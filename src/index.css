@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+@theme {
+  --color-base: var(--bg-base);
+  --color-surface: var(--bg-surface);
+  --color-primary: var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-accent: #ff9f1a;
+  --color-accent-navy: #1e3a8a;
+  --color-accent-green: #B4F481;
+  
+  --font-display: "Plus Jakarta Sans", "Inter", sans-serif;
+  --font-sans: "Inter", sans-serif;
+}
+
+:root {
+  --bg-base: #f8f7f5;
+  --bg-surface: rgba(255, 255, 255, 0.7);
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --elevation-border: rgba(0, 0, 0, 0.05);
+  --glass-bg: rgba(255, 255, 255, 0.4);
+}
+
+.dark {
+  --bg-base: #050505;
+  --bg-surface: rgba(255, 255, 255, 0.02);
+  --text-primary: #f8fafc;
+  --text-secondary: rgba(255, 255, 255, 0.5);
+  --elevation-border: rgba(255, 255, 255, 0.05);
+  --glass-bg: rgba(255, 255, 255, 0.02);
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  min-height: 100vh;
+  transition: background-color 0.3s ease, color 0.3s ease;
+  background-attachment: fixed;
+}
+
+.dark body {
+  background: radial-gradient(circle at 50% -20%, #1a1510 0%, #050505 60%);
+}
+
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(40px) saturate(120%);
+  -webkit-backdrop-filter: blur(40px) saturate(120%);
+  border: 1px solid var(--elevation-border);
+}
+
+.vision-glow {
+  box-shadow: 0 0 40px -10px rgba(99, 102, 241, 0.15);
+}
+
+.dark .vision-glow {
+  box-shadow: 0 0 60px -15px rgba(99, 102, 241, 0.3);
+}
+
+.sound-bar {
+  transition: height 0.3s ease;
+}
+
+.shadow-kompagnon {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+}
+
+.dark .shadow-kompagnon {
+  box-shadow: none;
+}
+
+.menu-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--elevation-border);
+  border-radius: 1rem;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+}
+
+.dark .menu-panel {
+  background: #121212;
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+}
+
+.backdrop-blur-glass {
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+}
+
+.liquid-glow {
+  filter: blur(80px);
+  opacity: 0.15;
+  pointer-events: none;
+}
+
+/* Unified Card Class */
+.kompagnon-card {
+  background-color: var(--bg-surface);
+  border-radius: 1.5rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+  transition: all 0.3s ease-out;
+}
+
+.dark .kompagnon-card {
+  background-color: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+}
+
+.kompagnon-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.1);
+}
