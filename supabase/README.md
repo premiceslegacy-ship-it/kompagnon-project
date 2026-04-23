@@ -1,6 +1,6 @@
-# Kompagnon — Déploiement Supabase
+# Atelier — Déploiement Supabase
 
-Ce dossier contient toutes les migrations SQL pour déployer Kompagnon sur un nouveau projet Supabase.
+Ce dossier contient toutes les migrations SQL pour déployer Atelier sur un nouveau projet Supabase.
 
 ---
 
@@ -66,7 +66,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...
 NEXT_PUBLIC_APP_URL=https://[votre-domaine.com]
 
 # Optionnel : personnalisation marque
-NEXT_PUBLIC_APP_NAME=Kompagnon
+NEXT_PUBLIC_APP_NAME=Atelier
 ```
 
 ### Étape 4 — Vérifier l'activation de l'extension vector

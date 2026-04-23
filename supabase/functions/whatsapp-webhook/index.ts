@@ -9,13 +9,16 @@
  *   → Lookup org par phone_number_id
  *   → Vérification numéro autorisé
  *   → Si vocal : Voxtral Mini STT (Mistral API)
- *   → Claude Sonnet 4.6 (OpenRouter) + tool_use
+ *   → Gemini 2.5 Flash (OpenRouter) + tool_use
  *   → Exécution outils Supabase (chantiers, pointages, notes…)
  *   → Réponse WhatsApp via Cloud API
  *
  * Variables Supabase Secrets :
  *   OPENROUTER_API_KEY
  *   MISTRAL_API_KEY
+ *   RESEND_API_KEY
+ *   RESEND_FROM_EMAIL
+ *   APP_URL
  *   SUPABASE_URL (auto-injecté)
  *   SUPABASE_SERVICE_ROLE_KEY (auto-injecté)
  */
@@ -58,17 +61,25 @@ interface OrgConfig {
   authorized_numbers: string[]
 }
 
-// ─── Outils Claude ────────────────────────────────────────────────────────────
+type UsageMetrics = {
+  promptTokens: number | null
+  completionTokens: number | null
+  totalTokens: number | null
+  providerCost: number | null
+  currency: string
+}
+
+// ─── Outils ───────────────────────────────────────────────────────────────────
 
 const TOOLS = [
   {
     name: 'get_resume',
-    description: 'Résumé de la situation actuelle : chantiers en cours, factures impayées, devis en attente, tâches urgentes.',
+    description: 'Résumé de la situation actuelle : chantiers en cours, factures impayées, devis en attente de réponse, acomptes en attente.',
     input_schema: { type: 'object', properties: {}, required: [] },
   },
   {
     name: 'get_chantiers',
-    description: 'Liste les chantiers en cours ou planifiés. Retourne titre, statut, ville, progression tâches.',
+    description: 'Liste les chantiers en cours ou planifiés. Retourne titre, statut, ville, progression tâches, contact référent.',
     input_schema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -115,7 +126,7 @@ const TOOLS = [
   },
   {
     name: 'get_factures_impayees',
-    description: 'Liste les factures en retard de paiement avec montant et client.',
+    description: 'Liste les factures en retard de paiement avec montant, client et nombre de jours de retard.',
     input_schema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -131,12 +142,12 @@ const TOOLS = [
   },
   {
     name: 'get_prestation_types',
-    description: 'Liste les prestations types du catalogue (nom, prix HT, unité, catégorie). À appeler avant create_quote pour connaître les tarifs disponibles.',
+    description: 'Liste les prestations types et articles du catalogue (nom, prix HT, unité, catégorie, variantes tarifaires si disponibles). Appeler avant create_quote pour connaître les tarifs disponibles.',
     input_schema: { type: 'object', properties: {}, required: [] },
   },
   {
     name: 'create_quote',
-    description: 'Crée un nouveau devis en brouillon pour un client avec des lignes. Le client est recherché par nom ou email.',
+    description: 'Crée un nouveau devis en brouillon pour un client. Chaque ligne peut être liée au catalogue via prestation_type_id. Le client est recherché par nom ou email.',
     input_schema: {
       type: 'object',
       properties: {
@@ -153,6 +164,8 @@ const TOOLS = [
               unit: { type: 'string' },
               unit_price: { type: 'number' },
               vat_rate: { type: 'number', description: 'Taux TVA, défaut 20' },
+              prestation_type_id: { type: 'string', description: 'ID de la prestation catalogue (optionnel, issu de get_prestation_types)' },
+              variant_label: { type: 'string', description: 'Libellé de la variante tarifaire choisie (optionnel)' },
             },
             required: ['description', 'quantity', 'unit', 'unit_price'],
           },
@@ -176,7 +189,7 @@ const TOOLS = [
   },
   {
     name: 'create_invoice_from_quote',
-    description: 'Convertit un devis en facture. Cherche le devis par numéro ou mots-clés du titre.',
+    description: 'Convertit un devis accepté en facture. Cherche le devis par numéro ou mots-clés du titre.',
     input_schema: {
       type: 'object',
       properties: {
@@ -197,12 +210,31 @@ const TOOLS = [
       required: ['invoice_search'],
     },
   },
+  {
+    name: 'get_acomptes',
+    description: 'Liste les acomptes en attente ou partiellement encaissés, avec le montant, le taux, le devis associé et le client.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'create_acompte',
+    description: 'Crée un acompte sur un devis existant. Peut être exprimé en montant fixe ou en pourcentage du total du devis.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        quote_search: { type: 'string', description: 'Numéro du devis ou mots-clés du titre' },
+        amount: { type: 'number', description: 'Montant HT de l\'acompte (prioritaire sur pct)' },
+        pct: { type: 'number', description: 'Pourcentage du total HT du devis (ex: 30 pour 30%). Ignoré si amount est fourni.' },
+        label: { type: 'string', description: 'Libellé de l\'acompte, ex: "Acompte à la commande"' },
+        due_days: { type: 'number', description: 'Délai d\'échéance en jours depuis aujourd\'hui, défaut 0 (à réception)' },
+      },
+      required: ['quote_search'],
+    },
+  },
 ]
 
 // ─── Handler principal ────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request): Promise<Response> => {
-  // GET : vérification du webhook Meta
   if (req.method === 'GET') {
     const url = new URL(req.url)
     const mode = url.searchParams.get('hub.mode')
@@ -213,7 +245,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return new Response('Bad Request', { status: 400 })
     }
 
-    // Chercher une org avec ce verify_token
     const supabase = getAdminClient()
     const { data } = await supabase
       .from('whatsapp_configs')
@@ -226,15 +257,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return new Response(challenge, { status: 200 })
   }
 
-  // POST : messages entrants
   if (req.method === 'POST') {
     const payload = await req.json() as WebhookPayload
-
-    // Toujours ACK immédiatement (Meta exige < 5s)
-    // On traite en arrière-plan via waitUntil équivalent (Edge Function timeout = 150s)
     const supabase = getAdminClient()
     await processPayload(supabase, payload)
-
     return new Response('OK', { status: 200 })
   }
 
@@ -253,7 +279,6 @@ async function processPayload(supabase: ReturnType<typeof getAdminClient>, paylo
 
       if (!messages.length) continue
 
-      // Lookup org
       const { data: config } = await supabase
         .from('whatsapp_configs')
         .select('id, is_active, access_token, authorized_numbers, organizations(id, name)')
@@ -290,10 +315,15 @@ async function handleMessage(
 ) {
   const fromNumber = msg.from
 
-  // Vérification numéro autorisé
+  if (!(await isWhatsAppModuleEnabled(supabase, orgConfig.id))) {
+    await sendWhatsAppText(orgConfig, fromNumber,
+      "L'agent WhatsApp n'est pas activé pour cette instance.")
+    return
+  }
+
   if (orgConfig.authorized_numbers.length > 0 && !orgConfig.authorized_numbers.includes(fromNumber)) {
     await sendWhatsAppText(orgConfig, fromNumber,
-      "Désolé, ce numéro n'est pas autorisé à utiliser l'assistant Kompagnon.")
+      "Désolé, ce numéro n'est pas autorisé à utiliser l'assistant.")
     return
   }
 
@@ -301,11 +331,10 @@ async function handleMessage(
   let transcription: string | null = null
   let messageType = msg.type
 
-  // Transcription vocale
   if (msg.type === 'audio' && msg.audio?.id) {
     try {
       const audioBuffer = await downloadWhatsAppMedia(orgConfig.access_token, msg.audio.id)
-      transcription = await transcribeWithVoxtral(audioBuffer, msg.audio.mime_type)
+      transcription = await transcribeWithVoxtral(supabase, orgConfig.id, audioBuffer, msg.audio.mime_type)
       userText = transcription
     } catch (err) {
       console.error('[whatsapp-agent] STT error:', err)
@@ -319,7 +348,6 @@ async function handleMessage(
     userText = msg.image.caption
     messageType = 'image'
   } else {
-    // Type non supporté
     await sendWhatsAppText(orgConfig, fromNumber,
       "Je gère les messages texte et vocaux. Envoyez-moi votre demande en texte ou par vocal !")
     return
@@ -327,7 +355,6 @@ async function handleMessage(
 
   if (!userText?.trim()) return
 
-  // Log message entrant
   await supabase.from('whatsapp_messages').insert({
     organization_id: orgConfig.id,
     wamid: msg.id,
@@ -339,10 +366,8 @@ async function handleMessage(
     content: userText,
   })
 
-  // Claude Sonnet avec outils
-  const { reply, toolCalls } = await callClaude(supabase, orgConfig, userText, fromNumber)
+  const { reply, toolCalls } = await callGemini(supabase, orgConfig, userText)
 
-  // Log message sortant
   await supabase.from('whatsapp_messages').insert({
     organization_id: orgConfig.id,
     direction: 'outbound',
@@ -353,17 +378,15 @@ async function handleMessage(
     tool_calls: toolCalls.length ? toolCalls : null,
   })
 
-  // Envoi réponse
   await sendWhatsAppText(orgConfig, fromNumber, reply)
 }
 
-// ─── Claude Sonnet + tool_use ─────────────────────────────────────────────────
+// ─── Gemini 2.5 Flash via OpenRouter + tool_use ───────────────────────────────
 
-async function callClaude(
+async function callGemini(
   supabase: ReturnType<typeof getAdminClient>,
   orgConfig: OrgConfig,
   userText: string,
-  _fromNumber: string,
 ): Promise<{ reply: string; toolCalls: unknown[] }> {
   const openrouterKey = Deno.env.get('OPENROUTER_API_KEY')!
   const appUrl = Deno.env.get('APP_URL') ?? ''
@@ -378,40 +401,79 @@ Sois direct et pratique — l'artisan est souvent sur le terrain.`
   const messages = [{ role: 'user', content: userText }]
   const allToolCalls: unknown[] = []
 
-  // Boucle agentic (jusqu'à 5 tours d'outils max)
   for (let turn = 0; turn < 5; turn++) {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openrouterKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': appUrl,
-        'X-Title': 'Kompagnon',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages,
-        tools: TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } })),
-        tool_choice: 'auto',
-        user: orgConfig.id,
-      }),
-    })
-
-    if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${await res.text()}`)
-    const json = await res.json()
-    const choice = json.choices?.[0]
-
-    if (!choice) throw new Error('No choice from Claude')
-
-    // Réponse finale (pas d'appel outil)
-    if (choice.finish_reason === 'stop' || choice.finish_reason === 'length') {
-      const text = choice.message?.content ?? ''
-      return { reply: text, toolCalls: allToolCalls }
+    const requestBody = {
+      model: 'google/gemini-2.5-flash',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages,
+      tools: TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } })),
+      tool_choice: 'auto',
+      user: orgConfig.id,
     }
 
-    // Traitement tool_calls
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let json: any
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openrouterKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': appUrl,
+          'X-Title': 'Kompagnon',
+        },
+        body: JSON.stringify(requestBody),
+      })
+
+      if (!res.ok) {
+        const errorText = await res.text()
+        await logProviderUsage(supabase, {
+          organizationId: orgConfig.id,
+          provider: 'openrouter',
+          feature: 'whatsapp_reply',
+          model: 'google/gemini-2.5-flash',
+          inputKind: 'text',
+          status: 'error',
+          usage: emptyUsageMetrics(),
+          externalRequestId: null,
+          metadata: {
+            turn,
+            error: errorText,
+          },
+        })
+        throw new Error(`OpenRouter ${res.status}: ${errorText}`)
+      }
+
+      json = await res.json()
+      await logProviderUsage(supabase, {
+        organizationId: orgConfig.id,
+        provider: 'openrouter',
+        feature: 'whatsapp_reply',
+        model: 'google/gemini-2.5-flash',
+        inputKind: 'text',
+        status: 'success',
+        usage: buildUsageMetrics(json.usage as Record<string, unknown> | undefined),
+        externalRequestId: typeof json.id === 'string' ? json.id : null,
+        metadata: {
+          turn,
+          tool_count: Array.isArray(json.choices?.[0]?.message?.tool_calls)
+            ? (json.choices?.[0]?.message?.tool_calls?.length ?? 0)
+            : 0,
+        },
+      })
+    } catch (error) {
+      throw error
+    }
+
+    const choice = json.choices?.[0]
+
+    if (!choice) throw new Error('No choice from OpenRouter')
+
+    if (choice.finish_reason === 'stop' || choice.finish_reason === 'length') {
+      return { reply: choice.message?.content ?? '', toolCalls: allToolCalls }
+    }
+
     if (choice.finish_reason === 'tool_calls' && choice.message?.tool_calls?.length) {
       const toolResults = []
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -428,13 +490,11 @@ Sois direct et pratique — l'artisan est souvent sur le terrain.`
         })
       }
 
-      // Ajouter assistant + tool results pour le prochain tour
       messages.push(choice.message)
       messages.push(...toolResults)
       continue
     }
 
-    // Cas inattendu
     break
   }
 
@@ -455,18 +515,24 @@ async function executeTool(
 
   switch (toolName) {
     case 'get_resume': {
-      const [{ data: chantiers }, { data: invoices }, { data: quotes }] = await Promise.all([
+      const [{ data: chantiers }, { data: invoices }, { data: quotes }, { data: acomptes }] = await Promise.all([
         supabase.from('chantiers').select('title, status, city').eq('organization_id', orgId).in('status', ['en_cours', 'planifie']).limit(5),
         supabase.from('invoices').select('number, total_ttc, currency, due_date, client:clients(company_name)').eq('organization_id', orgId).eq('status', 'sent').lt('due_date', today).limit(5),
         supabase.from('quotes').select('number, total_ttc, currency, status').eq('organization_id', orgId).in('status', ['sent', 'viewed']).limit(5),
+        supabase.from('acomptes').select('amount_ht, label, due_date, status, quote:quotes(number, title, client:clients(company_name))').eq('organization_id', orgId).in('status', ['pending', 'partial']).limit(5),
       ])
-      return { chantiers_en_cours: chantiers ?? [], factures_impayees: invoices ?? [], devis_en_attente: quotes ?? [] }
+      return {
+        chantiers_en_cours: chantiers ?? [],
+        factures_impayees: invoices ?? [],
+        devis_en_attente: quotes ?? [],
+        acomptes_en_attente: acomptes ?? [],
+      }
     }
 
     case 'get_chantiers': {
       const { data } = await supabase
         .from('chantiers')
-        .select('id, title, status, city, estimated_end_date')
+        .select('id, title, status, city, estimated_end_date, contact_name, contact_phone')
         .eq('organization_id', orgId)
         .in('status', ['en_cours', 'planifie', 'suspendu'])
         .order('created_at', { ascending: false })
@@ -478,7 +544,6 @@ async function executeTool(
       const chantier = await findChantierBySearch(supabase, orgId, input.chantier_search)
       if (!chantier) return { error: `Chantier introuvable pour "${input.chantier_search}"` }
 
-      // Trouver le user_id via le profil owner (simplification MVP)
       const { data: membership } = await supabase
         .from('memberships')
         .select('user_id')
@@ -486,7 +551,7 @@ async function executeTool(
         .eq('is_owner', true)
         .single()
 
-      if (!membership) return { error: 'Impossible de déterminer l\'utilisateur' }
+      if (!membership) return { error: "Impossible de déterminer l'utilisateur" }
 
       const { error } = await supabase.from('chantier_pointages').insert({
         chantier_id: chantier.id,
@@ -511,7 +576,7 @@ async function executeTool(
         .eq('is_owner', true)
         .single()
 
-      if (!membership) return { error: 'Impossible de déterminer l\'utilisateur' }
+      if (!membership) return { error: "Impossible de déterminer l'utilisateur" }
 
       const { error } = await supabase.from('chantier_notes').insert({
         chantier_id: chantier.id,
@@ -544,7 +609,13 @@ async function executeTool(
         .lt('due_date', today)
         .order('due_date', { ascending: true })
         .limit(10)
-      return data ?? []
+
+      // Enrichir avec le nombre de jours de retard
+      const enriched = (data ?? []).map((inv: Record<string, unknown>) => {
+        const daysLate = Math.floor((Date.now() - new Date(inv.due_date as string).getTime()) / 86400000)
+        return { ...inv, jours_retard: daysLate }
+      })
+      return enriched
     }
 
     case 'get_planning_day': {
@@ -587,14 +658,35 @@ async function executeTool(
     }
 
     case 'get_prestation_types': {
-      const { data } = await supabase
+      const { data: prestations } = await supabase
         .from('prestation_types')
-        .select('id, name, category, unit, base_price_ht, base_cost_ht, base_margin_pct, vat_rate')
+        .select('id, name, category, unit, base_price_ht, base_cost_ht, base_margin_pct, vat_rate, item_type')
         .eq('organization_id', orgId)
         .eq('is_active', true)
         .order('category', { ascending: true })
         .order('name', { ascending: true })
-      return data ?? []
+
+      if (!prestations?.length) return []
+
+      // Récupérer les variantes tarifaires pour chaque prestation
+      const ids = prestations.map((p: { id: string }) => p.id)
+      const { data: variants } = await supabase
+        .from('material_price_variants')
+        .select('material_id, id, label, unit_price_ht, unit')
+        .in('material_id', ids)
+        .order('label', { ascending: true })
+
+      const variantsByPrestation: Record<string, unknown[]> = {}
+      for (const v of (variants ?? [])) {
+        const vid = (v as Record<string, unknown>).material_id as string
+        if (!variantsByPrestation[vid]) variantsByPrestation[vid] = []
+        variantsByPrestation[vid].push(v)
+      }
+
+      return prestations.map((p: Record<string, unknown>) => ({
+        ...p,
+        variantes: variantsByPrestation[p.id as string] ?? [],
+      }))
     }
 
     case 'create_quote': {
@@ -637,6 +729,9 @@ async function executeTool(
         unit_price: l.unit_price,
         vat_rate: l.vat_rate ?? 20,
         position: idx + 1,
+        // Lien catalogue si fourni
+        ...(l.prestation_type_id ? { material_id: l.prestation_type_id } : {}),
+        ...(l.variant_label ? { variant_label: l.variant_label } : {}),
       }))
 
       const { error: itemsErr } = await supabase.from('quote_items').insert(items)
@@ -659,7 +754,7 @@ async function executeTool(
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const clientEmail = (quote as any).client?.email
-      if (!clientEmail) return { error: 'Pas d\'adresse email pour ce client' }
+      if (!clientEmail) return { error: "Pas d'adresse email pour ce client" }
 
       await supabase
         .from('quotes')
@@ -680,12 +775,11 @@ async function executeTool(
     case 'create_invoice_from_quote': {
       const quote = await findQuoteBySearch(supabase, orgId, input.quote_search)
       if (!quote) return { error: `Devis introuvable pour "${input.quote_search}"` }
-      if (quote.status === 'converted') return { error: `Ce devis a déjà été converti en facture` }
+      if (quote.status === 'converted') return { error: 'Ce devis a déjà été converti en facture' }
 
-      // Charger les lignes du devis
       const { data: quoteItems } = await supabase
         .from('quote_items')
-        .select('description, quantity, unit, unit_price, vat_rate, position')
+        .select('description, quantity, unit, unit_price, vat_rate, position, material_id, variant_label')
         .eq('quote_id', quote.id)
         .order('position', { ascending: true })
 
@@ -722,11 +816,13 @@ async function executeTool(
           unit_price: qi.unit_price,
           vat_rate: qi.vat_rate,
           position: qi.position ?? idx + 1,
+          // Conserver le lien catalogue depuis le devis
+          ...(qi.material_id ? { material_id: qi.material_id } : {}),
+          ...(qi.variant_label ? { variant_label: qi.variant_label } : {}),
         }))
         await supabase.from('invoice_items').insert(invItems)
       }
 
-      // Marquer le devis comme converti
       await supabase
         .from('quotes')
         .update({ status: 'converted', converted_at: new Date().toISOString(), invoice_id: invoice.id })
@@ -748,7 +844,7 @@ async function executeTool(
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const clientEmail = (invoice as any).client?.email
-      if (!clientEmail) return { error: 'Pas d\'adresse email pour ce client' }
+      if (!clientEmail) return { error: "Pas d'adresse email pour ce client" }
 
       await supabase
         .from('invoices')
@@ -766,12 +862,74 @@ async function executeTool(
       return { success: true, invoice_number: invoice.number, sent_to: clientEmail }
     }
 
+    case 'get_acomptes': {
+      const { data } = await supabase
+        .from('acomptes')
+        .select('id, label, amount_ht, pct, due_date, status, quote:quotes(number, title, client:clients(company_name))')
+        .eq('organization_id', orgId)
+        .in('status', ['pending', 'partial'])
+        .order('due_date', { ascending: true })
+        .limit(10)
+      return data ?? []
+    }
+
+    case 'create_acompte': {
+      const quote = await findQuoteBySearch(supabase, orgId, input.quote_search)
+      if (!quote) return { error: `Devis introuvable pour "${input.quote_search}"` }
+
+      let amountHt = input.amount ?? null
+      let pct = input.pct ?? null
+
+      // Calculer le montant depuis le pourcentage si amount non fourni
+      if (!amountHt && pct) {
+        const { data: quoteData } = await supabase
+          .from('quotes')
+          .select('total_ht')
+          .eq('id', quote.id)
+          .single()
+        if (quoteData?.total_ht) {
+          amountHt = Math.round((quoteData.total_ht * pct) / 100 * 100) / 100
+        }
+      }
+
+      if (!amountHt) return { error: 'Précisez un montant ou un pourcentage pour l\'acompte' }
+
+      const dueDays = input.due_days ?? 0
+      const dueDate = dueDays > 0
+        ? new Date(Date.now() + dueDays * 86400000).toISOString().split('T')[0]
+        : today
+
+      const { data: acompte, error: aErr } = await supabase
+        .from('acomptes')
+        .insert({
+          organization_id: orgId,
+          quote_id: quote.id,
+          label: input.label ?? 'Acompte',
+          amount_ht: amountHt,
+          pct: pct ?? null,
+          due_date: dueDate,
+          status: 'pending',
+        })
+        .select('id, label, amount_ht, due_date')
+        .single()
+
+      if (aErr || !acompte) return { error: aErr?.message ?? 'Erreur création acompte' }
+
+      return {
+        success: true,
+        label: acompte.label,
+        amount_ht: acompte.amount_ht,
+        due_date: acompte.due_date,
+        quote_number: quote.number,
+      }
+    }
+
     default:
       return { error: `Outil inconnu: ${toolName}` }
   }
 }
 
-// ─── Helper : recherche chantier par mots-clés ───────────────────────────────
+// ─── Helpers recherche ────────────────────────────────────────────────────────
 
 async function findChantierBySearch(
   supabase: ReturnType<typeof getAdminClient>,
@@ -786,13 +944,76 @@ async function findChantierBySearch(
     .not('status', 'eq', 'annule')
     .order('created_at', { ascending: false })
     .limit(1)
-
   return data?.[0] ?? null
+}
+
+async function findClientBySearch(
+  supabase: ReturnType<typeof getAdminClient>,
+  orgId: string,
+  search: string,
+): Promise<{ id: string; company_name: string | null; email: string | null } | null> {
+  const { data } = await supabase
+    .from('clients')
+    .select('id, company_name, first_name, last_name, email')
+    .eq('organization_id', orgId)
+    .or(`company_name.ilike.%${search}%,email.ilike.%${search}%,last_name.ilike.%${search}%`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  return data?.[0] ?? null
+}
+
+async function findQuoteBySearch(
+  supabase: ReturnType<typeof getAdminClient>,
+  orgId: string,
+  search: string,
+): Promise<{ id: string; number: string | null; title: string | null; status: string; client: { id: string; email: string | null } | null } | null> {
+  const { data } = await supabase
+    .from('quotes')
+    .select('id, number, title, status, client:clients(id, company_name, email)')
+    .eq('organization_id', orgId)
+    .or(`number.ilike.%${search}%,title.ilike.%${search}%`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data?.[0] as any) ?? null
+}
+
+async function findInvoiceBySearch(
+  supabase: ReturnType<typeof getAdminClient>,
+  orgId: string,
+  search: string,
+): Promise<{ id: string; number: string | null; status: string; client: { id: string; email: string | null } | null } | null> {
+  const { data } = await supabase
+    .from('invoices')
+    .select('id, number, status, client:clients(id, company_name, email)')
+    .eq('organization_id', orgId)
+    .ilike('number', `%${search}%`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  if (data?.[0]) return data[0] as any // eslint-disable-line @typescript-eslint/no-explicit-any
+
+  const { data: all } = await supabase
+    .from('invoices')
+    .select('id, number, status, client:clients(id, company_name, email)')
+    .eq('organization_id', orgId)
+    .not('status', 'eq', 'cancelled')
+    .order('created_at', { ascending: false })
+    .limit(20)
+
+  return (all ?? []).find((inv: any) => // eslint-disable-line @typescript-eslint/no-explicit-any
+    (inv.client?.company_name ?? '').toLowerCase().includes(search.toLowerCase())
+  ) ?? null
 }
 
 // ─── Voxtral STT (Mistral API) ────────────────────────────────────────────────
 
-async function transcribeWithVoxtral(audioBuffer: ArrayBuffer, mimeType: string): Promise<string> {
+async function transcribeWithVoxtral(
+  supabase: ReturnType<typeof getAdminClient>,
+  orgId: string,
+  audioBuffer: ArrayBuffer,
+  mimeType: string,
+): Promise<string> {
   const mistralKey = Deno.env.get('MISTRAL_API_KEY')!
   const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mpeg') ? 'mp3' : 'ogg'
 
@@ -806,22 +1027,51 @@ async function transcribeWithVoxtral(audioBuffer: ArrayBuffer, mimeType: string)
     body: formData,
   })
 
-  if (!res.ok) throw new Error(`Voxtral ${res.status}: ${await res.text()}`)
+  if (!res.ok) {
+    const errorText = await res.text()
+    await logProviderUsage(supabase, {
+      organizationId: orgId,
+      provider: 'mistral',
+      feature: 'whatsapp_transcription',
+      model: 'voxtral-mini-latest',
+      inputKind: 'audio',
+      status: 'error',
+      usage: emptyUsageMetrics(),
+      externalRequestId: null,
+      metadata: {
+        error: errorText,
+        mime_type: mimeType,
+      },
+    })
+    throw new Error(`Voxtral ${res.status}: ${errorText}`)
+  }
+
   const json = await res.json()
+  await logProviderUsage(supabase, {
+    organizationId: orgId,
+    provider: 'mistral',
+    feature: 'whatsapp_transcription',
+    model: 'voxtral-mini-latest',
+    inputKind: 'audio',
+    status: 'success',
+    usage: buildUsageMetrics(json.usage),
+    externalRequestId: typeof json.id === 'string' ? json.id : null,
+    metadata: {
+      mime_type: mimeType,
+    },
+  })
   return json.text ?? ''
 }
 
 // ─── Téléchargement média WhatsApp ────────────────────────────────────────────
 
 async function downloadWhatsAppMedia(accessToken: string, mediaId: string): Promise<ArrayBuffer> {
-  // 1. Obtenir l'URL de téléchargement
   const urlRes = await fetch(`https://graph.facebook.com/v19.0/${mediaId}`, {
     headers: { 'Authorization': `Bearer ${accessToken}` },
   })
   if (!urlRes.ok) throw new Error(`WhatsApp media URL ${urlRes.status}`)
   const { url } = await urlRes.json()
 
-  // 2. Télécharger le fichier
   const fileRes = await fetch(url, {
     headers: { 'Authorization': `Bearer ${accessToken}` },
   })
@@ -855,74 +1105,7 @@ async function sendWhatsAppText(orgConfig: OrgConfig, to: string, text: string):
   }
 }
 
-// ─── Helper : recherche client ───────────────────────────────────────────────
-
-async function findClientBySearch(
-  supabase: ReturnType<typeof getAdminClient>,
-  orgId: string,
-  search: string,
-): Promise<{ id: string; company_name: string | null; email: string | null } | null> {
-  const { data } = await supabase
-    .from('clients')
-    .select('id, company_name, first_name, last_name, email')
-    .eq('organization_id', orgId)
-    .or(`company_name.ilike.%${search}%,email.ilike.%${search}%,last_name.ilike.%${search}%`)
-    .order('created_at', { ascending: false })
-    .limit(1)
-  return data?.[0] ?? null
-}
-
-// ─── Helper : recherche devis ────────────────────────────────────────────────
-
-async function findQuoteBySearch(
-  supabase: ReturnType<typeof getAdminClient>,
-  orgId: string,
-  search: string,
-): Promise<{ id: string; number: string | null; title: string | null; status: string; client: { id: string; email: string | null } | null } | null> {
-  const { data } = await supabase
-    .from('quotes')
-    .select('id, number, title, status, client:clients(id, company_name, email)')
-    .eq('organization_id', orgId)
-    .or(`number.ilike.%${search}%,title.ilike.%${search}%`)
-    .order('created_at', { ascending: false })
-    .limit(1)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (data?.[0] as any) ?? null
-}
-
-// ─── Helper : recherche facture ──────────────────────────────────────────────
-
-async function findInvoiceBySearch(
-  supabase: ReturnType<typeof getAdminClient>,
-  orgId: string,
-  search: string,
-): Promise<{ id: string; number: string | null; status: string; client: { id: string; email: string | null } | null } | null> {
-  // Cherche d'abord par numéro
-  const { data } = await supabase
-    .from('invoices')
-    .select('id, number, status, client:clients(id, company_name, email)')
-    .eq('organization_id', orgId)
-    .ilike('number', `%${search}%`)
-    .order('created_at', { ascending: false })
-    .limit(1)
-
-  if (data?.[0]) return data[0] as any // eslint-disable-line @typescript-eslint/no-explicit-any
-
-  // Fallback : cherche par nom client
-  const { data: all } = await supabase
-    .from('invoices')
-    .select('id, number, status, client:clients(id, company_name, email)')
-    .eq('organization_id', orgId)
-    .not('status', 'eq', 'cancelled')
-    .order('created_at', { ascending: false })
-    .limit(20)
-
-  return (all ?? []).find((inv: any) => // eslint-disable-line @typescript-eslint/no-explicit-any
-    (inv.client?.company_name ?? '').toLowerCase().includes(search.toLowerCase())
-  ) ?? null
-}
-
-// ─── Helper : envoi email via Resend ─────────────────────────────────────────
+// ─── Envoi email via Resend ───────────────────────────────────────────────────
 
 async function sendResendEmail({ to, subject, html }: { to: string; subject: string; html: string }): Promise<void> {
   const resendKey = Deno.env.get('RESEND_API_KEY')
@@ -944,4 +1127,198 @@ function getAdminClient() {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     { auth: { persistSession: false } },
   )
+}
+
+function emptyUsageMetrics(): UsageMetrics {
+  return {
+    promptTokens: null,
+    completionTokens: null,
+    totalTokens: null,
+    providerCost: null,
+    currency: 'USD',
+  }
+}
+
+function buildUsageMetrics(rawUsage?: Record<string, unknown>): UsageMetrics {
+  return {
+    promptTokens: typeof rawUsage?.prompt_tokens === 'number' ? rawUsage.prompt_tokens : null,
+    completionTokens: typeof rawUsage?.completion_tokens === 'number' ? rawUsage.completion_tokens : null,
+    totalTokens: typeof rawUsage?.total_tokens === 'number' ? rawUsage.total_tokens : null,
+    providerCost: typeof rawUsage?.cost === 'number' ? rawUsage.cost : null,
+    currency: 'USD',
+  }
+}
+
+async function isWhatsAppModuleEnabled(
+  supabase: ReturnType<typeof getAdminClient>,
+  organizationId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('organization_modules')
+    .select('modules')
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[whatsapp-agent.modules]', error)
+    return false
+  }
+
+  return data?.modules?.whatsapp_agent === true
+}
+
+async function logProviderUsage(
+  supabase: ReturnType<typeof getAdminClient>,
+  params: {
+    organizationId: string
+    provider: 'openrouter' | 'mistral'
+    feature: 'whatsapp_reply' | 'whatsapp_transcription'
+    model: string
+    inputKind: 'text' | 'audio'
+    status: 'success' | 'error'
+    usage: UsageMetrics
+    externalRequestId: string | null
+    metadata?: Record<string, unknown>
+  },
+) {
+  const { data, error } = await supabase
+    .from('usage_logs')
+    .insert({
+      organization_id: params.organizationId,
+      provider: params.provider,
+      feature: params.feature,
+      model: params.model,
+      input_kind: params.inputKind,
+      status: params.status,
+      prompt_tokens: params.usage.promptTokens,
+      completion_tokens: params.usage.completionTokens,
+      total_tokens: params.usage.totalTokens,
+      provider_cost: params.usage.providerCost,
+      currency: params.usage.currency,
+      external_request_id: params.externalRequestId,
+      metadata: params.metadata ?? null,
+    })
+    .select('id')
+    .single()
+
+  if (error) {
+    console.error('[whatsapp-agent.usage_logs.insert]', error)
+    return
+  }
+
+  const logId = data?.id as string | undefined
+  if (!logId) return
+
+  await syncUsageLogToOperator(supabase, logId, {
+    source_instance: getOperatorSourceInstance(),
+    organization_id: params.organizationId,
+    occurred_at: new Date().toISOString(),
+    provider: params.provider,
+    feature: params.feature,
+    model: params.model,
+    provider_cost: params.usage.providerCost,
+    currency: params.usage.currency,
+    total_tokens: params.usage.totalTokens,
+    status: params.status,
+    local_usage_log_id: logId,
+    metadata: params.metadata ?? null,
+  })
+}
+
+function getOperatorSourceInstance(): string {
+  const explicit = Deno.env.get('OPERATOR_SOURCE_INSTANCE')?.trim()
+  if (explicit) return explicit
+
+  const appUrl = Deno.env.get('APP_URL')?.trim()
+  if (!appUrl) return 'unknown-instance'
+
+  try {
+    return new URL(appUrl).host
+  } catch {
+    return appUrl
+  }
+}
+
+function hexEncode(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+async function signOperatorPayload(secret: string, payload: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))
+  return hexEncode(signature)
+}
+
+async function syncUsageLogToOperator(
+  supabase: ReturnType<typeof getAdminClient>,
+  logId: string,
+  payload: {
+    source_instance: string
+    organization_id: string
+    occurred_at: string
+    provider: string
+    feature: string
+    model: string
+    provider_cost: number | null
+    currency: string
+    total_tokens: number | null
+    status: string
+    local_usage_log_id: string
+    metadata?: Record<string, unknown> | null
+  },
+) {
+  const url = Deno.env.get('OPERATOR_INGEST_URL')?.trim()
+  const secret = Deno.env.get('OPERATOR_INGEST_SECRET')?.trim()
+
+  if (!url || !secret) {
+    await supabase
+      .from('usage_logs')
+      .update({ operator_sync_status: 'skipped', operator_sync_error: null, operator_synced_at: null })
+      .eq('id', logId)
+    return
+  }
+
+  const body = JSON.stringify(payload)
+
+  try {
+    const signature = await signOperatorPayload(secret, body)
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-operator-signature': signature,
+      },
+      body,
+    })
+
+    if (!res.ok) {
+      throw new Error(`Operator ingest ${res.status}: ${await res.text()}`)
+    }
+
+    await supabase
+      .from('usage_logs')
+      .update({
+        operator_sync_status: 'synced',
+        operator_sync_error: null,
+        operator_synced_at: new Date().toISOString(),
+      })
+      .eq('id', logId)
+  } catch (error) {
+    await supabase
+      .from('usage_logs')
+      .update({
+        operator_sync_status: 'failed',
+        operator_sync_error: error instanceof Error ? error.message : 'Operator ingest failed',
+        operator_synced_at: null,
+      })
+      .eq('id', logId)
+  }
 }

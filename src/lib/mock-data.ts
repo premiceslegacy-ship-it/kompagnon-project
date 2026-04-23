@@ -105,18 +105,21 @@ export const mockData = {
   ],
   catalog: {
     materials: [
-      { id: "m1", name: "Acier S235", thickness: "2mm", format: "3000x1500", price: 45.50, unit: "m²" },
-      { id: "m2", name: "Acier S235", thickness: "5mm", format: "3000x1500", price: 110.00, unit: "m²" },
-      { id: "m3", name: "Acier Galvanisé", thickness: "1.5mm", format: "2500x1250", price: 38.00, unit: "m²" },
-      { id: "m4", name: "Inox 304L", thickness: "3mm", format: "3000x1500", price: 185.00, unit: "m²" },
-      { id: "m5", name: "Alu 5754", thickness: "2mm", format: "3000x1500", price: 95.00, unit: "m²" },
+      { id: 1, ref: 'AC-S235-2MM', name: 'Tôle Acier S235 - Ép. 2mm (3000x1500)', category: 'Acier', purchasePrice: 45, margin: 30, sellingPrice: 58.50, thickness: "2mm", format: "3000x1500", unit: "U" },
+      { id: 2, ref: 'AC-GALV-3MM', name: 'Tôle Acier Galvanisé - Ép. 3mm (3000x1500)', category: 'Acier Galvanisé', purchasePrice: 65, margin: 35, sellingPrice: 87.75, thickness: "3mm", format: "3000x1500", unit: "U" },
+      { id: 3, ref: 'IN-304L-1.5MM', name: 'Tôle Inox 304L Brossé - Ép. 1.5mm (2500x1250)', category: 'Inox', purchasePrice: 120, margin: 25, sellingPrice: 150, thickness: "1.5mm", format: "2500x1250", unit: "U" },
+      { id: 4, ref: 'AL-5754-5MM', name: 'Tôle Alu 5754 H111 - Ép. 5mm (3000x1500)', category: 'Aluminium', purchasePrice: 180, margin: 30, sellingPrice: 234, thickness: "5mm", format: "3000x1500", unit: "U" },
+      { id: 5, ref: 'AC-S235-10MM', name: 'Tôle Acier S235 - Ép. 10mm (3000x1500)', category: 'Acier', purchasePrice: 210, margin: 25, sellingPrice: 262.50, thickness: "10mm", format: "3000x1500", unit: "U" },
+      { id: 6, ref: 'IN-316L-3MM', name: 'Tôle Inox 316L - Ép. 3mm (3000x1500)', category: 'Inox', purchasePrice: 340, margin: 20, sellingPrice: 408, thickness: "3mm", format: "3000x1500", unit: "U" },
+      { id: 7, ref: 'TUBE-AC-40X40', name: 'Tube Acier Carré 40x40x2 (Barre 6m)', category: 'Profilé', purchasePrice: 24, margin: 40, sellingPrice: 33.60, thickness: "2mm", format: "Barre 6m", unit: "mL" },
+      { id: 8, ref: 'COR-IN-50X50', name: 'Cornière Inox 304L 50x50x5 (Barre 6m)', category: 'Profilé', purchasePrice: 85, margin: 35, sellingPrice: 114.75, thickness: "5mm", format: "Barre 6m", unit: "mL" },
     ],
     operations: [
-      { id: "o1", name: "Programmation CAO", price: 65.00, unit: "h" },
-      { id: "o2", name: "Découpe Laser", price: 120.00, unit: "h" },
-      { id: "o3", name: "Pliage commande numérique", price: 85.00, unit: "h" },
-      { id: "o4", name: "Soudure TIG/MIG", price: 75.00, unit: "h" },
-      { id: "o5", name: "Thermolaquage", price: 25.00, unit: "m²" },
+      { id: 101, ref: 'MO-CAO', name: 'Programmation CAO / DAO', category: 'Ingénierie', purchasePrice: 45, margin: 60, sellingPrice: 72, unit: "h" },
+      { id: 102, ref: 'MO-LASER', name: 'Découpe Laser (Heure Machine + Opérateur)', category: 'Usinage', purchasePrice: 80, margin: 50, sellingPrice: 120, unit: "h" },
+      { id: 103, ref: 'MO-PLIAGE', name: 'Pliage Commande Numérique', category: 'Usinage', purchasePrice: 65, margin: 55, sellingPrice: 100.75, unit: "h" },
+      { id: 104, ref: 'MO-SOUD-TIG', name: 'Soudure TIG / MIG', category: 'Assemblage', purchasePrice: 50, margin: 60, sellingPrice: 80, unit: "h" },
+      { id: 105, ref: 'MO-THERMO', name: 'Thermolaquage (Forfait m²)', category: 'Finition', purchasePrice: 15, margin: 70, sellingPrice: 25.50, unit: "m²" },
     ]
   }
 };
