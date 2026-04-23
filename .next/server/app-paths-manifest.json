@@ -1,0 +1,7 @@
+{
+  "/sign/[token]/page": "app/sign/[token]/page.js",
+  "/(app)/finances/invoice-editor/page": "app/(app)/finances/invoice-editor/page.js",
+  "/(app)/dashboard/page": "app/(app)/dashboard/page.js",
+  "/(app)/finances/quote-editor/page": "app/(app)/finances/quote-editor/page.js",
+  "/(app)/finances/page": "app/(app)/finances/page.js"
+}
