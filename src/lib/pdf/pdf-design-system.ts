@@ -1,11 +1,15 @@
 // Atelier by Orsayn — PDF Design System v1.0
-// Polices requises dans /public/fonts/ :
-//   inter-regular.ttf, inter-bold.ttf
-//   plus-jakarta-sans-bold.ttf, plus-jakarta-sans-extrabold.ttf
+// Polices chargées via chemin absolu fs (server-side uniquement, compatible Cloudflare Workers)
 
+import path from 'path'
 import { Font, StyleSheet } from '@react-pdf/renderer'
 
 let fontsRegistered = false
+
+function fontPath(name: string): string {
+  // process.cwd() = racine du projet en dev et en prod Workers
+  return path.join(process.cwd(), 'public', 'fonts', name)
+}
 
 export function registerFonts() {
   if (fontsRegistered) return
@@ -14,16 +18,16 @@ export function registerFonts() {
   Font.register({
     family: 'Inter',
     fonts: [
-      { src: '/fonts/inter-regular.ttf', fontWeight: 400 },
-      { src: '/fonts/inter-bold.ttf', fontWeight: 700 },
+      { src: fontPath('inter-regular.ttf'), fontWeight: 400 },
+      { src: fontPath('inter-bold.ttf'), fontWeight: 700 },
     ],
   })
 
   Font.register({
     family: 'PlusJakartaSans',
     fonts: [
-      { src: '/fonts/plus-jakarta-sans-bold.ttf', fontWeight: 700 },
-      { src: '/fonts/plus-jakarta-sans-extrabold.ttf', fontWeight: 800 },
+      { src: fontPath('plus-jakarta-sans-bold.ttf'), fontWeight: 700 },
+      { src: fontPath('plus-jakarta-sans-extrabold.ttf'), fontWeight: 800 },
     ],
   })
 
