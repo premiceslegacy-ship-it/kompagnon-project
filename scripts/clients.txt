@@ -1,0 +1,13 @@
+# Liste des Workers Cloudflare à déployer
+# Un nom par ligne — même format que "name" dans wrangler.jsonc
+# Lignes commençant par # ignorées
+#
+# Exemples :
+#   atelier-weber
+#   atelier-dupont
+#
+# Ajouter une ligne à chaque nouveau client.
+# Le cockpit est aussi un Worker — l'inclure si tu veux le mettre à jour en même temps.
+
+orsayn-cockpit
+# atelier-weber      ← décommenter quand le client est déployé
