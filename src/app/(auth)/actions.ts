@@ -53,7 +53,9 @@ export async function login(_prevState: AuthState, formData: FormData): Promise<
   }
 
   revalidatePath('/', 'layout')
-  redirect('/dashboard')
+  // Sur le cockpit opérateur, rediriger vers /orsayn plutôt que /dashboard
+  const destination = process.env.OPERATOR_MODE === 'true' ? '/orsayn' : '/dashboard'
+  redirect(destination)
 }
 
 export async function signup(_prevState: AuthState, formData: FormData): Promise<AuthState> {
