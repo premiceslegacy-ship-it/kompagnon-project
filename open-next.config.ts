@@ -1,3 +1,28 @@
-import { defineCloudflareConfig } from '@opennextjs/cloudflare/config'
+import type { OpenNextConfig } from "@opennextjs/cloudflare";
 
-export default defineCloudflareConfig()
+const config: OpenNextConfig = {
+  default: {
+    override: {
+      wrapper: "cloudflare-node",
+      converter: "edge",
+      proxyExternalRequest: "fetch",
+      incrementalCache: "dummy",
+      tagCache: "dummy",
+      queue: "direct",
+    },
+  },
+  edgeExternals: ["node:crypto"],
+  middleware: {
+    external: true,
+    override: {
+      wrapper: "cloudflare-edge",
+      converter: "edge",
+      proxyExternalRequest: "fetch",
+      incrementalCache: "dummy",
+      tagCache: "dummy",
+      queue: "direct",
+    },
+  },
+};
+
+export default config;
