@@ -45,6 +45,17 @@ export function getOperatorSourceInstance(): string {
   return 'unknown-instance'
 }
 
+export function getOperatorUsdToEurRate(): number {
+  const raw = process.env.OPERATOR_USD_TO_EUR_RATE?.trim()
+  const parsed = raw ? Number.parseFloat(raw) : Number.NaN
+
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed
+  }
+
+  return 0.92
+}
+
 export function signOperatorPayload(payload: string, secret: string): string {
   return createHmac('sha256', secret).update(payload).digest('hex')
 }
@@ -60,4 +71,3 @@ export function verifyOperatorSignature(payload: string, secret: string, provide
 
   return timingSafeEqual(expectedBuffer, providedBuffer)
 }
-

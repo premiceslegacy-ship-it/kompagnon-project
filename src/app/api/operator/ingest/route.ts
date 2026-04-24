@@ -53,7 +53,9 @@ export async function POST(req: NextRequest) {
     .upsert({
       source_instance: payload.source_instance,
       organization_id: payload.organization_id,
+      label: payload.source_instance,
       metadata: payload.metadata ?? null,
+      updated_at: new Date().toISOString(),
     }, { onConflict: 'source_instance,organization_id' })
 
   if (clientError) {
