@@ -156,3 +156,16 @@ La PA gère le routage vers l'administration. Atelier fournit les bons inputs, p
 - La déclaration de TVA (hors scope)
 - Le rapprochement automatique e-reporting de paiement / encaissement réel (V2)
 - Les factures B2C internationales avec règles TVA spécifiques (hors scope MVP)
+
+---
+
+## Ce que la réforme ne concerne pas
+
+- **Les devis** : aucune obligation légale, pas de format imposé. Le PDF simple suffit.
+- **Les factures B2C** : pas d'e-invoicing, PDF standard. La PA gère l'e-reporting agrégé.
+
+---
+
+## Interopérabilité PA : le client reste libre
+
+Un client Atelier en mode `export_only` télécharge son Factur-X (profil EN 16931 COMFORT) et peut le déposer sur **n'importe quelle PA de son choix** (Indy, Pennylane, Chorus Pro, Sage…). Le format est standard et lisible par tout l'écosystème comptable français. Atelier ne crée pas de dépendance : si un client veut utiliser Indy pour sa comptabilité et Atelier pour ses devis et factures, les deux coexistent sans friction.

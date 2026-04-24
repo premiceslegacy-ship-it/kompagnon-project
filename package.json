@@ -43,6 +43,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@fontsource/inter": "^5.2.8",
     "@opennextjs/cloudflare": "^1.19.4",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",

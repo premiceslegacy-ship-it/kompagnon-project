@@ -1014,7 +1014,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       {/* Prestation Picker Modal */}
       {prestationOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-2xl p-8 relative max-h-[80vh] flex flex-col">
+          <div className="card w-full max-w-2xl p-8 relative max-h-[80vh] flex flex-col">
             <button onClick={() => setPrestationOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary">
               <X className="w-6 h-6" />
             </button>
@@ -1081,7 +1081,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       {/* Catalog Modal */}
       {catalogOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-2xl p-8 relative max-h-[80vh] flex flex-col">
+          <div className="card w-full max-w-2xl p-8 relative max-h-[80vh] flex flex-col">
             <button onClick={() => setCatalogOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary">
               <X className="w-6 h-6" />
             </button>
@@ -1236,7 +1236,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
         {/* Left panel */}
         <div className="lg:col-span-4 space-y-6">
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 space-y-5">
+          <div className="rounded-3xl card p-8 space-y-5">
             <h3 className="text-lg font-bold text-primary border-b border-[var(--elevation-border)] pb-3">Informations</h3>
             <div className="space-y-4">
               <div className="space-y-2">
@@ -1283,7 +1283,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           </div>
 
           {/* Totals */}
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 space-y-4 sticky top-24">
+          <div className="rounded-3xl card p-8 space-y-4 sticky top-24">
             <h3 className="text-lg font-bold text-primary mb-2">Récapitulatif</h3>
             <div className="flex justify-between text-secondary">
               <span>Total HT</span><span className="tabular-nums">{fmt(totalHt)}</span>
@@ -1338,7 +1338,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
           {/* Demande du client (formulaire public) */}
           {clientRequestDescription && (
-            <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-accent/30 p-8">
+            <div className="card rounded-3xl border-accent/30 p-8">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <MessageSquare className="w-4 h-4 text-accent" />
@@ -1365,7 +1365,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           )}
 
           {/* Intro text */}
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8">
+          <div className="rounded-3xl card p-8">
             <label className="text-sm font-semibold text-secondary block mb-3">Texte d'introduction</label>
             <textarea
               value={notesClient}
@@ -1377,7 +1377,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
           {/* Sections */}
           {sections.map(sec => (
-            <div key={sec._tempId} className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 space-y-5">
+            <div key={sec._tempId} className="rounded-3xl card p-8 space-y-5">
               <div className="flex items-center justify-between border-b border-[var(--elevation-border)] pb-4">
                 <input
                   type="text"
@@ -1680,7 +1680,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       {/* Modal nouveau client inline */}
       {newClientOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-200">
+          <div className="card w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-200">
             <button onClick={() => setNewClientOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary"><X className="w-5 h-5" /></button>
             <h2 className="text-xl font-bold text-primary mb-6">Nouveau client</h2>
 

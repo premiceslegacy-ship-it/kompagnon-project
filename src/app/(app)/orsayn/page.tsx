@@ -267,29 +267,29 @@ export default async function OrsaynPage() {
           </p>
         </div>
 
-        <div className="rounded-3xl border border-[var(--elevation-border)] bg-surface px-5 py-4 shadow-kompagnon">
+        <div className="card px-5 py-4">
           <p className="text-xs font-bold uppercase tracking-wider text-secondary">Acces operateur</p>
           <p className="mt-2 text-sm font-medium text-primary">{user.email}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-        <section className="rounded-3xl border border-[var(--elevation-border)] bg-surface p-6 shadow-kompagnon">
+        <section className="card p-6">
           <p className="text-xs font-bold uppercase tracking-wider text-secondary">Cout IA du mois</p>
           <p className="mt-3 text-3xl font-bold text-primary">{formatMoney(costTotalEur)}</p>
           <p className="mt-2 text-sm text-secondary">Equivalent EUR sur {activeRows.length} client(s) actif(s).</p>
         </section>
-        <section className="rounded-3xl border border-[var(--elevation-border)] bg-surface p-6 shadow-kompagnon">
+        <section className="card p-6">
           <p className="text-xs font-bold uppercase tracking-wider text-secondary">CA mensuel saisi</p>
           <p className="mt-3 text-3xl font-bold text-primary">{formatMoney(revenueTotalEur)}</p>
           <p className="mt-2 text-sm text-secondary">{rowsWithFee.length} client(s) avec forfait renseigne.</p>
         </section>
-        <section className="rounded-3xl border border-[var(--elevation-border)] bg-surface p-6 shadow-kompagnon">
+        <section className="card p-6">
           <p className="text-xs font-bold uppercase tracking-wider text-secondary">Marge brute estimee</p>
           <p className="mt-3 text-3xl font-bold text-primary">{formatMoney(grossMarginTotalEur)}</p>
           <p className="mt-2 text-sm text-secondary">Comparaison forfait mensuel HT vs cout IA du mois.</p>
         </section>
-        <section className="rounded-3xl border border-[var(--elevation-border)] bg-surface p-6 shadow-kompagnon">
+        <section className="card p-6">
           <p className="text-xs font-bold uppercase tracking-wider text-secondary">Taux de marge</p>
           <p className="mt-3 text-3xl font-bold text-primary">{formatPercent(marginRate)}</p>
           <p className="mt-2 text-sm text-secondary">{missingBillingRows.length} client(s) encore a completer.</p>
@@ -297,7 +297,7 @@ export default async function OrsaynPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr,0.8fr,0.8fr]">
-        <section className="rounded-3xl border border-[var(--elevation-border)] bg-surface p-6 shadow-kompagnon">
+        <section className="card p-6">
           <div className="mb-4">
             <h2 className="text-lg font-bold text-primary">Ajouter ou preconfigurer un client</h2>
             <p className="mt-1 text-sm text-secondary">
@@ -365,7 +365,7 @@ export default async function OrsaynPage() {
           </form>
         </section>
 
-        <section className="rounded-3xl border border-[var(--elevation-border)] bg-surface p-6 shadow-kompagnon space-y-3">
+        <section className="card p-6 space-y-3">
           <div>
             <h2 className="text-lg font-bold text-primary">Peu rentables</h2>
             <p className="mt-1 text-sm text-secondary">Classement sur le mois en equivalent EUR.</p>
@@ -383,7 +383,7 @@ export default async function OrsaynPage() {
           ))}
         </section>
 
-        <section className="rounded-3xl border border-[var(--elevation-border)] bg-surface p-6 shadow-kompagnon space-y-3">
+        <section className="card p-6 space-y-3">
           <div>
             <h2 className="text-lg font-bold text-primary">Clients couteux</h2>
             <p className="mt-1 text-sm text-secondary">Couts IA du mois les plus eleves.</p>
@@ -402,7 +402,7 @@ export default async function OrsaynPage() {
         </section>
       </div>
 
-      <section className="rounded-3xl border border-[var(--elevation-border)] bg-surface p-6 shadow-kompagnon space-y-4">
+      <section className="card p-6 space-y-4">
         <div>
           <h2 className="text-lg font-bold text-primary">Clients et marge</h2>
           <p className="mt-1 text-sm text-secondary">
@@ -505,7 +505,7 @@ export default async function OrsaynPage() {
         </div>
       </section>
 
-      <section className="rounded-3xl border border-[var(--elevation-border)] bg-surface p-6 shadow-kompagnon space-y-4">
+      <section className="card p-6 space-y-4">
         <div>
           <h2 className="text-lg font-bold text-primary">Derniers evenements</h2>
           <p className="mt-1 text-sm text-secondary">20 derniers appels synchronises depuis les instances clientes.</p>

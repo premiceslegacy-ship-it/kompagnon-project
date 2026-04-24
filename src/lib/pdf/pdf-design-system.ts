@@ -18,8 +18,8 @@ export function registerFonts() {
   Font.register({
     family: 'Inter',
     fonts: [
-      { src: fontPath('inter-regular.ttf'), fontWeight: 400 },
-      { src: fontPath('inter-bold.ttf'), fontWeight: 700 },
+      { src: fontPath('inter-regular.woff'), fontWeight: 400 },
+      { src: fontPath('inter-bold.woff'), fontWeight: 700 },
     ],
   })
 

@@ -4,6 +4,7 @@
 
 import type { Organization } from '@/lib/data/queries/organization'
 import type { InvoiceWithItems } from '@/lib/data/queries/invoices'
+import { facturxGuidelineId } from '@/lib/pdf/facturx-profile'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,21 +38,62 @@ function invoiceTypeCode(type: string | null | undefined): string {
   return type === 'avoir' ? '384' : '380'
 }
 
+// Mapping des unités vers les codes UN/ECE Rec 20 (codelist 8 du Factur-X)
+// C62 = pièce (unité sans dimension) — valeur par défaut
+const UNIT_CODE_MAP: Record<string, string> = {
+  'u': 'C62', 'unite': 'C62', 'unité': 'C62', 'unit': 'C62', 'pc': 'C62', 'piece': 'C62', 'pièce': 'C62',
+  'h': 'HUR', 'heure': 'HUR', 'hr': 'HUR', 'hour': 'HUR',
+  'j': 'DAY', 'jour': 'DAY', 'jours': 'DAY', 'day': 'DAY',
+  'min': 'MIN', 'minute': 'MIN',
+  'm': 'MTR', 'ml': 'MTR', 'mètre': 'MTR', 'metre': 'MTR', 'meter': 'MTR',
+  'm2': 'MTK', 'm²': 'MTK',
+  'm3': 'MTQ', 'm³': 'MTQ',
+  'mm': 'MMT',
+  'cm': 'CMT',
+  'km': 'KMT',
+  'kg': 'KGM', 'kilo': 'KGM', 'kilogramme': 'KGM',
+  'g': 'GRM', 'gramme': 'GRM',
+  't': 'TNE', 'tonne': 'TNE',
+  'l': 'LTR', 'litre': 'LTR',
+  'ml_vol': 'MLT',
+  'forfait': 'C62', 'ft': 'C62', 'lot': 'LO',
+  'pourcent': 'P1', '%': 'P1',
+}
+
+function toUnitCode(unit: string | null | undefined): string {
+  if (!unit) return 'C62'
+  const key = unit.toLowerCase().trim()
+  return UNIT_CODE_MAP[key] ?? 'C62'
+}
+
 // ─── Sections XML ─────────────────────────────────────────────────────────────
 
-function xmlSeller(org: Organization): string {
-  const address = [
-    org.address_line1 ? `<ram:LineOne>${esc(org.address_line1)}</ram:LineOne>` : '',
-    org.address_line2 ? `<ram:LineTwo>${esc(org.address_line2)}</ram:LineTwo>` : '',
-    org.postal_code ? `<ram:PostcodeCode>${esc(org.postal_code)}</ram:PostcodeCode>` : '',
-    org.city ? `<ram:CityName>${esc(org.city)}</ram:CityName>` : '',
+// Ordre XSD strict dans TradeAddressType (CII D16B) :
+// PostcodeCode → LineOne → LineTwo → LineThree → CityName → CountryID
+// Chaque élément est conditionnel mais émis dans l'ordre fixe de la séquence XSD
+function xmlAddress(fields: {
+  line1?: string | null
+  line2?: string | null
+  postcode?: string | null
+  city?: string | null
+  country?: string | null
+}): string {
+  const country = (fields.country ?? 'FR').trim().toUpperCase().slice(0, 2)
+  return [
+    fields.postcode ? `<ram:PostcodeCode>${esc(fields.postcode)}</ram:PostcodeCode>` : '',
+    fields.line1 ? `<ram:LineOne>${esc(fields.line1)}</ram:LineOne>` : '',
+    fields.line2 ? `<ram:LineTwo>${esc(fields.line2)}</ram:LineTwo>` : '',
+    fields.city ? `<ram:CityName>${esc(fields.city)}</ram:CityName>` : '',
+    `<ram:CountryID>${country}</ram:CountryID>`,
   ].filter(Boolean).join('\n        ')
+}
 
-  const siretBlock = org.siret
-    ? `<ram:ID schemeID="0002">${esc(org.siret)}</ram:ID>`
-    : org.siren
-      ? `<ram:ID schemeID="0002">${esc(org.siren)}</ram:ID>`
-      : ''
+function xmlSeller(org: Organization): string {
+  const legalOrgBlock = (org.siret || org.siren)
+    ? `<ram:SpecifiedLegalOrganization>
+        <ram:ID schemeID="0002">${esc(org.siret ?? org.siren)}</ram:ID>
+      </ram:SpecifiedLegalOrganization>`
+    : ''
 
   const vatBlock = org.vat_number
     ? `<ram:SpecifiedTaxRegistration>
@@ -60,13 +102,12 @@ function xmlSeller(org: Organization): string {
     : ''
 
   return `<ram:SellerTradeParty>
-      ${siretBlock}
       <ram:Name>${esc(org.name)}</ram:Name>
-      ${org.email ? `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${esc(org.email)}</ram:URIID></ram:URIUniversalCommunication>` : ''}
+      ${legalOrgBlock}
       <ram:PostalTradeAddress>
-        ${address}
-        <ram:CountryID>${esc(org.country ?? 'FR')}</ram:CountryID>
+        ${xmlAddress({ line1: org.address_line1, line2: org.address_line2, postcode: org.postal_code, city: org.city, country: org.country })}
       </ram:PostalTradeAddress>
+      ${org.email ? `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${esc(org.email)}</ram:URIID></ram:URIUniversalCommunication>` : ''}
       ${vatBlock}
     </ram:SellerTradeParty>`
 }
@@ -77,11 +118,11 @@ function xmlBuyer(client: NonNullable<InvoiceWithItems['client']>): string {
     || client.email
     || 'Client'
 
-  const siretBlock = client.siret
-    ? `<ram:ID schemeID="0002">${esc(client.siret)}</ram:ID>`
-    : client.siren
-      ? `<ram:ID schemeID="0002">${esc(client.siren)}</ram:ID>`
-      : ''
+  const legalOrgBlock = (client.siret || client.siren)
+    ? `<ram:SpecifiedLegalOrganization>
+        <ram:ID schemeID="0002">${esc(client.siret ?? client.siren)}</ram:ID>
+      </ram:SpecifiedLegalOrganization>`
+    : ''
 
   const vatBlock = client.vat_number
     ? `<ram:SpecifiedTaxRegistration>
@@ -89,20 +130,15 @@ function xmlBuyer(client: NonNullable<InvoiceWithItems['client']>): string {
       </ram:SpecifiedTaxRegistration>`
     : ''
 
-  const address = [
-    client.address_line1 ? `<ram:LineOne>${esc(client.address_line1)}</ram:LineOne>` : '',
-    client.postal_code ? `<ram:PostcodeCode>${esc(client.postal_code)}</ram:PostcodeCode>` : '',
-    client.city ? `<ram:CityName>${esc(client.city)}</ram:CityName>` : '',
-  ].filter(Boolean).join('\n        ')
+  const hasAddress = client.address_line1 || client.postal_code || client.city
 
   return `<ram:BuyerTradeParty>
-      ${siretBlock}
       <ram:Name>${esc(name)}</ram:Name>
-      ${client.email ? `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${esc(client.email)}</ram:URIID></ram:URIUniversalCommunication>` : ''}
-      ${address ? `<ram:PostalTradeAddress>
-        ${address}
-        <ram:CountryID>FR</ram:CountryID>
+      ${legalOrgBlock}
+      ${hasAddress ? `<ram:PostalTradeAddress>
+        ${xmlAddress({ line1: client.address_line1, postcode: client.postal_code, city: client.city })}
       </ram:PostalTradeAddress>` : ''}
+      ${client.email ? `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${esc(client.email)}</ram:URIID></ram:URIUniversalCommunication>` : ''}
       ${vatBlock}
     </ram:BuyerTradeParty>`
 }
@@ -128,7 +164,7 @@ function xmlTradeLines(items: InvoiceWithItems['items']): string {
         </ram:NetPriceProductTradePrice>
       </ram:SpecifiedLineTradeAgreement>
       <ram:SpecifiedLineTradeDelivery>
-        <ram:BilledQuantity unitCode="${esc(item.unit ?? 'C62')}">${fmtAmount(item.quantity)}</ram:BilledQuantity>
+        <ram:BilledQuantity unitCode="${toUnitCode(item.unit)}">${fmtAmount(item.quantity)}</ram:BilledQuantity>
       </ram:SpecifiedLineTradeDelivery>
       <ram:SpecifiedLineTradeSettlement>
         <ram:ApplicableTradeTax>
@@ -195,6 +231,7 @@ export function generateFacturXml(
 
   const issueDate = fmtDate(invoice.issue_date ?? invoice.created_at)
   const dueDate = fmtDate(invoice.due_date ?? invoice.issue_date ?? invoice.created_at)
+  const guidelineId = facturxGuidelineId('EN 16931')
 
   const client = invoice.client
 
@@ -207,9 +244,9 @@ export function generateFacturXml(
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <rsm:ExchangedDocumentContext>
-    <ram:SpecifiedDocumentContextParameter>
-      <ram:ID>urn:cen.eu:en16931:2017</ram:ID>
-    </ram:SpecifiedDocumentContextParameter>
+    <ram:GuidelineSpecifiedDocumentContextParameter>
+      <ram:ID>${guidelineId}</ram:ID>
+    </ram:GuidelineSpecifiedDocumentContextParameter>
   </rsm:ExchangedDocumentContext>
 
   <rsm:ExchangedDocument>
@@ -230,21 +267,27 @@ export function generateFacturXml(
       ${client ? xmlBuyer(client) : '<ram:BuyerTradeParty><ram:Name>Client</ram:Name></ram:BuyerTradeParty>'}
     </ram:ApplicableHeaderTradeAgreement>
 
-    <ram:ApplicableHeaderTradeDelivery/>
+    <ram:ApplicableHeaderTradeDelivery>
+      <ram:ShipToTradeParty>
+        <ram:Name>${client ? esc(client.company_name || [client.first_name, client.last_name].filter(Boolean).join(' ') || 'Client') : 'Client'}</ram:Name>
+      </ram:ShipToTradeParty>
+    </ram:ApplicableHeaderTradeDelivery>
 
     <ram:ApplicableHeaderTradeSettlement>
       <ram:InvoiceCurrencyCode>${esc(invoice.currency ?? 'EUR')}</ram:InvoiceCurrencyCode>
-
-      ${xmlVatBreakdown(invoice.items, isVatSubject)}
 
       ${organization.iban ? `<ram:SpecifiedTradeSettlementPaymentMeans>
         <ram:TypeCode>30</ram:TypeCode>
         <ram:Information>Virement bancaire</ram:Information>
         <ram:PayeePartyCreditorFinancialAccount>
           <ram:IBANID>${esc(organization.iban)}</ram:IBANID>
-          ${organization.bic ? `<ram:ProprietaryID>${esc(organization.bic)}</ram:ProprietaryID>` : ''}
         </ram:PayeePartyCreditorFinancialAccount>
+        ${organization.bic ? `<ram:PayeeSpecifiedCreditorFinancialInstitution>
+          <ram:BICID>${esc(organization.bic)}</ram:BICID>
+        </ram:PayeeSpecifiedCreditorFinancialInstitution>` : ''}
       </ram:SpecifiedTradeSettlementPaymentMeans>` : ''}
+
+      ${xmlVatBreakdown(invoice.items, isVatSubject)}
 
       ${invoice.payment_conditions ? `<ram:SpecifiedTradePaymentTerms>
         <ram:Description>${esc(invoice.payment_conditions)}</ram:Description>
@@ -259,8 +302,6 @@ export function generateFacturXml(
 
       <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
         <ram:LineTotalAmount>${fmtAmount(totalHt)}</ram:LineTotalAmount>
-        <ram:AllowanceTotalAmount>0.00</ram:AllowanceTotalAmount>
-        <ram:ChargeTotalAmount>0.00</ram:ChargeTotalAmount>
         <ram:TaxBasisTotalAmount>${fmtAmount(totalHt)}</ram:TaxBasisTotalAmount>
         <ram:TaxTotalAmount currencyID="${esc(invoice.currency ?? 'EUR')}">${fmtAmount(totalTva)}</ram:TaxTotalAmount>
         <ram:GrandTotalAmount>${fmtAmount(totalTtc)}</ram:GrandTotalAmount>

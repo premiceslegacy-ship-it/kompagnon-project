@@ -119,7 +119,7 @@ function NewMaterialModal({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] w-full max-w-2xl max-h-[92vh] flex flex-col relative animate-in fade-in zoom-in duration-300">
+      <div className="rounded-3xl card w-full max-w-2xl max-h-[92vh] flex flex-col relative animate-in fade-in zoom-in duration-300">
         <div className="px-8 pt-8 pb-4 shrink-0 flex items-start justify-between">
           <h2 className="text-2xl font-bold text-primary">{kindLabels.createLabel}</h2>
           <button onClick={onClose} className="text-secondary hover:text-primary transition-colors mt-1"><X className="w-6 h-6" /></button>
@@ -343,7 +343,7 @@ function NewLaborRateModal({ isOpen, onClose, categories, catalogContext }: { is
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300">
+      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300">
         <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <h2 className="text-2xl font-bold text-primary mb-6">{catalogContext.laborRateUi.modalTitle}</h2>
 
@@ -804,7 +804,7 @@ function NewPrestationModal({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] w-full max-w-5xl max-h-[92vh] flex flex-col relative animate-in fade-in zoom-in duration-300">
+      <div className="rounded-3xl card w-full max-w-5xl max-h-[92vh] flex flex-col relative animate-in fade-in zoom-in duration-300">
         {/* Header */}
         <div className="flex items-center justify-between px-8 pt-8 pb-4 shrink-0">
           <h2 className="text-2xl font-bold text-primary">
@@ -1158,7 +1158,7 @@ function ImportModal({ isOpen, onClose, title, fields, templateFilename, serverA
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300">
+      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300">
         <button onClick={handleClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <h2 className="text-2xl font-bold text-primary mb-2">{title}</h2>
 
@@ -1654,7 +1654,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
       {/* Confirmation mise à jour prix de vente */}
       {priceConfirm.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-300">
+          <div className="rounded-3xl card w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-300">
             <AlertCircle className="w-6 h-6 text-accent mb-6" />
             <h2 className="text-2xl font-bold text-primary mb-2">Mise à jour du prix</h2>
             <p className="text-secondary mb-6">
@@ -1746,7 +1746,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
 
       {/* Table — Articles / Main d'oeuvre */}
       {activeTab !== 'prestations' && (
-        <div className={`rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] overflow-hidden transition-opacity ${isPending ? 'opacity-80' : ''}`}>
+        <div className={`rounded-3xl card overflow-hidden transition-opacity ${isPending ? 'opacity-80' : ''}`}>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -1909,7 +1909,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
 
       {/* Table — Prestations types */}
       {activeTab === 'prestations' && (
-        <div className={`rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] overflow-hidden transition-opacity ${isPending ? 'opacity-80' : ''}`}>
+        <div className={`rounded-3xl card overflow-hidden transition-opacity ${isPending ? 'opacity-80' : ''}`}>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>

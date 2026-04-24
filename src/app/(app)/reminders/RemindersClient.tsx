@@ -161,7 +161,7 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
 
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out p-6 flex flex-col gap-2 relative overflow-hidden">
+        <div className="rounded-3xl card transition-all duration-300 ease-out p-6 flex flex-col gap-2 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/5 rounded-bl-full -mr-8 -mt-8" />
           <span className="text-sm font-semibold text-secondary uppercase tracking-wider flex items-center gap-2">
             <Flame className="w-4 h-4 text-red-500" />Factures en retard
@@ -173,7 +173,7 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
             {invoices.length} facture{invoices.length !== 1 ? 's' : ''} à relancer
           </span>
         </div>
-        <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out p-6 flex flex-col gap-2 relative overflow-hidden">
+        <div className="rounded-3xl card transition-all duration-300 ease-out p-6 flex flex-col gap-2 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-32 h-32 bg-accent/5 rounded-bl-full -mr-8 -mt-8" />
           <span className="text-sm font-semibold text-secondary uppercase tracking-wider flex items-center gap-2">
             <Hourglass className="w-4 h-4 text-accent" />Devis sans réponse
@@ -186,7 +186,7 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
       </div>
 
       {/* Listes */}
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out overflow-hidden flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-[var(--elevation-border)]">
+      <div className="rounded-3xl card transition-all duration-300 ease-out overflow-hidden flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-[var(--elevation-border)]">
 
         {/* Urgences — Factures */}
         <div className="flex-1 p-8 space-y-6">

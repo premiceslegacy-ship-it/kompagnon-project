@@ -126,7 +126,10 @@ export async function renderInvoicePdfBufferById(invoiceId: string, orgId: strin
 
   // Embarquer le XML Factur-X dans le PDF (PDF/A-3 + XMP)
   const xml = generateFacturXml(invoiceRecord as any, organization)
-  const buffer = await embedFacturXml(pdfBuffer, xml)
+  const buffer = await embedFacturXml(pdfBuffer, xml, {
+    conformanceLevel: 'EN 16931',
+    language: 'fr-FR',
+  })
 
   const fileName = `${sanitizeFileName(invoiceRecord.number ?? invoiceRecord.title ?? invoiceId, 'facture')}.pdf`
   return { buffer, fileName }

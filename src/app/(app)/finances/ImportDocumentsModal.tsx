@@ -209,7 +209,7 @@ export default function ImportDocumentsModal({ isOpen, onClose, defaultType = 'i
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-200">
+      <div className="card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-200">
         <button onClick={handleClose} className="absolute top-6 right-6 text-secondary hover:text-primary"><X className="w-6 h-6" /></button>
 
         <div className="flex items-center gap-3 mb-6">

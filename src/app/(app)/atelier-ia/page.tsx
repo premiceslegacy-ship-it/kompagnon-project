@@ -192,7 +192,7 @@ export default function AtelierIAPage() {
 
         {/* ── Left panel — Input ───────────────────────────────────────────── */}
         <div className="lg:col-span-5 flex flex-col gap-4">
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-6 flex flex-col flex-1 gap-4">
+          <div className="rounded-3xl card p-6 flex flex-col flex-1 gap-4">
 
             {/* Mode switcher */}
             <div className="flex gap-1 p-1 rounded-xl bg-black/5 dark:bg-white/5">
@@ -360,7 +360,7 @@ export default function AtelierIAPage() {
 
         {/* ── Right panel — Result ─────────────────────────────────────────── */}
         <div className="lg:col-span-7 flex flex-col">
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-6 flex-1 flex flex-col overflow-hidden">
+          <div className="rounded-3xl card p-6 flex-1 flex flex-col overflow-hidden">
 
             {!result && !isAnalyzing && (
               <div className="flex-1 flex flex-col items-center justify-center gap-4 text-secondary">

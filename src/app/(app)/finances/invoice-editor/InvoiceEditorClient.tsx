@@ -625,7 +625,7 @@ export default function InvoiceEditorClient({
       {/* ── Modal Devis ── */}
       {isQuoteModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-2xl p-8 relative max-h-[80vh] flex flex-col">
+          <div className="card w-full max-w-2xl p-8 relative max-h-[80vh] flex flex-col">
             <button onClick={() => setIsQuoteModalOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
             <h2 className="text-2xl font-bold text-primary mb-6">Importer un devis accepté</h2>
             <div className="flex-1 overflow-y-auto space-y-3 pr-1">
@@ -687,7 +687,7 @@ export default function InvoiceEditorClient({
       )}
 
       {/* ── Paramètres ── */}
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 space-y-6">
+      <div className="rounded-3xl card p-8 space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="space-y-2 lg:col-span-2">
             <label className="text-sm font-semibold text-secondary">Intitulé de la facture</label>
@@ -744,7 +744,7 @@ export default function InvoiceEditorClient({
 
       <div className="flex flex-col lg:flex-row gap-8 items-start">
         {/* ── Lignes ── */}
-        <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 flex-1 w-full overflow-hidden">
+        <div className="rounded-3xl card p-8 flex-1 w-full overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse" style={{ minWidth: 760 }}>
               <thead>
@@ -929,7 +929,7 @@ export default function InvoiceEditorClient({
         </div>
 
         {/* ── Récapitulatif ── */}
-        <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 w-full lg:w-[320px] shrink-0 sticky top-24 space-y-4">
+        <div className="rounded-3xl card p-8 w-full lg:w-[320px] shrink-0 sticky top-24 space-y-4">
           <h3 className="text-lg font-bold text-primary">Récapitulatif</h3>
           <div className="space-y-3 text-sm">
             <div className="flex justify-between text-secondary">
@@ -981,7 +981,7 @@ export default function InvoiceEditorClient({
       {/* Modal nouveau client inline */}
       {newClientOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-200">
+          <div className="card w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-200">
             <button onClick={() => setNewClientOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary"><X className="w-5 h-5" /></button>
             <h2 className="text-xl font-bold text-primary mb-6">Nouveau client</h2>
 
