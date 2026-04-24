@@ -1,10 +1,10 @@
 # SOP Déploiement — Nouveau client Atelier
 
 > **Document vivant.** Toute nouvelle étape de déploiement doit être ajoutée ici immédiatement.
-> Modèle : **1 Supabase + 1 Cloudflare Pages + 1 domaine** par client — données totalement isolées.
+> Modèle : **1 Supabase + 1 déploiement Cloudflare Workers + 1 domaine** par client — données totalement isolées.
 
 > **Outils connectés dans chaque session Claude :** Supabase MCP + Supabase CLI (`supabase login` fait) + `wrangler` authentifié → les étapes C1 à C10 sont entièrement automatiques, sans copier-coller.
-> **Outils à connecter pour gagner encore :** Cloudflare API token → C3 (variables Cloudflare Pages) deviendrait automatique. Resend API → C2 (création domaine) deviendrait automatique.
+> **Outils à connecter pour gagner encore :** Cloudflare API token → C3 (variables Cloudflare Workers) deviendrait automatique. Resend API → C2 (création domaine) deviendrait automatique.
 
 ---
 
@@ -13,7 +13,7 @@
 ```
 Client BTP
   └── Supabase (DB + Auth + Storage + Edge Functions)  → données isolées
-  └── Cloudflare Pages (Next.js app)                   → hébergement gratuit, CDN mondial
+  └── Cloudflare Workers (Next.js via OpenNext)        → app full-stack
   └── Cloudflare Worker (cron relances auto)           → 8h chaque matin
   └── Resend (emails transactionnels)                  → devis, factures, invitations
   └── OpenRouter + Mistral (IA)                        → clés Atelier partagées (voir §IA)
@@ -29,7 +29,7 @@ Client BTP
 ```
 GitHub (1 seul repo)
     │
-    ├── Push → Cloudflare Pages détecte automatiquement
+    ├── Push → Cloudflare Workers Builds compile OpenNext
     │
     ├── Atelier-Weber    → compile le code + injecte vars Weber    → app Weber
     ├── Atelier-Dupont   → compile le code + injecte vars Dupont   → app Dupont
@@ -39,12 +39,12 @@ GitHub (1 seul repo)
 **Ce que font les variables d'env :** au moment du build, Cloudflare injecte les variables propres à chaque projet. Le code lit `process.env.NEXT_PUBLIC_SUPABASE_URL` — il ne sait pas "chez qui" il tourne. Il pointe juste vers le bon Supabase.
 
 ```
-Cloudflare Pages — Atelier-Weber
+Cloudflare Workers — Atelier-Weber
   NEXT_PUBLIC_SUPABASE_URL    = https://weber-ref.supabase.co    ← données Weber
   SUPABASE_SERVICE_ROLE_KEY   = clé_weber
   RESEND_FROM_ADDRESS         = contact@weber-tolerie.fr          ← emails au nom de Weber
 
-Cloudflare Pages — Atelier-Dupont
+Cloudflare Workers — Atelier-Dupont
   NEXT_PUBLIC_SUPABASE_URL    = https://dupont-ref.supabase.co   ← données Dupont
   SUPABASE_SERVICE_ROLE_KEY   = clé_dupont
   RESEND_FROM_ADDRESS         = contact@dupont-btp.fr
@@ -91,9 +91,9 @@ Ces étapes nécessitent une interface web ou une action humaine irremplaçable.
 |---|-------|----|-------|-----------------|
 | T1 | Créer le projet Supabase (région `eu-west-1`) + copier les 3 clés | [supabase.com](https://supabase.com) → New project | 5 min | Pas d'API de création projet |
 | T2 | Créer le compte Resend + ajouter le domaine + poser les records DNS chez le registrar | [resend.com](https://resend.com) → Domains | 15 min | DNS = action humaine chez le registrar |
-| T3 | Créer le projet Cloudflare Pages + connecter le repo GitHub | [dash.cloudflare.com](https://dash.cloudflare.com) → Pages | 10 min | OAuth GitHub → navigateur obligatoire |
-| T4 | Injecter les variables d'env dans Cloudflare Pages (voir liste §3) | Settings → Environment variables | 5 min | ⚡ Devient automatique si Cloudflare API token fourni |
-| T5 | Ajouter le domaine custom + pointer DNS | Cloudflare Pages → Custom domains | 3 min | Dépend de la propagation DNS |
+| T3 | Créer le projet Cloudflare Workers + connecter le repo GitHub | [dash.cloudflare.com](https://dash.cloudflare.com) → Workers & Pages | 10 min | OAuth GitHub → navigateur obligatoire |
+| T4 | Injecter les variables d'env dans Cloudflare Workers (voir liste §3) | Settings → Variables and Secrets | 5 min | ⚡ Devient automatique si Cloudflare API token fourni |
+| T5 | Ajouter le domaine custom + pointer DNS | Cloudflare Workers → Domains & Routes | 3 min | Dépend de la propagation DNS |
 | T6 | *(Si WhatsApp)* Créer l'app Meta, générer le token permanent | [developers.facebook.com](https://developers.facebook.com) | 20 min | Formulaire Meta, pas d'API publique |
 | T7 | Onboarding owner : créer le compte, remplir les infos entreprise | App en production | 10 min | Action du client final |
 
@@ -104,7 +104,7 @@ wrangler login      # débloque C7
 ```
 
 **Pour rendre T4 automatique (optionnel) :**
-Créer un token API Cloudflare avec scope `Cloudflare Pages:Edit` → me le donner dans le protocole → je peux injecter les variables sans navigateur.
+Créer un token API Cloudflare avec scope `Workers Scripts:Edit` → me le donner dans le protocole → je peux injecter les variables sans navigateur.
 
 ---
 
@@ -125,7 +125,7 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 | C9 | Vérifier migrations, permissions, buckets | Supabase MCP | MCP connecté ✅ |
 | C10 | Afficher récapitulatif final + URL webhook Meta | — | — |
 
-**Note C4 (variables Cloudflare Pages) :** actuellement T4 est manuel. Si tu fournis un `CLOUDFLARE_API_TOKEN` dans le protocole, je peux aussi injecter les variables via l'API Cloudflare (`curl`), éliminant T4.
+**Note C4 (variables Cloudflare Workers) :** actuellement T4 est manuel. Si tu fournis un `CLOUDFLARE_API_TOKEN` dans le protocole, je peux aussi injecter les variables via l'API Cloudflare (`curl`), éliminant T4.
 
 ---
 
@@ -240,7 +240,7 @@ Impact déploiement :
 - obligatoire avant d'utiliser les nouveaux champs catalogue, les variantes tarifaires et le contexte par activité
 - obligatoire avant d'utiliser l'export complet owner-only dans `Settings > Données & confidentialité`
 - obligatoire avant tout appel IA en production (`callAI.ts` lit `organization_modules` — sans la table, toutes les features IA échouent)
-- ajouter les 3 variables opérateur dans Cloudflare Pages pour activer la sync vers le cockpit (voir §3)
+- ajouter les 3 variables opérateur dans Cloudflare Workers pour activer la sync vers le cockpit (voir §3)
 - après migration, vérifier rapidement dans l'app :
   - Settings → activité métier bien sélectionnée
   - Catalogue → création/édition produit/service OK
@@ -268,7 +268,7 @@ CREATE POLICY "chantier_photos_delete" ON storage.objects
   FOR DELETE USING (bucket_id = 'chantier-photos' AND auth.role() = 'authenticated');
 ```
 
-### 3. Variables d'environnement (Cloudflare Pages)
+### 3. Variables d'environnement (Cloudflare Workers)
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
@@ -303,13 +303,22 @@ OPERATOR_SOURCE_INSTANCE=nom-client   ← identifiant du client dans le cockpit 
 **Note :** les variables `NEXT_PUBLIC_LEGAL_*` et `NEXT_PUBLIC_*EMAIL` servent aux pages publiques `privacy`, `terms`, `legal`
 et devront être reprises telles quelles sur la future landing pour garder un wording cohérent.
 
-### 4. Cloudflare Pages — build settings
+### 4. Cloudflare Workers / OpenNext — configuration repo
 
-| Champ | Valeur |
-|-------|--------|
-| Framework preset | `Next.js` |
-| Build command | `npx @cloudflare/next-on-pages@1` |
-| Build output directory | `.vercel/output/static` |
+Fichiers à versionner dans le repo :
+- `open-next.config.ts`
+- `wrangler.jsonc`
+
+Scripts npm :
+- `npm run preview` → build OpenNext + preview local via `wrangler dev`
+- `npm run deploy` → build OpenNext + `wrangler deploy`
+
+Wrangler utilise :
+- `main = ".open-next/worker.js"`
+- `assets.directory = ".open-next/assets"`
+- `compatibility_flags = ["nodejs_compat"]`
+
+> **Important :** on ne déploie plus l'app avec `next-on-pages`. Toute l'app Next full-stack tourne via OpenNext sur Cloudflare Workers.
 
 ### 5. Cloudflare Worker — relances automatiques
 
@@ -317,13 +326,13 @@ Script de déploiement (lancé par Claude via terminal) :
 ```bash
 cd workers/auto-reminder
 wrangler secret put APP_URL          # → https://domaine-du-client.fr
-wrangler secret put CRON_SECRET      # → même valeur que dans Cloudflare Pages
+wrangler secret put CRON_SECRET      # → même valeur que dans l'app Workers
 wrangler deploy
 ```
 
 Cron : `0 7 * * *` (8h Paris hiver, 9h été) — défini dans `wrangler.toml`.
 
-> **Prérequis critique :** `OPENROUTER_API_KEY` doit être injectée dans les variables Cloudflare Pages (voir §3). Le Worker appelle `/api/cron/auto-reminders` sur l'app, qui génère chaque email via l'IA. Si cette clé est absente ou invalide, **aucune relance ne part** (échec silencieux côté cron). C'est la clé Atelier partagée — elle est déjà dans ton `.env.local`.
+> **Prérequis critique :** `OPENROUTER_API_KEY` doit être injectée dans les variables Cloudflare Workers de l'app (voir §3). Le Worker appelle `/api/cron/auto-reminders` sur l'app, qui génère chaque email via l'IA. Si cette clé est absente ou invalide, **aucune relance ne part** (échec silencieux côté cron). C'est la clé Atelier partagée — elle est déjà dans ton `.env.local`.
 
 ### 6. Edge Function WhatsApp
 
@@ -388,7 +397,7 @@ Activer dans **Settings → Formulaire public** + sélectionner les prestations 
 - [ ] Auth Supabase configurée (Site URL + Redirect URLs)
 - [ ] Edge Function `whatsapp-webhook` déployée
 - [ ] Worker Cloudflare déployé + cron actif
-- [ ] Variables d'env injectées dans Cloudflare Pages
+- [ ] Variables d'env injectées dans Cloudflare Workers
 
 ### Checklist fonctionnelle (à tester manuellement après go-live)
 
@@ -406,18 +415,19 @@ Activer dans **Settings → Formulaire public** + sélectionner les prestations 
 
 ## ─── COCKPIT ORSAYN (déploiement unique, une seule fois) ────────────────────────
 
-> Le cockpit est **ton** tableau de bord privé. Il tourne sur une instance Cloudflare Pages séparée, connectée à son propre projet Supabase. Il n'a rien à voir avec les instances clientes.
+> Le cockpit est **ton** tableau de bord privé. Il tourne sur un déploiement Cloudflare Workers séparé, connecté à son propre projet Supabase. Il n'a rien à voir avec les instances clientes.
 
 ### Ce qu'il faut faire une fois
 
 **T-O1 — Créer le projet Supabase opérateur**
 - Nouveau projet Supabase (ex: `orsayn-operator`) dans la même région
-- Appliquer `supabase/operator-migrations/001_operator_usage.sql` sur ce projet
+- Appliquer `supabase/operator-migrations/001_operator_usage.sql`
+- Puis appliquer `supabase/operator-migrations/002_operator_client_settings.sql`
 - Récupérer l'URL et la service role key
 
-**T-O2 — Déployer le cockpit sur Cloudflare Pages**
-- Même repo GitHub, nouveau projet Cloudflare Pages (ex: `atelier-orsayn`)
-- Build settings identiques aux instances clientes (voir §4)
+**T-O2 — Déployer le cockpit sur Cloudflare Workers**
+- Même repo GitHub, nouveau projet Cloudflare Workers (ex: `atelier-orsayn`)
+- Même `wrangler.jsonc` que les instances clientes : seule la variable d'environnement change
 - Variables d'environnement spécifiques au cockpit :
 
 ```env
@@ -426,6 +436,7 @@ OPERATOR_INGEST_SECRET=...                   ← même secret que sur les instan
 OPERATOR_ALLOWED_EMAILS=mbebourasam@gmail.com
 OPERATOR_SUPABASE_URL=https://<operateur-ref>.supabase.co
 OPERATOR_SUPABASE_SERVICE_ROLE_KEY=eyJ...    ← service role du Supabase opérateur
+OPERATOR_USD_TO_EUR_RATE=0.92                ← taux fixe V1 pour marge et synthèse globale
 
 # Variables Supabase standard (pour l'auth de la page /orsayn — peut pointer vers n'importe quelle instance)
 NEXT_PUBLIC_SUPABASE_URL=https://<operateur-ref>.supabase.co
@@ -436,7 +447,7 @@ NEXT_PUBLIC_APP_URL=https://cockpit.orsayn.fr
 > **Important :** ne pas mettre `OPERATOR_MODE=true` sur les instances clientes — ça activerait l'endpoint d'ingestion et la page cockpit chez le client.
 
 **T-O3 — Domaine custom**
-- Ajouter `cockpit.orsayn.fr` dans Cloudflare Pages → Custom domains
+- Ajouter `cockpit.orsayn.fr` dans Cloudflare Workers → Domains & Routes
 - C'est l'URL à renseigner dans `OPERATOR_INGEST_URL` sur toutes les instances clientes
 
 ### Accès au cockpit
@@ -446,11 +457,12 @@ Connexion avec le compte Supabase opérateur dont l'email est dans `OPERATOR_ALL
 
 ### Checklist cockpit
 
-- [ ] `001_operator_usage.sql` appliqué sur le Supabase opérateur
-- [ ] 3 tables créées : `operator_clients`, `operator_usage_events`, `operator_whatsapp_cost_snapshots`
-- [ ] Variables d'env cockpit injectées dans Cloudflare Pages
+- [ ] `001_operator_usage.sql` + `002_operator_client_settings.sql` appliqués sur le Supabase opérateur
+- [ ] 4 tables créées : `operator_clients`, `operator_usage_events`, `operator_whatsapp_cost_snapshots`, `operator_client_settings`
+- [ ] Variables d'env cockpit injectées dans Cloudflare Workers
 - [ ] Page `/orsayn` accessible (renvoie 404 sinon → `OPERATOR_MODE` non reconnu)
 - [ ] Envoyer un appel IA de test depuis une instance cliente → vérifier que l'event apparaît dans le cockpit
+- [ ] Renseigner un `monthly_fee_ht` dans le cockpit → vérifier le calcul de marge
 
 ---
 
@@ -484,8 +496,8 @@ Connexion avec le compte Supabase opérateur dont l'email est dans `OPERATOR_ALL
 | Service | Gratuit jusqu'à | Coût payant |
 |---------|----------------|-------------|
 | Supabase | 500MB DB, 1GB storage, 50k MAU | Pro $25/mois |
-| Cloudflare Pages | Illimité | Toujours gratuit |
-| Cloudflare Workers | 100k req/jour | $5/mois |
+| Cloudflare Workers (app Next.js) | 100k req/jour | $5/mois |
+| Cloudflare Worker (cron) | 100k req/jour | $5/mois |
 | Resend | 3 000 emails/mois | $20/mois |
 | Domaine custom | — | ~€10/an |
 
@@ -509,9 +521,9 @@ GROUP BY organization_id;
 
 **Long terme (> 10 clients) → clé par client**
 
-Chaque client crée son propre compte OpenRouter, tu injectes SA clé dans SON Cloudflare Pages et SON Edge Function. Il paye directement OpenRouter — tu n'es plus revendeur IA. Plus simple à facturer, risque isolé par client.
+Chaque client crée son propre compte OpenRouter, tu injectes SA clé dans SON déploiement Cloudflare Workers et SON Edge Function. Il paye directement OpenRouter — tu n'es plus revendeur IA. Plus simple à facturer, risque isolé par client.
 
-La migration est simple : changer `OPENROUTER_API_KEY` dans les variables Cloudflare + redéployer l'Edge Function.
+La migration est simple : changer `OPENROUTER_API_KEY` dans les variables Cloudflare Workers + redéployer l'Edge Function.
 
 **Aujourd'hui :** clé Atelier partagée. Variable `OPENROUTER_API_KEY` marquée "Oui (partagée)" dans le tableau ci-dessous.
 

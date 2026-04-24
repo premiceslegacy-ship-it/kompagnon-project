@@ -2,8 +2,15 @@ node_modules/
 build/
 dist/
 coverage/
+.next/
+.open-next/
+.wrangler/
+cloudflare-env.d.ts
+.dev.vars*
+.assetsignore
 .DS_Store
 *.log
+tsconfig.tsbuildinfo
 .env*
 .env.example
 .env.local
