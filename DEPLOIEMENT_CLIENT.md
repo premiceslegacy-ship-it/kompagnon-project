@@ -203,6 +203,9 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 053_organization_exports.sql               ← Table organization_exports + bucket privé pour exports de réversibilité owner-only
 054_quote_attachments_public_upload.sql    ← Politiques RLS storage quote-attachments (upload anonyme formulaire public)
 055_organization_modules_usage_logs.sql    ← Config modules IA par org + journal usage_logs (gating, billing, sync opérateur)
+056_invoice_balance_due_date.sql           ← Échéance du solde restant sur factures d'acompte (balance_due_date)
+057_embedding_qwen3.sql                    ← Migration colonne embedding company_memory : 1536 → 4096 dims (Qwen3-Embedding-8B)
+058_rag_function.sql                       ← Fonction SQL match_company_memory pour la recherche vectorielle RAG
 ```
 
 Note historique :
@@ -229,6 +232,9 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `050_catalog_activity_services_variants.sql`
 - `053_organization_exports.sql`
 - `055_organization_modules_usage_logs.sql`
+- `056_invoice_balance_due_date.sql`
+- `057_embedding_qwen3.sql`
+- `058_rag_function.sql`
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`
@@ -247,11 +253,15 @@ Effets de ces migrations :
   - création de `organization_modules` (config modules IA par org : `quote_ai`, `planning_ai`, `document_ai`, `whatsapp_agent`)
   - création de `usage_logs` (journal de chaque appel IA : provider, feature, tokens, coût, statut sync opérateur)
   - toutes les features IA passent désormais par `callAI.ts` qui vérifie le module avant d'appeler le provider
+- `056` : ajout de `balance_due_date` sur `invoices` (échéance solde restant après acompte)
+- `057` : migration colonne `embedding` de `company_memory` de 1536 → 4096 dims pour Qwen3-Embedding-8B (vide les embeddings existants — à re-générer via le cron)
+- `058` : création de la fonction SQL `match_company_memory` pour la recherche vectorielle RAG
 
 Impact déploiement :
 - obligatoire avant d'utiliser les nouveaux champs catalogue, les variantes tarifaires et le contexte par activité
 - obligatoire avant d'utiliser l'export complet owner-only dans `Settings > Données & confidentialité`
 - obligatoire avant tout appel IA en production (`callAI.ts` lit `organization_modules` — sans la table, toutes les features IA échouent)
+- `057` vide les embeddings existants : déclencher le cron `/api/cron/embeddings` après migration pour re-générer
 - ajouter les 3 variables opérateur dans Cloudflare Workers pour activer la sync vers le cockpit (voir §3)
 - après migration, vérifier rapidement dans l'app :
   - Settings → activité métier bien sélectionnée
