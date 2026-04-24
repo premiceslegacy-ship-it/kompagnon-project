@@ -13,39 +13,41 @@ Atelier génère toujours un PDF + un fichier XML conforme. La différence entre
 ## Stack de déploiement
 
 - **1 repo GitHub** pour tous les clients
-- **1 projet Cloudflare** par client (Pages ou Workers)
-- Le mode facturation est piloté par les **variables d'environnement Cloudflare** du projet client
-- Zéro modification de code entre clients
+- **1 Cloudflare Worker** par client (Next.js via OpenNext + Wrangler)
+- Le mode facturation est piloté par **`organization_modules` en base de données** — zéro redéploiement pour activer ou changer de mode
+- Les clés B2Brouter (propres à chaque client) sont stockées dans les **variables d'env Cloudflare** du Worker client
 
 ---
 
-## Variables d'environnement par projet Cloudflare
+## Pilotage du mode facturation
 
-```env
-# Mode export manuel
-FACTURATION_MODE=export_only
+Le mode est un flag dans `organization_modules`, exactement comme les modules IA :
 
-# Mode intégration B2Brouter
-FACTURATION_MODE=b2brouter
-B2BROUTER_API_KEY=xxxx
-B2BROUTER_SENDER_ID=xxxx
+```typescript
+// organization-modules.ts — à ajouter quand on développe cette feature
+'facturation_b2brouter': false  // false = export_only, true = b2brouter
 ```
 
-Quand un client upgrade de `export_only` vers `b2brouter` :
-1. Dashboard Cloudflare du projet client
-2. Modifier `FACTURATION_MODE` + ajouter les clés B2Brouter
-3. Redéploiement
-4. Zéro touche au repo
+Pour activer B2Brouter chez un client :
+1. Cockpit Orsayn → modifier le flag `facturation_b2brouter` sur l'org du client
+2. Ajouter `B2BROUTER_API_KEY` et `B2BROUTER_SENDER_ID` dans Cloudflare Workers → Settings → Secrets
+3. Zéro redéploiement, zéro touche au repo
+
+> **Note :** les clés B2Brouter restent dans les variables d'env Cloudflare (pas en DB) car ce sont des secrets d'API, pas des données applicatives.
 
 ---
 
 ## Lecture du mode dans le code
 
 ```typescript
-const FACTURATION_MODE = process.env.FACTURATION_MODE ?? 'export_only'
-```
+// Via organization_modules (piloté depuis le cockpit)
+const modules = await getOrganizationModules(orgId)
+const isB2Brouter = modules.facturation_b2brouter
 
-Valeurs possibles : `'export_only'` | `'b2brouter'`
+// Clés API (injectées dans Cloudflare Workers → Settings → Secrets)
+const B2BROUTER_API_KEY    = process.env.B2BROUTER_API_KEY
+const B2BROUTER_SENDER_ID  = process.env.B2BROUTER_SENDER_ID
+```
 
 ---
 
@@ -73,7 +75,7 @@ Factur-X = PDF lisible + XML embarqué dans le même fichier. L'humain voit un P
 
 ---
 
-## Mode 1 — `export_only`
+## Mode 1 — `export_only` (`facturation_b2brouter: false`)
 
 **Profil** : artisan qui veut être conforme, gère sa PA lui-même, ou qui n'a pas encore de budget pour l'intégration complète.
 
@@ -91,9 +93,11 @@ Factur-X = PDF lisible + XML embarqué dans le même fichier. L'humain voit un P
 
 ---
 
-## Mode 2 — `b2brouter`
+## Mode 2 — `b2brouter` (`facturation_b2brouter: true`)
 
-**Profil** : client qui veut zéro friction, volume de facturation suffisant pour justifier le coût B2Brouter (modèle eDocExchange — une clé API par client).
+**Profil** : client qui veut zéro friction, volume de facturation suffisant pour justifier le coût B2Brouter.
+
+> **TODO :** intégrer la documentation API B2Brouter dès réception pour compléter cette section (endpoints, format des payloads, authentification, webhooks entrants).
 
 **Comportement attendu :**
 
@@ -111,8 +115,8 @@ Factur-X = PDF lisible + XML embarqué dans le même fichier. L'humain voit un P
 - Possibilité de lier une facture reçue à un projet ou chantier
 
 **Ce que le dev fait :**
-- Intégration API B2Brouter (clé lue depuis env var `B2BROUTER_API_KEY`)
-- Endpoint webhook entrant sécurisé pour réception des factures
+- Intégration API B2Brouter (clé lue depuis `process.env.B2BROUTER_API_KEY`)
+- Endpoint webhook entrant sécurisé pour réception des factures (`/api/webhooks/b2brouter`)
 - UI : section "Factures reçues" avec liste, statuts, actions
 - UI : statut de transmission visible sur chaque facture émise
 
@@ -134,8 +138,9 @@ Factur-X = PDF lisible + XML embarqué dans le même fichier. L'humain voit un P
 
 1. **Générateur Factur-X** — indépendant, aucune dépendance externe, couvre les deux modes
 2. **UI export_only** — bouton téléchargement + statut "à déposer"
-3. **Intégration B2Brouter émission** — appel API + gestion statuts
-4. **Webhook réception + section factures reçues** — finalise le mode b2brouter
+3. **Ajouter `facturation_b2brouter` dans `organization_modules`** — gate applicatif
+4. **Intégration B2Brouter émission** — appel API + gestion statuts (après réception doc API)
+5. **Webhook réception + section factures reçues** — finalise le mode b2brouter
 
 ---
 
