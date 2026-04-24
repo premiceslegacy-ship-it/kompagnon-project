@@ -59,6 +59,7 @@ type Props = {
     organization: Organization | null;
     appUrl: string;
     supabaseUrl: string;
+    sharedWabaDisplayNumber: string | null;
     catalogMaterials: CatalogMaterial[];
     catalogPrestationTypes: PrestationType[];
     whatsappConfig: WhatsAppConfig | null;
@@ -68,7 +69,7 @@ type Props = {
     modules: OrganizationModules;
 };
 
-export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, catalogMaterials, catalogPrestationTypes, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, modules }: Props) {
+export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogPrestationTypes, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, modules }: Props) {
     const router = useRouter()
     const webhookUrl = supabaseUrl
         ? `${supabaseUrl}/functions/v1/whatsapp-webhook`
@@ -1892,6 +1893,18 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+                        )}
+
+                        {/* Numéro bot Atelier — affiché uniquement en mode mutualisé */}
+                        {waUseSharedWaba && sharedWabaDisplayNumber && (
+                            <div className="bg-green-500/8 border border-green-500/20 rounded-xl px-4 py-4 space-y-2">
+                                <p className="text-xs font-semibold text-secondary uppercase tracking-wider">Numéro de votre assistant WhatsApp</p>
+                                <div className="flex items-center gap-3">
+                                    <p className="text-xl font-bold text-primary font-mono tracking-wide">{sharedWabaDisplayNumber}</p>
+                                    <CopyButton text={sharedWabaDisplayNumber} />
+                                </div>
+                                <p className="text-xs text-secondary">Enregistrez ce numéro dans vos contacts WhatsApp (ex&nbsp;: &laquo;&nbsp;Mon assistant Atelier&nbsp;&raquo;) et envoyez-lui un message pour commencer.</p>
                             </div>
                         )}
 

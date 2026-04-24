@@ -35,6 +35,7 @@ export default async function SettingsPage() {
 
   const catalogContext = resolveCatalogContext(organization)
   const { supabaseUrl } = getPublicRuntimeConfig()
+  const sharedWabaDisplayNumber = process.env.NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER ?? null
 
   return (
     <SettingsClient
@@ -46,6 +47,7 @@ export default async function SettingsPage() {
       organization={organization}
       appUrl={getAppUrl()}
       supabaseUrl={supabaseUrl}
+      sharedWabaDisplayNumber={sharedWabaDisplayNumber}
       catalogMaterials={catalogMaterials}
       catalogPrestationTypes={catalogPrestationTypes}
       whatsappConfig={whatsappConfig}
