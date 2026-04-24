@@ -132,7 +132,7 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 | C3 | Configurer Auth Supabase (Site URL + Redirect URLs + OTP) | Supabase MCP | MCP connecté ✅ |
 | C4 | Générer un `CRON_SECRET` unique si non fourni | Terminal (`openssl`) | — |
 | C5 | Déployer la Edge Function `whatsapp-webhook` | `supabase functions deploy` | `supabase login` ✅ |
-| C6 | Injecter les 5 secrets Edge Function (`OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `APP_URL`) | `./scripts/deploy-edge-functions.sh` | `supabase login` ✅ |
+| C6 | Déployer la Edge Function + injecter les secrets (`OPENROUTER`, `MISTRAL`, `RESEND`, `APP_URL`, `SHARED_WABA_*`) | `./scripts/deploy-edge-functions.sh <ref> --resend-key ... --resend-from ... --app-url ...` | `supabase login` ✅ |
 | C7 | Déployer le Cloudflare Worker relances + injecter `APP_URL` + `CRON_SECRET` | `wrangler deploy` | `wrangler login` ✅ |
 | C8 | Peupler `company_memory` avec le contexte de l'entretien client | Supabase MCP | MCP connecté ✅ |
 | C9 | Vérifier migrations, permissions, buckets | Supabase MCP | MCP connecté ✅ |
@@ -397,20 +397,21 @@ Cron : `0 7 * * *` (8h Paris hiver, 9h été) — défini dans `wrangler.toml`.
 
 Script automatisé (lancé par Claude via terminal) :
 ```bash
-./scripts/deploy-edge-functions.sh <PROJECT_REF>
+./scripts/deploy-edge-functions.sh <PROJECT_REF> \
+  --resend-key re_xxx \
+  --resend-from contact@client.fr \
+  --app-url https://client.fr
 ```
 
-Ce script déploie `whatsapp-webhook` et injecte automatiquement tous les secrets depuis `.env.local` :
+**Séparation clés partagées / clés par client :**
+- **Depuis `.env.local`** (clés Atelier identiques partout) : `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `SHARED_WABA_PHONE_NUMBER_ID`, `SHARED_WABA_ACCESS_TOKEN`
+- **En argument** (clés propres au client) : `--resend-key`, `--resend-from`, `--app-url`
 
-```bash
-./scripts/deploy-edge-functions.sh <PROJECT_REF>
-# Injecte : OPENROUTER_API_KEY, MISTRAL_API_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL, APP_URL
-# + SHARED_WABA_PHONE_NUMBER_ID, SHARED_WABA_ACCESS_TOKEN (mode mutualisé)
-```
+Cela évite de modifier `.env.local` entre chaque déploiement client.
 
 `APP_URL` est requis pour les liens PDF dans les emails envoyés depuis WhatsApp (`send_quote`, `send_invoice`).
 
-URL webhook à configurer dans Meta :
+URL webhook (mode propre WABA uniquement) :
 ```
 https://<PROJECT_REF>.supabase.co/functions/v1/whatsapp-webhook
 ```
@@ -420,10 +421,10 @@ Le Verify Token est généré automatiquement dans **Settings → Agent WhatsApp
 **Mise à jour code** (quand la Edge Function évolue) :
 ```bash
 # Un client
-./scripts/deploy-edge-functions.sh <ref>
+./scripts/deploy-edge-functions.sh <ref> --resend-key re_xxx --resend-from contact@client.fr --app-url https://client.fr
 
-# Tous les clients
-for ref in ref1 ref2 ref3; do ./scripts/deploy-edge-functions.sh $ref; done
+# Tous les clients (adapter les valeurs par client)
+for ref in ref1 ref2 ref3; do ./scripts/deploy-edge-functions.sh $ref --resend-key re_xxx --resend-from contact@client.fr --app-url https://client.fr; done
 ```
 
 ### 7. Company Memory — contexte IA (rempli par Claude après l'entretien)
