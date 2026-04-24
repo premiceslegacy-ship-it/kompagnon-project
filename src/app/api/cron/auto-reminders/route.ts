@@ -4,6 +4,7 @@ import { Resend } from 'resend'
 import { getClientGreetingName } from '@/lib/client'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
+import { getSupabaseRuntimeConfig } from '@/lib/supabase/config'
 
 // ─── Sécurité ─────────────────────────────────────────────────────────────────
 // Appelé par Cloudflare Worker (ou cron-job.org) avec le header X-Cron-Secret
@@ -46,9 +47,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const { supabaseUrl } = getSupabaseRuntimeConfig()
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const supabase: any = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    supabaseUrl,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   )
   const resend = new Resend(process.env.RESEND_API_KEY!)

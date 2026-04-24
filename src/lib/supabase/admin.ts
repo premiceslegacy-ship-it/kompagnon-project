@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { getSupabaseRuntimeConfig } from './config'
 
 /**
  * Client Supabase avec le service role key — contourne le RLS.
@@ -6,8 +7,10 @@ import { createClient } from '@supabase/supabase-js'
  * Ne jamais exposer côté client.
  */
 export function createAdminClient() {
+  const { supabaseUrl } = getSupabaseRuntimeConfig()
+
   return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    supabaseUrl,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     {
       auth: {

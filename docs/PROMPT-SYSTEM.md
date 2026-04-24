@@ -73,8 +73,8 @@ Conventions
 
 **Variables d'environnement :**
 ```
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY
+SUPABASE_URL
+SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY         ← uniquement dans /lib/data/admin.ts
 ANTHROPIC_API_KEY
 RESEND_API_KEY
@@ -200,8 +200,8 @@ import type { Database } from './types'
 export function getDb() {
   const cookieStore = cookies()
   return createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_ANON_KEY!,
     {
       cookies: {
         get(name) { return cookieStore.get(name)?.value },
@@ -215,8 +215,8 @@ export function getDb() {
 // Pour le middleware
 export function getDbMiddleware(request: Request, response: Response) {
   return createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_ANON_KEY!,
     { cookies: { /* middleware cookies */ } }
   )
 }

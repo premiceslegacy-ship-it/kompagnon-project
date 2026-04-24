@@ -28,8 +28,8 @@ Ce dossier contient toutes les migrations SQL pour déployer Atelier sur un nouv
 1. Aller sur [supabase.com](https://supabase.com) → New Project
 2. Choisir la région EU (ex: `eu-west-3` Paris)
 3. Noter les variables :
-   - `Project URL` → `NEXT_PUBLIC_SUPABASE_URL`
-   - `anon public key` → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `Project URL` → `SUPABASE_URL`
+   - `anon public key` → `SUPABASE_ANON_KEY`
    - `service_role secret key` → `SUPABASE_SERVICE_ROLE_KEY`
 
 ### Étape 2 — Appliquer les migrations
@@ -60,8 +60,8 @@ Dashboard → SQL Editor → New query → Run
 Créer le fichier `.env.local` à la racine du projet Next.js :
 
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=https://[ref].supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+SUPABASE_URL=https://[ref].supabase.co
+SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 NEXT_PUBLIC_APP_URL=https://[votre-domaine.com]
 
