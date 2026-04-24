@@ -160,7 +160,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     const [autoReminder, setAutoReminder] = useState({
         enabled: organization?.auto_reminder_enabled ?? false,
         invoiceDays: organization?.invoice_reminder_days ?? [2, 7],
-        quoteDays: organization?.quote_reminder_days ?? [3, 10],
+        quoteDays: organization?.quote_reminder_days ?? [3, 7, 10],
         reminderHour: organization?.reminder_hour_utc ?? 8,
     });
     const [autoReminderSaveStatus, setAutoReminderSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');

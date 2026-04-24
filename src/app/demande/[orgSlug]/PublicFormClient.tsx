@@ -6,6 +6,7 @@ import { submitQuoteRequest } from '@/lib/data/mutations/quote-requests'
 import {
   buildMaterialSelectionPricing,
   displayUnitToMeters,
+  formatPublicUnit,
   getDimensionFieldDefinition,
   metersToDisplayUnit,
   type DimensionPricingMode,
@@ -266,7 +267,7 @@ function MaterialCard({
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-semibold truncate ${selected ? 'text-blue-800' : 'text-gray-800'}`}>{material.name}</p>
           <div className="flex items-center gap-2">
-            {material.unit && <p className="text-xs text-gray-400">{material.unit}</p>}
+            {material.unit && <p className="text-xs text-gray-400">{formatPublicUnit(material.unit)}</p>}
             <p className="text-[11px] text-gray-400">{itemKindLabel}</p>
           </div>
         </div>
@@ -294,7 +295,7 @@ function MaterialCard({
               )}
               <div className="flex items-end">
                 <div className="w-full text-xs text-blue-700 bg-blue-100 rounded-lg px-3 py-2 font-semibold">
-                  Quantité calculée : {quantity.toFixed(2)} {dimensionMode === 'linear' ? 'ml' : dimensionMode === 'area' ? 'm²' : 'm³'}
+                  Quantité calculée : {quantity.toFixed(2)} {dimensionMode === 'linear' ? 'm' : dimensionMode === 'area' ? 'm²' : 'm³'}
                 </div>
               </div>
             </div>
@@ -441,7 +442,7 @@ function PrestationCard({
                     <span className="flex-1 text-sm font-medium text-gray-700">{line.designation}</span>
                     {line.dimension_pricing_mode !== 'none' ? (
                       <span className="text-xs font-semibold text-blue-700 bg-blue-100 px-2 py-1 rounded-lg">
-                        {line.quantity.toFixed(2)} {line.dimension_pricing_mode === 'linear' ? 'ml' : line.dimension_pricing_mode === 'area' ? 'm²' : 'm³'}
+                        {line.quantity.toFixed(2)} {line.dimension_pricing_mode === 'linear' ? 'm' : line.dimension_pricing_mode === 'area' ? 'm²' : 'm³'}
                       </span>
                     ) : (
                       <div className="flex items-center gap-1.5">

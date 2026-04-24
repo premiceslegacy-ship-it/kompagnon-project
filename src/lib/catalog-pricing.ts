@@ -369,6 +369,10 @@ export function buildCatalogPricingPreview(item: DimensionableCatalogItem): {
   return buildMaterialSelectionPricing({ item })
 }
 
+export function formatPublicUnit(unit: string): string {
+  return unit === 'ml' ? 'm' : unit
+}
+
 export function formatDimensionLabel(item: Pick<DimensionableCatalogItem, 'base_length_m' | 'base_width_m' | 'base_height_m' | 'dimension_pricing_mode' | 'dimension_pricing_enabled'>): string {
   const mode = getEffectiveMode(item)
   const L = item.base_length_m

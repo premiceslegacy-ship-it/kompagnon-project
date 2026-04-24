@@ -52,9 +52,10 @@ export const BTP_UNIT_GROUPS: UnitGroup[] = [
     ],
   },
   {
-    label: 'Forfait',
+    label: 'Forfait / passage',
     options: [
       { value: 'forfait', label: 'forfait' },
+      { value: 'passage', label: 'passage' },
     ],
   },
 ]

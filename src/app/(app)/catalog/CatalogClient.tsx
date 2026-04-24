@@ -202,7 +202,7 @@ function NewMaterialModal({
             <div className="space-y-2">
               <label className="text-sm font-semibold text-secondary">Unité</label>
               <input type="hidden" name="unit" value={unit} />
-              <UnitSelect value={unit} onChange={setUnit} allowedUnits={defaultKind === 'service' ? catalogContext.unitSetsByKind.service : catalogContext.unitSetsByKind.material} className="w-full px-4 py-3 rounded-xl" />
+              <UnitSelect value={unit} onChange={setUnit} allowedUnits={defaultKind === 'service' ? catalogContext.unitSetsByKind.service : catalogContext.unitSetsByKind.material} className="w-full px-4 py-3 rounded-xl" disabled={dimMode !== 'none'} />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-semibold text-secondary">{defaultKind === 'service' ? "Coût de revient (HT)" : "Coût d'achat (HT)"}</label>
@@ -246,6 +246,9 @@ function NewMaterialModal({
                       setDimMode(value)
                       setDimensionSchemaState(buildEditableSchemaState(null, value))
                       if (value === 'none') setShowAdvancedDimensions(false)
+                      if (value === 'linear') setUnit('ml')
+                      else if (value === 'area') setUnit('m²')
+                      else if (value === 'volume') setUnit('m³')
                     }}
                     className={`rounded-xl border px-3 py-3 text-left transition-all ${dimMode === value ? 'bg-accent text-black border-accent shadow-sm' : 'bg-base border-[var(--elevation-border)] hover:border-accent hover:bg-black/5 dark:hover:bg-white/8'}`}>
                     <span className={`block ${dimMode === value ? 'text-black' : 'text-primary'}`}>{label}</span>

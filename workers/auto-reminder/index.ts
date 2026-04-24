@@ -1,12 +1,14 @@
 /**
- * Cloudflare Worker — Relances automatiques Kompagnon
+ * Cloudflare Worker — Crons automatiques Atelier
  *
  * Déclenché chaque matin à 8h (cron schedule dans wrangler.toml).
- * Appelle simplement l'API route Next.js sécurisée par CRON_SECRET.
+ * Appelle séquentiellement les API routes Next.js sécurisées par CRON_SECRET :
+ *   1. /api/cron/auto-reminders    — relances devis/factures en retard (IA)
+ *   2. /api/cron/recurring-invoices — brouillons récurrents + auto-envoi PDF si délai expiré
  *
  * Variables d'environnement à configurer dans Cloudflare Dashboard :
- *   APP_URL      → URL de l'app (ex: https://kompagnon-weber.vercel.app)
- *   CRON_SECRET  → même valeur que dans .env.local de l'app
+ *   APP_URL      → URL de l'app (ex: https://atelier-weber.workers.dev)
+ *   CRON_SECRET  → même valeur que dans les variables du Worker app
  */
 
 export interface Env {
@@ -15,13 +17,11 @@ export interface Env {
 }
 
 export default {
-  // Déclenché par le cron schedule
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(triggerReminders(env))
+  async scheduled(_event: { scheduledTime: number }, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
+    ctx.waitUntil(runAllCrons(env))
   },
 
-  // Déclenché manuellement via HTTP (pour tester)
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, _ctx: unknown): Promise<Response> {
     if (request.method !== 'POST') {
       return new Response('Method Not Allowed', { status: 405 })
     }
@@ -29,28 +29,33 @@ export default {
     if (!auth || auth !== env.CRON_SECRET) {
       return new Response('Unauthorized', { status: 401 })
     }
-    await triggerReminders(env)
+    await runAllCrons(env)
     return new Response('OK', { status: 200 })
   },
 }
 
-async function triggerReminders(env: Env): Promise<void> {
-  const url = `${env.APP_URL}/api/cron/auto-reminders`
+async function runAllCrons(env: Env): Promise<void> {
+  await callCron(env, '/api/cron/auto-reminders')
+  await callCron(env, '/api/cron/recurring-invoices')
+}
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'x-cron-secret': env.CRON_SECRET,
-      'Content-Type': 'application/json',
-    },
-  })
-
-  if (!res.ok) {
-    const body = await res.text()
-    console.error(`[auto-reminder worker] API returned ${res.status}: ${body}`)
-    return
+async function callCron(env: Env, path: string): Promise<void> {
+  const url = `${env.APP_URL}${path}`
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'x-cron-secret': env.CRON_SECRET,
+        'Content-Type': 'application/json',
+      },
+    })
+    const data = await res.json() as Record<string, unknown>
+    if (!res.ok) {
+      console.error(`[cron worker] ${path} returned ${res.status}:`, data)
+    } else {
+      console.log(`[cron worker] ${path}:`, JSON.stringify(data))
+    }
+  } catch (err) {
+    console.error(`[cron worker] ${path} fetch error:`, err)
   }
-
-  const data = await res.json() as { processed: number; sent: number; errors: number }
-  console.log(`[auto-reminder worker] processed=${data.processed} sent=${data.sent} errors=${data.errors}`)
 }

@@ -21,6 +21,7 @@ export type RecurringInvoiceInput = {
   firstSendDate: string            // date ISO du premier envoi
   requiresConfirmation: boolean
   confirmationDelayDays: number    // jours avant l'envoi où on crée le brouillon
+  autoSendDelayDays?: number | null // jours après création brouillon avant envoi auto (null = désactivé)
   currency?: string
   items: {
     description: string
@@ -60,6 +61,7 @@ export async function createRecurringInvoice(data: RecurringInvoiceInput): Promi
       next_send_date: data.firstSendDate,
       requires_confirmation: data.requiresConfirmation,
       confirmation_delay_days: data.confirmationDelayDays,
+      auto_send_delay_days: data.autoSendDelayDays ?? null,
       base_amount_ht: baseAmountHt,
       currency: data.currency ?? 'EUR',
       is_active: true,
