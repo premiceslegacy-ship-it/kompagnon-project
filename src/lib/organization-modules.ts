@@ -16,35 +16,35 @@ export type BusinessProfile = 'btp' | 'cleaning' | 'industry'
 // L'override individuel dans organization_modules prend toujours le dessus.
 export const DEFAULT_MODULES_BY_PROFILE: Record<BusinessProfile, OrganizationModules> = {
   btp: {
-    whatsapp_agent: false,
-    voice_input:    false,
+    whatsapp_agent: true,
+    voice_input:    true,
     planning_ai:    true,
     quote_ai:       true,
-    document_ai:    false,
+    document_ai:    true,
   },
   cleaning: {
-    whatsapp_agent: false,
-    voice_input:    false,
-    planning_ai:    false,
-    quote_ai:       true,
-    document_ai:    false,
-  },
-  industry: {
-    whatsapp_agent: false,
-    voice_input:    false,
+    whatsapp_agent: true,
+    voice_input:    true,
     planning_ai:    true,
     quote_ai:       true,
-    document_ai:    false,
+    document_ai:    true,
+  },
+  industry: {
+    whatsapp_agent: true,
+    voice_input:    true,
+    planning_ai:    true,
+    quote_ai:       true,
+    document_ai:    true,
   },
 }
 
 // Fallback si aucun profil connu
 export const DEFAULT_ORGANIZATION_MODULES: OrganizationModules = {
-  whatsapp_agent: false,
-  voice_input:    false,
-  planning_ai:    false,
-  quote_ai:       false,
-  document_ai:    false,
+  whatsapp_agent: true,
+  voice_input:    true,
+  planning_ai:    true,
+  quote_ai:       true,
+  document_ai:    true,
 }
 
 export function getDefaultModulesForProfile(profile: string | null | undefined): OrganizationModules {
