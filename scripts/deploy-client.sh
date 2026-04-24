@@ -10,13 +10,15 @@
 #
 # Ce que fait ce script :
 #   1. Patch wrangler.jsonc avec le bon "name"
-#   2. Lance npm run deploy (opennextjs build + patch-worker + wrangler deploy)
+#   2. Lance npm run deploy (build OpenNext sans .env.local + wrangler deploy --keep-vars)
 #   3. Restaure le "name" précédent dans wrangler.jsonc
 #
 # Note :
 #   L'app lit maintenant SUPABASE_URL et SUPABASE_ANON_KEY au runtime
 #   depuis Cloudflare Workers. Il n'y a plus de bascule temporaire
 #   à faire dans .env.local avant un déploiement client/cockpit.
+#   Le script de déploiement ignore temporairement .env.local et
+#   conserve les vars configurées dans Cloudflare Dashboard.
 #
 # Prérequis : wrangler login + npm install -g wrangler @opennextjs/cloudflare
 
