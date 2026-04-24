@@ -33,7 +33,7 @@ function clientDisplayName(c: Client): string {
   return getClientDisplayName(c)
 }
 
-const cardCls = 'rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)]'
+const cardCls = 'rounded-3xl card'
 const FREQ_OPTIONS: { value: RecurringFrequency; label: string }[] = [
   { value: 'monthly', label: 'Mensuelle' },
   { value: 'quarterly', label: 'Trimestrielle' },

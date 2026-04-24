@@ -484,7 +484,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     const renderContent = () => {
         if (activeTab === 'profil') {
             return (
-                <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out p-8 space-y-8">
+                <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8">
                     <div><h2 className="text-2xl font-bold text-primary mb-6">Mon Profil</h2>
                         <div className="flex flex-col md:flex-row gap-8">
                             <div className="flex-shrink-0">
@@ -551,7 +551,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
         if (activeTab === 'entreprise') {
             return (
-                <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out p-8 space-y-8">
+                <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
                             <h2 className="text-2xl font-bold text-primary">Identité de l&#39;entreprise</h2>
@@ -760,7 +760,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
         if (activeTab === 'equipe') {
             return (
-                <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out p-8 space-y-8 relative">
+                <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8 relative">
 
                     {/* Code entreprise */}
                     {joinCode && (
@@ -866,7 +866,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     {/* Modal invitation email */}
                     {isInviteModalOpen && (
                         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                            <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-300">
+                            <div className="rounded-3xl card transition-all duration-300 ease-out w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-300">
                                 <button
                                     onClick={() => { setIsInviteModalOpen(false); setInviteStatus('idle'); setInviteError(null); setInviteEmail(''); }}
                                     className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"
@@ -962,7 +962,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 <div className="space-y-6">
 
                 {/* Relances automatiques — en premier */}
-                <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out p-8 space-y-6">
+                <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-6">
                     <div className="flex items-start justify-between gap-6">
                         <div>
                             <h2 className="text-2xl font-bold text-primary mb-1">Relances automatiques</h2>
@@ -1064,7 +1064,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 </div>
 
                 {/* Configuration expéditeur */}
-                <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out p-8 space-y-6">
+                <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-6">
                     <div>
                         <h2 className="text-2xl font-bold text-primary mb-1">Configuration email</h2>
                         <p className="text-sm text-secondary">Adresse utilisée pour l&apos;envoi des invitations et des emails métier (devis, factures, relances).</p>
@@ -1139,7 +1139,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
             return (
                 <div className="space-y-6 max-w-3xl">
-                    <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 space-y-8">
+                    <div className="rounded-3xl card p-8 space-y-8">
                         <div>
                             <h2 className="text-2xl font-bold text-primary mb-1">Formulaire de demande de devis</h2>
                             <p className="text-secondary text-sm">Intégrez votre formulaire public sur votre site web pour recevoir des demandes directement dans ATELIER.</p>
@@ -1199,83 +1199,14 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             )
         }
 
-        if (activeTab === 'modules') {
-            const moduleCards: Array<{ key: keyof OrganizationModules; title: string; description: string }> = [
-                { key: 'quote_ai', title: 'IA devis', description: 'Analyse de description, génération assistée et estimation de ressources.' },
-                { key: 'document_ai', title: 'IA documents', description: 'Extraction assistée depuis PDF pour imports et traitements documentaires.' },
-                { key: 'planning_ai', title: 'IA planning', description: 'Suggestions de tâches et planification assistée.' },
-                { key: 'voice_input', title: 'Saisie vocale', description: 'Modes vocaux et interactions basées sur la voix côté produit.' },
-                { key: 'whatsapp_agent', title: 'Agent WhatsApp', description: 'Activation produit de l’agent WhatsApp, en plus de sa configuration technique.' },
-            ];
 
-            return (
-                <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 space-y-8">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div>
-                            <h2 className="text-2xl font-bold text-primary">Modules produit</h2>
-                            <p className="text-sm text-secondary mt-1">Activez ou désactivez les capacités applicatives de cette instance, sans modifier les données métier.</p>
-                        </div>
-                        <button
-                            onClick={handleSaveModules}
-                            disabled={isPending || modulesSaveStatus === 'saving'}
-                            className={`px-8 py-3 rounded-full font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 ${
-                                modulesSaveStatus === 'saved' ? 'bg-green-500 text-white shadow-green-500/20' :
-                                modulesSaveStatus === 'error' ? 'bg-red-500 text-white shadow-red-500/20' :
-                                'bg-accent text-black shadow-accent/20'
-                            }`}
-                        >
-                            <Save className="w-4 h-4" />
-                            {modulesSaveStatus === 'saving' ? 'Enregistrement...' :
-                             modulesSaveStatus === 'saved' ? 'Enregistré !' :
-                             modulesSaveStatus === 'error' ? 'Erreur' :
-                             'Sauvegarder'}
-                        </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {moduleCards.map((item) => {
-                            const enabled = moduleSettings[item.key]
-                            return (
-                                <button
-                                    key={item.key}
-                                    type="button"
-                                    onClick={() => setModuleSettings(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
-                                    className={`rounded-2xl border p-5 text-left transition-all ${
-                                        enabled
-                                            ? 'border-accent bg-accent/10'
-                                            : 'border-[var(--elevation-border)] bg-base dark:bg-white/[0.03]'
-                                    }`}
-                                >
-                                    <div className="flex items-start justify-between gap-4">
-                                        <div className="space-y-2">
-                                            <p className="text-sm font-bold text-primary">{item.title}</p>
-                                            <p className="text-xs leading-relaxed text-secondary">{item.description}</p>
-                                        </div>
-                                        {enabled ? (
-                                            <ToggleRight className="w-7 h-7 text-accent flex-shrink-0" />
-                                        ) : (
-                                            <ToggleLeft className="w-7 h-7 text-secondary flex-shrink-0" />
-                                        )}
-                                    </div>
-                                </button>
-                            )
-                        })}
-                    </div>
-
-                    <div className="rounded-2xl border border-[var(--elevation-border)] bg-base dark:bg-white/[0.03] p-4">
-                        <p className="text-xs font-bold text-secondary uppercase tracking-wider mb-1">Note</p>
-                        <p className="text-sm text-secondary">Les coûts IA ne sont pas visibles ici. Cette section pilote uniquement l’activation produit de l’instance cliente.</p>
-                    </div>
-                </div>
-            )
-        }
 
         if (activeTab === 'formulaire') {
             const orgSlug = organization?.slug ?? ''
             const publicUrl = `${appUrl}/demande/${orgSlug}`
             return (
                 <div className="space-y-6">
-                    <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 space-y-8">
+                    <div className="rounded-3xl card p-8 space-y-8">
                         <div>
                             <h2 className="text-2xl font-bold text-primary mb-1">Formulaire public</h2>
                             <p className="text-secondary text-sm">Configurez le formulaire que vos prospects utilisent pour demander un devis.</p>
@@ -1379,7 +1310,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     </div>
 
                     {/* Sélection des éléments visibles dans le formulaire */}
-                    <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 space-y-6">
+                    <div className="rounded-3xl card p-8 space-y-6">
                         <div>
                             <h3 className="text-xl font-bold text-primary mb-1 flex items-center gap-2"><Package className="w-5 h-5 text-accent" />Éléments visibles dans le formulaire public</h3>
                             <p className="text-sm text-secondary">Sélectionnez les {catalogContext.labelSet.material.plural.toLowerCase()} et {catalogContext.labelSet.bundleTemplate.plural.toLowerCase()} à exposer à vos prospects. Les prix, marges et coûts internes ne sont jamais affichés.</p>
@@ -1522,7 +1453,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         if (activeTab === 'confidentialite') {
             return (
                 <div className="space-y-6">
-                    <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 space-y-8">
+                    <div className="rounded-3xl card p-8 space-y-8">
                         <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
                             <div>
                                 <h2 className="text-2xl font-bold text-primary mb-1">Données & confidentialité</h2>
@@ -1556,7 +1487,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         </div>
                     </div>
 
-                    <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-8 space-y-6">
+                    <div className="rounded-3xl card p-8 space-y-6">
                         <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
                             <div>
                                 <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">Fermeture de compte et suppression</h2>
@@ -2036,7 +1967,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     <button onClick={() => setActiveTab('equipe')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'equipe' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Users className="w-5 h-5" />Équipe</button>
                     <button onClick={() => setActiveTab('emails')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'emails' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Mail className="w-5 h-5" />Relances &amp; emails</button>
                     <button onClick={() => setActiveTab('confidentialite')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'confidentialite' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><ShieldCheck className="w-5 h-5" />Données &amp; confidentialité</button>
-                    <button onClick={() => setActiveTab('modules')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'modules' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Layers className="w-5 h-5" />Modules produit</button>
                     <button onClick={() => setActiveTab('integration')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'integration' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Globe className="w-5 h-5" />Intégration</button>
                     <button onClick={() => setActiveTab('formulaire')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'formulaire' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Inbox className="w-5 h-5" />Formulaire public</button>
                     <button onClick={() => setActiveTab('whatsapp')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'whatsapp' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><MessageSquare className="w-5 h-5 text-green-500" />Agent WhatsApp</button>

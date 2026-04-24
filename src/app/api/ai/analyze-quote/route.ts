@@ -5,6 +5,7 @@ import { resolveCatalogContext } from '@/lib/catalog-context'
 import { getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
+import { fetchRAGContext } from '@/lib/ai/rag'
 
 export type AIQuoteItem = {
   description: string
@@ -37,7 +38,7 @@ function extractJson(text: string): string {
 }
 
 // Charge le catalogue, les postes récents et les infos de l'org pour enrichir le contexte IA
-async function loadCatalogContext(orgId: string): Promise<{ context: string; sector: string }> {
+async function loadCatalogContext(orgId: string): Promise<{ context: string; sector: string; activityId: string | null }> {
   const supabase = await createClient()
 
   const [
@@ -140,10 +141,10 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
     }
   }
 
-  return { context: lines.join('\n'), sector }
+  return { context: lines.join('\n'), sector, activityId: org?.business_activity_id ?? null }
 }
 
-function buildSystemPrompt(catalogContext: string, sector: string): string {
+function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string): string {
   const hasCatalog = catalogContext.trim().length > 0
 
   return `Tu es un assistant IA expert en devis pour une entreprise française du secteur : **${sector}**. À partir d'une description de travaux, tu dois extraire et structurer les postes de travaux en sections et lignes de devis, ET estimer la main-d'œuvre nécessaire.
@@ -188,7 +189,7 @@ Dans un cahier des charges, le client décrit rarement la main-d'œuvre à dépl
 - Regroupe les postes MO dans une section dédiée "Main-d'œuvre" ou intègre-les dans les sections pertinentes selon le contexte.
 - Estime des quantités d'heures réalistes en fonction de l'ampleur des travaux décrits.
 
-Règles générales :
+${ragContext ? `\n## Mémoire de l'entreprise (devis et tarifs de référence issus de projets passés) :\n${ragContext}\n\n` : ''}Règles générales :
 - Le champ \`title\` doit synthétiser le projet en un titre court et professionnel. Si un titre ou nom de chantier est explicitement mentionné dans le document, utilise-le. Sinon, forge un titre clair (ex: "Bardage acier façade entrepôt B", "Rénovation cuisine appartement 3e étage").
 - Regroupe les postes par corps de métier ou par zone (ex: Cuisine, Salle de bain)
 - TVA : 10% pour rénovation logement existant, 20% par défaut (neuf, travaux neufs)
@@ -210,19 +211,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Clé API IA non configurée (OPENROUTER_API_KEY manquante)' }, { status: 500 })
   }
 
-  // Charge le catalogue en parallèle avec la lecture du body
   const orgId = await getCurrentOrganizationId()
-  const { context: catalogContext, sector } = orgId
-    ? await loadCatalogContext(orgId)
-    : { context: '', sector: 'BTP' }
-  const systemPrompt = buildSystemPrompt(catalogContext, sector)
-
   const contentType = req.headers.get('content-type') ?? ''
   let model: string
   let messages: { role: string; content: any }[]
 
+  // Extraire la description tôt pour l'embedding RAG, avant le chargement catalogue
+  let formDataCache: FormData | null = null
+  let bodyCache: { text?: string } | null = null
+  let queryText = 'devis chantier BTP'
+
   if (contentType.includes('multipart/form-data')) {
-    const formData = await req.formData()
+    formDataCache = await req.formData()
+    const desc = (formDataCache.get('description') as string | null)?.trim()
+    if (desc) queryText = desc
+  } else {
+    bodyCache = await req.json()
+    if (bodyCache?.text?.trim()) queryText = bodyCache.text.trim()
+  }
+
+  // Catalogue + RAG en parallèle
+  const [{ context: catalogContext, sector, activityId }, ragContext_] = await Promise.all([
+    orgId ? loadCatalogContext(orgId) : Promise.resolve({ context: '', sector: 'BTP', activityId: null }),
+    orgId ? fetchRAGContext(orgId, queryText) : Promise.resolve(''),
+  ])
+  // Re-fetch RAG avec le filtre activityId maintenant qu'on l'a (best-effort, pas bloquant)
+  const ragContext = activityId && orgId
+    ? await fetchRAGContext(orgId, queryText, { activityId })
+    : ragContext_
+  const systemPrompt = buildSystemPrompt(catalogContext, sector, ragContext)
+
+  if (contentType.includes('multipart/form-data')) {
+    const formData = formDataCache!
     const file = formData.get('file') as File | null
     if (!file) return NextResponse.json({ error: 'Fichier manquant' }, { status: 400 })
     if (file.size > 10 * 1024 * 1024) return NextResponse.json({ error: 'Fichier trop volumineux (max 10 Mo)' }, { status: 400 })
@@ -249,8 +269,7 @@ export async function POST(req: NextRequest) {
       },
     ]
   } else {
-    const body = await req.json()
-    const text: string = body.text ?? ''
+    const text: string = bodyCache?.text ?? ''
     if (!text || text.trim().length < 5) {
       return NextResponse.json({ error: 'Texte trop court' }, { status: 400 })
     }

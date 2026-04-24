@@ -70,7 +70,7 @@ const INVOICE_STATUS: Record<string, { label: string; cls: string }> = {
 
 function StatCard({ icon, label, value, danger }: { icon: React.ReactNode; label: string; value: string; danger?: boolean }) {
   return (
-    <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-6 flex items-center gap-4">
+    <div className="rounded-3xl card p-6 flex items-center gap-4">
       <div className="flex-shrink-0">{icon}</div>
       <div>
         <p className="text-sm font-semibold text-secondary uppercase tracking-wider">{label}</p>
@@ -395,7 +395,7 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
             </>
           ) : (
             <>
-              <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-6 flex items-center gap-4">
+              <div className="rounded-3xl card p-6 flex items-center gap-4">
                 <Wallet className="w-6 h-6 text-accent-green flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-secondary uppercase tracking-wider">CA émis HT</p>
@@ -405,7 +405,7 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
                   ) : null}
                 </div>
               </div>
-              <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-6 flex items-center gap-4">
+              <div className="rounded-3xl card p-6 flex items-center gap-4">
                 <Receipt className="w-6 h-6 text-accent flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Encaissé TTC</p>
@@ -415,7 +415,7 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
                   ) : null}
                 </div>
               </div>
-              <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-6 flex items-center gap-4">
+              <div className="rounded-3xl card p-6 flex items-center gap-4">
                 <AlertTriangle className={`w-6 h-6 flex-shrink-0 ${enRetardCount > 0 ? 'text-red-500' : 'text-secondary'}`} />
                 <div>
                   <p className="text-sm font-semibold text-secondary uppercase tracking-wider">En retard</p>
@@ -429,7 +429,7 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
       </div>
 
       {/* Table */}
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] overflow-visible">
+      <div className="rounded-3xl card overflow-visible">
         <div className="p-6 border-b border-[var(--elevation-border)] flex flex-col sm:flex-row items-center gap-4">
           <div className="relative w-full max-w-md">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-secondary" />

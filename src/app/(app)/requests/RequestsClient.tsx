@@ -123,7 +123,7 @@ function RequestCard({ request }: { request: QuoteRequest }) {
   const alreadyConverted = status === 'converted'
 
   return (
-    <div className={`rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] overflow-hidden transition-all ${status === 'new' ? 'ring-1 ring-accent/40' : ''}`}>
+    <div className={`rounded-3xl card overflow-hidden transition-all ${status === 'new' ? 'ring-1 ring-accent/40' : ''}`}>
       {/* Header */}
       <div
         className="flex items-start justify-between p-6 cursor-pointer hover:bg-accent/5 transition-colors"
@@ -377,7 +377,7 @@ export default function RequestsClient({ initialRequests }: { initialRequests: Q
           {filtered.map(req => <RequestCard key={req.id} request={req} />)}
         </div>
       ) : (
-        <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-20 flex flex-col items-center gap-4 text-center">
+        <div className="rounded-3xl card p-20 flex flex-col items-center gap-4 text-center">
           <Inbox className="w-12 h-12 text-secondary opacity-20" />
           <p className="text-xl font-bold text-primary">
             {filter === 'new' ? 'Aucune nouvelle demande' : 'Aucune demande pour le moment'}

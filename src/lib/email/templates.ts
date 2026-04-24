@@ -483,7 +483,6 @@ export function buildDepositInvoiceEmail({
   totalTtc,
   currency,
   dueDate,
-  pdfUrl,
 }: {
   orgName: string
   orgEmail: string
@@ -495,7 +494,6 @@ export function buildDepositInvoiceEmail({
   totalTtc: number | null
   currency: string
   dueDate: string | null
-  pdfUrl: string
 }): { subject: string; html: string } {
   const numText = invoiceNumber ? ` N° ${invoiceNumber}` : ''
   const subject = `Facture d'acompte${numText} · ${orgName}`
@@ -527,10 +525,9 @@ export function buildDepositInvoiceEmail({
 </h1>
 <p style="margin:0 0 28px;font-size:15px;color:#555;line-height:1.7;">
   ${escHtml(orgName)} vous adresse une facture d'acompte${quoteRef}.
-  Vous trouverez ci-dessous les détails et le document PDF en pièce jointe.
+  Vous trouverez le document en pièce jointe. Merci de procéder au règlement avant la date indiquée.
 </p>
 ${renderInfoBox(infoRows)}
-${renderCTA('Voir la facture PDF →', pdfUrl)}
 <p style="margin:0;font-size:13px;color:#aaa;line-height:1.6;">
   Pour toute question, répondez simplement à cet email ou contactez-nous à
   <a href="mailto:${escHtml(orgEmail)}" style="color:#555;">${escHtml(orgEmail)}</a>.
@@ -539,17 +536,10 @@ ${renderCTA('Voir la facture PDF →', pdfUrl)}
   Merci pour votre confiance.
 </p>`
 
-  const fallback = `
-<p style="margin:0;font-size:11px;color:#ccc;">
-  Lien alternatif :<br/>
-  <a href="${pdfUrl}" style="color:#999;word-break:break-all;">${pdfUrl}</a>
-</p>`
-
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
     bodyHtml: body,
-    fallbackLinkHtml: fallback,
   })
 
   return { subject, html }

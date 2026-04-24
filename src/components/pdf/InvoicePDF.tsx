@@ -12,7 +12,7 @@ registerFonts()
 const fmt = (n: number, currency = 'EUR') =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: 2 })
     .format(n)
-    .replace(/ /g, ' ')
+    .replace(/[   ]/g, ' ')
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -78,7 +78,10 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
     <Document
       title={`Facture ${invoice.number ?? ''} — ${organization.name}`}
       author={organization.name}
+      subject={`Facture ${invoice.number ?? invoice.title ?? invoice.id}`}
       creator={APP_NAME}
+      language="fr-FR"
+      pdfVersion="1.7"
     >
       <Page size="A4" style={S.page}>
 

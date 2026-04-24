@@ -38,7 +38,7 @@ function EditModal({ client, onClose }: { client: Client; onClose: () => void })
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
+      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
         <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors">
           <X className="w-6 h-6" />
         </button>

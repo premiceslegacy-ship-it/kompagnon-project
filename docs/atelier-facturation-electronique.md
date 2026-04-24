@@ -60,13 +60,19 @@ Toutes les instances Atelier génèrent systématiquement deux fichiers à chaqu
 **Pourquoi XML et pas juste PDF ?**
 Le PDF est lisible par un humain, pas par une machine. Le XML balise chaque champ (montant HT, TVA, SIRET, IBAN, échéance...). Il peut être ingéré automatiquement par une PA, un logiciel comptable, ou transmis sur le réseau Peppol/PPF.
 
-**Format cible recommandé : Factur-X profil EXTENDED**
-Factur-X = PDF lisible + XML embarqué dans le même fichier. L'humain voit un PDF normal, la machine lit le XML en dessous. C'est le format le plus adapté à la période de transition.
+**Deux profils selon l'usage :**
+- **EN 16931 (COMFORT)** → PDF téléchargeable par le client, conforme légalement, importable dans toute PA (Indy, Pennylane, Sage…). C'est ce qu'Atelier génère aujourd'hui, validé Factur-X.
+- **EXTENDED** → requis par B2Brouter pour la transmission automatisée sur le réseau Peppol/PPF. Sur-ensemble d'EN 16931 — les champs COMFORT restent valides, il faut en ajouter.
+
+**Interopérabilité :** un client en mode `export_only` qui télécharge son Factur-X COMFORT et le dépose sur sa PA (Indy, Chorus Pro…) reste lisible par le réseau Peppol côté destinataire. Le format est standard, pas propriétaire.
+
+**Formats acceptés par B2Brouter :** XML UBL 2.1, XML CII D16B, JSON, ou Factur-X EXTENDED. Atelier génère déjà du CII — l'envoi direct XML sans enveloppe PDF/A-3 est possible si besoin.
 
 **Références :**
 - Norme EN 16931 (Core)
 - Format UBL 2.1 ou CII D16B
 - Documentation PPF / Chorus Pro
+- B2Brouter API Guides & Références (endpoints, webhooks)
 
 **Ce que le dev fait :**
 - Générateur Factur-X à partir du data model facture existant
@@ -97,7 +103,19 @@ Factur-X = PDF lisible + XML embarqué dans le même fichier. L'humain voit un P
 
 **Profil** : client qui veut zéro friction, volume de facturation suffisant pour justifier le coût B2Brouter.
 
-> **TODO :** intégrer la documentation API B2Brouter dès réception pour compléter cette section (endpoints, format des payloads, authentification, webhooks entrants).
+**Prérequis format :** B2Brouter exige le profil Factur-X **EXTENDED** (ou XML CII/UBL brut). Le générateur EN 16931 existant devra être enrichi avec les champs EXTENDED pour ce mode. Même data model, champs supplémentaires conditionnels — pas un refactor complet.
+
+**Sandbox disponible :** B2Brouter fournit un environnement de test complet (URL sandbox + clé sandbox) pour valider le format XML, les appels API, les statuts de transmission et les webhooks entrants — sans toucher au réseau Peppol/PPF de production. S'enregistrer sur la sandbox avant de développer l'intégration.
+
+**Documentation B2Brouter transmise :**
+- API Guides & API Références (endpoints, webhooks, authentification)
+- Validateur de facture en ligne
+- Enregistrement vidéo API en français
+- Webinaire API Demo (anglais, vendredi 9h30)
+- Grille tarifaire eDocExchange (mensuel et annuel)
+- Manuel revendeur
+
+> **TODO :** récupérer les URLs de documentation B2Brouter et les ajouter ici. S'enregistrer sur la sandbox et demander l'activation des droits.
 
 **Comportement attendu :**
 

@@ -25,11 +25,12 @@ ALTER TABLE public.company_memory
 COMMENT ON COLUMN public.company_memory.embedding IS 'Qwen3-Embedding-8B via OpenRouter — 4096 dims';
 
 -- Mettre à jour l'index vectoriel si existant
+-- ivfflat est limité à 2000 dims — Qwen3 (4096) requiert HNSW
 DROP INDEX IF EXISTS idx_company_memory_embedding;
 CREATE INDEX idx_company_memory_embedding
   ON public.company_memory
-  USING ivfflat (embedding public.vector_cosine_ops)
-  WITH (lists = 100);
+  USING hnsw (embedding public.vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
 ```
 
 ⚠️ Si des embeddings 1536 dims ont déjà été insérés, vider la colonne avant :
@@ -112,7 +113,10 @@ LIMIT 5
 
 - [x] Décision modèle prise (Qwen3-Embedding-8B)
 - [x] `company_memory` commence à être alimentée (import factures/devis)
-- [ ] Migration SQL `030_embedding_qwen3.sql` à appliquer
-- [ ] `src/lib/ai/embeddings.ts` à créer
-- [ ] Cron background pour générer les embeddings manquants
-- [ ] Brancher le RAG dans les prompts agents (niveau 2+)
+- [x] Migration SQL `057_embedding_qwen3.sql` créée et appliquée (numéro 030 déjà pris par chantiers_equipes)
+- [x] `src/lib/ai/embeddings.ts` créé
+- [x] `company_memory.embedding` est désormais `vector(4096)` en base
+- [x] Cron background créé (`api/cron/embeddings` + `workers/embeddings/`)
+- [x] Brancher le RAG dans les prompts agents (`analyze-quote` + `estimate-labor`)
+- [x] Filtre optionnel par `activity_id` dans `match_company_memory`
+- [x] Appliquer `058_rag_function.sql` en base Supabase

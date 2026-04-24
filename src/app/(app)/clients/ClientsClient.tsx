@@ -209,7 +209,7 @@ function NewClientModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
+      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
         <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <h2 className="text-2xl font-bold text-primary mb-2">Nouveau Client</h2>
         <p className="text-secondary text-sm mb-6">Client ayant déjà travaillé avec vous ou dont le devis a été accepté.</p>
@@ -284,7 +284,7 @@ function NewLeadModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
+      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
         <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <div className="flex items-center gap-3 mb-2">
           <Target className="w-6 h-6 text-accent" />
@@ -358,7 +358,7 @@ function EditClientModal({ client, onClose }: { client: Client; onClose: () => v
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
+      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
         <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <h2 className="text-2xl font-bold text-primary mb-6">Modifier le contact</h2>
 
@@ -544,7 +544,7 @@ function ImportCSVModal({ isOpen, onClose, isLeads = false }: { isOpen: boolean;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] w-full max-w-3xl p-8 relative animate-in fade-in zoom-in duration-300">
+      <div className="rounded-3xl card w-full max-w-3xl p-8 relative animate-in fade-in zoom-in duration-300">
         <button onClick={handleClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <h2 className="text-2xl font-bold text-primary mb-1">{isLeads ? 'Importer des leads' : 'Importer des clients'}</h2>
         <p className="text-sm text-secondary mb-6">
@@ -835,7 +835,7 @@ export default function ClientsClient({ initialClients }: Props) {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-6 flex items-center gap-4">
+        <div className="rounded-3xl card p-6 flex items-center gap-4">
           <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-accent-green/10">
             <Users className="w-6 h-6 text-accent-green" />
           </div>
@@ -844,7 +844,7 @@ export default function ClientsClient({ initialClients }: Props) {
             <p className="text-2xl font-bold text-primary tabular-nums">{totalClients}</p>
           </div>
         </div>
-        <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-6 flex items-center gap-4">
+        <div className="rounded-3xl card p-6 flex items-center gap-4">
           <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-accent/10">
             <Target className="w-6 h-6 text-accent" />
           </div>
@@ -854,7 +854,7 @@ export default function ClientsClient({ initialClients }: Props) {
             <p className="text-xs text-secondary">leads + prospects</p>
           </div>
         </div>
-        <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] p-6 flex items-center gap-4">
+        <div className="rounded-3xl card p-6 flex items-center gap-4">
           <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-blue-500/10">
             <Euro className="w-6 h-6 text-blue-500" />
           </div>
@@ -866,7 +866,7 @@ export default function ClientsClient({ initialClients }: Props) {
       </div>
 
       {/* Table */}
-      <div className="rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] overflow-visible">
+      <div className="rounded-3xl card overflow-visible">
         <div className="overflow-x-auto md:overflow-visible">
           <table className="w-full text-left border-collapse">
             <thead>

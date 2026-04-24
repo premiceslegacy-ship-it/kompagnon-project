@@ -11,7 +11,7 @@ import AIReminderModal from '@/components/shared/AIReminderModal'
 const fmt = (n: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n)
 
-const cardCls = "rounded-3xl p-6 bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out"
+const cardCls = "rounded-3xl p-6 card transition-all duration-300 ease-out"
 
 export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
   initialItems: UrgentItem[]

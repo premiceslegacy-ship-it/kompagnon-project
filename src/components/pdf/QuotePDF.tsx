@@ -10,10 +10,12 @@ registerFonts()
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Remplace tout espace (normal, insécable U+00A0, fine insécable U+202F) par
+// pour empêcher react-pdf de couper les montants en milieu de nombre.
 const fmt = (n: number, currency = 'EUR') =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: 2 })
     .format(n)
-    .replace(/ /g, ' ')
+    .replace(/[   ]/g, ' ')
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })

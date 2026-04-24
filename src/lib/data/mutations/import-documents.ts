@@ -125,6 +125,13 @@ export async function importInvoices(
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.', imported: 0, skipped: 0, clients_created: 0, memory_entries: 0, skipped_reasons: [] }
 
+  const { data: org } = await supabase
+    .from('organizations')
+    .select('business_activity_id')
+    .eq('id', orgId)
+    .single()
+  const activityId: string | null = org?.business_activity_id ?? null
+
   // Grouper les lignes par numéro de facture (ou par client+date si pas de numéro)
   const groups = new Map<string, ImportDocumentRow[]>()
   for (const row of rows) {
@@ -299,7 +306,7 @@ export async function importInvoices(
       organization_id: orgId,
       type: 'invoice',
       content: memContent,
-      metadata: { invoice_id: invoice.id, client_id: clientId, total_ht: totalHt, status, date: issueDate },
+      metadata: { invoice_id: invoice.id, client_id: clientId, total_ht: totalHt, status, date: issueDate, ...(activityId ? { activity_id: activityId } : {}) },
       source: 'import',
       confidence: 1.0,
     })
@@ -324,6 +331,13 @@ export async function importQuotes(
 
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.', imported: 0, skipped: 0, clients_created: 0, memory_entries: 0, skipped_reasons: [] }
+
+  const { data: org } = await supabase
+    .from('organizations')
+    .select('business_activity_id')
+    .eq('id', orgId)
+    .single()
+  const activityId: string | null = org?.business_activity_id ?? null
 
   const groups = new Map<string, ImportDocumentRow[]>()
   for (const row of rows) {
@@ -470,7 +484,7 @@ export async function importQuotes(
       organization_id: orgId,
       type: 'quote',
       content: memContent,
-      metadata: { quote_id: quote.id, client_id: clientId, total_ht: totalHt, status, date: issueDate },
+      metadata: { quote_id: quote.id, client_id: clientId, total_ht: totalHt, status, date: issueDate, ...(activityId ? { activity_id: activityId } : {}) },
       source: 'import',
       confidence: 1.0,
     })

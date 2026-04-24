@@ -27,7 +27,7 @@ export default function MaSemaineWidget() {
   }
 
   return (
-    <div className="rounded-3xl p-6 bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] relative overflow-hidden">
+    <div className="rounded-3xl p-6 card relative overflow-hidden">
       {/* Glow décoratif */}
       <div className="absolute top-0 right-0 w-48 h-48 -mr-12 -mt-12 pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(181,242,45,0.15) 0%, transparent 65%)' }} />
 

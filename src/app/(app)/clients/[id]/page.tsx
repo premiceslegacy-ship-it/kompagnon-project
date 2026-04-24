@@ -20,7 +20,7 @@ import {
 const formatCurrency = (amount: number) =>
     new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(amount);
 
-const cardClasses = "rounded-3xl bg-surface shadow-kompagnon dark:bg-surface/2 dark:backdrop-blur-glass border border-[var(--elevation-border)] transition-all duration-300 ease-out";
+const cardClasses = "rounded-3xl card transition-all duration-300 ease-out";
 
 export default async function ClientProfilePage({ params }: { params: { id: string } }) {
     const [client, quotes, invoices] = await Promise.all([

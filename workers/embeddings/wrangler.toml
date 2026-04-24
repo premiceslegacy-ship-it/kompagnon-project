@@ -1,0 +1,13 @@
+name = "atelier-embeddings"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+
+# Cron : toutes les heures
+[triggers]
+crons = ["0 * * * *"]
+
+# Variables d'environnement (valeurs à définir dans le Dashboard Cloudflare)
+# Ne pas mettre les vraies valeurs ici — utiliser `wrangler secret put`
+#
+# wrangler secret put APP_URL
+# wrangler secret put CRON_SECRET

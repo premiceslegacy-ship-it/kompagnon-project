@@ -275,9 +275,6 @@ export async function sendInvoice(invoiceId: string): Promise<Result> {
       || 'Client'
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
-  const pdfUrl = `${appUrl}/api/pdf/invoice/${invoiceId}`
-
   let subject: string
   let html: string
 
@@ -312,7 +309,6 @@ export async function sendInvoice(invoiceId: string): Promise<Result> {
       totalTtc: invoice.total_ttc,
       currency: invoice.currency ?? 'EUR',
       dueDate: invoice.due_date ?? null,
-      pdfUrl,
     })
     subject = built.subject
     html = built.html
