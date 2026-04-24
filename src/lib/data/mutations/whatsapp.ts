@@ -4,13 +4,20 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 
+export type AuthorizedContact = {
+  number: string
+  label: string
+}
+
 export type WhatsAppConfig = {
   id: string
-  phone_number_id: string
+  phone_number_id: string | null
   waba_id: string | null
-  access_token: string
+  access_token: string | null
   verify_token: string
   authorized_numbers: string[]
+  authorized_contacts: AuthorizedContact[]
+  use_shared_waba: boolean
   is_active: boolean
 }
 
@@ -21,33 +28,46 @@ export async function getWhatsAppConfig(): Promise<WhatsAppConfig | null> {
 
   const { data } = await supabase
     .from('whatsapp_configs')
-    .select('id, phone_number_id, waba_id, access_token, verify_token, authorized_numbers, is_active')
+    .select('id, phone_number_id, waba_id, access_token, verify_token, authorized_numbers, authorized_contacts, use_shared_waba, is_active')
     .eq('organization_id', orgId)
     .single()
 
-  return data ?? null
+  if (!data) return null
+
+  return {
+    ...data,
+    authorized_contacts: (data.authorized_contacts as AuthorizedContact[] | null) ?? [],
+    use_shared_waba: data.use_shared_waba ?? false,
+  }
 }
 
 export async function saveWhatsAppConfig(data: {
-  phoneNumberId: string
+  phoneNumberId?: string
   wabaId?: string
-  accessToken: string
+  accessToken?: string
   verifyToken: string
   authorizedNumbers: string[]
+  authorizedContacts: AuthorizedContact[]
+  useSharedWaba: boolean
   isActive: boolean
 }): Promise<{ error: string | null }> {
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     organization_id: orgId,
-    phone_number_id: data.phoneNumberId.trim(),
-    waba_id: data.wabaId?.trim() || null,
-    access_token: data.accessToken.trim(),
     verify_token: data.verifyToken.trim(),
     authorized_numbers: data.authorizedNumbers.filter(n => n.trim()),
+    authorized_contacts: data.authorizedContacts.filter(c => c.number.trim()),
+    use_shared_waba: data.useSharedWaba,
     is_active: data.isActive,
+  }
+
+  if (!data.useSharedWaba) {
+    payload.phone_number_id = data.phoneNumberId?.trim() ?? null
+    payload.waba_id = data.wabaId?.trim() || null
+    payload.access_token = data.accessToken?.trim() ?? null
   }
 
   const { error } = await supabase

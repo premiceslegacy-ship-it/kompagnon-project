@@ -19,6 +19,8 @@
  *   RESEND_API_KEY
  *   RESEND_FROM_EMAIL
  *   APP_URL
+ *   SHARED_WABA_PHONE_NUMBER_ID  (WABA mutualisée Atelier — optionnel)
+ *   SHARED_WABA_ACCESS_TOKEN     (WABA mutualisée Atelier — optionnel)
  *   SUPABASE_URL (auto-injecté)
  *   SUPABASE_SERVICE_ROLE_KEY (auto-injecté)
  */
@@ -53,12 +55,18 @@ interface WebhookPayload {
   }>
 }
 
+interface AuthorizedContact {
+  number: string
+  label: string
+}
+
 interface OrgConfig {
   id: string
   name: string
   phone_number_id: string
   access_token: string
   authorized_numbers: string[]
+  authorized_contacts: AuthorizedContact[]
 }
 
 type UsageMetrics = {
@@ -138,6 +146,19 @@ const TOOLS = [
         date: { type: 'string', description: 'Date ISO YYYY-MM-DD, défaut = aujourd\'hui' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'update_chantier_planning',
+    description: "Déplace ou reprogramme un chantier dans le planning. Permet de changer la date de début ou de fin d'un chantier. Exemple : \"déplace le chantier Dupont à jeudi\", \"repousse la rénovation Martin d'une semaine\".",
+    input_schema: {
+      type: 'object',
+      properties: {
+        chantier_search: { type: 'string', description: 'Nom ou mots-clés du chantier à déplacer' },
+        new_start_date: { type: 'string', description: 'Nouvelle date de début ISO YYYY-MM-DD' },
+        new_end_date: { type: 'string', description: 'Nouvelle date de fin ISO YYYY-MM-DD (optionnel, conserve la durée si omis)' },
+      },
+      required: ['chantier_search', 'new_start_date'],
     },
   },
   {
@@ -279,22 +300,80 @@ async function processPayload(supabase: ReturnType<typeof getAdminClient>, paylo
 
       if (!messages.length) continue
 
-      const { data: config } = await supabase
+      const sharedPhoneNumberId = Deno.env.get('SHARED_WABA_PHONE_NUMBER_ID')?.trim()
+      const sharedAccessToken = Deno.env.get('SHARED_WABA_ACCESS_TOKEN')?.trim()
+      const isSharedWaba = sharedPhoneNumberId && phoneNumberId === sharedPhoneNumberId
+
+      let config: Record<string, unknown> | null = null
+
+      if (isSharedWaba) {
+        // Mode mutualisé : on ne connaît pas encore l'org — on résout après avoir lu from_number
+        // Le routing se fait message par message dans handleMessage pour le mode mutualisé
+        for (const msg of messages) {
+          const fromNumber = msg.from
+          const { data: sharedConfig } = await supabase
+            .from('whatsapp_configs')
+            .select('id, is_active, access_token, authorized_numbers, authorized_contacts, use_shared_waba, organizations(id, name)')
+            .eq('use_shared_waba', true)
+            .eq('is_active', true)
+            .contains('authorized_contacts', JSON.stringify([{ number: fromNumber }]))
+            .maybeSingle()
+
+          // Fallback : chercher dans authorized_numbers si authorized_contacts ne matche pas
+          let resolvedConfig = sharedConfig
+          if (!resolvedConfig) {
+            const { data: fallbackConfig } = await supabase
+              .from('whatsapp_configs')
+              .select('id, is_active, access_token, authorized_numbers, authorized_contacts, use_shared_waba, organizations(id, name)')
+              .eq('use_shared_waba', true)
+              .eq('is_active', true)
+              .contains('authorized_numbers', [fromNumber])
+              .maybeSingle()
+            resolvedConfig = fallbackConfig
+          }
+
+          if (!resolvedConfig) continue
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const org = (resolvedConfig as any).organizations
+          const contacts: AuthorizedContact[] = (resolvedConfig.authorized_contacts as AuthorizedContact[] | null) ?? []
+          const orgConfig: OrgConfig = {
+            id: org.id,
+            name: org.name,
+            phone_number_id: sharedPhoneNumberId,
+            access_token: sharedAccessToken!,
+            authorized_numbers: (resolvedConfig.authorized_numbers as string[] | null) ?? [],
+            authorized_contacts: contacts,
+          }
+
+          await handleMessage(supabase, orgConfig, msg).catch(err => {
+            console.error('[whatsapp-agent] handleMessage error:', err)
+          })
+        }
+        continue
+      }
+
+      // Mode classique : routing par phone_number_id
+      const { data: classicConfig } = await supabase
         .from('whatsapp_configs')
-        .select('id, is_active, access_token, authorized_numbers, organizations(id, name)')
+        .select('id, is_active, access_token, authorized_numbers, authorized_contacts, organizations(id, name)')
         .eq('phone_number_id', phoneNumberId)
         .single()
+
+      config = classicConfig as Record<string, unknown> | null
 
       if (!config || !config.is_active) continue
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const org = (config as any).organizations
+      const contacts: AuthorizedContact[] = (config.authorized_contacts as AuthorizedContact[] | null) ?? []
       const orgConfig: OrgConfig = {
         id: org.id,
         name: org.name,
         phone_number_id: phoneNumberId,
-        access_token: config.access_token,
-        authorized_numbers: config.authorized_numbers ?? [],
+        access_token: config.access_token as string,
+        authorized_numbers: (config.authorized_numbers as string[] | null) ?? [],
+        authorized_contacts: contacts,
       }
 
       for (const msg of messages) {
@@ -321,7 +400,13 @@ async function handleMessage(
     return
   }
 
-  if (orgConfig.authorized_numbers.length > 0 && !orgConfig.authorized_numbers.includes(fromNumber)) {
+  // Vérification autorisation : cherche dans authorized_contacts (nouveau) puis authorized_numbers (rétrocompat)
+  const authorizedNums = [
+    ...orgConfig.authorized_contacts.map(c => c.number),
+    ...orgConfig.authorized_numbers,
+  ]
+  const hasRestriction = authorizedNums.length > 0
+  if (hasRestriction && !authorizedNums.includes(fromNumber)) {
     await sendWhatsAppText(orgConfig, fromNumber,
       "Désolé, ce numéro n'est pas autorisé à utiliser l'assistant.")
     return
@@ -921,6 +1006,28 @@ async function executeTool(
         amount_ht: acompte.amount_ht,
         due_date: acompte.due_date,
         quote_number: quote.number,
+      }
+    }
+
+    case 'update_chantier_planning': {
+      const chantier = await findChantierBySearch(supabase, orgId, input.chantier_search)
+      if (!chantier) return { error: `Chantier introuvable pour "${input.chantier_search}"` }
+
+      const updateData: Record<string, unknown> = { start_date: input.new_start_date }
+      if (input.new_end_date) updateData.end_date = input.new_end_date
+
+      const { error } = await supabase
+        .from('chantiers')
+        .update(updateData)
+        .eq('id', chantier.id)
+        .eq('organization_id', orgId)
+
+      if (error) return { error: error.message }
+      return {
+        success: true,
+        chantier: chantier.title,
+        new_start_date: input.new_start_date,
+        ...(input.new_end_date ? { new_end_date: input.new_end_date } : {}),
       }
     }
 
