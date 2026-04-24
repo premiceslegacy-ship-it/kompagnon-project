@@ -30,34 +30,50 @@ export async function getOrganizationModules(orgId?: string | null): Promise<Org
   if (!targetOrgId) return { ...DEFAULT_ORGANIZATION_MODULES }
 
   const supabase = await createClient()
-  const { data, error } = await supabase
-    .from('organization_modules')
-    .select('modules')
-    .eq('organization_id', targetOrgId)
-    .maybeSingle()
 
-  if (error) {
-    console.error('[getOrganizationModules]', error)
+  const [modulesResult, orgResult] = await Promise.all([
+    supabase
+      .from('organization_modules')
+      .select('modules')
+      .eq('organization_id', targetOrgId)
+      .maybeSingle(),
+    supabase
+      .from('organizations')
+      .select('business_profile')
+      .eq('id', targetOrgId)
+      .maybeSingle(),
+  ])
+
+  if (modulesResult.error) {
+    console.error('[getOrganizationModules]', modulesResult.error)
     return { ...DEFAULT_ORGANIZATION_MODULES }
   }
 
-  return normalizeOrganizationModules(data?.modules)
+  return normalizeOrganizationModules(modulesResult.data?.modules, orgResult.data?.business_profile)
 }
 
 export async function getOrganizationModulesAdmin(orgId: string): Promise<OrganizationModules> {
   const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('organization_modules')
-    .select('modules')
-    .eq('organization_id', orgId)
-    .maybeSingle()
 
-  if (error) {
-    console.error('[getOrganizationModulesAdmin]', error)
+  const [modulesResult, orgResult] = await Promise.all([
+    admin
+      .from('organization_modules')
+      .select('modules')
+      .eq('organization_id', orgId)
+      .maybeSingle(),
+    admin
+      .from('organizations')
+      .select('business_profile')
+      .eq('id', orgId)
+      .maybeSingle(),
+  ])
+
+  if (modulesResult.error) {
+    console.error('[getOrganizationModulesAdmin]', modulesResult.error)
     return { ...DEFAULT_ORGANIZATION_MODULES }
   }
 
-  return normalizeOrganizationModules(data?.modules)
+  return normalizeOrganizationModules(modulesResult.data?.modules, orgResult.data?.business_profile)
 }
 
 export async function isModuleEnabled(moduleKey: OrganizationModuleKey, orgId?: string | null): Promise<boolean> {
