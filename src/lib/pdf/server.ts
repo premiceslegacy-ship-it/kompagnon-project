@@ -5,6 +5,8 @@ import QuotePDF from '@/components/pdf/QuotePDF'
 import InvoicePDF from '@/components/pdf/InvoicePDF'
 import ChantierPDF from '@/components/pdf/ChantierPDF'
 import { sanitizeFileName } from '@/lib/organization-exports/csv'
+import { generateFacturXml } from '@/lib/pdf/facturx-xml'
+import { embedFacturXml } from '@/lib/pdf/facturx-embed'
 
 async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null
@@ -115,12 +117,16 @@ export async function renderInvoicePdfBufferById(invoiceId: string, orgId: strin
     client: invoiceClient ?? null,
   }
 
-  const buffer = await renderToBuffer(
+  const pdfBuffer = await renderToBuffer(
     React.createElement(InvoicePDF, {
       invoice: invoiceRecord,
       organization,
     }) as any,
   )
+
+  // Embarquer le XML Factur-X dans le PDF (PDF/A-3 + XMP)
+  const xml = generateFacturXml(invoiceRecord as any, organization)
+  const buffer = await embedFacturXml(pdfBuffer, xml)
 
   const fileName = `${sanitizeFileName(invoiceRecord.number ?? invoiceRecord.title ?? invoiceId, 'facture')}.pdf`
   return { buffer, fileName }
