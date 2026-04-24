@@ -91,20 +91,22 @@ Ces étapes nécessitent une interface web ou une action humaine irremplaçable.
 |---|-------|----|-------|-----------------|
 | T1 | Créer le projet Supabase (région `eu-west-1`) + copier les 3 clés | [supabase.com](https://supabase.com) → New project | 5 min | Pas d'API de création projet |
 | T2 | Créer le compte Resend + ajouter le domaine + poser les records DNS chez le registrar | [resend.com](https://resend.com) → Domains | 15 min | DNS = action humaine chez le registrar |
-| T3 | Créer le projet Cloudflare Workers + connecter le repo GitHub | [dash.cloudflare.com](https://dash.cloudflare.com) → Workers & Pages | 10 min | OAuth GitHub → navigateur obligatoire |
-| T4 | Injecter les variables d'env dans Cloudflare Workers (voir liste §3) | Settings → Variables and Secrets | 5 min | ⚡ Devient automatique si Cloudflare API token fourni |
+| T3 | Lancer `./scripts/deploy-client.sh atelier-nomclient` depuis le terminal | Terminal | 2 min | Crée le Worker automatiquement au premier déploiement — le script patche wrangler.jsonc et restaure ensuite |
+| T4 | Injecter les variables d'env dans Cloudflare Workers (voir tableau §4) | dash.cloudflare.com → Workers & Pages → le projet → Settings → Variables and Secrets | 5 min | ⚡ Devient automatique si Cloudflare API token fourni |
 | T5 | Ajouter le domaine custom + pointer DNS | Cloudflare Workers → Domains & Routes | 3 min | Dépend de la propagation DNS |
 | T6 | *(Si WhatsApp)* Créer l'app Meta, générer le token permanent | [developers.facebook.com](https://developers.facebook.com) | 20 min | Formulaire Meta, pas d'API publique |
 | T7 | Onboarding owner : créer le compte, remplir les infos entreprise | App en production | 10 min | Action du client final |
 
 **À faire une seule fois sur ta machine (déjà fait) :**
 ```bash
-supabase login      # débloque C1, C5, C6
-wrangler login      # débloque C7
+supabase login                        # débloque C1, C5, C6
+wrangler login                        # débloque T3, C7
+npm install -g wrangler               # déjà fait
+npm install -g @opennextjs/cloudflare # déjà fait
 ```
 
 **Pour rendre T4 automatique (optionnel) :**
-Créer un token API Cloudflare avec scope `Workers Scripts:Edit` → me le donner dans le protocole → je peux injecter les variables sans navigateur.
+Créer un token API Cloudflare avec scope `Workers Scripts:Edit` → me le donner dans le protocole → je peux injecter les variables via l'API Cloudflare sans navigateur.
 
 ---
 
@@ -305,20 +307,43 @@ et devront être reprises telles quelles sur la future landing pour garder un wo
 
 ### 4. Cloudflare Workers / OpenNext — configuration repo
 
-Fichiers à versionner dans le repo :
-- `open-next.config.ts`
-- `wrangler.jsonc`
+Fichiers clés dans le repo :
+- `open-next.config.ts` — config OpenNext 1.x (wrapper cloudflare-node, edge externals)
+- `wrangler.jsonc` — config Wrangler (name, main, assets, nodejs_compat)
+- `scripts/patch-worker.mjs` — retire l'import `cloudflare/images.js` du worker généré (requiert le plan Cloudflare payant, inutile pour cette app)
+- `next.config.mjs` — `images: { unoptimized: true }` (désactive l'optimisation Next.js, incompatible avec le plan gratuit)
 
-Scripts npm :
-- `npm run preview` → build OpenNext + preview local via `wrangler dev`
-- `npm run deploy` → build OpenNext + `wrangler deploy`
+#### Prérequis outils (une fois sur ta machine)
+```bash
+npm install -g wrangler
+npm install -g @opennextjs/cloudflare
+wrangler login   # authentifie vers ton compte Cloudflare
+```
 
-Wrangler utilise :
-- `main = ".open-next/worker.js"`
-- `assets.directory = ".open-next/assets"`
-- `compatibility_flags = ["nodejs_compat"]`
+#### Déployer un client
 
-> **Important :** on ne déploie plus l'app avec `next-on-pages`. Toute l'app Next full-stack tourne via OpenNext sur Cloudflare Workers.
+```bash
+# Déployer UN client (premier déploiement ou mise à jour)
+./scripts/deploy-client.sh atelier-weber
+
+# Mettre à jour TOUS les clients en une commande
+./scripts/deploy-all-clients.sh
+```
+
+- `deploy-client.sh` : patche temporairement `wrangler.jsonc` avec le bon `name`, lance `npm run deploy`, puis restaure. Pas besoin de modifier le fichier à la main.
+- `deploy-all-clients.sh` : lit `scripts/clients.txt` (un worker-name par ligne) et déploie chacun séquentiellement. Affiche un résumé succès/échec à la fin.
+- Ajouter chaque nouveau client dans `scripts/clients.txt` pour l'inclure dans les mises à jour futures.
+
+#### Variables d'environnement
+
+À injecter dans Cloudflare Dashboard → Workers & Pages → le projet → Settings → Variables and Secrets :
+
+| Type | Variables |
+|------|-----------|
+| **Secret** | `OPERATOR_INGEST_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `CRON_SECRET` |
+| **Text** | `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_USD_TO_EUR_RATE`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE` et toutes les `NEXT_PUBLIC_LEGAL_*` |
+
+> **Important :** déconnecter le repo GitHub du projet Cloudflare Pages après le premier déploiement manuel — sinon chaque push GitHub déclenche un build automatique qui échoue (next-on-pages n'est plus utilisé).
 
 ### 5. Cloudflare Worker — relances automatiques
 
@@ -496,8 +521,8 @@ Connexion avec le compte Supabase opérateur dont l'email est dans `OPERATOR_ALL
 | Service | Gratuit jusqu'à | Coût payant |
 |---------|----------------|-------------|
 | Supabase | 500MB DB, 1GB storage, 50k MAU | Pro $25/mois |
-| Cloudflare Workers (app Next.js) | 100k req/jour | $5/mois |
-| Cloudflare Worker (cron) | 100k req/jour | $5/mois |
+| Cloudflare Workers (app Next.js) | 100k req/jour **partagées sur tous les Workers** (~400 clients actifs) | $5/mois illimité |
+| Cloudflare Worker (cron) | inclus dans les 100k req/jour | $5/mois illimité |
 | Resend | 3 000 emails/mois | $20/mois |
 | Domaine custom | — | ~€10/an |
 
@@ -652,6 +677,28 @@ Atelier préfinance, refacture avec ~20% de marge :
    - `src/app/api/ai/analyze-quote/` — si ça touche l'analyse de devis
    - `src/app/api/ai/suggest-tasks/` — si ça touche les tâches chantier
    - `src/app/api/cron/auto-reminders/` — si ça touche la relance ou les acomptes
+
+### Mise à jour code — tous les clients
+
+Quand tu pousses un bugfix ou une nouvelle feature sur GitHub, tu veux que tous les Workers clients reçoivent la mise à jour.
+
+```bash
+# Met à jour tous les clients listés dans scripts/clients.txt
+./scripts/deploy-all-clients.sh
+```
+
+Le registre `scripts/clients.txt` contient un worker-name par ligne. Exemple :
+```
+orsayn-cockpit
+atelier-weber
+atelier-dupont
+```
+
+Ordre recommandé pour une release avec migration SQL :
+1. Appliquer la migration sur chaque Supabase client (`supabase link --project-ref <ref> && supabase db push`)
+2. Lancer `./scripts/deploy-all-clients.sh` pour déployer le code
+
+> **Note :** les déploiements sont séquentiels (pas en parallèle). Pour ~10 clients, compter 3-4 min au total (build unique partagé entre tous les déploiements).
 
 ### Mise à jour Edge Function
 
