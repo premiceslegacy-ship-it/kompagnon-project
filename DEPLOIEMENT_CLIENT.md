@@ -36,16 +36,18 @@ GitHub (1 seul repo)
     └── Atelier-Demo     → compile le code + injecte vars Demo     → app démo
 ```
 
-**Ce que font les variables d'env :** au moment du build, Cloudflare injecte les variables propres à chaque projet. Le code lit `process.env.NEXT_PUBLIC_SUPABASE_URL` — il ne sait pas "chez qui" il tourne. Il pointe juste vers le bon Supabase.
+**Ce que font les variables d'env :** Cloudflare injecte les variables propres à chaque Worker au runtime. Le code serveur et le navigateur lisent `SUPABASE_URL` et `SUPABASE_ANON_KEY` depuis la config runtime injectée par le layout. Un même bundle peut donc servir plusieurs clients sans rebuild spécifique.
 
 ```
 Cloudflare Workers — Atelier-Weber
-  NEXT_PUBLIC_SUPABASE_URL    = https://weber-ref.supabase.co    ← données Weber
+  SUPABASE_URL               = https://weber-ref.supabase.co    ← données Weber
+  SUPABASE_ANON_KEY          = anon_weber
   SUPABASE_SERVICE_ROLE_KEY   = clé_weber
   RESEND_FROM_ADDRESS         = contact@weber-tolerie.fr          ← emails au nom de Weber
 
 Cloudflare Workers — Atelier-Dupont
-  NEXT_PUBLIC_SUPABASE_URL    = https://dupont-ref.supabase.co   ← données Dupont
+  SUPABASE_URL               = https://dupont-ref.supabase.co   ← données Dupont
+  SUPABASE_ANON_KEY          = anon_dupont
   SUPABASE_SERVICE_ROLE_KEY   = clé_dupont
   RESEND_FROM_ADDRESS         = contact@dupont-btp.fr
 ```
@@ -56,7 +58,7 @@ Cloudflare Workers — Atelier-Dupont
 
 **Ce que tu ne fais jamais :** modifier le code "pour un seul client". La personnalisation par client se fait via des flags en base de données (`organizations` table), jamais dans le code.
 
-**Ton `.env.local` (sur ta machine)** n'est jamais pushé sur GitHub (bloqué par `.gitignore`). Il pointe vers ton Supabase de dev/démo. C'est ton environnement de test personnel, indépendant de tous les clients.
+**Ton `.env.local` (sur ta machine)** n'est jamais pushé sur GitHub (bloqué par `.gitignore`). Il reste utile pour le dev local, mais il n'a plus besoin d'être modifié pour déployer un client ou le cockpit.
 
 ---
 
@@ -273,8 +275,8 @@ CREATE POLICY "chantier_photos_delete" ON storage.objects
 ### 3. Variables d'environnement (Cloudflare Workers)
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+SUPABASE_URL=https://<ref>.supabase.co
+SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 NEXT_PUBLIC_APP_URL=https://domaine-du-client.fr
 RESEND_API_KEY=re_...
@@ -340,8 +342,8 @@ wrangler login   # authentifie vers ton compte Cloudflare
 
 | Type | Variables |
 |------|-----------|
-| **Secret** | `OPERATOR_INGEST_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `CRON_SECRET` |
-| **Text** | `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_USD_TO_EUR_RATE`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE` et toutes les `NEXT_PUBLIC_LEGAL_*` |
+| **Secret** | `OPERATOR_INGEST_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `CRON_SECRET` |
+| **Text** | `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_USD_TO_EUR_RATE`, `SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE` et toutes les `NEXT_PUBLIC_LEGAL_*` |
 
 > **Important :** déconnecter le repo GitHub du projet Cloudflare Pages après le premier déploiement manuel — sinon chaque push GitHub déclenche un build automatique qui échoue (next-on-pages n'est plus utilisé).
 
@@ -463,9 +465,9 @@ OPERATOR_SUPABASE_URL=https://<operateur-ref>.supabase.co
 OPERATOR_SUPABASE_SERVICE_ROLE_KEY=eyJ...    ← service role du Supabase opérateur
 OPERATOR_USD_TO_EUR_RATE=0.92                ← taux fixe V1 pour marge et synthèse globale
 
-# Variables Supabase standard (pour l'auth de la page /orsayn — peut pointer vers n'importe quelle instance)
-NEXT_PUBLIC_SUPABASE_URL=https://<operateur-ref>.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+# Variables Supabase standard (pour l'auth de la page /orsayn)
+SUPABASE_URL=https://<operateur-ref>.supabase.co
+SUPABASE_ANON_KEY=eyJ...
 NEXT_PUBLIC_APP_URL=https://cockpit.orsayn.fr
 ```
 
@@ -653,8 +655,8 @@ Atelier préfinance, refacture avec ~20% de marge :
 
 | Variable | Source | Partagée ? |
 |----------|--------|-----------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Settings → API | Non |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase → Settings → API | Non |
+| `SUPABASE_URL` | Supabase → Settings → API | Non |
+| `SUPABASE_ANON_KEY` | Supabase → Settings → API | Non |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API | Non |
 | `NEXT_PUBLIC_APP_URL` | URL production client | Non |
 | `RESEND_API_KEY` | Compte Resend client | Non |

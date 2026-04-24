@@ -58,6 +58,7 @@ type Props = {
     joinCode: string | null;
     organization: Organization | null;
     appUrl: string;
+    supabaseUrl: string;
     catalogMaterials: CatalogMaterial[];
     catalogPrestationTypes: PrestationType[];
     whatsappConfig: WhatsAppConfig | null;
@@ -67,8 +68,11 @@ type Props = {
     modules: OrganizationModules;
 };
 
-export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, catalogMaterials, catalogPrestationTypes, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, modules }: Props) {
+export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, catalogMaterials, catalogPrestationTypes, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, modules }: Props) {
     const router = useRouter()
+    const webhookUrl = supabaseUrl
+        ? `${supabaseUrl}/functions/v1/whatsapp-webhook`
+        : 'https://[ref].supabase.co/functions/v1/whatsapp-webhook'
     const [activeTab, setActiveTab] = useState('profil');
     const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
     const [inviteEmail, setInviteEmail] = useState('');
@@ -1785,12 +1789,9 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             </p>
                             <div className="flex items-center gap-2 mt-1">
                                 <p className="text-xs text-secondary font-mono break-all flex-1">
-                                    {(process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://[ref].supabase.co').replace('.supabase.co', '')
-                                        .split('//')[1]
-                                        ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/whatsapp-webhook`
-                                        : 'https://[ref].supabase.co/functions/v1/whatsapp-webhook'}
+                                    {webhookUrl}
                                 </p>
-                                <CopyButton text={`${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''}/functions/v1/whatsapp-webhook`} />
+                                <CopyButton text={webhookUrl} />
                             </div>
                         </div>
 

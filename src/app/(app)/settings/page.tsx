@@ -9,6 +9,7 @@ import { getWhatsAppConfig } from '@/lib/data/mutations/whatsapp'
 import { getCurrentMembershipContext } from '@/lib/data/queries/membership'
 import { getOrganizationExports } from '@/lib/data/queries/organization-exports'
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules'
+import { getPublicRuntimeConfig } from '@/lib/supabase/config'
 import SettingsClient from './SettingsClient'
 
 function getAppUrl(): string {
@@ -33,6 +34,7 @@ export default async function SettingsPage() {
   ])
 
   const catalogContext = resolveCatalogContext(organization)
+  const { supabaseUrl } = getPublicRuntimeConfig()
 
   return (
     <SettingsClient
@@ -43,6 +45,7 @@ export default async function SettingsPage() {
       joinCode={joinCode}
       organization={organization}
       appUrl={getAppUrl()}
+      supabaseUrl={supabaseUrl}
       catalogMaterials={catalogMaterials}
       catalogPrestationTypes={catalogPrestationTypes}
       whatsappConfig={whatsappConfig}

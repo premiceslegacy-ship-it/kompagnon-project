@@ -124,8 +124,8 @@ Copier `.env.local.example` → `.env.local` et remplir :
 
 ```bash
 # Supabase (nouveau project client)
-NEXT_PUBLIC_SUPABASE_URL=https://[project-ref].supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=[anon-key]
+SUPABASE_URL=https://[project-ref].supabase.co
+SUPABASE_ANON_KEY=[anon-key]
 SUPABASE_SERVICE_ROLE_KEY=[service-role-key]
 
 # IA — choisir selon le modèle retenu

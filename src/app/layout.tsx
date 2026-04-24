@@ -1,7 +1,9 @@
 import type { Metadata } from 'next';
+import { unstable_noStore as noStore } from 'next/cache';
 import './globals.css';
 import { ThemeProvider } from '@/components/theme-provider';
 import { APP_NAME, BRAND_ASSETS } from '@/lib/brand';
+import { getPublicRuntimeConfig, serializeRuntimeConfig } from '@/lib/supabase/config';
 
 import { Plus_Jakarta_Sans, Inter } from 'next/font/google';
 
@@ -30,9 +32,18 @@ export default function RootLayout({
 }: {
     children: React.ReactNode;
 }) {
+    noStore();
+
+    const runtimeConfig = getPublicRuntimeConfig();
+    const runtimeConfigScript = `window.__APP_RUNTIME_CONFIG__ = ${serializeRuntimeConfig(runtimeConfig)};`;
+
     return (
         <html lang="fr" suppressHydrationWarning>
             <body className={`${displayFont.variable} ${bodyFont.variable} font-body bg-base min-h-screen transition-colors duration-300 ease-out`}>
+                <script
+                    id="app-runtime-config"
+                    dangerouslySetInnerHTML={{ __html: runtimeConfigScript }}
+                />
                 <ThemeProvider
                     attribute="class"
                     defaultTheme="system"

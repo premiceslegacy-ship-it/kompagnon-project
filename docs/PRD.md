@@ -558,7 +558,7 @@ Page /invoices/recurring → liste de tous les modèles récurrents actifs + sta
 | Anthropic API (claude-sonnet-4-6) | IA devis, extraction fichiers (PDF/Excel/Word/image), mémoire | ANTHROPIC_API_KEY |
 | OpenAI Whisper | Transcription vocale → texte | OPENAI_API_KEY |
 | Resend + React Email | Tous les emails | RESEND_API_KEY |
-| Supabase (Postgres + Storage) | BDD + fichiers | NEXT_PUBLIC_SUPABASE_URL etc. |
+| Supabase (Postgres + Storage) | BDD + fichiers | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` |
 | API Sirene INSEE | Auto-complétion SIRET | SIRENE_API_KEY |
 | Vercel Cron | Relances auto + notifications factures récurrentes | — |
 | Sentry | Monitoring erreurs | SENTRY_DSN |
