@@ -578,7 +578,13 @@ La migration est simple : changer `OPENROUTER_API_KEY` dans les variables Cloudf
 
 > WhatsApp agent migré de Sonnet 4.6 → Gemini 2.5 Flash (7× moins cher, ~€0,003/message). Sans WhatsApp, le coût IA est inférieur à €0,20/mois. Levier restant si les marges se compriment : passer les relances auto de Haiku 4.5 → Gemini Flash Lite (divisé encore par 3).
 
-### Marges — sans facturation électronique
+### Marges selon le tier facturation électronique
+
+Trois situations possibles — le tier est piloté par le flag `facturation_b2brouter` dans `organization_modules`.
+
+#### Tier 1 — Sans facturation électronique (ou export only inclus dans l'abonnement)
+
+Export only ne coûte rien de plus : c'est du code qui génère un XML. Tu peux l'inclure dans tous les abonnements dès maintenant sans impact sur tes marges, et en faire un argument commercial ("conforme sept. 2026 dès aujourd'hui").
 
 | Profil | Coût infra+IA | Prix vente | Marge |
 |--------|--------------|------------|-------|
@@ -587,17 +593,27 @@ La migration est simple : changer `OPENROUTER_API_KEY` dans les variables Cloudf
 | Actif + agents | ~€15 | €149 | **90%** |
 | Gros client | ~€53 | €199 | **73%** |
 
-### Marges — avec facturation électronique B2Brouter M1 (franchise TVA)
+#### Tier 2 — Export only explicite (si tu veux en faire un palier tarifaire distinct)
 
-| Profil | Coût réel TTC | Prix vente | Marge |
-|--------|--------------|------------|-------|
+Même coût que Tier 1 — zéro surcoût B2Brouter. Marge identique. Utile si tu veux afficher un prix légèrement supérieur pour "pack conformité 2026" sans rien débourser de plus.
+
+#### Tier 3 — B2Brouter intégré (`facturation_b2brouter: true`)
+
+B2Brouter te coûte €29/mois/client (M1) + €150 d'activation one-shot. C'est là que le prix vente doit monter.
+
+| Profil | Coût infra+IA+B2Brouter | Prix vente | Marge |
+|--------|------------------------|------------|-------|
 | Démarrage | ~€36 | €79 min ⚠️ | **54%** |
 | Standard | ~€43 | €99 | **57%** |
 | Actif + agents | ~€50 | €149 | **66%** |
 | Gros client | ~€124 | €199 | **38%** |
 
-> ⚠️ Démarrage avec fact. élec. : repositionner à **€79/mois min** dès activation.
+> ⚠️ Démarrage avec B2Brouter : repositionner à **€79/mois min** dès activation.
 > Dès passage TVA : coûts passent en HT → marges s'améliorent d'environ +10% sans toucher les prix.
+
+**Résumé de la logique tarifaire :**
+- Export only → inclure dans l'abonnement de base, argument commercial gratuit
+- B2Brouter → facturer le surcoût (~€30-40/mois de plus selon profil) + €190 d'activation one-shot
 
 ### B2Brouter — grille tarifaire (HT)
 
