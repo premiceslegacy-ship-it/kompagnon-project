@@ -135,6 +135,7 @@ export default function RecurringClient({
     new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
   )
   const [formConfirmDelay, setFormConfirmDelay] = useState(3)
+  const [formAutoSendDelay, setFormAutoSendDelay] = useState<number | null>(null)
   const [formItems, setFormItems] = useState<FormItem[]>([
     { id: 1, desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, is_internal: false },
   ])
@@ -165,6 +166,7 @@ export default function RecurringClient({
     setFormCustomDays(30)
     setFormFirstDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
     setFormConfirmDelay(3)
+    setFormAutoSendDelay(null)
     setFormItems([{ id: 1, desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, is_internal: false }])
     setFormError(null)
   }
@@ -268,6 +270,7 @@ export default function RecurringClient({
         firstSendDate: formFirstDate,
         requiresConfirmation: true,
         confirmationDelayDays: formConfirmDelay,
+        autoSendDelayDays: formAutoSendDelay,
         items: formItems
           .filter(i => i.desc.trim())
           .map((i, idx) => ({
@@ -749,6 +752,28 @@ export default function RecurringClient({
                   <label className="text-sm font-semibold text-secondary">Préparer le brouillon (jours avant)</label>
                   <input type="number" min={0} max={14} value={formConfirmDelay} onChange={e => setFormConfirmDelay(Number(e.target.value))} className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50" />
                   <p className="text-xs text-secondary">Le brouillon apparaît {formConfirmDelay}j avant l'envoi pour vérification.</p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-secondary">Envoi automatique si non validé</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={formAutoSendDelay === null ? '' : String(formAutoSendDelay)}
+                      onChange={e => setFormAutoSendDelay(e.target.value === '' ? null : Number(e.target.value))}
+                      className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50"
+                    >
+                      <option value="">Désactivé — validation manuelle requise</option>
+                      <option value="1">1 jour après création du brouillon</option>
+                      <option value="2">2 jours après création du brouillon</option>
+                      <option value="3">3 jours après création du brouillon</option>
+                      <option value="5">5 jours après création du brouillon</option>
+                      <option value="7">7 jours après création du brouillon</option>
+                    </select>
+                  </div>
+                  <p className="text-xs text-secondary">
+                    {formAutoSendDelay === null
+                      ? 'La facture attend votre validation manuelle avant d\'être envoyée.'
+                      : `Si le brouillon n'est pas validé après ${formAutoSendDelay}j, la facture est envoyée automatiquement avec PDF.`}
+                  </p>
                 </div>
               </div>
 

@@ -16,7 +16,7 @@ export async function getRecurringInvoices(): Promise<RecurringInvoice[]> {
     .from('recurring_invoices')
     .select(`
       id, title, internal_note, frequency, send_day, custom_interval_days,
-      next_send_date, requires_confirmation, confirmation_delay_days,
+      next_send_date, requires_confirmation, confirmation_delay_days, auto_send_delay_days,
       base_amount_ht, currency, is_active, paused_until, created_at, client_id,
       client:clients(id, company_name, contact_name, first_name, last_name, email),
       items:recurring_invoice_items(id, description, quantity, unit, unit_price, vat_rate, position)

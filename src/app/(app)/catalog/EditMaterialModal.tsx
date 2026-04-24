@@ -245,6 +245,7 @@ export function EditMaterialModal({ material, categories, catalogContext, onClos
                 onChange={setUnit}
                 allowedUnits={material.item_kind === 'service' ? catalogContext.unitSetsByKind.service : catalogContext.unitSetsByKind.material}
                 className="w-full px-4 py-3 rounded-xl"
+                disabled={dimMode !== 'none'}
               />
             </div>
 
@@ -316,6 +317,9 @@ export function EditMaterialModal({ material, categories, catalogContext, onClos
                     onClick={() => {
                       setDimMode(value)
                       if (value === 'none') setShowAdvancedDimensions(false)
+                      if (value === 'linear') setUnit('ml')
+                      else if (value === 'area') setUnit('m²')
+                      else if (value === 'volume') setUnit('m³')
                     }}
                     className={`rounded-xl border px-3 py-3 text-left transition-all ${dimMode === value ? 'bg-accent text-black border-accent shadow-sm' : 'bg-base border-[var(--elevation-border)] hover:border-accent hover:bg-black/5 dark:hover:bg-white/8'}`}>
                     <span className={`block ${dimMode === value ? 'text-black' : 'text-primary'}`}>{label}</span>

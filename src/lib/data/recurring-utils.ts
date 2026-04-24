@@ -22,6 +22,7 @@ export type RecurringInvoice = {
   next_send_date: string
   requires_confirmation: boolean
   confirmation_delay_days: number
+  auto_send_delay_days: number | null
   base_amount_ht: number | null
   currency: string
   is_active: boolean

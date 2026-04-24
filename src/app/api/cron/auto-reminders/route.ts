@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   for (const org of orgs as Org[]) {
     if (!org.email_from_address) continue
     const invoiceDays = org.invoice_reminder_days ?? [2, 7]
-    const quoteDays = org.quote_reminder_days ?? [3, 10]
+    const quoteDays = org.quote_reminder_days ?? [3, 7, 10]
 
     try {
       const items = await collectItems(supabase, org.id, todayStr, invoiceDays, quoteDays, cooldownCutoff)

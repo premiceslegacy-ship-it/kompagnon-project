@@ -108,6 +108,15 @@ npm install -g wrangler               # déjà fait
 npm install -g @opennextjs/cloudflare # déjà fait
 ```
 
+**Clés WABA mutualisées — à faire une seule fois avant le premier client WhatsApp :**
+Une fois Meta approuvé, ajouter dans `.env.local` :
+```
+SHARED_WABA_PHONE_NUMBER_ID=<Phone Number ID du numéro bot Atelier>
+SHARED_WABA_ACCESS_TOKEN=<Token permanent Meta>
+NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33...
+```
+→ `deploy-edge-functions.sh` les lit automatiquement pour tous les clients présents et futurs. Pas besoin d'y toucher à nouveau.
+
 **Pour rendre T4 automatique (optionnel) :**
 1. dash.cloudflare.com → My Profile → API Tokens → Create Token → Custom Token
 2. Scope : `Workers Scripts:Edit` (niveau Account)
@@ -208,6 +217,7 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 057_embedding_qwen3.sql                    ← Migration colonne embedding company_memory : 1536 → 4096 dims (Qwen3-Embedding-8B)
 058_rag_function.sql                       ← Fonction SQL match_company_memory pour la recherche vectorielle RAG
 059_whatsapp_shared_waba.sql               ← WABA mutualisée : phone_number_id/access_token optionnels + use_shared_waba + authorized_contacts JSONB[]
+060_recurring_auto_send.sql                ← Auto-envoi factures récurrentes : colonne auto_send_delay_days sur recurring_invoices
 ```
 
 Note historique :
@@ -238,6 +248,7 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `057_embedding_qwen3.sql`
 - `058_rag_function.sql`
 - `059_whatsapp_shared_waba.sql`
+- `060_recurring_auto_send.sql`
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`
@@ -259,6 +270,7 @@ Effets de ces migrations :
 - `056` : ajout de `balance_due_date` sur `invoices` (échéance solde restant après acompte)
 - `057` : migration colonne `embedding` de `company_memory` de 1536 → 4096 dims pour Qwen3-Embedding-8B (vide les embeddings existants — à re-générer via le cron)
 - `058` : création de la fonction SQL `match_company_memory` pour la recherche vectorielle RAG
+- `060` : ajout de `auto_send_delay_days` sur `recurring_invoices` — nombre de jours après création du brouillon avant envoi automatique au client avec PDF (NULL = désactivé, validation manuelle requise)
 - `059` :
   - `phone_number_id` et `access_token` rendus optionnels sur `whatsapp_configs`
   - ajout de `use_shared_waba BOOLEAN DEFAULT false`
@@ -379,7 +391,7 @@ wrangler login   # authentifie vers ton compte Cloudflare
 
 > **Important :** déconnecter le repo GitHub du projet Cloudflare Pages après le premier déploiement manuel — sinon chaque push GitHub déclenche un build automatique qui échoue (next-on-pages n'est plus utilisé).
 
-### 5. Cloudflare Worker — relances automatiques
+### 5. Cloudflare Worker — crons automatiques
 
 Script de déploiement (lancé par Claude via terminal) :
 ```bash
@@ -391,7 +403,56 @@ wrangler deploy
 
 Cron : `0 7 * * *` (8h Paris hiver, 9h été) — défini dans `wrangler.toml`.
 
+Le Worker déclenche **séquentiellement deux routes** à chaque exécution :
+
+| Route | Rôle |
+|---|---|
+| `POST /api/cron/auto-reminders` | Relances devis/factures en retard — génère les emails via IA (Claude Haiku) |
+| `POST /api/cron/recurring-invoices` | **Passe 1** : crée les brouillons récurrents dont `next_send_date` est atteinte + notifie l'artisan. **Passe 2** : envoie automatiquement avec PDF les brouillons non validés dont le délai `auto_send_delay_days` est expiré |
+
 > **Prérequis critique :** `OPENROUTER_API_KEY` doit être injectée dans les variables Cloudflare Workers de l'app (voir §3). Le Worker appelle `/api/cron/auto-reminders` sur l'app, qui génère chaque email via l'IA. Si cette clé est absente ou invalide, **aucune relance ne part** (échec silencieux côté cron). C'est la clé Atelier partagée — elle est déjà dans ton `.env.local`.
+
+**Mise à jour code** (quand le Worker relances évolue) :
+
+> ⚠️ `deploy-all-clients.sh` **ne couvre pas** ce Worker — il déploie uniquement l'app Next.js principale. Le Worker relances doit être redéployé séparément si son code change.
+
+```bash
+# Redéployer le Worker relances pour un client
+cd workers/auto-reminder
+# Les secrets APP_URL et CRON_SECRET sont déjà injectés — pas besoin de les re-saisir
+wrangler deploy --name auto-reminder-<nomclient>
+
+# Pour tous les clients (adapter la liste)
+for name in weber dupont; do
+  cd workers/auto-reminder
+  wrangler deploy --name auto-reminder-$name
+done
+```
+
+### 5.b Cron — génération des embeddings Qwen (mémoire entreprise)
+
+`POST /api/cron/embeddings` est un endpoint Next.js (pas un Cloudflare Cron Trigger). Il vectorise les lignes `company_memory` dont `embedding IS NULL`. Il doit être appelé par un planificateur externe.
+
+**Planification recommandée — cron-job.org (gratuit) :**
+
+1. Aller sur [cron-job.org](https://cron-job.org) → créer un job par client
+2. URL : `https://<domaine-du-client.fr>/api/cron/embeddings`
+3. Méthode : `POST`
+4. Header : `x-cron-secret: <CRON_SECRET du client>`
+5. Fréquence : toutes les heures (ou toutes les 15 min si la mémoire est alimentée souvent)
+
+**Quand déclencher manuellement :**
+- Après la migration `057_embedding_qwen3.sql` (vide les embeddings existants — à re-générer)
+- Après avoir peuplé `company_memory` (étape C8) pour que le RAG soit opérationnel immédiatement
+
+```bash
+# Déclencher manuellement via curl
+curl -X POST https://<domaine-du-client.fr>/api/cron/embeddings \
+  -H "x-cron-secret: <CRON_SECRET>"
+# Réponse attendue : { "processed": N, "updated": N, "errors": 0 }
+```
+
+> **Note :** sans ce cron planifié, le RAG (mémoire entreprise injectée dans les prompts IA) ne fonctionne pas — les embeddings restent `NULL` et `match_company_memory` renvoie 0 résultats.
 
 ### 6. Edge Function WhatsApp
 
@@ -759,6 +820,8 @@ Ordre recommandé pour une release avec migration SQL :
 
 > **Note :** les déploiements sont séquentiels (pas en parallèle). Pour ~10 clients, compter 3-4 min au total (build unique partagé entre tous les déploiements).
 
+> **Périmètre de `deploy-all-clients.sh` :** couvre uniquement l'app Next.js principale. Le Worker relances (`workers/auto-reminder`) et les Edge Functions Supabase doivent être redéployés séparément si leur code a changé (voir §5 et §6).
+
 ### Mise à jour Edge Function
 
 ```bash
@@ -779,4 +842,4 @@ Créer un cron-job.org gratuit → ping `https://<ref>.supabase.co/rest/v1/` tou
 
 | Client | Project Ref | Domaine | Déployé le | Migrations | WhatsApp | Fact. élec. |
 |--------|-------------|---------|------------|------------|---------|------------|
-| Weber Tôlerie (**démo**) | `pyxnmohknxmbpbcuvudg` | localhost | 2024 | 001→055 | ❌ | ❌ |
+| Weber Tôlerie (**démo**) | `pyxnmohknxmbpbcuvudg` | localhost | 2024 | 001→060 | ❌ | ❌ |
