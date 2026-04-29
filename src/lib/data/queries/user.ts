@@ -1,4 +1,6 @@
+import { cache } from 'react'
 import { createClient } from '@/lib/supabase/server'
+import { getCachedUser } from './session-cache'
 
 export type UserProfile = {
   id: string
@@ -8,20 +10,11 @@ export type UserProfile = {
   onboarding_done: boolean
 }
 
-/**
- * Récupère le profil de l'utilisateur connecté.
- * Combine auth.users (email) et la table profiles (full_name, avatar_url, onboarding_done).
- * À appeler uniquement dans les Server Components, Server Actions ou Route Handlers.
- */
-export async function getCurrentUserProfile(): Promise<UserProfile | null> {
-  const supabase = await createClient()
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
+export const getCurrentUserProfile = cache(async (): Promise<UserProfile | null> => {
+  const user = await getCachedUser()
   if (!user) return null
 
+  const supabase = await createClient()
   const { data } = await supabase
     .from('profiles')
     .select('id, full_name, avatar_url, onboarding_done')
@@ -41,4 +34,4 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
     avatar_url: profile?.avatar_url ?? null,
     onboarding_done: profile?.onboarding_done ?? false,
   }
-}
+})

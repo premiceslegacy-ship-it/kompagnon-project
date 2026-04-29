@@ -138,7 +138,7 @@ export default function OnboardingClient({ firstName, roles, joinCode }: Props) 
   )
 
   return (
-    <div className="fixed inset-0 flex flex-col items-center justify-center bg-[#050505] text-white overflow-hidden font-body p-6">
+    <div className="fixed inset-0 flex flex-col items-center justify-start sm:justify-center bg-[#050505] text-white overflow-y-auto font-body p-4 sm:p-6 pt-8 sm:pt-6">
       {/* Glows */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[700px] h-[400px] bg-accent/[0.08] rounded-full blur-[160px] pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-accent/[0.04] rounded-full blur-[120px] pointer-events-none" />
@@ -178,7 +178,7 @@ export default function OnboardingClient({ firstName, roles, joinCode }: Props) 
 
       {/* Card */}
       <div className="relative z-10 w-full max-w-lg">
-        <div className="bg-white/[0.04] backdrop-blur-[40px] border border-white/[0.08] rounded-3xl p-8 lg:p-10">
+        <div className="bg-white/[0.04] backdrop-blur-[40px] border border-white/[0.08] rounded-2xl sm:rounded-3xl p-5 sm:p-8 lg:p-10">
 
           {/* Erreur URL */}
           {errorMsg && step !== 0 && (

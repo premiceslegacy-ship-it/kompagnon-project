@@ -21,13 +21,13 @@ import {
     User,
     LogOut,
     Inbox,
+    Menu,
+    X,
 } from 'lucide-react';
 import type { UserProfile } from '@/lib/data/queries/user';
 import { AI_NAME } from '@/lib/brand';
 import type { OrganizationModules } from '@/lib/organization-modules';
 
-// Exact copy of ThemeToggle from the backup prototype
-// Note: backup has NO mounted check — keep it to avoid hydration issues in SSR
 const ThemeToggle = () => {
     const { theme, setTheme } = useTheme();
     const [mounted, setMounted] = useState(false);
@@ -114,14 +114,12 @@ const UserMenu = ({ profile }: { profile: UserProfile | null }) => {
                     style={{ top: coords.top + 8, left: coords.left }}
                     onClick={(e) => e.stopPropagation()}
                 >
-                    {/* Identité utilisateur */}
                     <div className="px-4 py-3 border-b border-[var(--elevation-border)]">
                         <p className="text-sm font-bold text-primary truncate">{displayName}</p>
                         {profile?.email && (
                             <p className="text-xs text-secondary truncate mt-0.5">{profile.email}</p>
                         )}
                     </div>
-
                     <div className="pt-1">
                         <button
                             onClick={() => { setIsOpen(false); router.push('/settings'); }}
@@ -146,7 +144,7 @@ const UserMenu = ({ profile }: { profile: UserProfile | null }) => {
     );
 };
 
-type NotificationsData = { overdueInvoices: number; expiringQuotes: number; newRequests?: number }
+type NotificationsData = { overdueInvoices: number; expiringQuotes: number; newRequests?: number; chantiersAtRisk?: number }
 
 const NotificationBell = ({ notifications }: { notifications: NotificationsData }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -157,7 +155,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
 
     useEffect(() => { setMounted(true); }, []);
 
-    const total = notifications.overdueInvoices + notifications.expiringQuotes;
+    const total = notifications.overdueInvoices + notifications.expiringQuotes + (notifications.chantiersAtRisk ?? 0);
 
     const toggleMenu = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -214,7 +212,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                                     <span className="w-2 h-2 rounded-full bg-red-500 mt-1.5 flex-shrink-0" />
                                     <div>
                                         <p className="text-sm font-semibold text-primary">{notifications.overdueInvoices} facture{notifications.overdueInvoices > 1 ? 's' : ''} en retard</p>
-                                        <p className="text-xs text-secondary mt-0.5">Échéance dépassée, paiement en attente</p>
+                                        <p className="text-xs text-secondary mt-0.5">Echéance dépassée, paiement en attente</p>
                                     </div>
                                 </button>
                             )}
@@ -230,6 +228,18 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                                     </div>
                                 </button>
                             )}
+                            {(notifications.chantiersAtRisk ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/chantiers'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <span className="w-2 h-2 rounded-full bg-orange-500 mt-1.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.chantiersAtRisk} chantier{(notifications.chantiersAtRisk ?? 0) > 1 ? 's' : ''} en alerte budget</p>
+                                        <p className="text-xs text-secondary mt-0.5">Coûts dépassent 90% du budget prévu</p>
+                                    </div>
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>,
@@ -239,73 +249,288 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
     );
 };
 
+type NavItem = {
+    href: string;
+    label: string;
+    icon: React.ReactNode;
+    active: boolean;
+    badge?: number;
+    subLinks?: { href: string; label: string; icon: React.ReactNode; active: boolean }[];
+}
+
+const MobileDrawer = ({
+    isOpen,
+    onClose,
+    navItems,
+    profile,
+    notifications,
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    navItems: NavItem[];
+    profile: UserProfile | null;
+    notifications: NotificationsData;
+}) => {
+    const router = useRouter();
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => { setMounted(true); }, []);
+
+    // Fermer avec Escape
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        if (isOpen) document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [isOpen, onClose]);
+
+    // Bloquer le scroll body quand ouvert
+    useEffect(() => {
+        if (isOpen) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+        return () => { document.body.style.overflow = ''; };
+    }, [isOpen]);
+
+    if (!mounted || typeof document === 'undefined') return null;
+
+    const displayName = profile?.full_name || 'Utilisateur';
+    const initials = displayName.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase();
+    const total = notifications.overdueInvoices + notifications.expiringQuotes + (notifications.chantiersAtRisk ?? 0);
+
+    return createPortal(
+        <>
+            {/* Backdrop */}
+            <div
+                className={`fixed inset-0 z-[9990] bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                onClick={onClose}
+            />
+            {/* Drawer */}
+            <div
+                className={`fixed top-0 left-0 h-full w-[280px] z-[9991] flex flex-col transition-transform duration-300 ease-out bg-surface dark:bg-[#141414] ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
+            >
+                {/* Header drawer */}
+                <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--elevation-border)]">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0">
+                            {profile?.avatar_url ? (
+                                <img className="w-full h-full object-cover rounded-full" alt={displayName} src={profile.avatar_url} />
+                            ) : (
+                                <span className="text-xs font-bold text-accent">{initials}</span>
+                            )}
+                        </div>
+                        <div className="min-w-0">
+                            <p className="text-sm font-bold text-primary truncate">{displayName}</p>
+                            {profile?.email && (
+                                <p className="text-xs text-secondary truncate">{profile.email}</p>
+                            )}
+                        </div>
+                    </div>
+                    <button
+                        onClick={onClose}
+                        className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-base transition-colors flex-shrink-0"
+                    >
+                        <X className="w-5 h-5 text-secondary" />
+                    </button>
+                </div>
+
+                {/* Nav links */}
+                <nav className="flex-1 overflow-y-auto py-3">
+                    {navItems.map((item) => (
+                        <div key={item.href}>
+                            <Link
+                                href={item.href}
+                                onClick={onClose}
+                                className={`flex items-center gap-3 px-5 py-3.5 text-sm font-semibold transition-colors relative ${item.active ? 'text-primary bg-accent/8' : 'text-secondary hover:text-primary hover:bg-base'}`}
+                            >
+                                {item.active && (
+                                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-full bg-accent" />
+                                )}
+                                <span className={item.active ? 'text-accent' : ''}>{item.icon}</span>
+                                {item.label}
+                                {(item.badge ?? 0) > 0 && (
+                                    <span className="ml-auto min-w-[20px] h-5 rounded-full bg-red-500 text-white text-[10px] font-extrabold flex items-center justify-center px-1.5">
+                                        {(item.badge ?? 0) > 9 ? '9+' : item.badge}
+                                    </span>
+                                )}
+                            </Link>
+                            {item.subLinks?.map((sub) => (
+                                <Link
+                                    key={sub.href}
+                                    href={sub.href}
+                                    onClick={onClose}
+                                    className={`flex items-center gap-3 pl-12 pr-5 py-3 text-sm font-semibold transition-colors ${sub.active ? 'text-accent' : 'text-secondary hover:text-primary hover:bg-base'}`}
+                                >
+                                    {sub.icon}
+                                    {sub.label}
+                                </Link>
+                            ))}
+                        </div>
+                    ))}
+                </nav>
+
+                {/* Footer drawer */}
+                <div className="border-t border-[var(--elevation-border)] px-5 py-4 flex flex-col gap-1">
+                    {total > 0 && (
+                        <div className="mb-2 px-3 py-2.5 rounded-xl bg-accent/8 flex items-center gap-2">
+                            <Bell className="w-4 h-4 text-accent flex-shrink-0" />
+                            <span className="text-xs font-semibold text-primary">{total} notification{total > 1 ? 's' : ''} en attente</span>
+                        </div>
+                    )}
+                    <button
+                        onClick={() => { onClose(); router.push('/settings'); }}
+                        className="flex items-center gap-3 py-3 px-3 rounded-xl text-sm font-semibold text-secondary hover:text-primary hover:bg-base transition-colors"
+                    >
+                        <Settings className="w-4 h-4" />
+                        Paramètres
+                    </button>
+                    <button
+                        onClick={() => { onClose(); router.push('/login'); }}
+                        className="flex items-center gap-3 py-3 px-3 rounded-xl text-sm font-semibold text-red-500 hover:bg-red-500/10 transition-colors"
+                    >
+                        <LogOut className="w-4 h-4" />
+                        Se déconnecter
+                    </button>
+                </div>
+            </div>
+        </>,
+        document.body
+    );
+};
+
 export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifications = { overdueInvoices: 0, expiringQuotes: 0 }, modules }: { profile: UserProfile | null; orgName?: string | null; logoUrl?: string | null; notifications?: NotificationsData; modules?: OrganizationModules }) => {
     const pathname = usePathname() || '/dashboard';
     const showAtelierAi = !!(modules?.quote_ai || modules?.document_ai || modules?.voice_input);
+    const [drawerOpen, setDrawerOpen] = useState(false);
+
+    const navItems: NavItem[] = [
+        {
+            href: '/dashboard',
+            label: 'Tableau de bord',
+            icon: <LayoutDashboard className="w-4 h-4" />,
+            active: pathname === '/dashboard',
+        },
+        {
+            href: '/clients',
+            label: 'Clients',
+            icon: <UserCircle className="w-4 h-4" />,
+            active: pathname.startsWith('/clients'),
+        },
+        {
+            href: '/finances',
+            label: 'Facturation',
+            icon: <FileText className="w-4 h-4" />,
+            active: pathname.startsWith('/finances'),
+        },
+        {
+            href: '/chantiers',
+            label: 'Chantiers',
+            icon: <HardHat className="w-4 h-4" />,
+            active: pathname.startsWith('/chantiers') && !pathname.startsWith('/chantiers/planning'),
+            subLinks: [
+                {
+                    href: '/chantiers/planning',
+                    label: 'Planning global',
+                    icon: <Calendar className="w-3.5 h-3.5" />,
+                    active: pathname.startsWith('/chantiers/planning'),
+                },
+            ],
+        },
+        {
+            href: '/catalog',
+            label: 'Catalogue',
+            icon: <Package className="w-4 h-4" />,
+            active: pathname.startsWith('/catalog'),
+        },
+        {
+            href: '/reminders',
+            label: 'Relances',
+            icon: <MailWarning className="w-4 h-4" />,
+            active: pathname.startsWith('/reminders'),
+        },
+        ...(showAtelierAi ? [{
+            href: '/atelier-ia',
+            label: AI_NAME,
+            icon: <Bot className="w-4 h-4" />,
+            active: pathname.startsWith('/atelier-ia'),
+        }] : []),
+        {
+            href: '/requests',
+            label: 'Demandes',
+            icon: <Inbox className="w-4 h-4" />,
+            active: pathname.startsWith('/requests'),
+            badge: notifications.newRequests ?? 0,
+        },
+    ];
 
     return (
-        <header className="flex items-center px-6 py-3 border-b border-[var(--elevation-border)] backdrop-blur-glass sticky top-0 z-50 bg-base/40 dark:bg-black/20">
-            {/* Nav centré qui prend tout l'espace libre avec espacement premium */}
-            <nav className="hidden md:flex items-center justify-center md:gap-6 lg:gap-10 flex-1">
-                <Link href="/dashboard" className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname === '/dashboard' ? 'text-primary' : 'text-secondary hover:text-primary'}`}>
-                    <LayoutDashboard className="w-4 h-4" />
-                    Tableau de bord
-                </Link>
-                <Link href="/clients" className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/clients') ? 'text-primary' : 'text-secondary hover:text-primary'}`}>
-                    <UserCircle className="w-4 h-4" />
-                    Clients
-                </Link>
-                <Link href="/finances" className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/finances') ? 'text-primary' : 'text-secondary hover:text-primary'}`}>
-                    <FileText className="w-4 h-4" />
-                    Facturation
-                </Link>
-                <div className="flex items-center gap-1">
-                    <Link href="/chantiers" className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/chantiers') && !pathname.startsWith('/chantiers/planning') ? 'text-primary' : 'text-secondary hover:text-primary'}`}>
-                        <HardHat className="w-4 h-4" />
-                        Chantiers
-                    </Link>
-                    <Link href="/chantiers/planning" title="Planning global" className={`p-1 rounded transition-colors ${pathname.startsWith('/chantiers/planning') ? 'text-accent' : 'text-secondary hover:text-primary'}`}>
-                        <Calendar className="w-3.5 h-3.5" />
-                    </Link>
-                </div>
-                <Link href="/catalog" className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/catalog') ? 'text-primary' : 'text-secondary hover:text-primary'}`}>
-                    <Package className="w-4 h-4" />
-                    Catalogue
-                </Link>
-                <Link href="/reminders" className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/reminders') ? 'text-primary' : 'text-secondary hover:text-primary'}`}>
-                    <MailWarning className="w-4 h-4" />
-                    Relances
-                </Link>
-                {showAtelierAi && (
-                    <Link href="/atelier-ia" className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/atelier-ia') ? 'text-primary' : 'text-secondary hover:text-primary'}`}>
-                        <Bot className="w-4 h-4" />
-                        {AI_NAME}
-                    </Link>
-                )}
-                <Link href="/requests" className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap relative ${pathname.startsWith('/requests') ? 'text-primary' : 'text-secondary hover:text-primary'}`}>
-                    <Inbox className="w-4 h-4" />
-                    Demandes
-                    {(notifications.newRequests ?? 0) > 0 && (
-                        <span className="absolute -top-2 -right-3 min-w-[16px] h-4 rounded-full bg-red-500 text-white text-[9px] font-extrabold flex items-center justify-center px-1 leading-none">
-                            {(notifications.newRequests ?? 0) > 9 ? '9+' : notifications.newRequests}
-                        </span>
-                    )}
-                </Link>
-            </nav>
-
-            {/* Actions à droite */}
-            <div className="flex items-center gap-3 flex-shrink-0">
-                <ThemeToggle />
-                <Link
-                    href="/settings"
-                    className="w-10 h-10 flex items-center justify-center hover:scale-110 transition-all duration-300 ease-out"
-                    title="Paramètres"
+        <>
+            <header className="flex items-center px-4 sm:px-6 py-3 border-b border-[var(--elevation-border)] backdrop-blur-glass sticky top-0 z-50 bg-base/40 dark:bg-black/20">
+                {/* Hamburger — mobile uniquement */}
+                <button
+                    onClick={() => setDrawerOpen(true)}
+                    className="md:hidden w-10 h-10 flex items-center justify-center hover:scale-110 transition-all duration-300 ease-out mr-1"
+                    aria-label="Ouvrir le menu"
                 >
-                    <Settings className="w-5 h-5 text-primary" />
-                </Link>
-                <NotificationBell notifications={notifications} />
-                <UserMenu profile={profile} />
-            </div>
-        </header>
+                    <Menu className="w-5 h-5 text-primary" />
+                </button>
+
+                {/* Nav centré — desktop */}
+                <nav className="hidden md:flex items-center justify-center md:gap-6 lg:gap-10 flex-1">
+                    {navItems.map((item) => (
+                        <div key={item.href} className="flex items-center gap-1">
+                            <Link
+                                href={item.href}
+                                className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap relative ${item.active ? 'text-primary' : 'text-secondary hover:text-primary'}`}
+                            >
+                                {item.icon}
+                                {item.label}
+                                {(item.badge ?? 0) > 0 && (
+                                    <span className="absolute -top-2 -right-3 min-w-[16px] h-4 rounded-full bg-red-500 text-white text-[9px] font-extrabold flex items-center justify-center px-1 leading-none">
+                                        {(item.badge ?? 0) > 9 ? '9+' : item.badge}
+                                    </span>
+                                )}
+                            </Link>
+                            {item.subLinks?.map((sub) => (
+                                <Link
+                                    key={sub.href}
+                                    href={sub.href}
+                                    title={sub.label}
+                                    className={`p-1 rounded transition-colors ${sub.active ? 'text-accent' : 'text-secondary hover:text-primary'}`}
+                                >
+                                    {sub.icon}
+                                </Link>
+                            ))}
+                        </div>
+                    ))}
+                </nav>
+
+                {/* Spacer mobile — pousse les actions à droite */}
+                <div className="flex-1 md:hidden" />
+
+                {/* Actions à droite */}
+                <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
+                    <ThemeToggle />
+                    <Link
+                        href="/settings"
+                        className="hidden md:flex w-10 h-10 items-center justify-center hover:scale-110 transition-all duration-300 ease-out"
+                        title="Paramètres"
+                    >
+                        <Settings className="w-5 h-5 text-primary" />
+                    </Link>
+                    <NotificationBell notifications={notifications} />
+                    <UserMenu profile={profile} />
+                </div>
+            </header>
+
+            <MobileDrawer
+                isOpen={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+                navItems={navItems}
+                profile={profile}
+                notifications={notifications}
+            />
+        </>
     );
 };

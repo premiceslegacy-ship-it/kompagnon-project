@@ -4,11 +4,19 @@ import RequestsClient from './RequestsClient'
 
 export type CatalogRequestItem = {
   id: string
-  item_type: 'material' | 'labor'
+  item_type: 'material' | 'labor' | 'prestation'
   description: string
   unit: string | null
-  unit_price: number
+  unit_price?: number
   quantity: number
+}
+
+export type RequestAttachment = {
+  storage_path?: string
+  filename?: string
+  size?: number
+  content_type?: string | null
+  public_url?: string
 }
 
 export type QuoteRequest = {
@@ -22,6 +30,7 @@ export type QuoteRequest = {
   prestation_type: string | null
   dimensions: string | null
   attachment_url: string | null
+  attachments: RequestAttachment[] | null
   type: string
   catalog_items: CatalogRequestItem[] | null
   chantier_address_line1: string | null
@@ -40,7 +49,7 @@ async function getQuoteRequests(): Promise<QuoteRequest[]> {
 
   const { data, error } = await supabase
     .from('quote_requests')
-    .select('id, name, email, phone, company_name, subject, description, prestation_type, dimensions, attachment_url, type, catalog_items, chantier_address_line1, chantier_postal_code, chantier_city, status, client_id, quote_id, created_at')
+    .select('id, name, email, phone, company_name, subject, description, prestation_type, dimensions, attachment_url, attachments, type, catalog_items, chantier_address_line1, chantier_postal_code, chantier_city, status, client_id, quote_id, created_at')
     .eq('organization_id', orgId)
     .neq('status', 'archived')
     .order('created_at', { ascending: false })

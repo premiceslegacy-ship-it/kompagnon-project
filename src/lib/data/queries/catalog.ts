@@ -16,6 +16,7 @@ export type CatalogMaterial = {
   vat_rate: number | null
   category: string | null
   supplier: string | null
+  supplier_id: string | null
   description: string | null
   dimension_pricing_mode: 'none' | 'linear' | 'area' | 'volume'
   dimension_pricing_enabled: boolean
@@ -41,13 +42,15 @@ export type CatalogLaborRate = {
   category: string | null
   type: string | null
   description: string | null
+  purchase_price: number | null
+  lifetime_uses: number | null
   is_active: boolean
   created_at: string
 }
 
 export type DistanceRule = { from: number; to: number; multiplier: number }
 
-export type PrestationItemType = 'material' | 'service' | 'labor' | 'transport' | 'free'
+export type PrestationItemType = 'material' | 'service' | 'labor' | 'transport' | 'free' | 'equipment'
 
 export type PrestationTypeItem = {
   id: string

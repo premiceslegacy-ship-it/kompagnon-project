@@ -4,9 +4,11 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import QuotePDF from '@/components/pdf/QuotePDF'
 import InvoicePDF from '@/components/pdf/InvoicePDF'
 import ChantierPDF from '@/components/pdf/ChantierPDF'
+import MemberHoursReportPDF from '@/components/pdf/MemberHoursReportPDF'
 import { sanitizeFileName } from '@/lib/organization-exports/csv'
 import { generateFacturXml } from '@/lib/pdf/facturx-xml'
 import { embedFacturXml } from '@/lib/pdf/facturx-embed'
+import { getMemberPointages } from '@/lib/data/queries/members'
 
 async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null
@@ -25,7 +27,7 @@ async function getOrganizationForPdf(orgId: string) {
   const admin = createAdminClient()
   const { data } = await admin
     .from('organizations')
-    .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, email_from_name, email_from_address, forme_juridique, capital_social, rcs, rcs_ville, insurance_info, certifications, primary_color, payment_terms_days, late_penalty_rate, court_competent, iban, bic, bank_name, recovery_indemnity_text, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, sector, business_profile, business_activity_id, label_set, unit_set, default_categories, starter_presets, is_vat_subject, default_vat_rate, public_form_enabled, public_form_welcome_message, public_form_catalog_item_ids, public_form_custom_mode_enabled, public_form_notification_email')
+    .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, email_from_name, email_from_address, forme_juridique, capital_social, rcs, rcs_ville, insurance_info, certifications, primary_color, payment_terms_days, late_penalty_rate, court_competent, iban, bic, bank_name, recovery_indemnity_text, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, sector, business_profile, business_activity_id, label_set, unit_set, default_categories, starter_presets, is_vat_subject, default_vat_rate, public_form_enabled, public_form_welcome_message, public_form_catalog_item_ids, public_form_custom_mode_enabled, public_form_notification_email, decennale_enabled, decennale_assureur, decennale_police, decennale_couverture, decennale_date_debut, decennale_date_fin, cgv_text')
     .eq('id', orgId)
     .single()
 
@@ -43,7 +45,7 @@ export async function renderQuotePdfBufferById(quoteId: string, orgId: string): 
     .select(`
       id, number, title, status, total_ht, total_tva, total_ttc, currency,
       validity_days, valid_until, sent_at, signed_at, created_at,
-      notes_client, payment_conditions, discount_rate, deposit_rate,
+      notes_client, payment_conditions, discount_rate, deposit_rate, aid_label, aid_amount,
       client_request_description, client_request_visible_on_pdf,
       client:clients(id, company_name, contact_name, email)
     `)
@@ -98,7 +100,7 @@ export async function renderInvoicePdfBufferById(invoiceId: string, orgId: strin
       .select(`
         id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, currency,
         issue_date, due_date, sent_at, paid_at, created_at,
-        notes_client, payment_conditions, quote_id, client_id,
+        notes_client, payment_conditions, aid_label, aid_amount, quote_id, client_id,
         client:clients(id, company_name, contact_name, first_name, last_name, email, phone,
           address_line1, postal_code, city, siret, siren, vat_number, type),
         items:invoice_items(id, description, quantity, unit, unit_price, vat_rate, position, length_m, width_m, height_m, is_internal, material_id, dimension_values, variant_label, catalog_variant_id)
@@ -187,5 +189,46 @@ export async function renderChantierPdfBufferById(chantierId: string, orgId: str
   )
 
   const fileName = `${sanitizeFileName(chantier.data.title ?? chantierId, 'chantier')}.pdf`
+  return { buffer, fileName }
+}
+
+export async function renderMemberHoursReportPdfBuffer(
+  memberId: string,
+  orgId: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<{ buffer: Buffer; fileName: string } | null> {
+  const admin = createAdminClient()
+
+  const { getMemberByIdAdmin } = await import('@/lib/data/queries/members')
+  const [member, orgResult] = await Promise.all([
+    getMemberByIdAdmin(memberId),
+    admin
+      .from('organizations')
+      .select('name, logo_url, address_line1, postal_code, city')
+      .eq('id', orgId)
+      .single(),
+  ])
+
+  if (!member || member.organization_id !== orgId || !orgResult.data) return null
+
+  const org = orgResult.data
+
+  const pointages = await getMemberPointages(memberId, { dateFrom, dateTo, useAdmin: true })
+  const totalHours = pointages.reduce((s, p) => s + p.hours, 0)
+
+  const buffer = await renderToBuffer(
+    React.createElement(MemberHoursReportPDF as any, {
+      member,
+      organization: org,
+      pointages,
+      periodFrom: dateFrom,
+      periodTo: dateTo,
+      totalHours,
+    }) as any,
+  )
+
+  const memberSlug = [member.prenom, member.name].filter(Boolean).join('-').toLowerCase().replace(/[^a-z0-9-]/gi, '-')
+  const fileName = `rapport-heures-${memberSlug}-${dateFrom}-${dateTo}.pdf`
   return { buffer, fileName }
 }

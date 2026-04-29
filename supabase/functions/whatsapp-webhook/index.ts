@@ -60,6 +60,52 @@ interface AuthorizedContact {
   label: string
 }
 
+const ACTIVITY_LABELS: Record<string, string> = {
+  nettoyage_bureaux: 'Nettoyage de bureaux',
+  vitrerie: 'Vitrerie',
+  desinfection: 'Désinfection',
+  remise_en_etat: 'Remise en état',
+  renovation: 'Rénovation',
+  electricite: 'Électricité',
+  plomberie: 'Plomberie',
+  menuiserie: 'Menuiserie',
+  maconnerie: 'Maçonnerie',
+  peinture: 'Peinture',
+  carrelage: 'Carrelage',
+  facade: 'Façade',
+  charpente: 'Charpente',
+  depannage_multitechnique: 'Dépannage multitechnique',
+  tolerie: 'Tôlerie',
+  chaudronnerie: 'Chaudronnerie',
+  decoupe_laser: 'Découpe laser',
+  pliage: 'Pliage',
+  soudure: 'Soudure',
+  fabrication_atelier: 'Fabrication atelier',
+}
+
+const ACTIVITY_DESCRIPTIONS: Record<string, string> = {
+  nettoyage_bureaux: 'Entretien régulier, consommables et prestations récurrentes.',
+  vitrerie: 'Nettoyage de vitres, vitrines et façades vitrées.',
+  desinfection: 'Traitements ponctuels ou récurrents de désinfection.',
+  remise_en_etat: 'Interventions après travaux, sinistres ou états des lieux.',
+  renovation: "Travaux tous corps d'état et interventions multi-lots.",
+  electricite: 'Installations, dépannages et mises en conformité électriques.',
+  plomberie: 'Plomberie, sanitaire, chauffage et réseaux.',
+  menuiserie: 'Pose, fabrication et finitions bois, alu ou PVC.',
+  maconnerie: 'Gros oeuvre, dalles, murs et ouvrages maçonnés.',
+  peinture: 'Préparation, peinture et finitions intérieures ou extérieures.',
+  carrelage: 'Sols, faïence, revêtements et finitions associées.',
+  facade: "Ravalement, enduits et isolation par l'extérieur.",
+  charpente: 'Charpente, couverture et zinguerie.',
+  depannage_multitechnique: "Interventions rapides avec fournitures et main-d'oeuvre.",
+  tolerie: 'Découpe, pliage et fabrication de pièces en tôle.',
+  chaudronnerie: 'Assemblages, ouvrages sur mesure et fabrication métal.',
+  decoupe_laser: 'Découpe de précision, séries courtes et pièces unitaires.',
+  pliage: 'Pliage atelier, réglages machine et reprises.',
+  soudure: 'Assemblage, soudure TIG, MIG ou MAG et finitions.',
+  fabrication_atelier: 'Production, assemblage et contrôle en atelier.',
+}
+
 interface OrgConfig {
   id: string
   name: string
@@ -67,6 +113,8 @@ interface OrgConfig {
   access_token: string
   authorized_numbers: string[]
   authorized_contacts: AuthorizedContact[]
+  business_activity_id: string | null
+  sector: string | null
 }
 
 type UsageMetrics = {
@@ -251,6 +299,42 @@ const TOOLS = [
       required: ['quote_search'],
     },
   },
+  {
+    name: 'add_chantier_expense',
+    description: 'Enregistre une dépense sur un chantier : achat de matériel, sous-traitance, location d\'engin, transport, etc. Exemple : "j\'ai acheté pour 350€ de placo chez Point P sur le chantier Dupont".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        chantier_search: { type: 'string', description: 'Nom ou mots-clés du chantier' },
+        category: {
+          type: 'string',
+          enum: ['materiel', 'sous_traitance', 'location', 'transport', 'autre'],
+          description: 'Catégorie de la dépense',
+        },
+        label: { type: 'string', description: 'Description de la dépense (ex: "Placo BA13 - 50 plaques")' },
+        amount_ht: { type: 'number', description: 'Montant HT en euros' },
+        supplier_name: { type: 'string', description: 'Nom du fournisseur (optionnel)' },
+        date: { type: 'string', description: 'Date ISO YYYY-MM-DD, défaut = aujourd\'hui' },
+      },
+      required: ['chantier_search', 'category', 'label', 'amount_ht'],
+    },
+  },
+  {
+    name: 'get_chantier_profitability',
+    description: 'Affiche la rentabilité d\'un chantier : budget, coûts réels (main-d\'œuvre, matériel, sous-traitance), CA facturé et marge en € et %.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        chantier_search: { type: 'string', description: 'Nom ou mots-clés du chantier' },
+      },
+      required: ['chantier_search'],
+    },
+  },
+  {
+    name: 'get_chantiers_at_risk',
+    description: 'Liste les chantiers en alerte : ceux dont le coût dépasse 90% du budget ou dont la marge est inférieure à 10%.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
 ]
 
 // ─── Handler principal ────────────────────────────────────────────────────────
@@ -313,7 +397,7 @@ async function processPayload(supabase: ReturnType<typeof getAdminClient>, paylo
           const fromNumber = msg.from
           const { data: sharedConfig } = await supabase
             .from('whatsapp_configs')
-            .select('id, is_active, access_token, authorized_numbers, authorized_contacts, use_shared_waba, organizations(id, name)')
+            .select('id, is_active, access_token, authorized_numbers, authorized_contacts, use_shared_waba, organizations(id, name, sector, business_activity_id)')
             .eq('use_shared_waba', true)
             .eq('is_active', true)
             .contains('authorized_contacts', JSON.stringify([{ number: fromNumber }]))
@@ -324,7 +408,7 @@ async function processPayload(supabase: ReturnType<typeof getAdminClient>, paylo
           if (!resolvedConfig) {
             const { data: fallbackConfig } = await supabase
               .from('whatsapp_configs')
-              .select('id, is_active, access_token, authorized_numbers, authorized_contacts, use_shared_waba, organizations(id, name)')
+              .select('id, is_active, access_token, authorized_numbers, authorized_contacts, use_shared_waba, organizations(id, name, sector, business_activity_id)')
               .eq('use_shared_waba', true)
               .eq('is_active', true)
               .contains('authorized_numbers', [fromNumber])
@@ -344,6 +428,8 @@ async function processPayload(supabase: ReturnType<typeof getAdminClient>, paylo
             access_token: sharedAccessToken!,
             authorized_numbers: (resolvedConfig.authorized_numbers as string[] | null) ?? [],
             authorized_contacts: contacts,
+            business_activity_id: org.business_activity_id ?? null,
+            sector: org.sector ?? null,
           }
 
           await handleMessage(supabase, orgConfig, msg).catch(err => {
@@ -356,7 +442,7 @@ async function processPayload(supabase: ReturnType<typeof getAdminClient>, paylo
       // Mode classique : routing par phone_number_id
       const { data: classicConfig } = await supabase
         .from('whatsapp_configs')
-        .select('id, is_active, access_token, authorized_numbers, authorized_contacts, organizations(id, name)')
+        .select('id, is_active, access_token, authorized_numbers, authorized_contacts, organizations(id, name, sector, business_activity_id)')
         .eq('phone_number_id', phoneNumberId)
         .single()
 
@@ -374,6 +460,8 @@ async function processPayload(supabase: ReturnType<typeof getAdminClient>, paylo
         access_token: config.access_token as string,
         authorized_numbers: (config.authorized_numbers as string[] | null) ?? [],
         authorized_contacts: contacts,
+        business_activity_id: org.business_activity_id ?? null,
+        sector: org.sector ?? null,
       }
 
       for (const msg of messages) {
@@ -477,11 +565,19 @@ async function callGemini(
   const appUrl = Deno.env.get('APP_URL') ?? ''
   const today = new Date().toISOString().split('T')[0]
 
-  const systemPrompt = `Tu es l'assistant IA de ${orgConfig.name}, un artisan BTP.
+  const activityId = orgConfig.business_activity_id ?? ''
+  const activityLabel = ACTIVITY_LABELS[activityId] ?? orgConfig.sector ?? 'artisan'
+  const activityDesc = ACTIVITY_DESCRIPTIONS[activityId]
+
+  const systemPrompt = `Tu es l'assistant IA de ${orgConfig.name}, entreprise spécialisée en ${activityLabel}.${activityDesc ? `\nSpécificité métier : ${activityDesc}` : ''}
 Tu réponds en français, de façon concise (WhatsApp = messages courts).
+Tu connais les subtilités et le vocabulaire propre à ce métier : utilise-les dans tes réponses.
 Tu peux consulter les données de l'application et agir dessus via les outils disponibles.
 Date d'aujourd'hui : ${today}.
-Sois direct et pratique — l'artisan est souvent sur le terrain.`
+Sois direct et pratique, l'utilisateur est souvent sur le terrain.
+Tu peux enregistrer des dépenses chantier (add_chantier_expense), consulter la rentabilité d'un chantier (get_chantier_profitability) et lister les chantiers en alerte budget ou marge faible (get_chantiers_at_risk).
+Si la marge d'un chantier est < 10% ou le budget utilisé > 90%, mentionne-le explicitement dans ta réponse.
+Règles de style : aucun emoji, aucun tiret cadratin (—), français soigné et professionnel.`
 
   const messages = [{ role: 'user', content: userText }]
   const allToolCalls: unknown[] = []
@@ -1029,6 +1125,182 @@ async function executeTool(
         new_start_date: input.new_start_date,
         ...(input.new_end_date ? { new_end_date: input.new_end_date } : {}),
       }
+    }
+
+    case 'add_chantier_expense': {
+      const chantier = await findChantierBySearch(supabase, orgId, input.chantier_search)
+      if (!chantier) return { error: `Chantier introuvable pour "${input.chantier_search}"` }
+
+      const { data: membership } = await supabase
+        .from('memberships')
+        .select('user_id')
+        .eq('organization_id', orgId)
+        .eq('is_owner', true)
+        .single()
+
+      if (!membership) return { error: "Impossible de déterminer l'utilisateur" }
+
+      const { error } = await supabase.from('chantier_expenses').insert({
+        organization_id: orgId,
+        chantier_id: chantier.id,
+        category: input.category,
+        label: input.label,
+        amount_ht: input.amount_ht,
+        vat_rate: 20,
+        expense_date: input.date ?? today,
+        supplier_name: input.supplier_name ?? null,
+        created_by: membership.user_id,
+      })
+
+      if (error) return { error: error.message }
+      return {
+        success: true,
+        chantier: chantier.title,
+        label: input.label,
+        amount_ht: input.amount_ht,
+        category: input.category,
+        date: input.date ?? today,
+      }
+    }
+
+    case 'get_chantier_profitability': {
+      const chantier = await findChantierBySearch(supabase, orgId, input.chantier_search)
+      if (!chantier) return { error: `Chantier introuvable pour "${input.chantier_search}"` }
+
+      // Taux horaire org
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('default_labor_cost_per_hour, default_hourly_rate')
+        .eq('id', orgId)
+        .single()
+
+      const laborRate = org?.default_labor_cost_per_hour
+        ?? (org?.default_hourly_rate ? org.default_hourly_rate * 0.5 : 35)
+
+      // Heures pointées
+      const { data: pointages } = await supabase
+        .from('chantier_pointages')
+        .select('hours')
+        .eq('chantier_id', chantier.id)
+
+      const hoursLogged = (pointages ?? []).reduce((s: number, p: { hours: number }) => s + (p.hours ?? 0), 0)
+      const costLabor = hoursLogged * laborRate
+
+      // Dépenses
+      const { data: expenses } = await supabase
+        .from('chantier_expenses')
+        .select('category, amount_ht')
+        .eq('chantier_id', chantier.id)
+
+      const costMaterial = (expenses ?? []).filter((e: { category: string }) => e.category === 'materiel').reduce((s: number, e: { amount_ht: number }) => s + e.amount_ht, 0)
+      const costSubcontract = (expenses ?? []).filter((e: { category: string }) => e.category === 'sous_traitance').reduce((s: number, e: { amount_ht: number }) => s + e.amount_ht, 0)
+      const costOther = (expenses ?? []).filter((e: { category: string }) => ['location', 'transport', 'autre'].includes(e.category)).reduce((s: number, e: { amount_ht: number }) => s + e.amount_ht, 0)
+      const costTotal = costMaterial + costLabor + costSubcontract + costOther
+
+      // Budget
+      const { data: chantierData } = await supabase
+        .from('chantiers')
+        .select('budget_ht, quote_id')
+        .eq('id', chantier.id)
+        .single()
+
+      // CA facturé
+      let revenueHt = 0
+      if (chantierData?.quote_id) {
+        const { data: invoices } = await supabase
+          .from('invoices')
+          .select('total_ht, invoice_type')
+          .eq('quote_id', chantierData.quote_id)
+          .eq('organization_id', orgId)
+          .neq('status', 'cancelled')
+
+        revenueHt = (invoices ?? [])
+          .filter((inv: { invoice_type: string }) => inv.invoice_type !== 'avoir')
+          .reduce((s: number, inv: { total_ht: number }) => s + (inv.total_ht ?? 0), 0)
+      }
+
+      const marginEur = revenueHt - costTotal
+      const marginPct = revenueHt > 0 ? Math.round((marginEur / revenueHt) * 100) : null
+
+      return {
+        chantier: chantier.title,
+        budget_ht: chantierData?.budget_ht ?? 0,
+        ca_facture_ht: Math.round(revenueHt),
+        cout_main_oeuvre: Math.round(costLabor),
+        cout_materiel: Math.round(costMaterial),
+        cout_sous_traitance: Math.round(costSubcontract),
+        cout_autre: Math.round(costOther),
+        cout_total: Math.round(costTotal),
+        marge_eur: Math.round(marginEur),
+        marge_pct: marginPct,
+        heures_pointees: hoursLogged,
+        taux_horaire: laborRate,
+      }
+    }
+
+    case 'get_chantiers_at_risk': {
+      const { data: chantiersList } = await supabase
+        .from('chantiers')
+        .select('id, title, budget_ht, quote_id')
+        .eq('organization_id', orgId)
+        .in('status', ['en_cours', 'planifie'])
+        .eq('is_archived', false)
+
+      if (!chantiersList?.length) return { chantiers_at_risk: [] }
+
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('default_labor_cost_per_hour, default_hourly_rate')
+        .eq('id', orgId)
+        .single()
+
+      const laborRate = org?.default_labor_cost_per_hour
+        ?? (org?.default_hourly_rate ? org.default_hourly_rate * 0.5 : 35)
+
+      const atRisk: unknown[] = []
+
+      for (const c of chantiersList.slice(0, 8)) {
+        const [{ data: pointages }, { data: expenses }] = await Promise.all([
+          supabase.from('chantier_pointages').select('hours').eq('chantier_id', c.id),
+          supabase.from('chantier_expenses').select('amount_ht').eq('chantier_id', c.id),
+        ])
+
+        const costLabor = (pointages ?? []).reduce((s: number, p: { hours: number }) => s + p.hours, 0) * laborRate
+        const costExpenses = (expenses ?? []).reduce((s: number, e: { amount_ht: number }) => s + e.amount_ht, 0)
+        const costTotal = costLabor + costExpenses
+        const budgetHt = c.budget_ht ?? 0
+        const budgetUsagePct = budgetHt > 0 ? costTotal / budgetHt : 0
+
+        // CA pour calculer marge
+        let revenueHt = 0
+        if (c.quote_id) {
+          const { data: invoices } = await supabase
+            .from('invoices').select('total_ht, invoice_type')
+            .eq('quote_id', c.quote_id).eq('organization_id', orgId).neq('status', 'cancelled')
+          revenueHt = (invoices ?? []).filter((inv: { invoice_type: string }) => inv.invoice_type !== 'avoir').reduce((s: number, inv: { total_ht: number }) => s + (inv.total_ht ?? 0), 0)
+        }
+
+        const marginPct = revenueHt > 0 ? ((revenueHt - costTotal) / revenueHt) * 100 : null
+
+        const isBudgetAlert = budgetHt > 0 && budgetUsagePct > 0.9
+        const isMarginAlert = marginPct !== null && marginPct < 10
+
+        if (isBudgetAlert || isMarginAlert) {
+          atRisk.push({
+            chantier: c.title,
+            budget_ht: budgetHt,
+            cout_total: Math.round(costTotal),
+            budget_usage_pct: Math.round(budgetUsagePct * 100),
+            marge_pct: marginPct !== null ? Math.round(marginPct) : null,
+            alerte: [
+              isBudgetAlert ? `budget utilisé à ${Math.round(budgetUsagePct * 100)}%` : null,
+              isMarginAlert ? `marge faible (${Math.round(marginPct!)}%)` : null,
+            ].filter(Boolean).join(', '),
+          })
+        }
+      }
+
+      return { chantiers_at_risk: atRisk }
     }
 
     default:

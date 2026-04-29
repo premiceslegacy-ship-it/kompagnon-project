@@ -1,4 +1,20 @@
 // Atelier by Orsayn — PDF Design System v1.0
+// @react-pdf/renderer peut retomber sur Helvetica avec certains séparateurs unicode
+// ou retours ligne bruts. En PDF/A, Helvetica non embarquée rend le fichier invalide.
+export function pdfText(value: string | number | null | undefined): string {
+  if (value == null) return ''
+  return String(value)
+    .replace(/[\u202f\u00a0]/g, ' ')
+    .replace(/\s*\r?\n\s*/g, ' ')
+}
+
+// Toujours passer par fmtCurrency pour normaliser les séparateurs de milliers.
+export function fmtCurrency(amount: number, currency = 'EUR'): string {
+  return pdfText(new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: 2 })
+    .format(amount))
+}
+
+
 // Polices chargées via chemin absolu fs (server-side uniquement, compatible Cloudflare Workers)
 
 import path from 'path'
@@ -225,7 +241,7 @@ export function makePageStyles() {
       flexDirection: 'row',
       paddingVertical: DS.space.md,
       borderBottomWidth: 0.5,
-      borderBottomColor: '#F4F4F5',
+      borderBottomColor: DS.color.divider,
     },
     itemText: {
       fontFamily: DS.font.body,
@@ -301,7 +317,6 @@ export function makePageStyles() {
       fontFamily: DS.font.body,
       fontSize: DS.size.xs,
       color: DS.color.muted,
-      fontStyle: 'italic',
       textAlign: 'right',
       marginTop: 4,
     },
@@ -389,27 +404,29 @@ export function makePageStyles() {
     // Footer
     footer: {
       position: 'absolute',
-      bottom: 22,
+      bottom: 14,
       left: DS.space.page,
       right: DS.space.page,
       borderTopWidth: 0.5,
       borderTopColor: DS.color.divider,
       paddingTop: DS.space.xs,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-end',
     },
     footerText: {
       fontFamily: DS.font.body,
       fontSize: DS.size.xxs,
       color: DS.color.muted,
-      textAlign: 'center',
-      lineHeight: 1.5,
+      lineHeight: 1.4,
+      textAlign: 'left',
     },
     pageNumber: {
-      position: 'absolute',
-      bottom: 22,
-      right: DS.space.page,
       fontFamily: DS.font.body,
-      fontSize: DS.size.xs,
+      fontSize: DS.size.xxs,
       color: DS.color.muted,
+      flexShrink: 0,
+      marginLeft: DS.space.md,
     },
   })
 }

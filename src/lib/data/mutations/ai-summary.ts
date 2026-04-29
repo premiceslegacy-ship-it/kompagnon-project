@@ -4,7 +4,11 @@ import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getClientGreetingName } from '@/lib/client'
 import { APP_NAME } from '@/lib/brand'
+import { todayParis, dateParis } from '@/lib/utils'
 import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
+import { getChantierProfitability } from '@/lib/data/queries/chantier-profitability'
+
+const WEEKLY_SUMMARY_MODEL = 'google/gemini-2.5-flash-lite'
 
 export type AIReminderDraft = {
   subject: string
@@ -97,6 +101,7 @@ Ton : ${toneGuide}
 
 Règles de rédaction obligatoires :
 - Français soigné, aucun anglicisme
+- Aucun emoji, aucun symbole décoratif
 - Aucun tiret cadratin (—). Utilise des virgules ou des points à la place.
 - Ton humain et chaleureux, principes Carnegie : valorise le client, formule positivement, évite toute accusation directe
 - Corps : 3 à 5 phrases maximum, va à l'essentiel
@@ -114,7 +119,7 @@ Objet: [le sujet]
       organizationId: orgId,
       provider: 'openrouter',
       feature: 'reminder_draft',
-      model: 'anthropic/claude-haiku-4-5-20251001',
+      model: 'anthropic/claude-haiku-4-5',
       inputKind: 'text',
       request: {
         body: {
@@ -161,10 +166,8 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
   if (!orgId) return { summary: null, error: 'Non authentifié.' }
 
   const today = new Date()
-  const sevenDaysAgo = new Date(today)
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-  const todayStr = today.toISOString().split('T')[0]
-  const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0]
+  const todayStr = todayParis()
+  const sevenDaysAgoStr = dateParis(today.getTime() - 7 * 24 * 60 * 60 * 1000)
 
   const [
     { data: chantiers },
@@ -175,7 +178,7 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
   ] = await Promise.all([
     supabase
       .from('chantiers')
-      .select('title, status, estimated_end_date, client:clients(company_name)')
+      .select('id, title, status, estimated_end_date, budget_ht, client:clients(company_name)')
       .eq('organization_id', orgId)
       .in('status', ['en_cours', 'planifie'])
       .eq('is_archived', false),
@@ -211,13 +214,30 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
 
   if (!process.env.OPENROUTER_API_KEY) return { summary: null, error: 'Clé API IA manquante.' }
 
+  // Calcul rentabilité pour les chantiers actifs (max 5 pour limiter les appels)
+  const activeChantiers = (chantiers ?? []).slice(0, 5)
+  const profitabilityResults = await Promise.allSettled(
+    activeChantiers.map(c => getChantierProfitability((c as any).id))
+  )
+
   const context = {
-    chantiers_actifs: (chantiers ?? []).map(c => ({
-      titre: c.title,
-      statut: c.status,
-      client: (c.client as any)?.company_name ?? null,
-      fin_estimee: c.estimated_end_date ?? null,
-    })),
+    chantiers_actifs: activeChantiers.map((c, i) => {
+      const prof = profitabilityResults[i].status === 'fulfilled' ? profitabilityResults[i].value : null
+      return {
+        titre: c.title,
+        statut: c.status,
+        client: (c.client as any)?.company_name ?? null,
+        fin_estimee: c.estimated_end_date ?? null,
+        budget_ht: (c as any).budget_ht ?? null,
+        marge_pct: prof ? Math.round(prof.marginPct * 100) : null,
+        marge_eur: prof ? Math.round(prof.marginEur) : null,
+        cout_total: prof ? Math.round(prof.costTotal) : null,
+        heures_pointees: prof?.hoursLogged ?? null,
+        alerte_budget: prof && (c as any).budget_ht > 0
+          ? prof.costTotal / (c as any).budget_ht > 0.9 ? 'depassement_imminent' : null
+          : null,
+      }
+    }),
     devis_sans_reponse_7j: (devisEnAttente ?? []).map(d => ({
       titre: d.title,
       client: (d.client as any)?.company_name ?? null,
@@ -243,10 +263,16 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
   }
 
   const prompt = `Tu es l'assistant de ${APP_NAME}, un ERP pour artisans du BTP.
-Génère un résumé hebdomadaire concis et actionnable en français. Maximum 4 lignes.
-Format : commence par les points critiques (factures impayées, devis qui tardent), puis l'état général.
+Génère un résumé hebdomadaire concis et actionnable en français. Maximum 5 lignes.
+Format : commence par les alertes critiques (factures impayées, chantiers en dépassement budget, marge faible < 10%), puis l'état général.
 Termine toujours par UNE priorité claire : "Priorité : [action concrète]".
-Sois direct, pas de formules creuses. Chiffre tout ce qui peut l'être.
+Sois direct, pas de formules creuses. Chiffre tout ce qui peut l'être (€, %, heures).
+Si un chantier a alerte_budget="depassement_imminent" ou marge_pct < 10, mentionne-le explicitement.
+
+Règles de style obligatoires :
+- Aucun emoji, aucun symbole décoratif
+- Aucun tiret cadratin (—). Utilise des virgules ou des points.
+- Français irréprochable, ton professionnel et direct
 
 Données actuelles :
 ${JSON.stringify(context, null, 2)}`
@@ -256,17 +282,19 @@ ${JSON.stringify(context, null, 2)}`
       organizationId: orgId,
       provider: 'openrouter',
       feature: 'weekly_summary',
-      model: 'anthropic/claude-sonnet-4-5',
+      model: WEEKLY_SUMMARY_MODEL,
       inputKind: 'text',
       request: {
         body: {
           max_tokens: 300,
           messages: [{ role: 'user', content: prompt }],
         },
+        timeoutMs: 20000,
       },
       metadata: {
         mutation: 'getWeeklySummary',
         app_name: APP_NAME,
+        model_family: 'gemini',
       },
     })
 

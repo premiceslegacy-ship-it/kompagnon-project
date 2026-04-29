@@ -59,7 +59,7 @@ export type StarterPresetLine = {
   designation: string
   quantity: number
   unit: string
-  item_type: 'free' | 'service'
+  item_type: 'free' | 'service' | 'material' | 'labor' | 'transport' | 'mixed'
   unit_price_ht?: number
   unit_cost_ht?: number
 }
@@ -97,6 +97,7 @@ export type BundleTemplateUi = {
     material: string   // type de ligne = fourniture/matière/produit
     transport: string  // type de ligne = déplacement/logistique
     free: string       // ligne libre (identique pour tous les profils)
+    equipment: string  // type de ligne = matériel amorti (aspirateur, machine, etc.)
   }
   internalLineHelp: string     // aide contextuelle sur les lignes internes
   sectionPlaceholder: string   // placeholder pour le titre d'une section
@@ -466,8 +467,9 @@ export const BUSINESS_PROFILE_CONFIGS: Record<BusinessProfile, BusinessProfileCo
         material: "Produit",
         transport: "Déplacement",
         free: "Ligne libre",
+        equipment: "Équipement amorti",
       },
-      internalLineHelp: "Les lignes internes (ressources, déplacements) contribuent au coût de revient mais n'apparaissent pas dans le devis client.",
+      internalLineHelp: "Les lignes internes (ressources, déplacements, équipements) contribuent au coût de revient mais n'apparaissent pas dans le devis client.",
       sectionPlaceholder: "ex: Nettoyage des vitres",
       catalogMaterialHint: "Chercher un produit...",
       catalogLaborHint: "Chercher une ressource interne...",
@@ -582,8 +584,9 @@ export const BUSINESS_PROFILE_CONFIGS: Record<BusinessProfile, BusinessProfileCo
         material: "Fourniture",
         transport: "Déplacement",
         free: "Ligne libre",
+        equipment: "Équipement amorti",
       },
-      internalLineHelp: "Les lignes internes (main-d'oeuvre, déplacements) contribuent au coût de revient mais n'apparaissent pas dans le devis client.",
+      internalLineHelp: "Les lignes internes (main-d'oeuvre, déplacements, équipements) contribuent au coût de revient mais n'apparaissent pas dans le devis client.",
       sectionPlaceholder: "ex: Menuiserie intérieure",
       catalogMaterialHint: "Chercher une fourniture...",
       catalogLaborHint: "Chercher une ressource interne...",
@@ -698,8 +701,9 @@ export const BUSINESS_PROFILE_CONFIGS: Record<BusinessProfile, BusinessProfileCo
         material: "Matière",
         transport: "Logistique",
         free: "Ligne libre",
+        equipment: "Équipement amorti",
       },
-      internalLineHelp: "Les lignes internes (postes de charge, logistique) contribuent au coût de revient mais n'apparaissent pas dans le devis client.",
+      internalLineHelp: "Les lignes internes (postes de charge, logistique, équipements) contribuent au coût de revient mais n'apparaissent pas dans le devis client.",
       sectionPlaceholder: "ex: Découpe laser",
       catalogMaterialHint: "Chercher une matière...",
       catalogLaborHint: "Chercher une ressource interne...",
@@ -730,6 +734,45 @@ const BUSINESS_ACTIVITY_OVERRIDES: Partial<Record<BusinessActivityId, BusinessAc
       laborRate: ['Binôme vitrerie', 'Nacelle', 'Aspirateur eau'],
       bundleTemplate: ['Tournée vitres', 'Intervention ponctuelle', 'Contrat vitrerie'],
     },
+    starterPresets: [
+      {
+        name: 'Tournée vitres intérieures',
+        description: 'Passage régulier de nettoyage des vitres intérieures.',
+        category: 'Tournée vitres',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'service',
+        lines: [
+          { designation: 'Nettoyage vitres intérieures', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Essuyage et finition', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Vitrerie extérieure façade',
+        description: 'Nettoyage de façade vitrée avec nacelle ou perche.',
+        category: 'Contrat vitrerie',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Nettoyage vitres extérieures', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Mise en place matériel nacelle', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Contrat vitrerie mensuel',
+        description: 'Contrat récurrent mensuel pour entretien des surfaces vitrées.',
+        category: 'Contrat vitrerie',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'service',
+        lines: [
+          { designation: 'Vitrerie intérieure', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Vitrerie extérieure', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Compte-rendu intervention', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+    ],
   },
   desinfection: {
     labelSet: { catalogSubtitle: 'Produits, protocoles et ressources dédiés aux traitements de désinfection.' },
@@ -737,20 +780,513 @@ const BUSINESS_ACTIVITY_OVERRIDES: Partial<Record<BusinessActivityId, BusinessAc
       service: ['Traitement', 'Désinfection', 'Décontamination'],
       laborRate: ['Équipe mobile', 'Pulvérisateur', 'Nébulisation'],
     },
+    starterPresets: [
+      {
+        name: 'Désinfection ponctuelle',
+        description: 'Traitement de désinfection sur intervention unique.',
+        category: 'Ponctuel',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Application désinfectant surfaces', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Produit désinfectant', quantity: 1, unit: 'L', item_type: 'material' },
+          { designation: "Compte-rendu d'intervention", quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Protocole nébulisation',
+        description: 'Désinfection par nébulisation de locaux.',
+        category: 'Ponctuel',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Nébulisation des locaux', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Produit nébulisation', quantity: 1, unit: 'L', item_type: 'material' },
+          { designation: 'Temps de contact et aération', quantity: 1, unit: 'h', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Contrat désinfection mensuel',
+        description: 'Traitement récurrent mensuel de désinfection.',
+        category: 'Mensuel',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'service',
+        lines: [
+          { designation: 'Désinfection sanitaires', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Désinfection surfaces communes', quantity: 1, unit: 'forfait', item_type: 'service' },
+        ],
+      },
+    ],
   },
   electricite: {
     labelSet: { catalogSubtitle: 'Fournitures, prestations et ressources cohérentes avec vos interventions électriques.' },
     defaultCategories: {
       material: ['Tableau', 'Câblage', 'Appareillage', 'Dépannage'],
       service: ['Pose', 'Recherche de panne', 'Mise en conformité'],
+      bundleTemplate: ['Installation', 'Dépannage', 'Mise en conformité', 'Rénovation électrique'],
     },
+    starterPresets: [
+      {
+        name: 'Tableau électrique neuf',
+        description: 'Fourniture et pose de tableau électrique avec protection différentielle.',
+        category: 'Installation',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Tableau électrique 13 modules', quantity: 1, unit: 'u', item_type: 'material', unit_price_ht: 120 },
+          { designation: 'Disjoncteurs et différentiels', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { designation: 'Pose et câblage tableau', quantity: 4, unit: 'h', item_type: 'service' },
+          { designation: 'Essais et mise en service', quantity: 1, unit: 'forfait', item_type: 'service' },
+        ],
+      },
+      {
+        name: 'Dépannage électrique',
+        description: 'Intervention de dépannage avec diagnostic et remise en service.',
+        category: 'Dépannage',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Déplacement et diagnostic', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Intervention et réparation', quantity: 1, unit: 'h', item_type: 'service' },
+          { designation: 'Petites fournitures', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+      {
+        name: 'Mise en conformité électrique',
+        description: 'Diagnostic et mise en conformité selon normes NF C 15-100.',
+        category: 'Mise en conformité',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Diagnostic électrique complet', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Mise en conformité tableaux et circuits', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Fournitures de mise en conformité', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { designation: 'Rapport de conformité', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Rénovation électrique complète',
+        description: 'Réfection totale de l\'installation électrique d\'un logement.',
+        category: 'Rénovation électrique',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Dépose ancienne installation', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Passage de câbles', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Pose tableau neuf et protection', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+          { designation: 'Pose prises et interrupteurs', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+          { designation: 'Essais, mise en service et rapport', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Pose points lumineux',
+        description: 'Fourniture et pose de points lumineux avec câblage.',
+        category: 'Installation',
+        unit: 'u',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Câblage et raccordement', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Boite de dérivation', quantity: 1, unit: 'u', item_type: 'material' },
+          { designation: 'Interrupteur ou variateur', quantity: 1, unit: 'u', item_type: 'material' },
+        ],
+      },
+    ],
   },
   plomberie: {
     labelSet: { catalogSubtitle: 'Fournitures, prestations et ressources adaptées aux chantiers de plomberie.' },
     defaultCategories: {
       material: ['Réseaux', 'Sanitaire', 'Chauffe-eau', 'Dépannage'],
       service: ['Installation', 'Recherche de fuite', 'Maintenance'],
+      bundleTemplate: ['Salle de bain', 'Dépannage', 'Chauffe-eau', 'Réseau'],
     },
+    starterPresets: [
+      {
+        name: 'Remplacement chauffe-eau',
+        description: 'Dépose et remplacement de chauffe-eau électrique avec raccordement.',
+        category: 'Chauffe-eau',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Dépose ancien chauffe-eau', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Chauffe-eau électrique 200L', quantity: 1, unit: 'u', item_type: 'material' },
+          { designation: 'Raccordement eau et électricité', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Groupe de sécurité et accessoires', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { designation: 'Mise en service et essais', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Rénovation salle de bain complète',
+        description: 'Réfection complète de salle de bain avec dépose et pose.',
+        category: 'Salle de bain',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Dépose équipements existants', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Réseaux eau froide / chaude', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+          { designation: 'Pose receveur de douche', quantity: 1, unit: 'u', item_type: 'mixed' },
+          { designation: 'Pose lavabo et robinetterie', quantity: 1, unit: 'u', item_type: 'mixed' },
+          { designation: 'Pose WC suspendu', quantity: 1, unit: 'u', item_type: 'mixed' },
+          { designation: 'Evacuation et siphons', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+        ],
+      },
+      {
+        name: 'Recherche et réparation de fuite',
+        description: 'Intervention de détection et réparation de fuite.',
+        category: 'Dépannage',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Déplacement et diagnostic', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Recherche de fuite', quantity: 1, unit: 'h', item_type: 'service' },
+          { designation: 'Réparation et fournitures', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+        ],
+      },
+      {
+        name: 'Débouchage canalisation',
+        description: 'Intervention de débouchage par furet ou haute pression.',
+        category: 'Dépannage',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'service',
+        lines: [
+          { designation: 'Déplacement', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Débouchage furet motorisé', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Test d\'écoulement', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Entretien chaudière annuel',
+        description: 'Contrat d\'entretien annuel de chaudière gaz.',
+        category: 'Maintenance',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'service',
+        lines: [
+          { designation: 'Nettoyage brûleur et échangeur', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Contrôle combustion et sécurités', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Rapport d\'entretien', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+    ],
+  },
+  menuiserie: {
+    starterPresets: [
+      {
+        name: 'Pose fenêtre PVC double vitrage',
+        description: 'Dépose et remplacement de fenêtre PVC avec isolation.',
+        category: 'Pose',
+        unit: 'u',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Dépose ancienne fenêtre', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Fenêtre PVC double vitrage', quantity: 1, unit: 'u', item_type: 'material' },
+          { designation: 'Pose et calfeutrement', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Joint mousse et silicone', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+      {
+        name: 'Pose porte intérieure',
+        description: 'Fourniture et pose de porte intérieure avec huisserie.',
+        category: 'Pose',
+        unit: 'u',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Porte intérieure avec huisserie', quantity: 1, unit: 'u', item_type: 'material' },
+          { designation: 'Pose huisserie et calage', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Pose porte et réglage', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Serrure et quincaillerie', quantity: 1, unit: 'u', item_type: 'material' },
+        ],
+      },
+      {
+        name: 'Fabrication meuble sur mesure',
+        description: 'Conception et fabrication de meuble en bois sur mesure.',
+        category: 'Fabrication',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Étude et plans', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Panneaux bois et accessoires', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { designation: 'Fabrication atelier', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Pose et réglages', quantity: 1, unit: 'forfait', item_type: 'service' },
+        ],
+      },
+      {
+        name: 'Pose parquet flottant',
+        description: 'Fourniture et pose de parquet flottant avec sous-couche.',
+        category: 'Pose',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Parquet flottant', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Sous-couche acoustique', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Pose et plinthes', quantity: 1, unit: 'm²', item_type: 'service' },
+        ],
+      },
+    ],
+  },
+  maconnerie: {
+    starterPresets: [
+      {
+        name: 'Dalle béton',
+        description: 'Réalisation d\'une dalle béton armée avec coffrage.',
+        category: 'Gros oeuvre',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Terrassement et préparation fond de forme', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Gravillon et film polyane', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Ferraillage treillis soudé', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Coulage béton', quantity: 1, unit: 'm²', item_type: 'mixed' },
+        ],
+      },
+      {
+        name: 'Mur en parpaing',
+        description: 'Construction d\'un mur en parpaings avec enduit.',
+        category: 'Maçonnerie',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Parpaings 20x20x50', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Mortier de pose', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Montage et chaînage', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Enduit de finition', quantity: 1, unit: 'm²', item_type: 'mixed' },
+        ],
+      },
+      {
+        name: 'Création d\'ouverture',
+        description: 'Création d\'une ouverture dans mur porteur avec linteau.',
+        category: 'Gros oeuvre',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Étaiement et sécurisation', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Démolition et découpe', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Linteau béton armé', quantity: 1, unit: 'u', item_type: 'material' },
+          { designation: 'Rebouchage et finitions', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+        ],
+      },
+    ],
+  },
+  peinture: {
+    starterPresets: [
+      {
+        name: 'Peinture intérieure pièce',
+        description: 'Peinture complète d\'une pièce (murs et plafond).',
+        category: 'Peinture intérieure',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Préparation et rebouchage', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Impression', quantity: 1, unit: 'm²', item_type: 'mixed' },
+          { designation: 'Peinture 2 couches', quantity: 1, unit: 'm²', item_type: 'mixed' },
+          { designation: 'Protection sols et mobilier', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Ravalement de façade',
+        description: 'Nettoyage haute pression et peinture façade.',
+        category: 'Peinture extérieure',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Nettoyage haute pression', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Rebouchage fissures', quantity: 1, unit: 'm²', item_type: 'mixed' },
+          { designation: 'Peinture façade 2 couches', quantity: 1, unit: 'm²', item_type: 'mixed' },
+        ],
+      },
+      {
+        name: 'Pose papier peint',
+        description: 'Dépose et pose de papier peint.',
+        category: 'Revêtement mural',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Dépose ancien revêtement', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Préparation mur', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Papier peint et colle', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Pose papier peint', quantity: 1, unit: 'm²', item_type: 'service' },
+        ],
+      },
+    ],
+  },
+  carrelage: {
+    starterPresets: [
+      {
+        name: 'Pose carrelage sol',
+        description: 'Fourniture et pose carrelage sol avec joint.',
+        category: 'Carrelage sol',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Ragréage sol', quantity: 1, unit: 'm²', item_type: 'mixed' },
+          { designation: 'Carrelage sol', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Pose colle et joint', quantity: 1, unit: 'm²', item_type: 'mixed' },
+          { designation: 'Plinthes et finitions', quantity: 1, unit: 'ml', item_type: 'mixed' },
+        ],
+      },
+      {
+        name: 'Pose faïence murale',
+        description: 'Fourniture et pose faïence murale salle de bain ou cuisine.',
+        category: 'Faïence',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Préparation support', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Faïence murale', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Pose colle et joint', quantity: 1, unit: 'm²', item_type: 'mixed' },
+        ],
+      },
+      {
+        name: 'Dépose et repose carrelage',
+        description: 'Dépose de l\'existant et repose avec nouveau carrelage.',
+        category: 'Rénovation',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Dépose carrelage existant', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Ragréage et préparation', quantity: 1, unit: 'm²', item_type: 'mixed' },
+          { designation: 'Carrelage et pose', quantity: 1, unit: 'm²', item_type: 'mixed' },
+        ],
+      },
+    ],
+  },
+  facade: {
+    starterPresets: [
+      {
+        name: 'Ravalement enduit projeté',
+        description: 'Ravalement de façade avec enduit hydraulique projeté.',
+        category: 'Ravalement',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Nettoyage et démoussage', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Rebouchage fissures et arêtes', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+          { designation: 'Enduit hydraulique projeté', quantity: 1, unit: 'm²', item_type: 'mixed' },
+          { designation: 'Finition grattée ou lissée', quantity: 1, unit: 'm²', item_type: 'service' },
+        ],
+      },
+      {
+        name: 'ITE (isolation thermique extérieure)',
+        description: 'Isolation par l\'extérieur avec enduit de finition.',
+        category: 'ITE',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Pose panneaux isolants', quantity: 1, unit: 'm²', item_type: 'mixed' },
+          { designation: 'Treillis et enduit de base', quantity: 1, unit: 'm²', item_type: 'mixed' },
+          { designation: 'Enduit de finition', quantity: 1, unit: 'm²', item_type: 'mixed' },
+          { designation: 'Profils et accessoires', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+    ],
+  },
+  charpente: {
+    starterPresets: [
+      {
+        name: 'Charpente traditionnelle',
+        description: 'Fourniture et pose de charpente bois traditionnelle.',
+        category: 'Charpente',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Bois de charpente (chevrons, faîtage)', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { designation: 'Pose et assemblage charpente', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Contreventement et fixations', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+      {
+        name: 'Couverture tuiles',
+        description: 'Dépose et repose de couverture tuiles avec sous-toiture.',
+        category: 'Couverture',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Dépose tuiles et liteaux', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Écran sous-toiture', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Liteaux et contre-liteaux', quantity: 1, unit: 'm²', item_type: 'material' },
+          { designation: 'Repose tuiles', quantity: 1, unit: 'm²', item_type: 'service' },
+          { designation: 'Faîtage et arêtiers', quantity: 1, unit: 'ml', item_type: 'mixed' },
+        ],
+      },
+      {
+        name: 'Zinguerie gouttières',
+        description: 'Dépose et remplacement de gouttières et descentes.',
+        category: 'Zinguerie',
+        unit: 'ml',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Dépose gouttières existantes', quantity: 1, unit: 'ml', item_type: 'service' },
+          { designation: 'Gouttière zinc ou alu', quantity: 1, unit: 'ml', item_type: 'material' },
+          { designation: 'Pose et fixation', quantity: 1, unit: 'ml', item_type: 'service' },
+          { designation: 'Descentes et raccords', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+        ],
+      },
+    ],
+  },
+  renovation: {
+    starterPresets: [
+      {
+        name: 'Rénovation complète appartement',
+        description: 'Réfection tous corps d\'état d\'un appartement.',
+        category: 'Rénovation',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Démolition et dépose', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Plâtrerie / cloisons', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+          { designation: 'Électricité', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Plomberie', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Carrelage et faïence', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+          { designation: 'Peinture', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+          { designation: 'Menuiseries intérieures', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+        ],
+      },
+      {
+        name: 'Rénovation salle de bain',
+        description: 'Réfection complète salle de bain tous corps d\'état.',
+        category: 'Rénovation',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Dépose équipements et revêtements', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Plomberie et évacuations', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+          { designation: 'Carrelage sol et faïence murale', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+          { designation: 'Fourniture et pose sanitaires', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+          { designation: 'Peinture et finitions', quantity: 1, unit: 'forfait', item_type: 'mixed' },
+        ],
+      },
+    ],
   },
   tolerie: {
     labelSet: { catalogSubtitle: 'Matières, opérations vendues et postes internes dédiés à la tôlerie.' },
@@ -758,14 +1294,332 @@ const BUSINESS_ACTIVITY_OVERRIDES: Partial<Record<BusinessActivityId, BusinessAc
       material: ['Tôle brute', 'Bac acier', 'Pliage', 'Découpe'],
       service: ['Découpe', 'Pliage', 'Finition'],
       laborRate: ['Laser', 'Presse plieuse', 'Outillage amorti'],
+      bundleTemplate: ['Pièce unitaire', 'Série courte', 'Assemblage', 'Sous-traitance'],
     },
+    starterPresets: [
+      {
+        name: 'Découpe tôle + pliage simple',
+        description: 'Découpe et pliage d\'une pièce tôle acier standard.',
+        category: 'Pièce unitaire',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Tôle acier S235 2mm', quantity: 1, unit: 'kg', item_type: 'material' },
+          { designation: 'Découpe cisaille ou laser', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Pliage presse plieuse', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Ébavurage et contrôle', quantity: 1, unit: 'u', item_type: 'service' },
+        ],
+      },
+      {
+        name: 'Ensemble soudé sur plan',
+        description: 'Fabrication d\'un ensemble soudé à partir d\'un plan client.',
+        category: 'Assemblage',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Débit matière', quantity: 1, unit: 'kg', item_type: 'material' },
+          { designation: 'Découpe des éléments', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Pliage', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Pointage et soudure', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Finition et contrôle dimensionnel', quantity: 1, unit: 'u', item_type: 'service' },
+        ],
+      },
+      {
+        name: 'Série courte tôlerie',
+        description: 'Production en série courte avec réglages machine inclus.',
+        category: 'Série courte',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Mise au point programme / réglage', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Matière première', quantity: 1, unit: 'kg', item_type: 'material' },
+          { designation: 'Découpe et pliage série', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Contrôle et conditionnement', quantity: 1, unit: 'forfait', item_type: 'service' },
+        ],
+      },
+    ],
+  },
+  chaudronnerie: {
+    starterPresets: [
+      {
+        name: 'Ouvrage chaudronné sur plan',
+        description: 'Fabrication d\'un ouvrage métallique sur plan client.',
+        category: 'Fabrication',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Étude et mise en plan', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Débit et préparation matière', quantity: 1, unit: 'kg', item_type: 'material' },
+          { designation: 'Formage et assemblage', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Soudure TIG/MIG', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Contrôle et finition', quantity: 1, unit: 'u', item_type: 'service' },
+        ],
+      },
+      {
+        name: 'Réparation ouvrage existant',
+        description: 'Intervention de réparation sur équipement chaudronné.',
+        category: 'Réparation',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Diagnostic et dépose', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Fournitures de remplacement', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { designation: 'Soudure et remontage', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Contrôle et essai', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+    ],
   },
   decoupe_laser: {
     labelSet: { catalogSubtitle: 'Matières, opérations et postes de charge orientés découpe laser.' },
     defaultCategories: {
       service: ['Découpe laser', 'Programmation', 'Ébavurage'],
       laborRate: ['Machine laser', 'Approvisionnement', 'Maintenance'],
+      bundleTemplate: ['Pièce standard', 'Série laser', 'Prototype'],
     },
+    starterPresets: [
+      {
+        name: 'Découpe laser pièce standard',
+        description: 'Découpe laser d\'une pièce acier ou inox standard.',
+        category: 'Pièce standard',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Programmation DXF / CAO', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Tôle acier ou inox', quantity: 1, unit: 'kg', item_type: 'material' },
+          { designation: 'Découpe laser', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Ébavurage et contrôle', quantity: 1, unit: 'u', item_type: 'service' },
+        ],
+      },
+      {
+        name: 'Série laser répétitive',
+        description: 'Production en série avec imbrication optimisée.',
+        category: 'Série laser',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Imbrication et lancement série', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Matière', quantity: 1, unit: 'kg', item_type: 'material' },
+          { designation: 'Découpe laser série', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Tri et conditionnement', quantity: 1, unit: 'forfait', item_type: 'service' },
+        ],
+      },
+    ],
+  },
+  pliage: {
+    starterPresets: [
+      {
+        name: 'Pliage série standard',
+        description: 'Pliage de pièces en série avec réglage presse plieuse.',
+        category: 'Série',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Réglage outil et programme pliage', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Matière (fournie ou à fournir)', quantity: 1, unit: 'kg', item_type: 'material' },
+          { designation: 'Pliage presse plieuse', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Contrôle angulaire', quantity: 1, unit: 'u', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Pliage prototype / pièce unique',
+        description: 'Pliage unitaire avec temps de réglage complet.',
+        category: 'Prototype',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Réglage machine', quantity: 1, unit: 'h', item_type: 'service' },
+          { designation: 'Matière', quantity: 1, unit: 'kg', item_type: 'material' },
+          { designation: 'Pliage et reprise', quantity: 1, unit: 'u', item_type: 'service' },
+        ],
+      },
+    ],
+  },
+  soudure: {
+    starterPresets: [
+      {
+        name: 'Soudure assemblage simple',
+        description: 'Assemblage par soudure MIG ou MAG de pièces préparées.',
+        category: 'Assemblage',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'service',
+        lines: [
+          { designation: 'Pointage et assemblage', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Soudure MIG/MAG', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Meulage et ébavurage', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Consommables soudure', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+      {
+        name: 'Soudure TIG inox / alu',
+        description: 'Soudure TIG sur inox ou aluminium avec finition soignée.',
+        category: 'Soudure fine',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'service',
+        lines: [
+          { designation: 'Préparation et dégraissage', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Soudure TIG', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Reprise et finition', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Gaz argon et consommables', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+    ],
+  },
+  fabrication_atelier: {
+    starterPresets: [
+      {
+        name: 'Fabrication pièce atelier complète',
+        description: 'Fabrication atelier complète d\'une pièce de A à Z.',
+        category: 'Fabrication',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Étude et plan de fabrication', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Approvisionnement matière', quantity: 1, unit: 'kg', item_type: 'material' },
+          { designation: 'Usinage et formage', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Assemblage', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Contrôle qualité et conditionnement', quantity: 1, unit: 'u', item_type: 'free' },
+        ],
+      },
+      {
+        name: 'Prototype atelier',
+        description: 'Réalisation d\'un prototype avec suivi et ajustements.',
+        category: 'Prototype',
+        unit: 'u',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Analyse cahier des charges', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Matière et composants', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { designation: 'Fabrication et ajustements', quantity: 1, unit: 'u', item_type: 'service' },
+          { designation: 'Test et validation', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+    ],
+  },
+  remise_en_etat: {
+    starterPresets: [
+      {
+        name: 'Remise en état après travaux',
+        description: 'Nettoyage approfondi de fin de chantier.',
+        category: 'Ponctuel',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Dépoussiérage et aspiration', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Nettoyage vitres et menuiseries', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Nettoyage sols et finitions', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Produits et consommables', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+      {
+        name: 'État des lieux sortant',
+        description: 'Nettoyage complet pour restitution de local.',
+        category: 'Ponctuel',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Nettoyage cuisine et sanitaires', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Nettoyage pièces à vivre', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Nettoyage vitres', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Produits et consommables', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+    ],
+  },
+  depannage_multitechnique: {
+    defaultCategories: {
+      bundleTemplate: ['Dépannage', 'Entretien', 'Mise en service'],
+    },
+    starterPresets: [
+      {
+        name: 'Dépannage toutes trades',
+        description: 'Intervention de dépannage multi-corps d\'état.',
+        category: 'Dépannage',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Déplacement et diagnostic', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Intervention', quantity: 1, unit: 'h', item_type: 'service' },
+          { designation: 'Petites fournitures', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+      {
+        name: 'Visite de maintenance préventive',
+        description: 'Visite de contrôle et maintenance préventive des installations.',
+        category: 'Entretien',
+        unit: 'forfait',
+        vat_rate: 10,
+        profile_kind: 'service',
+        lines: [
+          { designation: 'Déplacement', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Contrôle électricité', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Contrôle plomberie', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Rapport d\'intervention', quantity: 1, unit: 'forfait', item_type: 'free' },
+        ],
+      },
+    ],
+  },
+  nettoyage_bureaux: {
+    starterPresets: [
+      {
+        name: 'Entretien hebdomadaire bureaux',
+        description: 'Passage régulier d\'entretien des espaces de travail.',
+        category: 'Hebdomadaire',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'service',
+        lines: [
+          { designation: 'Aspiration et lavage des sols', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Dépoussiérage bureaux et équipements', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Vidage des corbeilles', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Nettoyage sanitaires', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Produits et consommables', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+      {
+        name: 'Grand nettoyage annuel',
+        description: 'Nettoyage approfondi annuel de l\'ensemble des locaux.',
+        category: 'Ponctuel',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'mixed',
+        lines: [
+          { designation: 'Nettoyage vitres intérieures et extérieures', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Nettoyage moquettes / sols', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Dépoussiérage mobilier et cloisonnements', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { designation: 'Produits et consommables', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+      {
+        name: 'Contrat mensuel locaux commerciaux',
+        description: 'Contrat mensuel pour parties communes et locaux commerciaux.',
+        category: 'Mensuel',
+        unit: 'forfait',
+        vat_rate: 20,
+        profile_kind: 'service',
+        lines: [
+          { designation: 'Entretien parties communes', quantity: 4, unit: 'passage', item_type: 'service' },
+          { designation: 'Nettoyage sanitaires', quantity: 4, unit: 'passage', item_type: 'service' },
+          { designation: 'Produits et consommables', quantity: 1, unit: 'forfait', item_type: 'material' },
+        ],
+      },
+    ],
   },
 }
 
@@ -880,6 +1734,9 @@ function mergeBundleTemplateUi(base: BundleTemplateUi, override: unknown): Bundl
       free: typeof override.lineTypeLabels === 'object' && override.lineTypeLabels !== null && typeof (override.lineTypeLabels as Record<string, unknown>).free === 'string'
         ? (override.lineTypeLabels as Record<string, string>).free
         : base.lineTypeLabels.free,
+      equipment: typeof override.lineTypeLabels === 'object' && override.lineTypeLabels !== null && typeof (override.lineTypeLabels as Record<string, unknown>).equipment === 'string'
+        ? (override.lineTypeLabels as Record<string, string>).equipment
+        : base.lineTypeLabels.equipment,
     },
     internalLineHelp: typeof override.internalLineHelp === 'string' ? override.internalLineHelp : base.internalLineHelp,
     sectionPlaceholder: typeof override.sectionPlaceholder === 'string' ? override.sectionPlaceholder : base.sectionPlaceholder,
@@ -917,11 +1774,14 @@ function mergeUnitSetsByKind(
 }
 
 function mergeActivityConfig(base: BusinessProfileConfig, activityId: BusinessActivityId): BusinessProfileConfig {
+  const activity = getBusinessActivityById(activityId)
+  const activitySectorFallback = activity?.label ?? base.sectorFallback
   const override = BUSINESS_ACTIVITY_OVERRIDES[activityId]
   if (!override) {
     return {
       ...base,
       activityId,
+      sectorFallback: activitySectorFallback,
       laborRateUi: base.laborRateUi,
       bundleTemplateUi: base.bundleTemplateUi,
       resourceTypeOptions: buildResourceTypeOptions(base.laborRateUi),
@@ -932,6 +1792,7 @@ function mergeActivityConfig(base: BusinessProfileConfig, activityId: BusinessAc
   return {
     ...base,
     activityId,
+    sectorFallback: activitySectorFallback,
     labelSet: mergeLabelSet(base.labelSet, override.labelSet),
     unitSet: override.unitSet ?? base.unitSet,
     unitSetsByKind: mergeUnitSetsByKind(base.unitSetsByKind, override.unitSetsByKind),
@@ -1049,6 +1910,34 @@ export function resolveCatalogContext(input?: OrganizationCatalogConfigInput | n
     unitSet: mergeUnitSet(profileConfig.unitSet, input?.unit_set),
     defaultCategories: mergeDefaultCategories(profileConfig.defaultCategories, input?.default_categories),
     starterPresets: mergeStarterPresets(profileConfig.starterPresets, input?.starter_presets),
+  }
+}
+
+export type CatalogAIPromptContext = {
+  businessProfile: BusinessProfile
+  activityLabel: string
+  materialLabel: string
+  serviceLabel: string
+  laborRateLabel: string
+  bundleTemplateLabel: string
+  defaultCategories: DefaultCategories
+  unitsByKind: BusinessProfileConfig['unitSetsByKind']
+  vatRates: number[]
+  dimensionModes: string[]
+}
+
+export function getCatalogAIPromptContext(profileConfig: BusinessProfileConfig): CatalogAIPromptContext {
+  return {
+    businessProfile: profileConfig.businessProfile,
+    activityLabel: profileConfig.sectorFallback,
+    materialLabel: profileConfig.labelSet.material.singular,
+    serviceLabel: profileConfig.labelSet.service.singular,
+    laborRateLabel: profileConfig.labelSet.laborRate.singular,
+    bundleTemplateLabel: profileConfig.labelSet.bundleTemplate.singular,
+    defaultCategories: profileConfig.defaultCategories,
+    unitsByKind: profileConfig.unitSetsByKind,
+    vatRates: [0, 5.5, 10, 20],
+    dimensionModes: ['none', 'linear', 'area', 'volume'],
   }
 }
 

@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import React from 'react'
 import { createAdminClient } from '@/lib/supabase/admin'
+
+export const dynamic = 'force-dynamic';
+import { verifyCronSecret } from '@/lib/cron-auth'
 import { sendEmail } from '@/lib/email'
 import { computeNextSendDate } from '@/lib/data/recurring-utils'
 import type { RecurringFrequency } from '@/lib/data/recurring-utils'
 import { APP_SIGNATURE } from '@/lib/brand'
+import { dateParis } from '@/lib/utils'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { renderToBuffer } from '@react-pdf/renderer'
 import InvoicePDF from '@/components/pdf/InvoicePDF'
@@ -19,8 +23,7 @@ import InvoicePDF from '@/components/pdf/InvoicePDF'
 //      → si auto_send_delay_days est défini sur le modèle et le délai est écoulé
 
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get('x-cron-secret')
-  if (!secret || secret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req.headers.get('x-cron-secret'))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -134,7 +137,7 @@ export async function POST(req: NextRequest) {
       )
       await admin
         .from('recurring_invoices')
-        .update({ next_send_date: nextDate.toISOString().split('T')[0] })
+        .update({ next_send_date: dateParis(nextDate.getTime()) })
         .eq('id', model.id)
 
       // Notifier l'artisan si confirmation requise

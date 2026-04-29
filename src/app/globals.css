@@ -24,6 +24,7 @@
     --elevation-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.05);
     --elevation-border: rgba(0, 0, 0, 0.08);
     --glass-blur: 0px;
+    --accent-glow: none;
 
     /* Header */
     --header-blur: 16px;
@@ -33,6 +34,8 @@
     /* Accents */
     --accent-primary: 255 159 28;
     /* #FF9F1C Ambre */
+    --accent-secondary: 79 70 229;
+    /* #4F46E5 Indigo */
     --accent-navy: 26 29 42;
     /* #1A1D2A */
 
@@ -43,15 +46,15 @@
   }
 
   .dark {
-    /* 🌙 DARK MODE : Dark Liquid Glass */
+    /* 🌙 DARK MODE : OLED Liquid Glass */
 
     /* Fonds */
     --bg-base: 5 5 5;
     /* #050505 OLED Black */
     --bg-surface: 255 255 255;
-    /* appliqué à 2-3% via Tailwind */
+    /* appliqué à 2% via opacity utilities */
     --bg-interactive: 255 255 255;
-    /* appliqué à 4% via Tailwind */
+    /* appliqué à 4% via opacity utilities */
 
     /* Texte */
     --text-primary: 255 255 255;
@@ -59,10 +62,11 @@
     /* #A1A1AA */
     --text-inverse: 5 5 5;
 
-    /* Élévation — Dark : Ombres invisibles, Bordures clean, Blur massif */
-    --elevation-shadow: none;
-    --elevation-border: rgba(255, 255, 255, 0.12);
+    /* Élévation — Dark : Glass massif + glow ambiant */
+    --elevation-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+    --elevation-border: rgba(255, 255, 255, 0.05);
     --glass-blur: 40px;
+    --accent-glow: 0 0 30px rgba(255, 159, 28, 0.15);
 
     /* Header */
     --header-blur: 40px;
@@ -71,13 +75,19 @@
 
     /* Accents */
     --accent-primary: 255 159 28;
+    /* #FF9F1C Amber */
+    --accent-secondary: 99 102 241;
+    /* #6366F1 Indigo */
     --accent-navy: 255 255 255;
     /* blanc en dark mode */
 
     /* Sémantique */
-    --success: 16 185 129;
+    --success: 180 244 129;
+    /* #B4F481 */
     --danger: 239 68 68;
-    --warning: 249 115 22;
+    /* #EF4444 */
+    --warning: 255 159 28;
+    /* #FF9F1C */
   }
 }
 
@@ -95,13 +105,16 @@
    * AMBIENT GLOW ORBS
    * ═══════════════════ */
   .liquid-glow {
-    filter: blur(120px);
-    opacity: 0.07;
+    filter: blur(80px);
+    opacity: 0;
     transition: opacity 0.5s ease;
+    will-change: transform;
+    contain: strict;
   }
 
   .dark .liquid-glow {
     opacity: 0.18;
+    filter: blur(120px);
   }
 
   /* ═══════════════════
@@ -143,9 +156,141 @@
   }
 
   .dark .card {
-    background: rgba(255, 255, 255, 0.03); /* Subtle white overlay on OLED black */
+    background: rgba(255, 255, 255, 0.02);
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
     border-color: var(--elevation-border);
+    box-shadow: var(--elevation-shadow), var(--accent-glow);
+  }
+
+  /* ═══════════════════
+   * INPUTS
+   * ═══════════════════ */
+  .input-glass {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    border: 1px solid var(--elevation-border);
+    transition: border-color 0.2s ease;
+  }
+
+  .input-glass:focus {
+    outline: none;
+    border-color: rgb(var(--accent-primary));
+  }
+
+  /* ═══════════════════
+   * PILL BUTTONS
+   * ═══════════════════ */
+  .btn-pill {
+    border-radius: 9999px;
+    padding: 12px 24px;
+    font-weight: 600;
+    font-family: var(--font-jakarta), sans-serif;
+    transition: opacity 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .btn-pill:hover {
+    opacity: 0.88;
+  }
+
+  .btn-pill-primary {
+    background: rgb(var(--accent-primary));
+    color: #050505;
+  }
+
+  .dark .btn-pill-primary {
+    box-shadow: 0 0 20px rgba(255, 159, 28, 0.2);
+  }
+
+  /* ═══════════════════
+   * PAGE CONTAINER
+   * Padding responsive mobile-first, max-width centré
+   * ═══════════════════ */
+  .page-container {
+    flex: 1;
+    padding: 1.25rem 1rem;
+    max-width: 1400px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+  }
+
+  @media (min-width: 640px) {
+    .page-container {
+      padding: 1.5rem 1.25rem;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .page-container {
+      padding: 2rem 1.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .page-container {
+      padding: 2rem 2rem;
+    }
+  }
+
+  /* ═══════════════════
+   * MODAL RESPONSIVE
+   * Full-screen sur mobile, centré sur desktop
+   * ═══════════════════ */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9980;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    padding: 0;
+  }
+
+  @media (min-width: 640px) {
+    .modal-overlay {
+      align-items: center;
+      padding: 1rem;
+    }
+  }
+
+  .modal-panel {
+    background: rgb(var(--bg-surface));
+    border-radius: 1.5rem 1.5rem 0 0;
+    border: 1px solid var(--elevation-border);
+    box-shadow: var(--elevation-shadow);
+    width: 100%;
+    max-height: 92dvh;
+    overflow-y: auto;
+    position: relative;
+    padding: 1.25rem 1rem 1.5rem;
+  }
+
+  @media (min-width: 640px) {
+    .modal-panel {
+      border-radius: 1.5rem;
+      width: auto;
+      min-width: 480px;
+      max-width: 672px;
+      max-height: 90vh;
+      padding: 2rem;
+    }
+  }
+
+  .dark .modal-panel {
+    background: rgba(18, 18, 18, 0.98);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+  }
+
+  /* ═══════════════════
+   * ACCENT/8 UTILITY
+   * Tailwind ne génère pas bg-accent/8 — on le définit manuellement
+   * ═══════════════════ */
+  .bg-accent\/8 {
+    background-color: rgb(var(--accent-primary) / 0.08);
   }
 }

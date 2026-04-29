@@ -1,5 +1,7 @@
+import { cache } from 'react'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import { getCachedOrganizationId } from './session-cache'
 import {
   DEFAULT_ORGANIZATION_MODULES,
   normalizeOrganizationModules,
@@ -7,26 +9,8 @@ import {
   type OrganizationModules,
 } from '@/lib/organization-modules'
 
-async function getCurrentOrganizationIdFromSession(): Promise<string | null> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) return null
-
-  const { data: membership } = await supabase
-    .from('memberships')
-    .select('organization_id')
-    .eq('user_id', user.id)
-    .eq('is_active', true)
-    .single()
-
-  return membership?.organization_id ?? null
-}
-
-export async function getOrganizationModules(orgId?: string | null): Promise<OrganizationModules> {
-  const targetOrgId = orgId ?? await getCurrentOrganizationIdFromSession()
+async function _getOrganizationModules(orgId?: string | null): Promise<OrganizationModules> {
+  const targetOrgId = orgId ?? await getCachedOrganizationId()
   if (!targetOrgId) return { ...DEFAULT_ORGANIZATION_MODULES }
 
   const supabase = await createClient()
@@ -51,6 +35,8 @@ export async function getOrganizationModules(orgId?: string | null): Promise<Org
 
   return normalizeOrganizationModules(modulesResult.data?.modules, orgResult.data?.business_profile)
 }
+
+export const getOrganizationModules = cache(_getOrganizationModules)
 
 export async function getOrganizationModulesAdmin(orgId: string): Promise<OrganizationModules> {
   const admin = createAdminClient()

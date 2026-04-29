@@ -108,7 +108,7 @@ function RecurrenceBadge({ recurrence }: { recurrence: RecurrenceType | null | u
   )
 }
 
-function ActionMenu({ status, onReprendre, onTerminer, onSuspendre, onAnnuler, onDupliquer, onSupprimer }: {
+function ActionMenu({ status, onReprendre, onTerminer, onSuspendre, onAnnuler, onDupliquer, onSupprimer, canDelete }: {
   status: Status
   onReprendre: () => void
   onTerminer: () => void
@@ -116,6 +116,7 @@ function ActionMenu({ status, onReprendre, onTerminer, onSuspendre, onAnnuler, o
   onAnnuler: () => void
   onDupliquer: () => void
   onSupprimer: () => void
+  canDelete?: boolean
 }) {
   const [open, setOpen] = useState(false)
   return (
@@ -153,10 +154,14 @@ function ActionMenu({ status, onReprendre, onTerminer, onSuspendre, onAnnuler, o
             <button onClick={(e) => { e.stopPropagation(); setOpen(false); onDupliquer() }} className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-base flex items-center gap-2">
               <Copy className="w-4 h-4 text-blue-400" /> Dupliquer
             </button>
-            <div className="h-px bg-[var(--elevation-border)] my-1" />
-            <button onClick={(e) => { e.stopPropagation(); setOpen(false); onSupprimer() }} className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 flex items-center gap-2">
-              <Trash2 className="w-4 h-4" /> Supprimer
-            </button>
+            {canDelete && (
+              <>
+                <div className="h-px bg-[var(--elevation-border)] my-1" />
+                <button onClick={(e) => { e.stopPropagation(); setOpen(false); onSupprimer() }} className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 flex items-center gap-2">
+                  <Trash2 className="w-4 h-4" /> Supprimer
+                </button>
+              </>
+            )}
           </div>
         </>
       )}
@@ -191,15 +196,35 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
   const handleQuoteChange = (quoteId: string) => {
     const q = linkableQuotes.find(x => x.id === quoteId)
     if (q) {
+      // Toujours écraser depuis le devis sélectionné pour que changer de devis mette tout à jour
       setForm(f => ({
         ...f,
         quoteId,
-        title: f.title || q.title || '',
-        clientId: f.clientId || q.client_id || '',
-        budgetHt: f.budgetHt || (q.total_ht != null ? String(Math.round(q.total_ht)) : ''),
+        title: q.title || '',
+        clientId: q.client_id || '',
+        budgetHt: q.total_ht != null ? String(Math.round(q.total_ht)) : '',
+        addressLine1: q.client_address_line1 || '',
+        postalCode: q.client_postal_code || '',
+        city: q.client_city || '',
+        contactName: q.client_contact_name || '',
+        contactEmail: q.client_contact_email || '',
+        contactPhone: q.client_contact_phone || '',
       }))
     } else {
-      set('quoteId', '')
+      // Désélection : remettre les champs à vide
+      setForm(f => ({
+        ...f,
+        quoteId: '',
+        title: '',
+        clientId: '',
+        budgetHt: '',
+        addressLine1: '',
+        postalCode: '',
+        city: '',
+        contactName: '',
+        contactEmail: '',
+        contactPhone: '',
+      }))
     }
   }
 
@@ -233,8 +258,8 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg mx-4 menu-panel shadow-2xl">
+    <div className="modal-overlay">
+      <div className="modal-panel sm:max-w-lg">
         {/* Header modal */}
         <div className="flex items-center gap-3 px-6 pt-6 pb-4 border-b border-[var(--elevation-border)]">
           <div className="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
@@ -506,11 +531,15 @@ export default function ChantiersClient({
   stats,
   clients,
   linkableQuotes,
+  canCreate = false,
+  canDelete = false,
 }: {
   initialChantiers: Chantier[]
   stats: ChantierStats
   clients: Client[]
   linkableQuotes: QuoteStub[]
+  canCreate?: boolean
+  canDelete?: boolean
 }) {
   const router = useRouter()
   const [chantiers, setChantiers] = useState(initialChantiers)
@@ -561,7 +590,7 @@ export default function ChantiersClient({
   const fmtMoney = (n: number) => n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="page-container space-y-6">
       {/* Header */}
       <div className="card p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
@@ -576,22 +605,24 @@ export default function ChantiersClient({
         <div className="flex items-center gap-4 flex-wrap mt-4 md:mt-0">
           <Link
             href="/chantiers/planning"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 bg-base transition-all shadow-sm"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 bg-base transition-all shadow-sm whitespace-nowrap"
           >
             <Calendar className="w-4 h-4" /> Planning global
           </Link>
           <Link
             href="/chantiers/heures"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 bg-base transition-all shadow-sm"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 bg-base transition-all shadow-sm whitespace-nowrap"
           >
             <Clock className="w-4 h-4" /> Heures pointées
           </Link>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-accent text-white font-bold hover:bg-accent/90 shadow-sm shadow-accent/20 transition-all border border-accent/20"
-          >
-            <Plus className="w-5 h-5 text-white" /> Créer un chantier
-          </button>
+          {canCreate && (
+            <button
+              onClick={() => setShowCreate(true)}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-accent text-white font-bold hover:bg-accent/90 shadow-sm shadow-accent/20 transition-all border border-accent/20 whitespace-nowrap"
+            >
+              <Plus className="w-5 h-5 text-white" /> Créer un chantier
+            </button>
+          )}
         </div>
       </div>
 
@@ -693,6 +724,7 @@ export default function ChantiersClient({
                       onAnnuler={() => handleStatusChange(c, 'annule')}
                       onDupliquer={() => handleDuplicate(c)}
                       onSupprimer={() => handleDelete(c)}
+                      canDelete={canDelete}
                     />
                   </td>
                 </tr>

@@ -5,6 +5,12 @@ import { revalidatePath } from 'next/cache'
 import { renderToBuffer } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import {
+  CreateInvoiceSchema,
+  UpdateInvoiceSchema,
+  SaveInvoiceItemsSchema,
+  GenerateDepositSchema,
+} from '@/lib/validations/invoices'
 import { getInvoiceById } from '@/lib/data/queries/invoices'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { sendEmail } from '@/lib/email'
@@ -13,6 +19,7 @@ import { getClientGreetingName } from '@/lib/client'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import InvoicePDF from '@/components/pdf/InvoicePDF'
 import { coerceLegalVatRate } from '@/lib/utils'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 type Result = { error: string | null }
 
@@ -38,8 +45,16 @@ export async function saveInvoiceItems(
     dueDate: string
     title?: string | null
     quoteId?: string | null
+    chantierId?: string | null
+    aidLabel?: string | null
+    aidAmount?: number | null
   },
 ): Promise<Result> {
+  if (!(await hasPermission('invoices.edit'))) return { error: 'Permission refusée.' }
+
+  const parsed = SaveInvoiceItemsSchema.safeParse({ invoiceId, items, meta })
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Données invalides.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -91,6 +106,9 @@ export async function saveInvoiceItems(
       due_date: meta.dueDate,
       title: meta.title || 'Facture',
       quote_id: meta.quoteId ?? null,
+      chantier_id: meta.chantierId ?? null,
+      aid_label: meta.aidLabel ?? null,
+      aid_amount: meta.aidAmount ?? null,
       total_ht: totalHt,
       total_tva: totalTva,
       total_ttc: totalTtc,
@@ -111,6 +129,8 @@ export async function saveInvoiceItems(
  * et envoie un email de remerciement au client.
  */
 export async function markInvoicePaid(invoiceId: string): Promise<Result> {
+  if (!(await hasPermission('invoices.record_payment'))) return { error: 'Permission refusée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -135,7 +155,7 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result> {
   if (invoice?.client_id) {
     const [{ data: client }, { data: org }, { data: customTpl }] = await Promise.all([
       supabase.from('clients').select('company_name, contact_name, first_name, last_name, email').eq('id', invoice.client_id).single(),
-      supabase.from('organizations').select('name, email, email_from_address').eq('id', orgId).single(),
+      supabase.from('organizations').select('name, email, email_from_address, email_signature').eq('id', orgId).single(),
       supabase.from('email_templates').select('subject, body_text').eq('organization_id', orgId).eq('slug', 'invoice_paid').eq('is_active', true).maybeSingle(),
     ])
 
@@ -166,6 +186,7 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result> {
           totalTtc: invoice.total_ttc,
           currency: invoice.currency ?? 'EUR',
           paidAt,
+          emailSignature: (org as any).email_signature ?? null,
         })
         subject = built.subject
         html = built.html
@@ -192,7 +213,13 @@ export async function createInvoice(data: {
   title?: string
   currency?: string
   quoteId?: string | null
+  chantierId?: string | null
 }): Promise<{ invoiceId: string | null; error: string | null }> {
+  if (!(await hasPermission('invoices.create'))) return { invoiceId: null, error: 'Permission refusée.' }
+
+  const parsed = CreateInvoiceSchema.safeParse(data)
+  if (!parsed.success) return { invoiceId: null, error: parsed.error.issues[0]?.message ?? 'Données invalides.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { invoiceId: null, error: 'Non authentifié.' }
@@ -210,6 +237,7 @@ export async function createInvoice(data: {
       status: 'draft',
       created_by: user.id,
       quote_id: data.quoteId ?? null,
+      chantier_id: data.chantierId ?? null,
     })
     .select('id')
     .single()
@@ -234,8 +262,15 @@ export async function updateInvoice(
     payment_terms_days?: number
     notes_client?: string | null
     payment_conditions?: string | null
+    aid_label?: string | null
+    aid_amount?: number | null
   },
 ): Promise<Result> {
+  if (!(await hasPermission('invoices.edit'))) return { error: 'Permission refusée.' }
+
+  const parsed = UpdateInvoiceSchema.safeParse(updates)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Données invalides.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -251,9 +286,43 @@ export async function updateInvoice(
   return { error: null }
 }
 
+// ─── Lier / délier facture ↔ chantier ────────────────────────────────────────
+
+export async function linkInvoiceToChantier(invoiceId: string, chantierId: string | null): Promise<Result> {
+  if (!(await hasPermission('invoices.edit'))) return { error: 'Permission refusée.' }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Non authentifié.' }
+
+  if (chantierId) {
+    const { data: chantier } = await supabase
+      .from('chantiers')
+      .select('id')
+      .eq('id', chantierId)
+      .eq('organization_id', orgId)
+      .single()
+
+    if (!chantier) return { error: 'Chantier introuvable.' }
+  }
+
+  const { error } = await supabase
+    .from('invoices')
+    .update({ chantier_id: chantierId })
+    .eq('id', invoiceId)
+    .eq('organization_id', orgId)
+
+  if (error) return { error: error.message }
+  revalidatePath('/finances')
+  revalidatePath('/chantiers', 'layout')
+  return { error: null }
+}
+
 // ─── Send ─────────────────────────────────────────────────────────────────────
 
 export async function sendInvoice(invoiceId: string): Promise<Result> {
+  if (!(await hasPermission('invoices.send'))) return { error: 'Permission refusée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -309,6 +378,7 @@ export async function sendInvoice(invoiceId: string): Promise<Result> {
       totalTtc: invoice.total_ttc,
       currency: invoice.currency ?? 'EUR',
       dueDate: invoice.due_date ?? null,
+      emailSignature: organization.email_signature ?? null,
     })
     subject = built.subject
     html = built.html
@@ -381,20 +451,21 @@ export async function sendInvoice(invoiceId: string): Promise<Result> {
  */
 export async function generateDepositInvoice(
   quoteId: string,
-  depositRate: number, // en % (ex: 30 pour 30%)
+  depositRate: number,
   dueDate: string | null = null,
   balanceDueDate: string | null = null,
 ): Promise<{ invoiceId: string | null; error: string | null }> {
+  if (!(await hasPermission('invoices.create'))) return { invoiceId: null, error: 'Permission refusée.' }
+
+  const parsed = GenerateDepositSchema.safeParse({ quoteId, depositRate, dueDate, balanceDueDate })
+  if (!parsed.success) return { invoiceId: null, error: parsed.error.issues[0]?.message ?? 'Données invalides.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { invoiceId: null, error: 'Non authentifié.' }
 
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { invoiceId: null, error: 'Organisation introuvable.' }
-
-  if (depositRate <= 0 || depositRate > 100) {
-    return { invoiceId: null, error: 'Taux d\'acompte invalide (1-100%).' }
-  }
 
   // Charger le devis avec ses lignes (is_internal obligatoire pour filtrer les coûts internes)
   const { data: quote } = await supabase
@@ -474,6 +545,8 @@ export async function generateDepositInvoice(
 // ─── Archive ──────────────────────────────────────────────────────────────────
 
 export async function archiveInvoice(invoiceId: string): Promise<Result> {
+  if (!(await hasPermission('invoices.delete'))) return { error: 'Permission refusée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }

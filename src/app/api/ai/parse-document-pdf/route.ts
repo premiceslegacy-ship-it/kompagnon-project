@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import type { ImportDocumentRow } from '@/lib/data/mutations/import-documents'
 import { APP_NAME } from '@/lib/brand'
-import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 
 const VISION_MODEL = 'google/gemini-2.5-flash-lite'
@@ -120,6 +120,9 @@ export async function POST(req: NextRequest) {
       if (err instanceof AIModuleDisabledError) {
         return { error: 'module_disabled' }
       }
+      if (err instanceof AIRateLimitError) {
+        return { error: 'rate_limited' }
+      }
       if (err?.name === 'AbortError') {
         console.warn('[ai/parse-document-pdf] timeout after', MODEL_TIMEOUT_MS, 'ms for model', model)
         return { error: 'timeout' }
@@ -137,6 +140,9 @@ export async function POST(req: NextRequest) {
     if ('error' in result) {
       if (result.error === 'module_disabled') {
         return NextResponse.json({ error: 'Module IA document désactivé pour cette organisation.' }, { status: 403 })
+      }
+      if (result.error === 'rate_limited') {
+        return NextResponse.json({ error: 'Trop de requêtes IA pour cette organisation. Réessayez plus tard.' }, { status: 429 })
       }
       return NextResponse.json({ error: "Impossible d'analyser ce PDF. Vérifiez que le fichier est lisible." }, { status: 500 })
     }

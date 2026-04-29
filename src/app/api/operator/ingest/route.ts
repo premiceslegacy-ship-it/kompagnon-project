@@ -63,6 +63,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unable to upsert operator client' }, { status: 500 })
   }
 
+  // Auto-crée la ligne cockpit au premier event — le label peut être corrigé manuellement ensuite
+  await operator
+    .from('operator_client_settings')
+    .upsert({
+      source_instance: payload.source_instance,
+      label: payload.source_instance,
+    }, { onConflict: 'source_instance', ignoreDuplicates: true })
+
   const { error: usageError } = await operator
     .from('operator_usage_events')
     .upsert({

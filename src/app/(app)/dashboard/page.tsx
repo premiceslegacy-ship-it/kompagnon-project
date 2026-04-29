@@ -14,6 +14,7 @@ import UrgentTasksClient from './UrgentTasksClient';
 import MonthNav from './MonthNav';
 import MaSemaineWidget from './MaSemaineWidget';
 
+
 const cardCls = "rounded-3xl p-6 card transition-all duration-300 ease-out";
 
 const fmt = (n: number) =>
@@ -99,7 +100,7 @@ const QuickActions = () => (
     <h3 className="text-xl font-bold text-primary mb-6">Actions Rapides</h3>
     <div className="flex flex-col gap-4">
       <Link
-        href="/finances/quote-editor"
+        href={`/finances/quote-editor?returnTo=${encodeURIComponent('/dashboard')}`}
         className="w-full py-4 rounded-pill bg-accent text-black font-bold text-lg flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-95 transition-all duration-300 ease-out shadow-lg shadow-accent/20"
       >
         <FileText className="w-5 h-5" />
@@ -150,27 +151,27 @@ export default async function DashboardPage({
   const greeting = profile?.onboarding_done ? 'Bon retour,' : 'Bienvenue,';
 
   return (
-    <main className="flex-1 p-8 max-w-[1400px] mx-auto w-full space-y-8">
+    <main className="page-container space-y-6 md:space-y-8">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-4xl tracking-tight text-primary">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl tracking-tight text-primary">
             <span className="font-normal">{greeting} </span>
             <span className="font-bold">{firstName ?? 'dans ATELIER'}</span>
           </h1>
-          <p className="text-secondary text-lg">Voici un résumé de votre activité.</p>
+          <p className="text-secondary text-base md:text-lg mt-0.5">Voici un résumé de votre activité.</p>
         </div>
         <MonthNav currentMonth={selectedMonth} />
       </div>
 
       <KPIRow stats={stats} prevStats={prevStats} chantiersEnCours={chantierStats.enCours} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        <div className="lg:col-span-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8">
+        <div className="lg:col-span-8 space-y-6 md:space-y-8">
           <UrgentTasksClient initialItems={stats.urgentItems} facturesEnRetard={stats.facturesEnRetard} quoteAiEnabled={modules.quote_ai} />
         </div>
         <div className="lg:col-span-4 flex flex-col">
           <QuickActions />
-          <div className="mt-8">
+          <div className="mt-6 md:mt-8">
             {modules.planning_ai ? <MaSemaineWidget /> : null}
           </div>
         </div>

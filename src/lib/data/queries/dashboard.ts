@@ -1,14 +1,19 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { todayParis, dateParis } from '@/lib/utils'
 
 export type UrgentItem = {
   id: string
-  type: 'overdue_invoice' | 'pending_quote' | 'pending_recurring' | 'balance_due'
+  type: 'overdue_invoice' | 'pending_quote' | 'pending_recurring' | 'balance_due' | 'recently_sent'
   label: string
+  subtype?: 'recurring_invoice' | 'auto_reminder_invoice' | 'auto_reminder_quote'
   amount: number | null
   date: string | null
   clientEmail: string | null
+  clientName?: string | null
   invoiceId?: string | null
+  recurringId?: string | null
+  rank?: number | null
 }
 
 export type DashboardStats = {
@@ -39,8 +44,9 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
   }
   const firstOfMonth = new Date(year, mon, 1).toISOString()
   const firstOfNextMonth = new Date(year, mon + 1, 1).toISOString()
-  const today = now.toISOString().split('T')[0]
+  const today = todayParis()
   const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString()
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
 
   const [
     { data: monthInvoices },
@@ -48,6 +54,8 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
     { data: pendingQuotes },
     { data: pendingSchedules },
     { data: pendingBalances },
+    { data: recentAutoSent },
+    { data: recentAutoReminders },
   ] = await Promise.all([
     // Factures du mois — filtre sur issue_date (date d'émission réelle, pas de création du brouillon)
     supabase
@@ -101,8 +109,39 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       .eq('invoice_type', 'acompte')
       .in('status', ['sent', 'paid'])
       .not('balance_due_date', 'is', null)
-      .lte('balance_due_date', new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+      .lte('balance_due_date', dateParis(now.getTime() + 7 * 24 * 60 * 60 * 1000))
       .order('balance_due_date')
+      .limit(5),
+
+    // Factures récurrentes envoyées en auto dans les 7 derniers jours
+    supabase
+      .from('invoice_schedules')
+      .select(`
+        id, scheduled_date, amount_ht, confirmed_at,
+        recurring_invoice:recurring_invoices(
+          id, title,
+          client:clients(company_name, contact_name, first_name, last_name, email)
+        )
+      `)
+      .eq('organization_id', orgId)
+      .eq('status', 'sent')
+      .gte('confirmed_at', sevenDaysAgo)
+      .order('confirmed_at', { ascending: false })
+      .limit(5),
+
+    // Relances automatiques (devis + factures) envoyées dans les 7 derniers jours
+    supabase
+      .from('reminders')
+      .select(`
+        id, sent_at, type, rank,
+        invoice:invoices(id, title),
+        quote:quotes(id, title),
+        client:clients(company_name, contact_name, first_name, last_name, email)
+      `)
+      .eq('organization_id', orgId)
+      .eq('is_auto', true)
+      .gte('sent_at', sevenDaysAgo)
+      .order('sent_at', { ascending: false })
       .limit(5),
   ])
 
@@ -167,17 +206,57 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
     ...(pendingSchedules ?? []).map((s: any) => {
       const ri = s.recurring_invoice
       const client = ri?.client
-      const clientName = client?.company_name
+      const cName = client?.company_name
         ?? [client?.first_name, client?.last_name].filter(Boolean).join(' ')
         ?? null
       return {
         id: s.id,
         type: 'pending_recurring' as const,
-        label: `Facture récurrente${ri?.title ? ` « ${ri.title} »` : ''}${clientName ? ` · ${clientName}` : ''} à confirmer`,
+        label: ri?.title ?? 'Facture récurrente',
+        subtype: 'recurring_invoice' as const,
         amount: null,
         date: s.scheduled_date,
         clientEmail: client?.email ?? null,
         invoiceId: s.invoice_id ?? null,
+        recurringId: ri?.id ?? null,
+        clientName: cName,
+      }
+    }),
+    // Envois automatiques récents (7 derniers jours) — section "Confirmé automatiquement"
+    ...(recentAutoSent ?? []).map((s: any) => {
+      const ri = s.recurring_invoice
+      const client = ri?.client
+      const cName = client?.company_name
+        ?? [client?.first_name, client?.last_name].filter(Boolean).join(' ')
+        ?? null
+      return {
+        id: `autosent-${s.id}`,
+        type: 'recently_sent' as const,
+        label: ri?.title ?? 'Facture récurrente',
+        subtype: 'recurring_invoice' as const,
+        amount: s.amount_ht ?? null,
+        date: s.confirmed_at ?? s.scheduled_date,
+        clientEmail: client?.email ?? null,
+        clientName: cName,
+      }
+    }),
+    ...(recentAutoReminders ?? []).map((r: any) => {
+      const isInvoice = r.type === 'payment_reminder' || r.type === 'overdue_notice'
+      const doc = isInvoice ? r.invoice : r.quote
+      const client = r.client
+      const cName = client?.company_name
+        ?? [client?.first_name, client?.last_name].filter(Boolean).join(' ')
+        ?? null
+      return {
+        id: `autoremind-${r.id}`,
+        type: 'recently_sent' as const,
+        label: doc?.title ?? (isInvoice ? 'Facture' : 'Devis'),
+        subtype: (isInvoice ? 'auto_reminder_invoice' : 'auto_reminder_quote') as 'auto_reminder_invoice' | 'auto_reminder_quote',
+        amount: null,
+        date: r.sent_at,
+        clientEmail: client?.email ?? null,
+        clientName: cName,
+        rank: r.rank,
       }
     }),
   ]

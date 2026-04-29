@@ -1,14 +1,14 @@
 import { headers } from 'next/headers'
 import { getCurrentUserProfile } from '@/lib/data/queries/user'
 import { getTeamMembers } from '@/lib/data/queries/team'
-import { getOrgRoles, getOrgJoinCode } from '@/lib/data/queries/roles'
+import { getOrgRoles, getOrgJoinCode, getRolesWithPermissions } from '@/lib/data/queries/roles'
 import { getOrganization } from '@/lib/data/queries/organization'
-import { getMaterials, getPrestationTypes } from '@/lib/data/queries/catalog'
+import { getLaborRates, getMaterials, getPrestationTypes } from '@/lib/data/queries/catalog'
 import { resolveCatalogContext } from '@/lib/catalog-context'
 import { getWhatsAppConfig } from '@/lib/data/mutations/whatsapp'
-import { getCurrentMembershipContext } from '@/lib/data/queries/membership'
+import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/membership'
 import { getOrganizationExports } from '@/lib/data/queries/organization-exports'
-import { getOrganizationModules } from '@/lib/data/queries/organization-modules'
+import { getEmailTemplates } from '@/lib/data/queries/emailTemplates'
 import { getPublicRuntimeConfig } from '@/lib/supabase/config'
 import SettingsClient from './SettingsClient'
 
@@ -19,18 +19,24 @@ function getAppUrl(): string {
 }
 
 export default async function SettingsPage() {
-  const [profile, members, roles, joinCode, organization, catalogMaterials, catalogPrestationTypes, whatsappConfig, membership, organizationExports, modules] = await Promise.all([
+  const [profile, members, roles, joinCode, organization, catalogMaterials, catalogLaborRates, catalogPrestationTypes, whatsappConfig, membership, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg] = await Promise.all([
     getCurrentUserProfile(),
     getTeamMembers(),
     getOrgRoles(),
     getOrgJoinCode(),
     getOrganization(),
     getMaterials(),
+    getLaborRates(),
     getPrestationTypes(),
     getWhatsAppConfig(),
     getCurrentMembershipContext(),
     getOrganizationExports(),
-    getOrganizationModules(),
+    getEmailTemplates(),
+    getRolesWithPermissions(),
+    hasPermission('team.invite'),
+    hasPermission('team.remove_members'),
+    hasPermission('team.edit_roles'),
+    hasPermission('settings.edit_org'),
   ])
 
   const catalogContext = resolveCatalogContext(organization)
@@ -49,12 +55,18 @@ export default async function SettingsPage() {
       supabaseUrl={supabaseUrl}
       sharedWabaDisplayNumber={sharedWabaDisplayNumber}
       catalogMaterials={catalogMaterials}
+      catalogLaborRates={catalogLaborRates}
       catalogPrestationTypes={catalogPrestationTypes}
       whatsappConfig={whatsappConfig}
       catalogContext={catalogContext}
       currentRoleSlug={membership?.roleSlug ?? null}
       organizationExports={organizationExports}
-      modules={modules}
+      emailTemplates={emailTemplates}
+      rolesWithPermissions={rolesWithPermissions}
+      canInvite={canInvite}
+      canRemoveMembers={canRemoveMembers}
+      canEditRoles={canEditRoles}
+      canEditOrg={canEditOrg}
     />
   )
 }

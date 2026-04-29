@@ -14,6 +14,18 @@ export interface Env {
   CRON_SECRET: string
 }
 
+function constantTimeEqual(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') return false
+  if (a.length !== b.length) return false
+
+  let diff = 0
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  }
+
+  return diff === 0
+}
+
 export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(triggerEmbeddings(env))
@@ -24,7 +36,7 @@ export default {
       return new Response('Method Not Allowed', { status: 405 })
     }
     const auth = request.headers.get('x-cron-secret')
-    if (!auth || auth !== env.CRON_SECRET) {
+    if (!constantTimeEqual(auth, env.CRON_SECRET)) {
       return new Response('Unauthorized', { status: 401 })
     }
     await triggerEmbeddings(env)

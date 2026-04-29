@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { Resend } from 'resend'
+
+export const dynamic = 'force-dynamic';
 import { getClientGreetingName } from '@/lib/client'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
 import { getSupabaseRuntimeConfig } from '@/lib/supabase/config'
+import { verifyCronSecret } from '@/lib/cron-auth'
 
 // ─── Sécurité ─────────────────────────────────────────────────────────────────
 // Appelé par Cloudflare Worker (ou cron-job.org) avec le header X-Cron-Secret
@@ -22,6 +25,7 @@ type Org = {
   auto_reminder_enabled: boolean
   invoice_reminder_days: number[] | null
   quote_reminder_days: number[] | null
+  reminder_first_delay_days: number | null
 }
 
 type ReminderItem = {
@@ -42,8 +46,7 @@ type ReminderItem = {
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get('x-cron-secret')
-  if (!secret || secret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req.headers.get('x-cron-secret'))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -58,13 +61,13 @@ export async function POST(req: NextRequest) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
 
   const today = new Date()
-  const todayStr = today.toISOString().split('T')[0]
+  const todayStr = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(today).split('/').reverse().join('-')
   const cooldownCutoff = new Date(today.getTime() - COOLDOWN_DAYS * 86400000).toISOString()
 
   // 1. Toutes les orgs avec relances auto activées
   const { data: orgs } = await supabase
     .from('organizations')
-    .select('id, name, email_from_name, email_from_address, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days')
+    .select('id, name, email_from_name, email_from_address, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_first_delay_days')
     .eq('auto_reminder_enabled', true)
 
   if (!orgs?.length) {
@@ -76,7 +79,10 @@ export async function POST(req: NextRequest) {
 
   for (const org of orgs as Org[]) {
     if (!org.email_from_address) continue
-    const invoiceDays = org.invoice_reminder_days ?? [2, 7]
+    const baseInvoiceDays = org.invoice_reminder_days ?? [2, 7]
+    const invoiceDays = org.reminder_first_delay_days != null
+      ? [org.reminder_first_delay_days, ...baseInvoiceDays.slice(1)]
+      : baseInvoiceDays
     const quoteDays = org.quote_reminder_days ?? [3, 7, 10]
 
     try {
@@ -276,6 +282,8 @@ async function generateEmail(
 Contexte : ${contextStr}
 Client : ${item.clientName}
 Relance n°${item.rank}, ${toneGuide}
+
+Règles obligatoires : aucun emoji, aucun tiret cadratin (—), français soigné, ton professionnel.
 
 Format STRICT :
 Objet: [sujet]

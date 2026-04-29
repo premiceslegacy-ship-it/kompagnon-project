@@ -2,12 +2,25 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { sendEmail } from '@/lib/email'
 import { buildInviteEmail } from '@/lib/email/templates'
 import { resolveBusinessSelection, type BusinessActivityId, type BusinessProfileConfig } from '@/lib/catalog-context'
+
+const ONBOARDED_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: 'strict' as const,
+  maxAge: 60 * 60 * 24 * 365,
+  path: '/',
+}
+
+async function setOnboardedCookie(userId: string) {
+  const cookieStore = await cookies()
+  cookieStore.set('atelier_onboarded', userId, ONBOARDED_COOKIE_OPTIONS)
+}
 
 /** Génère un slug URL-safe unique depuis un nom d'entreprise. */
 function buildSlug(name: string): string {
@@ -249,6 +262,7 @@ export async function completeOnboarding(formData: FormData) {
     .update({ onboarding_done: true })
     .eq('id', user.id)
 
+  await setOnboardedCookie(user.id)
   revalidatePath('/', 'layout')
 
   if (inviteErrors.length > 0) {
@@ -312,6 +326,7 @@ export async function skipInvites(formData: FormData) {
     .update({ onboarding_done: true })
     .eq('id', user.id)
 
+  await setOnboardedCookie(user.id)
   revalidatePath('/', 'layout')
   redirect('/dashboard')
 }
@@ -387,6 +402,7 @@ export async function joinViaCode(formData: FormData) {
     .update({ job_title: jobTitle, onboarding_done: true })
     .eq('id', user.id)
 
+  await setOnboardedCookie(user.id)
   revalidatePath('/', 'layout')
   redirect('/dashboard')
 }

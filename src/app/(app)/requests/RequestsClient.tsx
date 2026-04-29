@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { type QuoteRequest } from './page'
 import { markRequestRead, archiveRequest, convertRequestToLeadAndQuote, createQuoteFromCatalogRequest } from '@/lib/data/mutations/quote-requests'
 import { createQuote, upsertQuoteSection, upsertQuoteItem } from '@/lib/data/mutations/quotes'
@@ -22,6 +22,7 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
 
 function RequestCard({ request }: { request: QuoteRequest }) {
   const router = useRouter()
+  const pathname = usePathname()
   const [expanded, setExpanded] = useState(request.status === 'new')
   const [status, setStatus] = useState(request.status)
   const [quoteId, setQuoteId] = useState(request.quote_id)
@@ -45,6 +46,7 @@ function RequestCard({ request }: { request: QuoteRequest }) {
   }
 
   const isCatalog = request.type === 'catalog'
+  const attachmentLabel = request.attachments?.[0]?.filename ?? request.attachment_url?.split('/').pop() ?? 'fichier joint'
 
   const handleConvert = () => {
     if (isConverting) return
@@ -76,7 +78,7 @@ function RequestCard({ request }: { request: QuoteRequest }) {
       const fileRes = await fetch(request.attachment_url)
       if (!fileRes.ok) throw new Error('Impossible de télécharger le fichier joint.')
       const blob = await fileRes.blob()
-      const fileName = request.attachment_url.split('/').pop() ?? 'document'
+      const fileName = request.attachments?.[0]?.filename ?? request.attachment_url.split('/').pop() ?? 'document'
       const file = new File([blob], fileName, { type: blob.type })
 
       // Envoyer à l'API analyze-quote
@@ -85,7 +87,8 @@ function RequestCard({ request }: { request: QuoteRequest }) {
       const aiRes = await fetch('/api/ai/analyze-quote', { method: 'POST', body: formData })
       const data = await aiRes.json()
       if (!aiRes.ok) throw new Error(data.error ?? 'Erreur lors de l\'analyse IA.')
-      const result = data as AIQuoteResult
+      const result = (data as { quotes: AIQuoteResult[] }).quotes?.[0]
+      if (!result) throw new Error('Réponse IA invalide.')
 
       // Créer le devis avec les sections et lignes générées
       const quoteRes = await createQuote({ clientId: null, title: result.title || 'Nouveau devis' })
@@ -112,7 +115,8 @@ function RequestCard({ request }: { request: QuoteRequest }) {
         }
       }
 
-      router.push(`/finances/quote-editor?id=${qId}`)
+      const params = new URLSearchParams({ id: qId, returnTo: pathname })
+      router.push(`/finances/quote-editor?${params}`)
     } catch (err: unknown) {
       setAiError(err instanceof Error ? err.message : 'Erreur inconnue.')
     } finally {
@@ -251,7 +255,7 @@ function RequestCard({ request }: { request: QuoteRequest }) {
                   className="flex items-center gap-3 p-3 rounded-xl bg-accent/5 border border-accent/20 hover:bg-accent/10 transition-colors group flex-1"
                 >
                   <Paperclip className="w-4 h-4 text-accent flex-shrink-0" />
-                  <span className="text-sm font-semibold text-accent flex-1">Voir le fichier joint</span>
+                  <span className="text-sm font-semibold text-accent flex-1 truncate">Voir {attachmentLabel}</span>
                   <ExternalLink className="w-3.5 h-3.5 text-accent opacity-0 group-hover:opacity-100 transition-opacity" />
                 </a>
                 {!alreadyConverted && (
@@ -291,7 +295,10 @@ function RequestCard({ request }: { request: QuoteRequest }) {
                 </div>
                 {quoteId && (
                   <button
-                    onClick={() => router.push(`/finances/quote-editor?id=${quoteId}`)}
+                    onClick={() => {
+                      const params = new URLSearchParams({ id: quoteId, returnTo: pathname })
+                      router.push(`/finances/quote-editor?${params}`)
+                    }}
                     className="px-5 py-2.5 rounded-full bg-accent text-black font-bold text-sm flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20"
                   >
                     <FileText className="w-4 h-4" />Voir le devis
@@ -302,7 +309,7 @@ function RequestCard({ request }: { request: QuoteRequest }) {
               <button
                 onClick={handleConvert}
                 disabled={isPending || isConverting}
-                className="px-5 py-2.5 rounded-full bg-accent text-black font-bold text-sm flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
+                className="px-5 py-2.5 rounded-full bg-accent text-black font-bold text-sm flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 whitespace-nowrap"
               >
                 {isConverting
                   ? <><Loader2 className="w-4 h-4 animate-spin" />Conversion...</>
@@ -342,7 +349,7 @@ export default function RequestsClient({ initialRequests }: { initialRequests: Q
   const newCount = initialRequests.filter(r => r.status === 'new').length
 
   return (
-    <main className="flex-1 p-8 max-w-[1000px] mx-auto w-full space-y-8">
+    <main className="page-container space-y-6 md:space-y-8" style={{ maxWidth: '64rem' }}>
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex flex-col gap-2">
