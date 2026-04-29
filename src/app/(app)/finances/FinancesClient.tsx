@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import type { Quote } from '@/lib/data/queries/quotes'
 import type { Invoice } from '@/lib/data/queries/invoices'
 import { formatCurrency, ActionMenu } from '@/components/shared'
@@ -10,11 +10,12 @@ import { archiveQuote, markQuoteAccepted, duplicateQuote } from '@/lib/data/muta
 import { archiveInvoice, markInvoicePaid, generateDepositInvoice } from '@/lib/data/mutations/invoices'
 import { createChantierFromQuote } from '@/lib/data/mutations/chantiers'
 import ImportDocumentsModal from './ImportDocumentsModal'
+import { todayParis } from '@/lib/utils'
 import {
   Search, Plus, FileText, Bot,
   CheckCircle2, Clock, Percent, Wallet, Receipt, AlertTriangle,
   Edit2, Trash2, FileDown, Eye, Repeat, Check, Copy, Landmark, HardHat,
-  ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Upload,
+  ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Upload, Loader2,
 } from 'lucide-react'
 
 // ─── Helpers mois ─────────────────────────────────────────────────────────────
@@ -80,7 +81,16 @@ function StatCard({ icon, label, value, danger }: { icon: React.ReactNode; label
   )
 }
 
-function EmptyState({ type }: { type: 'quotes' | 'invoices' }) {
+function buildEditorHref(path: string, params: Record<string, string | null | undefined> = {}) {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) query.set(key, value)
+  })
+  const qs = query.toString()
+  return qs ? `${path}?${qs}` : path
+}
+
+function EmptyState({ type, canCreate, returnTo }: { type: 'quotes' | 'invoices'; canCreate: boolean; returnTo: string }) {
   return (
     <div className="flex flex-col items-center gap-4">
       <FileText className="w-10 h-10 text-secondary opacity-20" />
@@ -92,13 +102,13 @@ function EmptyState({ type }: { type: 'quotes' | 'invoices' }) {
           {type === 'quotes' ? 'Créez votre premier devis pour commencer.' : 'Vos factures apparaîtront ici une fois créées.'}
         </p>
       </div>
-      {type === 'quotes' && (
-        <Link href="/finances/quote-editor" className="mt-2 px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20">
+      {canCreate && type === 'quotes' && (
+        <Link href={buildEditorHref('/finances/quote-editor', { returnTo })} className="mt-2 px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap">
           <Bot className="w-4 h-4" />Nouveau Devis
         </Link>
       )}
-      {type === 'invoices' && (
-        <Link href="/finances/invoice-editor" className="mt-2 px-6 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:bg-base transition-all">
+      {canCreate && type === 'invoices' && (
+        <Link href={buildEditorHref('/finances/invoice-editor', { returnTo })} className="mt-2 px-6 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:bg-base transition-all whitespace-nowrap">
           <Plus className="w-4 h-4" />Nouvelle Facture
         </Link>
       )}
@@ -106,15 +116,34 @@ function EmptyState({ type }: { type: 'quotes' | 'invoices' }) {
   )
 }
 
-export default function FinancesClient({ initialQuotes, initialInvoices }: { initialQuotes: Quote[]; initialInvoices: Invoice[] }) {
+export default function FinancesClient({
+  initialQuotes, initialInvoices,
+  canCreateQuote, canEditQuote, canSendQuote, canDeleteQuote,
+  canCreateInvoice, canSendInvoice, canRecordPayment, canDeleteInvoice,
+}: {
+  initialQuotes: Quote[]
+  initialInvoices: Invoice[]
+  canCreateQuote: boolean
+  canEditQuote: boolean
+  canSendQuote: boolean
+  canDeleteQuote: boolean
+  canCreateInvoice: boolean
+  canSendInvoice: boolean
+  canRecordPayment: boolean
+  canDeleteInvoice: boolean
+}) {
   const router = useRouter()
-  const [activeTab, setActiveTab] = useState<'quotes' | 'invoices'>('quotes')
+  const searchParams = useSearchParams()
+  const [activeTab, setActiveTab] = useState<'quotes' | 'invoices'>(
+    searchParams.get('tab') === 'invoices' ? 'invoices' : 'quotes'
+  )
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [quotes, setQuotes] = useState(initialQuotes)
   const [invoices, setInvoices] = useState(initialInvoices)
   const [depositModal, setDepositModal] = useState<{ quoteId: string; quoteTitle: string | null; quoteTtc: number | null } | null>(null)
   const [statsMonth, setStatsMonth] = useState(getCurrentYM)
+  const [quoteStatsMonth, setQuoteStatsMonth] = useState(getCurrentYM)
   const [depositRate, setDepositRate] = useState(30)
   const [depositDueDate, setDepositDueDate] = useState('')
   const [depositBalanceDueDate, setDepositBalanceDueDate] = useState('')
@@ -122,6 +151,10 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
   const [depositError, setDepositError] = useState<string | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [importDefaultType, setImportDefaultType] = useState<'invoices' | 'quotes'>('invoices')
+  const [reportLoading, setReportLoading] = useState(false)
+  const returnTo = `/finances?tab=${activeTab}`
+  const quoteEditorHref = (id?: string) => buildEditorHref('/finances/quote-editor', { id, returnTo })
+  const invoiceEditorHref = (id?: string) => buildEditorHref('/finances/invoice-editor', { id, returnTo })
 
   // ── Quote filters & stats ────────────────────────────────────────────────────
 
@@ -132,7 +165,8 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
       (q.number ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (q.title ?? '').toLowerCase().includes(searchTerm.toLowerCase())
     const matchStatus = statusFilter === 'all' || q.status === statusFilter
-    return matchSearch && matchStatus
+    const matchMonth = q.created_at.startsWith(quoteStatsMonth)
+    return matchSearch && matchStatus && matchMonth
   })
 
   const sentCount = quotes.filter(q => q.status === 'sent' || q.status === 'viewed').length
@@ -141,9 +175,29 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
   // Total accepté en HT (référence professionnelle BTP)
   const acceptedTotal = quotes.filter(q => q.status === 'accepted').reduce((sum, q) => sum + (q.total_ht ?? 0), 0)
 
+  // ── Stats mensuelles devis ───────────────────────────────────────────────────
+  const prevQuoteStatsMonth = offsetYM(quoteStatsMonth, -1)
+  const isCurrentQuoteMonth = quoteStatsMonth === getCurrentYM()
+
+  const quotesOfMonth = quotes.filter(q => q.created_at.startsWith(quoteStatsMonth))
+  const quotesOfPrevMonth = quotes.filter(q => q.created_at.startsWith(prevQuoteStatsMonth))
+
+  const qEmisCount = quotesOfMonth.length
+  const qEmisCountPrev = quotesOfPrevMonth.length
+  const qEmisHt = quotesOfMonth.reduce((s, q) => s + (q.total_ht ?? 0), 0)
+  const qEmisHtPrev = quotesOfPrevMonth.reduce((s, q) => s + (q.total_ht ?? 0), 0)
+  const qAcceptedCount = quotesOfMonth.filter(q => q.status === 'accepted').length
+  const qAcceptedHt = quotesOfMonth.filter(q => q.status === 'accepted').reduce((s, q) => s + (q.total_ht ?? 0), 0)
+  const qAcceptedHtPrev = quotesOfPrevMonth.filter(q => q.status === 'accepted').reduce((s, q) => s + (q.total_ht ?? 0), 0)
+  const qConvBase = quotesOfMonth.filter(q => ['sent', 'viewed', 'accepted', 'refused', 'expired'].includes(q.status)).length
+  const qConvRate = qConvBase > 0 ? Math.round((qAcceptedCount / qConvBase) * 100) : 0
+  const qConvBasePrev = quotesOfPrevMonth.filter(q => ['sent', 'viewed', 'accepted', 'refused', 'expired'].includes(q.status)).length
+  const qAcceptedCountPrev = quotesOfPrevMonth.filter(q => q.status === 'accepted').length
+  const qConvRatePrev = qConvBasePrev > 0 ? Math.round((qAcceptedCountPrev / qConvBasePrev) * 100) : 0
+
   // ── Invoice filters & stats ──────────────────────────────────────────────────
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = todayParis()
   const prevStatsMonth = offsetYM(statsMonth, -1)
   const isCurrentMonth = statsMonth === getCurrentYM()
 
@@ -200,7 +254,7 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
 
   const handleDuplicateQuote = async (id: string) => {
     const { quoteId, error } = await duplicateQuote(id)
-    if (!error && quoteId) router.push(`/finances/quote-editor?id=${quoteId}`)
+    if (!error && quoteId) router.push(quoteEditorHref(quoteId))
   }
 
   const handleCreateChantierFromQuote = async (quoteId: string) => {
@@ -221,14 +275,32 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
     setDepositLoading(false)
     if (error) { setDepositError(error); return }
     setDepositModal(null)
-    if (invoiceId) router.push(`/finances/invoice-editor?id=${invoiceId}`)
+    if (invoiceId) router.push(invoiceEditorHref(invoiceId))
   }
 
-  // Reset status filter when switching tabs
+  const handleDownloadMonthlyReport = async () => {
+    setReportLoading(true)
+    try {
+      const res = await fetch(`/api/finances/monthly-report?month=${statsMonth}`)
+      if (!res.ok) { setReportLoading(false); return }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = res.headers.get('content-disposition')?.match(/filename="([^"]+)"/)?.[1] ?? `rapport-${statsMonth}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setReportLoading(false)
+    }
+  }
+
+  // Reset status filter when switching tabs + sync URL
   const handleTabChange = (tab: 'quotes' | 'invoices') => {
     setActiveTab(tab)
     setStatusFilter('all')
     setSearchTerm('')
+    router.replace(`/finances?tab=${tab}`, { scroll: false })
   }
 
   const activeStatusMap = activeTab === 'quotes' ? STATUS : INVOICE_STATUS
@@ -238,7 +310,7 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
     : 0
 
   return (
-    <main className="flex-1 p-8 max-w-[1400px] mx-auto w-full space-y-8">
+    <main className="page-container space-y-6 md:space-y-8">
 
       <ImportDocumentsModal
         isOpen={importOpen}
@@ -248,8 +320,8 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
 
       {/* ── Modale acompte ── */}
       {depositModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-sm p-8 shadow-2xl space-y-6">
+        <div className="modal-overlay">
+          <div className="modal-panel space-y-6 sm:max-w-sm">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-accent/10 flex items-center justify-center">
                 <Landmark className="w-5 h-5 text-accent" />
@@ -329,69 +401,124 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
           </div>
         </div>
       )}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="flex flex-col gap-2">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 text-center md:text-left">
+        <div className="flex flex-col gap-2 items-center md:items-start">
           <h1 className="text-4xl font-bold text-primary">Devis & Factures</h1>
           <p className="text-secondary text-lg">Gérez vos documents financiers et suivez vos encaissements.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-center md:justify-end gap-3 flex-wrap">
           <button
             onClick={() => { setImportDefaultType(activeTab === 'invoices' ? 'invoices' : 'quotes'); setImportOpen(true) }}
             className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center justify-center gap-2 hover:text-primary hover:bg-base transition-all"
           >
             <Upload className="w-4 h-4" />Importer
           </button>
-          <Link href="/finances/recurring" className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center justify-center gap-2 hover:text-primary hover:bg-base transition-all">
+          <Link href="/finances/recurring" className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center justify-center gap-2 hover:text-primary hover:bg-base transition-all whitespace-nowrap">
             <Repeat className="w-4 h-4" />Récurrentes
           </Link>
-          <Link href="/finances/invoice-editor" className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all">
-            <Plus className="w-4 h-4" />Nouvelle Facture
-          </Link>
-          <Link href="/finances/quote-editor" className="px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20">
-            <Bot className="w-4 h-4" />Nouveau Devis
-          </Link>
+          {canCreateInvoice && (
+            <Link href={invoiceEditorHref()} className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all whitespace-nowrap">
+              <Plus className="w-4 h-4" />Nouvelle Facture
+            </Link>
+          )}
+          {canCreateQuote && (
+            <Link href={quoteEditorHref()} className="px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap">
+              <Bot className="w-4 h-4" />Nouveau Devis
+            </Link>
+          )}
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-2 p-1 bg-base/50 rounded-full w-fit border border-[var(--elevation-border)]">
+      <div className="flex items-center gap-2 p-1 bg-base/50 rounded-full w-fit border border-[var(--elevation-border)] mx-auto md:mx-0">
         <button onClick={() => handleTabChange('quotes')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'quotes' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>Devis</button>
         <button onClick={() => handleTabChange('invoices')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'invoices' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>Factures</button>
       </div>
 
       {/* Stats */}
       <div className="space-y-3">
-        {/* Sélecteur de mois (visible sur l'onglet Factures) */}
-        {activeTab === 'invoices' && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-secondary uppercase tracking-wider">Période :</span>
-            <button
-              onClick={() => setStatsMonth(m => offsetYM(m, -1))}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-base transition-colors text-secondary hover:text-primary"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-sm font-bold text-primary min-w-[80px] text-center">{fmtYM(statsMonth)}</span>
-            <button
-              onClick={() => setStatsMonth(m => offsetYM(m, 1))}
-              disabled={isCurrentMonth}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-base transition-colors text-secondary hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-            {!isCurrentMonth && (
-              <button onClick={() => setStatsMonth(getCurrentYM())} className="text-xs font-semibold text-accent hover:underline ml-1">
-                Aujourd&apos;hui
+        {/* Sélecteur de mois */}
+        {(activeTab === 'invoices' || activeTab === 'quotes') && (
+          <div className="flex items-center justify-between gap-3">
+            {/* Nav mois */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-secondary uppercase tracking-wider">Période :</span>
+              <button
+                onClick={() => activeTab === 'quotes' ? setQuoteStatsMonth(m => offsetYM(m, -1)) : setStatsMonth(m => offsetYM(m, -1))}
+                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-base transition-colors text-secondary hover:text-primary"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-sm font-bold text-primary min-w-[80px] text-center">
+                {fmtYM(activeTab === 'quotes' ? quoteStatsMonth : statsMonth)}
+              </span>
+              <button
+                onClick={() => activeTab === 'quotes' ? setQuoteStatsMonth(m => offsetYM(m, 1)) : setStatsMonth(m => offsetYM(m, 1))}
+                disabled={activeTab === 'quotes' ? isCurrentQuoteMonth : isCurrentMonth}
+                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-base transition-colors text-secondary hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              {(activeTab === 'quotes' ? !isCurrentQuoteMonth : !isCurrentMonth) && (
+                <button
+                  onClick={() => activeTab === 'quotes' ? setQuoteStatsMonth(getCurrentYM()) : setStatsMonth(getCurrentYM())}
+                  className="text-xs font-semibold text-accent hover:underline"
+                >
+                  Aujourd&apos;hui
+                </button>
+              )}
+            </div>
+            {/* Bouton rapport — uniquement onglet factures */}
+            {activeTab === 'invoices' && (
+              <button
+                onClick={handleDownloadMonthlyReport}
+                disabled={reportLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--elevation-border)] text-secondary dark:text-secondary bg-transparent hover:text-accent hover:border-accent dark:hover:text-accent dark:hover:border-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {reportLoading
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <FileDown className="w-3.5 h-3.5" />
+                }
+                {reportLoading ? 'Génération…' : `Rapport ${fmtYM(statsMonth)}`}
               </button>
             )}
           </div>
         )}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className={`grid grid-cols-1 gap-4 ${activeTab === 'quotes' ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
           {activeTab === 'quotes' ? (
             <>
-              <StatCard icon={<CheckCircle2 className="w-6 h-6 text-accent-green" />} label="Total Accepté HT" value={formatCurrency(acceptedTotal)} />
-              <StatCard icon={<Clock className="w-6 h-6 text-accent" />} label="En attente de réponse" value={String(sentCount)} />
-              <StatCard icon={<Percent className="w-6 h-6 text-blue-500" />} label="Taux de conversion" value={`${conversionRate}%`} />
+              <div className="rounded-3xl card p-6 flex items-center gap-4">
+                <FileText className="w-6 h-6 text-accent flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Devis émis</p>
+                  <p className="text-2xl font-bold tabular-nums text-primary">{qEmisCount}</p>
+                  <DeltaBadge current={qEmisCount} prev={qEmisCountPrev} />
+                </div>
+              </div>
+              <div className="rounded-3xl card p-6 flex items-center gap-4">
+                <Wallet className="w-6 h-6 text-accent-green flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Montant émis HT</p>
+                  <p className="text-2xl font-bold tabular-nums text-primary">{formatCurrency(qEmisHt)}</p>
+                  <DeltaBadge current={qEmisHt} prev={qEmisHtPrev} />
+                </div>
+              </div>
+              <div className="rounded-3xl card p-6 flex items-center gap-4">
+                <CheckCircle2 className="w-6 h-6 text-accent-green flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Accepté HT</p>
+                  <p className="text-2xl font-bold tabular-nums text-primary">{formatCurrency(qAcceptedHt)}</p>
+                  <DeltaBadge current={qAcceptedHt} prev={qAcceptedHtPrev} />
+                </div>
+              </div>
+              <div className="rounded-3xl card p-6 flex items-center gap-4">
+                <Percent className="w-6 h-6 text-blue-500 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Taux de conversion</p>
+                  <p className="text-2xl font-bold tabular-nums text-primary">{qConvRate}%</p>
+                  <DeltaBadge current={qConvRate} prev={qConvRatePrev} />
+                </div>
+              </div>
             </>
           ) : (
             <>
@@ -456,12 +583,12 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-base/30">
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">N°</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">Titre / Client</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">Date</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right">Montant HT</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">Statut</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right">Actions</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">N°</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Titre / Client</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Date</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Montant HT</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--elevation-border)]">
@@ -474,7 +601,7 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
                     <tr
                       key={q.id}
                       className="hover:bg-accent/5 transition-colors cursor-pointer"
-                      onClick={() => router.push(`/finances/quote-editor?id=${q.id}`)}
+                      onClick={() => router.push(quoteEditorHref(q.id))}
                     >
                       <td className="px-6 py-4"><p className="text-sm font-mono text-secondary">{q.number ?? '/'}</p></td>
                       <td className="px-6 py-4">
@@ -510,14 +637,14 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
                             <FileDown className="w-4 h-4" />
                           </a>
                           <ActionMenu actions={[
-                            ...(q.status === 'sent' || q.status === 'viewed' ? [{ label: 'Marquer accepté', icon: <Check className="w-4 h-4" />, onClick: () => handleMarkQuoteAccepted(q.id) }] : []),
-                            ...(q.status === 'accepted' ? [
+                            ...(canSendQuote && (q.status === 'sent' || q.status === 'viewed') ? [{ label: 'Marquer accepté', icon: <Check className="w-4 h-4" />, onClick: () => handleMarkQuoteAccepted(q.id) }] : []),
+                            ...(canCreateInvoice && q.status === 'accepted' ? [
                               { label: 'Générer acompte', icon: <Landmark className="w-4 h-4" />, onClick: () => { setDepositRate(30); setDepositDueDate(''); setDepositBalanceDueDate(''); setDepositError(null); setDepositModal({ quoteId: q.id, quoteTitle: q.title, quoteTtc: q.total_ttc }) } },
                               { label: 'Créer chantier', icon: <HardHat className="w-4 h-4" />, onClick: () => handleCreateChantierFromQuote(q.id) },
                             ] : []),
-                            { label: 'Modifier', icon: <Edit2 className="w-4 h-4" />, onClick: () => router.push(`/finances/quote-editor?id=${q.id}`) },
-                            { label: 'Dupliquer', icon: <Copy className="w-4 h-4" />, onClick: () => handleDuplicateQuote(q.id) },
-                            { label: 'Archiver', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => handleArchiveQuote(q.id) },
+                            ...(canEditQuote ? [{ label: 'Modifier', icon: <Edit2 className="w-4 h-4" />, onClick: () => router.push(quoteEditorHref(q.id)) }] : []),
+                            ...(canCreateQuote ? [{ label: 'Dupliquer', icon: <Copy className="w-4 h-4" />, onClick: () => handleDuplicateQuote(q.id) }] : []),
+                            ...(canDeleteQuote ? [{ label: 'Archiver', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => handleArchiveQuote(q.id) }] : []),
                           ]} />
                         </div>
                       </td>
@@ -526,7 +653,7 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
                 }) : (
                   <tr>
                     <td colSpan={6} className="px-6 py-20 text-center">
-                      <EmptyState type="quotes" />
+                      <EmptyState type="quotes" canCreate={canCreateQuote} returnTo={returnTo} />
                     </td>
                   </tr>
                 )
@@ -540,7 +667,7 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
                     <tr
                       key={inv.id}
                       className="hover:bg-accent/5 transition-colors cursor-pointer"
-                      onClick={() => router.push(`/finances/invoice-editor?id=${inv.id}`)}
+                      onClick={() => router.push(invoiceEditorHref(inv.id))}
                     >
                       <td className="px-6 py-4"><p className="text-sm font-mono text-secondary">{inv.number ?? '/'}</p></td>
                       <td className="px-6 py-4">
@@ -589,10 +716,10 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
                             <FileDown className="w-4 h-4" />
                           </a>
                           <ActionMenu actions={[
-                            { label: 'Modifier', icon: <Edit2 className="w-4 h-4" />, onClick: () => router.push(`/finances/invoice-editor?id=${inv.id}`) },
-                            { label: 'Convertir en récurrente', icon: <Repeat className="w-4 h-4" />, onClick: () => router.push(`/finances/recurring?from_invoice=${inv.id}`) },
-                            ...(inv.status === 'sent' ? [{ label: 'Marquer payée', icon: <CheckCircle2 className="w-4 h-4" />, onClick: () => handleMarkPaid(inv.id) }] : []),
-                            { label: 'Archiver', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => handleArchiveInvoice(inv.id) },
+                            ...(canSendInvoice ? [{ label: 'Modifier', icon: <Edit2 className="w-4 h-4" />, onClick: () => router.push(invoiceEditorHref(inv.id)) }] : []),
+                            ...(canCreateInvoice ? [{ label: 'Convertir en récurrente', icon: <Repeat className="w-4 h-4" />, onClick: () => router.push(`/finances/recurring?from_invoice=${inv.id}`) }] : []),
+                            ...(canRecordPayment && inv.status === 'sent' ? [{ label: 'Marquer payée', icon: <CheckCircle2 className="w-4 h-4" />, onClick: () => handleMarkPaid(inv.id) }] : []),
+                            ...(canDeleteInvoice ? [{ label: 'Archiver', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => handleArchiveInvoice(inv.id) }] : []),
                           ]} />
                         </div>
                       </td>
@@ -601,7 +728,7 @@ export default function FinancesClient({ initialQuotes, initialInvoices }: { ini
                 }) : (
                   <tr>
                     <td colSpan={6} className="px-6 py-20 text-center">
-                      <EmptyState type="invoices" />
+                      <EmptyState type="invoices" canCreate={canCreateInvoice} returnTo={returnTo} />
                     </td>
                   </tr>
                 )

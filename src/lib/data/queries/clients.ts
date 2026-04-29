@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { getCachedOrganizationId } from './session-cache'
 
 export type ClientStatus = 'active' | 'prospect' | 'lead_hot' | 'lead_cold' | 'inactive'
 
@@ -28,36 +29,25 @@ export type Client = {
  * Se base sur le membership de l'utilisateur connecté pour déterminer l'organisation.
  */
 export async function getClients(): Promise<Client[]> {
+  const orgId = await getCachedOrganizationId()
+  if (!orgId) return []
+
   const supabase = await createClient()
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) return []
-
-  // Récupère l'organisation via le membership
-  const { data: membership } = await supabase
-    .from('memberships')
-    .select('organization_id')
-    .eq('user_id', user.id)
-    .eq('is_active', true)
-    .single()
-
-  if (!membership?.organization_id) return []
-
-  // Récupère les clients avec leurs factures pour calculer total_revenue en temps réel
-  // (évite la dépendance au champ dénormalisé total_revenue maintenu par trigger sur payments)
+  // On ne ramène que les factures payées et non archivées pour calculer total_revenue —
+  // le filtre est appliqué côté Postgres (PostgREST resource embedding avec filter).
   const { data, error } = await supabase
     .from('clients')
     .select(`
       id, organization_id, type, company_name, contact_name, first_name, last_name,
       email, phone, siret, address_line1, city, postal_code, status, source,
       payment_terms_days, created_at,
-      invoices!client_id(total_ttc, status, is_archived)
+      paid_invoices:invoices!client_id(total_ttc)
     `)
-    .eq('organization_id', membership.organization_id)
+    .eq('organization_id', orgId)
     .eq('is_archived', false)
+    .eq('paid_invoices.status', 'paid')
+    .eq('paid_invoices.is_archived', false)
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -66,73 +56,43 @@ export async function getClients(): Promise<Client[]> {
   }
 
   return (data ?? []).map((c: any) => {
-    const invoices: Array<{ total_ttc: number; status: string; is_archived: boolean }> = c.invoices ?? []
-    const total_revenue = invoices
-      .filter(inv => inv.status === 'paid' && !inv.is_archived)
-      .reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0)
-    const { invoices: _inv, ...rest } = c
+    const paidInvoices: Array<{ total_ttc: number }> = c.paid_invoices ?? []
+    const total_revenue = paidInvoices.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0)
+    const { paid_invoices: _inv, ...rest } = c
     return { ...rest, total_revenue } as Client
   })
 }
 
 /**
  * Récupère l'organization_id de l'utilisateur connecté.
- * Utile pour les mutations.
+ * Utile pour les mutations. Dédupliqué via React cache() dans session-cache.
  */
 export async function getCurrentOrganizationId(): Promise<string | null> {
-  const supabase = await createClient()
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) return null
-
-  const { data } = await supabase
-    .from('memberships')
-    .select('organization_id')
-    .eq('user_id', user.id)
-    .eq('is_active', true)
-    .single()
-
-  return data?.organization_id ?? null
+  return getCachedOrganizationId()
 }
 
 /**
  * Récupère un client par son ID (vérifie qu'il appartient à l'org courante).
  */
 export async function getClientById(clientId: string): Promise<Client | null> {
+  const orgId = await getCachedOrganizationId()
+  if (!orgId) return null
+
   const supabase = await createClient()
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) return null
-
-  const { data: membership } = await supabase
-    .from('memberships')
-    .select('organization_id')
-    .eq('user_id', user.id)
-    .eq('is_active', true)
-    .single()
-
-  if (!membership?.organization_id) return null
-
   const { data, error } = await supabase
     .from('clients')
-    .select('*, invoices!client_id(total_ttc, status, is_archived)')
+    .select('*, paid_invoices:invoices!client_id(total_ttc)')
     .eq('id', clientId)
-    .eq('organization_id', membership.organization_id)
+    .eq('organization_id', orgId)
+    .eq('paid_invoices.status', 'paid')
+    .eq('paid_invoices.is_archived', false)
     .single()
 
   if (error || !data) return null
 
-  const invs: Array<{ total_ttc: number; status: string; is_archived: boolean }> = (data as any).invoices ?? []
-  const total_revenue = invs
-    .filter(inv => inv.status === 'paid' && !inv.is_archived)
-    .reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0)
+  const paidInvoices: Array<{ total_ttc: number }> = (data as any).paid_invoices ?? []
+  const total_revenue = paidInvoices.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0)
 
-  const { invoices: _inv, ...rest } = data as any
+  const { paid_invoices: _inv, ...rest } = data as any
   return { ...rest, total_revenue } as Client
 }

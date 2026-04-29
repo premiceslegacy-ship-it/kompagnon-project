@@ -6,7 +6,7 @@ import { AlertCircle, ArrowRight, Loader2, CheckCircle2 } from 'lucide-react'
 import { login, signup, type AuthState } from '../actions'
 import { BrandWordmark } from '@/components/brand/BrandMonogram'
 import { LegalFooter } from '@/components/legal/LegalFooter'
-import { APP_NAME, APP_SIGNATURE } from '@/lib/brand'
+import { APP_SIGNATURE } from '@/lib/brand'
 
 const initialState: AuthState = { error: null }
 
@@ -45,7 +45,7 @@ export default function AuthPage() {
   const message = mode === 'signup' ? signupState.message : undefined
 
   return (
-    <div className="fixed inset-0 flex bg-[#050505] text-white overflow-hidden font-body">
+    <div className="fixed inset-0 flex bg-[#050505] text-white overflow-y-auto font-body">
 
       {/* ── LEFT PANEL — Branding ── */}
       <div className="relative hidden lg:flex flex-col justify-between flex-1 p-16 xl:p-24 overflow-hidden">
@@ -77,26 +77,26 @@ export default function AuthPage() {
       <div className="hidden lg:block w-px bg-white/[0.05] self-stretch" />
 
       {/* ── RIGHT PANEL — Form ── */}
-      <div className="flex-1 flex flex-col items-center justify-center p-6 lg:p-16">
+      <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 lg:p-16 min-h-screen lg:min-h-0">
 
         {/* Mobile logo */}
-        <div className="lg:hidden flex mb-10 self-start -ml-2">
+        <div className="lg:hidden flex mb-8 self-center">
           <BrandWordmark background="dark" className="h-8 w-auto object-contain" />
         </div>
 
         <div className="w-full max-w-md">
           {/* Glass card */}
-          <div className="bg-white/[0.04] backdrop-blur-[40px] border border-white/[0.08] rounded-3xl p-8 lg:p-10">
+          <div className="bg-white/[0.04] backdrop-blur-[40px] border border-white/[0.08] rounded-2xl sm:rounded-3xl p-6 sm:p-8 lg:p-10">
 
             {/* Header */}
             <div className="mb-7">
               <h2 className="text-2xl font-bold font-display">
-                {mode === 'login' ? 'Bon retour' : 'Bienvenue'}
+                {mode === 'login' ? 'Bon retour !' : 'Bienvenue !'}
               </h2>
               <p className="mt-1.5 text-sm text-white/40">
                 {mode === 'login'
                   ? 'Connectez-vous à votre espace de travail.'
-                  : `Rejoignez ${APP_NAME} gratuitement.`}
+                  : `Accédez à votre écosystème métier intelligent.`}
               </p>
             </div>
 

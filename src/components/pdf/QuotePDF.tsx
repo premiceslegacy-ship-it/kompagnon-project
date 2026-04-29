@@ -49,7 +49,7 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
   const visibleSections = quote.sections.map(s => ({
     ...s,
     items: s.items.filter(i => !i.is_internal),
-  }))
+  })).filter(s => s.items.length > 0)
   const visibleUnsectioned = quote.unsectionedItems.filter(i => !i.is_internal)
 
   const allItems = [
@@ -75,17 +75,43 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
   const orgStreet = organization.address_line1 ?? null
   const orgPostalCity = [organization.postal_code, organization.city].filter(Boolean).join(' ') || null
 
-  const legalParts: string[] = []
-  if (organization.forme_juridique) legalParts.push(organization.forme_juridique)
-  if (organization.capital_social) legalParts.push(`Capital : ${organization.capital_social}`)
-  if (organization.siret) legalParts.push(`SIRET : ${organization.siret}`)
-  if (!isVatSubject) legalParts.push('TVA non applicable, art. 293B du CGI')
-  else if (organization.vat_number) legalParts.push(`TVA : ${organization.vat_number}`)
-  if (organization.rcs && organization.rcs_ville) legalParts.push(`RCS ${organization.rcs_ville} ${organization.rcs}`)
-  else if (organization.rcs) legalParts.push(`RCS ${organization.rcs}`)
-  if (organization.insurance_info) legalParts.push(`Assurance : ${organization.insurance_info}`)
-  if (organization.certifications) legalParts.push(organization.certifications)
-  const legalLine = legalParts.join('  ·  ') || organization.name
+  // ── Construction du footer légal multi-ligne ──
+  const fmtCapital = (v: string | number | null) => {
+    if (v == null) return null
+    const n = typeof v === 'string' ? parseFloat(v.replace(/[\s   ]/g, '').replace(',', '.').replace('€', '')) : v
+    if (isNaN(n)) return null
+    return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(n) + ' €'
+  }
+
+  // Ligne 1 : forme juridique + capital social
+  const line1Parts: string[] = []
+  if (organization.forme_juridique) line1Parts.push(organization.forme_juridique)
+  const capitalFmt = fmtCapital(organization.capital_social)
+  if (capitalFmt) line1Parts.push(`Capital social : ${capitalFmt}`)
+
+  // Ligne 2 : identifiants (SIRET, RCS, TVA)
+  const line2Parts: string[] = []
+  if (organization.siret) line2Parts.push(`SIRET : ${organization.siret}`)
+  if (organization.rcs && organization.rcs_ville) line2Parts.push(`RCS ${organization.rcs_ville} ${organization.rcs}`)
+  else if (organization.rcs) line2Parts.push(`RCS ${organization.rcs}`)
+  if (!isVatSubject) line2Parts.push('TVA non applicable, art. 293B du CGI')
+  else if (organization.vat_number) line2Parts.push(`TVA : ${organization.vat_number}`)
+
+  // Ligne 3 : assurance (adaptée au profil métier)
+  let insuranceLine: string | null = null
+  if (organization.insurance_info) {
+    const label = organization.decennale_enabled
+      ? 'Assurance responsabilité civile professionnelle et décennale'
+      : 'Assurance responsabilité civile professionnelle'
+    insuranceLine = `${label} : ${organization.insurance_info}`
+  }
+
+  const legalLines: string[] = [
+    line1Parts.join(' · '),
+    line2Parts.join(' · '),
+    insuranceLine,
+    organization.certifications,
+  ].filter((l): l is string => !!l && l.length > 0)
 
   return (
     <Document
@@ -169,6 +195,23 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
           <View style={S.clientRequestBox}>
             <Text style={S.clientRequestLabel}>Votre demande</Text>
             <Text style={S.clientRequestText}>{quote.client_request_description}</Text>
+          </View>
+        )}
+
+        {/* ── Garantie décennale ── */}
+        {organization.decennale_enabled && organization.decennale_assureur && (
+          <View style={{ marginBottom: DS.space.lg, paddingVertical: DS.space.md, paddingHorizontal: DS.space.md, borderWidth: 0.5, borderColor: DS.color.divider, backgroundColor: DS.color.surface }} wrap={false}>
+            <Text style={{ fontFamily: DS.font.heading, fontWeight: 700, fontSize: DS.size.xxs, color: DS.color.secondary, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: DS.space.sm }}>
+              Garantie décennale — Art. L241-1 Code des assurances
+            </Text>
+            <Text style={{ fontFamily: DS.font.body, fontSize: DS.size.sm, color: DS.color.body, lineHeight: 1.5 }}>
+              {`Assureur : ${organization.decennale_assureur}`}
+              {organization.decennale_police ? `  ·  Police n° ${organization.decennale_police}` : ''}
+              {organization.decennale_couverture ? `  ·  Couverture : ${organization.decennale_couverture}` : ''}
+              {(organization.decennale_date_debut || organization.decennale_date_fin)
+                ? `  ·  Validité : ${organization.decennale_date_debut ? new Date(organization.decennale_date_debut).toLocaleDateString('fr-FR') : '?'} – ${organization.decennale_date_fin ? new Date(organization.decennale_date_fin).toLocaleDateString('fr-FR') : '?'}`
+                : ''}
+            </Text>
           </View>
         )}
 
@@ -299,23 +342,20 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
 
         </View>
 
-        {/* ── Footer légal ── */}
+        {/* ── Footer légal + pagination ── */}
         <View style={S.footer} fixed>
+          <View style={{ flex: 1 }}>
+            {legalLines.map((line, i) => (
+              <Text key={i} style={S.footerText}>{line}</Text>
+            ))}
+          </View>
           <Text
-            style={S.footerText}
+            style={S.pageNumber}
             render={({ pageNumber, totalPages }) =>
-              pageNumber === totalPages ? legalLine : ''
+              totalPages > 1 ? `${pageNumber} / ${totalPages}` : ''
             }
           />
         </View>
-
-        <Text
-          style={S.pageNumber}
-          render={({ pageNumber, totalPages }) =>
-            totalPages > 1 ? `${pageNumber} / ${totalPages}` : ''
-          }
-          fixed
-        />
 
       </Page>
     </Document>

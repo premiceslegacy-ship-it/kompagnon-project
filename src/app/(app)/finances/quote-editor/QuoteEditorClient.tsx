@@ -35,6 +35,7 @@ import LaborEstimatePanel, { type MOInsertItem } from '@/components/ai/LaborEsti
 import type { AIQuoteResult } from '@/app/api/ai/analyze-quote/route'
 import type { ResolvedCatalogContext } from '@/lib/catalog-context'
 import { LEGAL_VAT_RATES, type VatConfig } from '@/lib/utils'
+import { computeFuel, DEFAULT_CONSUMPTION_L_PER_100KM, DEFAULT_FUEL_PRICE_EUR_PER_L } from '@/lib/utils/fuel'
 import { getCatalogDocumentVatRate, getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { AI_NAME } from '@/lib/brand'
 import type { OrganizationModules } from '@/lib/organization-modules'
@@ -44,6 +45,74 @@ const fmt = (n: number) =>
 
 function clientDisplayName(c: Client) {
   return getClientDisplayName(c)
+}
+
+function getSafeReturnTo(value: string | null, fallback: string) {
+  if (!value) return fallback
+  if (!value.startsWith('/') || value.startsWith('//')) return fallback
+  return value
+}
+
+function normalizeSearchText(value: string | null | undefined) {
+  return (value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z0-9@.]+/g, ' ')
+    .trim()
+}
+
+function findBestClientMatch(clients: Client[], rawSearch: string | null | undefined): Client | null {
+  const search = normalizeSearchText(rawSearch)
+  if (!search) return null
+
+  let best: { client: Client; score: number } | null = null
+  for (const client of clients) {
+    const fields = [
+      client.company_name,
+      client.contact_name,
+      [client.first_name, client.last_name].filter(Boolean).join(' '),
+      client.email,
+      client.phone,
+    ].filter(Boolean) as string[]
+
+    let score = 0
+    for (const field of fields) {
+      const normalized = normalizeSearchText(field)
+      if (!normalized) continue
+      if (normalized === search) score = Math.max(score, 100)
+      else if (normalized.includes(search) || search.includes(normalized)) score = Math.max(score, 80)
+      else {
+        const searchTokens = search.split(' ').filter(token => token.length >= 2)
+        const fieldTokens = normalized.split(' ').filter(token => token.length >= 2)
+        const matches = searchTokens.filter(token => fieldTokens.some(fieldToken => fieldToken === token || fieldToken.includes(token) || token.includes(fieldToken))).length
+        if (matches > 0) score = Math.max(score, Math.round((matches / searchTokens.length) * 70))
+      }
+    }
+
+    if (!best || score > best.score) best = { client, score }
+  }
+
+  return best && best.score >= 45 ? best.client : null
+}
+
+function isLikelyInternalAIItem(sectionTitle: string, item: AIQuoteResult['sections'][number]['items'][number]) {
+  if (item.is_internal === true) return true
+  const haystack = normalizeSearchText(`${sectionTitle} ${item.description}`)
+  return [
+    'main d oeuvre',
+    'main d',
+    'mo interne',
+    'ressource interne',
+    'cout interne',
+    'cout de revient',
+    'deplacement',
+    'transport',
+    'carburant',
+    'frais de route',
+    'coordination interne',
+    'preparation interne',
+  ].some(token => haystack.includes(token))
 }
 
 // ─── Local state types ──────────────────────────────────────────────────────
@@ -66,6 +135,10 @@ type LocalItem = {
   dimension_pricing_mode: 'none' | 'linear' | 'area' | 'volume' | null
   is_estimated: boolean  // UI uniquement — non persisté en DB
   is_internal: boolean
+  // Métadonnées transport — UI uniquement, non persistées en DB
+  transport_km: number | null
+  transport_conso: number | null
+  transport_prix_l: number | null
 }
 
 type LocalSection = {
@@ -135,6 +208,7 @@ function computeDimensionQuantity(
 
 function itemToLocal(i: QuoteItem): LocalItem {
   const dimensionMode = inferDimensionMode(i)
+  const isTransportLine = (i.is_internal ?? false) && i.unit === 'L' && (i.description ?? '').toLowerCase().includes('carburant')
   return {
     _tempId: i.id,
     id: i.id,
@@ -153,6 +227,9 @@ function itemToLocal(i: QuoteItem): LocalItem {
     position: i.position,
     is_estimated: false,
     is_internal: i.is_internal ?? false,
+    transport_km: isTransportLine ? Math.round(i.quantity / DEFAULT_CONSUMPTION_L_PER_100KM * 100) : null,
+    transport_conso: isTransportLine ? DEFAULT_CONSUMPTION_L_PER_100KM : null,
+    transport_prix_l: isTransportLine ? i.unit_price : null,
   }
 }
 
@@ -168,17 +245,19 @@ type Props = {
   catalogContext: ResolvedCatalogContext
   modules: OrganizationModules
   vatConfig: VatConfig
+  returnTo?: string | null
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export default function QuoteEditorClient({ clients: initialClients, initialQuote, materials, laborRates, prestationTypes, initialClientId, catalogContext, modules, vatConfig }: Props) {
+export default function QuoteEditorClient({ clients: initialClients, initialQuote, materials, laborRates, prestationTypes, initialClientId, catalogContext, modules, vatConfig, returnTo: rawReturnTo = null }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [isSending, setIsSending] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const defaultVatRate = getCatalogDocumentVatRate(vatConfig)
+  const returnTo = getSafeReturnTo(rawReturnTo, '/finances?tab=quotes')
 
   // Client list (mutable — peut être étendue par création inline)
   const [clients, setClients] = useState<Client[]>(initialClients)
@@ -218,7 +297,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const [quoteId, setQuoteId] = useState<string | null>(initialQuote?.id ?? null)
   const [clientId, setClientId] = useState<string>(initialQuote?.client?.id ?? initialClientId ?? initialClients[0]?.id ?? '')
   const [title, setTitle] = useState(initialQuote?.title ?? '')
-  const [validityDays, setValidityDays] = useState(initialQuote?.validity_days ?? 30)
+  const [validityDays, setValidityDays] = useState(initialQuote?.validity_days ?? vatConfig.defaultQuoteValidityDays ?? 30)
   const initialClientForIntro = initialClients.find(c => c.id === (initialQuote?.client?.id ?? initialClientId ?? initialClients[0]?.id ?? '')) ?? initialQuote?.client ?? null
   const getIntroForClient = (client: Client | null | undefined) =>
     client
@@ -228,6 +307,10 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const [clientRequestVisibleOnPdf, setClientRequestVisibleOnPdf] = useState<boolean>(
     (initialQuote as any)?.client_request_visible_on_pdf ?? true,
   )
+  const [aidLabel, setAidLabel] = useState<string>(initialQuote?.aid_label ?? '')
+  const [aidAmount, setAidAmount] = useState<number | null>(initialQuote?.aid_amount ?? null)
+  const [showAid, setShowAid] = useState<boolean>(!!(initialQuote?.aid_label || initialQuote?.aid_amount))
+  const [aidMode, setAidMode] = useState<'€' | '%'>('€')
   const [notesClient, setNotesClient] = useState(
     (initialQuote as any)?.notes_client ?? getIntroForClient(initialClientForIntro as Client | null),
   )
@@ -258,9 +341,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
   // Sections state
   const [sections, setSections] = useState<LocalSection[]>(() => {
-    if (!initialQuote) {
-      return [{ _tempId: 'sec_init', id: null, title: 'Section 1', position: 1, items: [] }]
-    }
+    if (!initialQuote) return []
     const secs: LocalSection[] = initialQuote.sections.map(s => ({
       _tempId: s.id,
       id: s.id,
@@ -277,7 +358,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         items: initialQuote.unsectionedItems.map(itemToLocal),
       })
     }
-    return secs.length > 0 ? secs : [{ _tempId: 'sec_init', id: null, title: 'Section 1', position: 1, items: [] }]
+    return secs
   })
 
   // Expanded detail rows (dimensions)
@@ -324,6 +405,36 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const margePct = totalHt > 0 ? (margeHt / totalHt) * 100 : 0
   const hasInternalItems = internalItems.length > 0
 
+  // ─── Équipement amorti ────────────────────────────────────────────────────
+  const [showEquipment, setShowEquipment] = useState(false)
+  const [equipmentTarget, setEquipmentTarget] = useState<string | null>(null)
+  const [equipmentName, setEquipmentName] = useState('')
+  const [equipmentPurchase, setEquipmentPurchase] = useState(0)
+  const [equipmentUses, setEquipmentUses] = useState(100)
+  const equipmentCostPerUse = equipmentUses > 0 ? Math.round((equipmentPurchase / equipmentUses) * 100) / 100 : 0
+
+  async function handleAddEquipment() {
+    if (!equipmentTarget || equipmentPurchase <= 0 || equipmentUses <= 0) return
+    const qId = await ensureQuote()
+    if (!qId) return
+    const sec = sectionsRef.current.find(s => s._tempId === equipmentTarget)!
+    const pos = sec.items.length + 1
+    const tempId = `item_${Date.now()}`
+    const desc = equipmentName.trim() || `Équipement amorti (${equipmentPurchase} € / ${equipmentUses} usages)`
+    setSections(prev => prev.map(s =>
+      s._tempId === equipmentTarget
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: 0, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null }] }
+        : s
+    ))
+    setShowEquipment(false)
+    const sectionId = await ensureSectionSaved(equipmentTarget, qId)
+    if (!sectionId) return
+    const res = await upsertQuoteItem({ quote_id: qId, section_id: sectionId, type: 'custom', description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, vat_rate: defaultVatRate, position: pos, is_internal: true })
+    if (res.itemId) {
+      await finalizeCreatedItem(equipmentTarget, tempId, res.itemId, qId, sectionId)
+    }
+  }
+
   // ─── Transport ────────────────────────────────────────────────────────────
   const [showTransport, setShowTransport] = useState(false)
   const [transportTarget, setTransportTarget] = useState<string | null>(null)
@@ -343,7 +454,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const desc = `Carburant - trajet ${transportKm} km`
     setSections(prev => prev.map(s =>
       s._tempId === transportTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_estimated: false, is_internal: true }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL }] }
         : s
     ))
     setShowTransport(false)
@@ -355,16 +466,44 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     }
   }
 
+  function handleTransportMetaChange(
+    secTempId: string,
+    itemTempId: string,
+    field: 'transport_km' | 'transport_conso' | 'transport_prix_l',
+    value: number | null,
+  ) {
+    setSections(prev => prev.map(s => {
+      if (s._tempId !== secTempId) return s
+      return {
+        ...s,
+        items: s.items.map(item => {
+          if (item._tempId !== itemTempId) return item
+          const updated = { ...item, [field]: value }
+          const km = updated.transport_km ?? 0
+          const conso = updated.transport_conso ?? DEFAULT_CONSUMPTION_L_PER_100KM
+          const prixL = updated.transport_prix_l ?? DEFAULT_FUEL_PRICE_EUR_PER_L
+          const { liters } = computeFuel({ km, consumption: conso, pricePerLiter: prixL })
+          const desc = `Carburant - trajet ${km} km`
+          return { ...updated, description: desc, quantity: liters, unit: 'L', unit_price: prixL }
+        }),
+      }
+    }))
+    scheduleItemSave(secTempId, itemTempId)
+  }
+
   // ─── Ensure quote exists ──────────────────────────────────────────────────
 
-  async function ensureQuote(): Promise<string | null> {
+  async function ensureQuote(clientIdOverride?: string | null): Promise<string | null> {
     if (quoteIdRef.current) return quoteIdRef.current
-    const res = await createQuote({ clientId, title: title || 'Nouveau devis' })
+    const res = await createQuote({ clientId: clientIdOverride !== undefined ? clientIdOverride : clientId, title: title || 'Nouveau devis' })
     if (res.error || !res.quoteId) { setErrorMsg(res.error); return null }
     setQuoteId(res.quoteId)
     quoteIdRef.current = res.quoteId
     // Mettre à jour l'URL sans déclencher un re-render SSC (évite la réinitialisation du state client)
-    window.history.replaceState(null, '', `/finances/quote-editor?id=${res.quoteId}`)
+    const nextUrl = new URL('/finances/quote-editor', window.location.origin)
+    nextUrl.searchParams.set('id', res.quoteId)
+    nextUrl.searchParams.set('returnTo', returnTo)
+    window.history.replaceState(null, '', `${nextUrl.pathname}${nextUrl.search}`)
     return res.quoteId
   }
 
@@ -501,7 +640,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const tempId = `item_${Date.now()}`
     setSections(prev => prev.map(s =>
       s._tempId === sectionTempId
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_estimated: false, is_internal: false }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_estimated: false, is_internal: false, transport_km: null, transport_conso: null, transport_prix_l: null }] }
         : s
     ))
     const sectionId = await ensureSectionSaved(sectionTempId, qId)
@@ -649,6 +788,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       dimension_pricing_mode: isMat ? (m.dimension_pricing_mode ?? null) : null,
       is_estimated: false,
       is_internal: !isMat,
+      transport_km: null, transport_conso: null, transport_prix_l: null,
     }
     setSections(prev => prev.map(s =>
       s._tempId === catalogTarget ? { ...s, items: [...s.items, newItem] } : s
@@ -732,7 +872,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const res = await sendQuote(qId)
     setIsSending(false)
     if (res.error) { setErrorMsg(res.error); return }
-    router.push('/finances')
+    router.push(returnTo)
   }
 
   async function handlePreviewPdf() {
@@ -747,7 +887,13 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   // ─── AI import ───────────────────────────────────────────────────────────
 
   async function handleAIImport(aiResult: AIQuoteResult) {
-    const qId = await ensureQuote()
+    const matchedClient = findBestClientMatch(clients, aiResult.clientName)
+    if (matchedClient && matchedClient.id !== clientId) {
+      setClientId(matchedClient.id)
+      if (quoteIdRef.current) scheduleHeaderSave({ client_id: matchedClient.id })
+    }
+
+    const qId = await ensureQuote(matchedClient?.id ?? undefined)
     if (!qId) return
 
     // Mettre à jour le titre si c'est encore le titre par défaut
@@ -769,6 +915,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
       for (let idx = 0; idx < aiSec.items.length; idx++) {
         const aiItem = aiSec.items[idx]
+        const isInternal = isLikelyInternalAIItem(aiSec.title, aiItem)
         const itemTempId = `item_ai_${Date.now()}_${idx}`
         const itemPos = idx + 1
         const newItem: LocalItem = {
@@ -788,7 +935,8 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           height_m: null,
           dimension_pricing_mode: null,
           is_estimated: aiItem.is_estimated ?? false,
-          is_internal: false,
+          is_internal: isInternal,
+          transport_km: null, transport_conso: null, transport_prix_l: null,
         }
         setSections(prev => prev.map(s =>
           s._tempId === tempId ? { ...s, items: [...s.items, newItem] } : s
@@ -803,6 +951,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           unit_price: aiItem.unit_price,
           vat_rate: aiItem.vat_rate,
           position: itemPos,
+          is_internal: isInternal,
         })
         if (itemRes.itemId) {
           await finalizeCreatedItem(tempId, itemTempId, itemRes.itemId, qId, sectionId)
@@ -857,6 +1006,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         material_id: null, labor_rate_id: item.labor_rate_id,
         position: itemPos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null,
         is_estimated: false, is_internal: true,
+        transport_km: null, transport_conso: null, transport_prix_l: null,
       }
       setSections(prev => prev.map(s =>
         s._tempId === sectionTempId ? { ...s, items: [...s.items, newItem] } : s
@@ -906,6 +1056,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         type: 'custom', material_id: null, labor_rate_id: null,
         position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null,
         is_estimated: false, is_internal: false,
+        transport_km: null, transport_conso: null, transport_prix_l: null,
       }
       setSections(prev => prev.map(s => s._tempId === targetTempId ? { ...s, items: [...s.items, newItem] } : s))
       const res = await upsertQuoteItem({ quote_id: qId, section_id: sectionId, type: 'custom', description: newItem.description, quantity: 1, unit: newItem.unit, unit_price: newItem.unit_price, vat_rate: newItem.vat_rate, position: pos })
@@ -939,21 +1090,34 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       setSections(prev => prev.map(s => s._tempId === secTempId ? { ...s, id: sectionId } : s))
 
       const tempIds = pItems.map((_, i) => `item_${Date.now()}_${sIdx}_${i}`)
-      const newItems: LocalItem[] = pItems.map((pItem, i) => ({
-        _tempId: tempIds[i], id: null,
-        description: pItem.designation,
-        quantity: pItem.quantity,
-        unit: pItem.unit,
-        unit_price: pItem.unit_price_ht,
-        vat_rate: defaultVatRate,
-        type: pItem.item_type === 'material' || pItem.item_type === 'service' ? 'material' : pItem.item_type === 'labor' ? 'labor' : 'custom' as const,
-        material_id: pItem.material_id,
-        labor_rate_id: pItem.labor_rate_id,
-        position: i + 1,
-        length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null,
-        is_estimated: false,
-        is_internal: pItem.is_internal,
-      }))
+      const newItems: LocalItem[] = pItems.map((pItem, i) => {
+        const isTransport = pItem.item_type === 'transport'
+        const prixL = pItem.unit_price_ht > 0 ? pItem.unit_price_ht : DEFAULT_FUEL_PRICE_EUR_PER_L
+        const conso = DEFAULT_CONSUMPTION_L_PER_100KM
+        // Reconstituer km estimé depuis les litres stockés dans quantity
+        const estimatedKm = isTransport && pItem.quantity > 0
+          ? Math.round(pItem.quantity / conso * 100)
+          : 100
+        const liters = isTransport ? computeFuel({ km: estimatedKm, consumption: conso, pricePerLiter: prixL }).liters : pItem.quantity
+        return {
+          _tempId: tempIds[i], id: null,
+          description: isTransport ? `Carburant - trajet ${estimatedKm} km` : pItem.designation,
+          quantity: isTransport ? liters : pItem.quantity,
+          unit: isTransport ? 'L' : pItem.unit,
+          unit_price: isTransport ? prixL : pItem.unit_price_ht,
+          vat_rate: defaultVatRate,
+          type: pItem.item_type === 'material' || pItem.item_type === 'service' ? 'material' : pItem.item_type === 'labor' ? 'labor' : 'custom' as const,
+          material_id: pItem.material_id,
+          labor_rate_id: pItem.labor_rate_id,
+          position: i + 1,
+          length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null,
+          is_estimated: false,
+          is_internal: pItem.is_internal || isTransport,
+          transport_km: isTransport ? estimatedKm : null,
+          transport_conso: isTransport ? conso : null,
+          transport_prix_l: isTransport ? prixL : null,
+        }
+      })
 
       setSections(prev => prev.map(s => s._tempId === secTempId ? { ...s, items: newItems } : s))
 
@@ -990,7 +1154,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <main className="flex-1 p-8 max-w-[1600px] mx-auto w-full space-y-8">
+    <main className="page-container pb-28 space-y-6 md:space-y-8 relative z-10" style={{ maxWidth: '1600px' }}>
 
       {/* ATELIER IA Panel */}
       {aiPanelOpen && (
@@ -1013,8 +1177,8 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
       {/* Prestation Picker Modal */}
       {prestationOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="card w-full max-w-2xl p-8 relative max-h-[80vh] flex flex-col">
+        <div className="modal-overlay">
+          <div className="modal-panel flex flex-col">
             <button onClick={() => setPrestationOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary">
               <X className="w-6 h-6" />
             </button>
@@ -1080,8 +1244,8 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
       {/* Catalog Modal */}
       {catalogOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="card w-full max-w-2xl p-8 relative max-h-[80vh] flex flex-col">
+        <div className="modal-overlay">
+          <div className="modal-panel flex flex-col">
             <button onClick={() => setCatalogOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary">
               <X className="w-6 h-6" />
             </button>
@@ -1165,13 +1329,13 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       )}
 
       {/* Topbar */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/finances" className="w-10 h-10 rounded-full bg-surface border border-[var(--elevation-border)] flex items-center justify-center text-secondary hover:text-primary transition-colors dark:bg-white/5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Link href={returnTo} className="w-10 h-10 rounded-full bg-surface border border-[var(--elevation-border)] flex items-center justify-center text-secondary hover:text-primary transition-colors dark:bg-white/5 flex-shrink-0">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-primary">
+            <h1 className="text-xl sm:text-2xl font-bold text-primary">
               {initialQuote?.number ? `Devis ${initialQuote.number}` : quoteId ? 'Édition du devis' : 'Nouveau devis'}
             </h1>
             {saveStatus === 'saving' && (
@@ -1186,21 +1350,22 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           {isPending && <Loader2 className="w-4 h-4 text-secondary animate-spin" />}
           {modules.quote_ai && (
             <button
               onClick={() => setMoaPanelOpen(true)}
-              className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-violet-500/30 text-violet-600 dark:text-violet-400 font-semibold flex items-center gap-2 hover:bg-violet-500/10 transition-all"
+              className="px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-violet-500/30 text-violet-600 dark:text-violet-400 font-semibold flex items-center gap-2 hover:bg-violet-500/10 transition-all whitespace-nowrap"
             >
               <Wrench className="w-4 h-4" />
-              Estimer les ressources internes
+              <span className="hidden md:inline">Estimer les ressources internes</span>
+              <span className="md:hidden">Ressources</span>
             </button>
           )}
           {modules.quote_ai && (
             <button
               onClick={() => setAIPanelOpen(true)}
-              className="px-5 py-3 rounded-full bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-semibold flex items-center gap-2 hover:from-violet-600 hover:to-indigo-700 transition-all shadow-lg shadow-violet-500/20"
+              className="px-4 py-2.5 rounded-full bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-semibold flex items-center gap-2 hover:from-violet-600 hover:to-indigo-700 transition-all shadow-lg shadow-violet-500/20 whitespace-nowrap"
             >
               <Bot className="w-4 h-4" />
               {AI_NAME}
@@ -1209,19 +1374,19 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           {quoteId ? (
             <button
               onClick={handlePreviewPdf}
-              className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:bg-base transition-all"
+              className="px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:bg-base transition-all whitespace-nowrap"
             >
-              <FileDown className="w-4 h-4" />Aperçu PDF
+              <FileDown className="w-4 h-4" /><span className="hidden sm:inline">Aperçu PDF</span>
             </button>
           ) : (
-            <span className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center gap-2 opacity-40 cursor-not-allowed" title="Ajoutez une ligne pour générer le PDF">
-              <FileDown className="w-4 h-4" />Aperçu PDF
+            <span className="px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center gap-2 opacity-40 cursor-not-allowed whitespace-nowrap" title="Ajoutez une ligne pour générer le PDF">
+              <FileDown className="w-4 h-4" /><span className="hidden sm:inline">Aperçu PDF</span>
             </span>
           )}
           <button
             onClick={handleSend}
             disabled={isSending || isPending}
-            className="px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60 disabled:hover:scale-100"
+            className="px-4 sm:px-6 py-2.5 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60 disabled:hover:scale-100 whitespace-nowrap"
           >
             {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             Envoyer
@@ -1232,11 +1397,11 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       {errorMsg && <p className="text-sm text-red-400 px-2">{errorMsg}</p>}
 
       {/* Main layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
 
         {/* Left panel */}
         <div className="lg:col-span-4 space-y-6">
-          <div className="rounded-3xl card p-8 space-y-5">
+          <div className="rounded-3xl card p-5 sm:p-8 space-y-5">
             <h3 className="text-lg font-bold text-primary border-b border-[var(--elevation-border)] pb-3">Informations</h3>
             <div className="space-y-4">
               <div className="space-y-2">
@@ -1283,7 +1448,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           </div>
 
           {/* Totals */}
-          <div className="rounded-3xl card p-8 space-y-4 sticky top-24">
+          <div className="rounded-3xl card p-5 sm:p-8 space-y-4 lg:sticky top-24">
             <h3 className="text-lg font-bold text-primary mb-2">Récapitulatif</h3>
             <div className="flex justify-between text-secondary">
               <span>Total HT</span><span className="tabular-nums">{fmt(totalHt)}</span>
@@ -1296,6 +1461,96 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
               <span className="font-semibold text-secondary">TOTAL TTC</span>
               <span className="text-3xl font-bold text-primary tabular-nums">{fmt(totalTtc)}</span>
             </div>
+
+            {/* Aide déductible (MaPrimeRénov, CEE…) */}
+            {!showAid ? (
+              <button
+                onClick={() => setShowAid(true)}
+                className="w-full text-xs text-secondary hover:text-accent transition-colors flex items-center gap-1.5 pt-1"
+              >
+                <Plus className="w-3 h-3" />Ajouter une aide / subvention
+              </button>
+            ) : (
+              <div className="pt-3 mt-1 border-t border-[var(--elevation-border)] space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold text-secondary uppercase tracking-wider">Aide / Subvention</p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex rounded-lg border border-[var(--elevation-border)] overflow-hidden text-xs">
+                      {(['€', '%'] as const).map(m => (
+                        <button key={m} type="button" onClick={() => setAidMode(m)}
+                          className={`px-2.5 py-1 transition-colors ${aidMode === m ? 'bg-accent text-white' : 'text-secondary hover:text-primary'}`}>
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => { setShowAid(false); setAidLabel(''); setAidAmount(null); scheduleHeaderSave({ aid_label: null, aid_amount: null }) }}
+                      className="text-secondary hover:text-red-500 transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {['MaPrimeRénov\'', 'CEE', 'Éco-PTZ', 'Anah'].map(preset => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => { setAidLabel(preset); scheduleHeaderSave({ aid_label: preset, aid_amount: aidAmount }) }}
+                      className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${aidLabel === preset ? 'bg-accent text-white border-accent' : 'border-[var(--elevation-border)] text-secondary hover:border-accent hover:text-accent'}`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  placeholder="Ou saisir un autre libellé…"
+                  value={aidLabel}
+                  onChange={e => { setAidLabel(e.target.value); scheduleHeaderSave({ aid_label: e.target.value || null, aid_amount: aidAmount }) }}
+                  className="w-full px-3 py-2 text-sm bg-base dark:bg-white/5 border border-[var(--elevation-border)] focus:border-accent rounded-xl text-primary outline-none transition-all"
+                />
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-secondary">−</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={aidMode === '%' ? 100 : totalTtc}
+                    step={aidMode === '%' ? 1 : 0.01}
+                    placeholder="0"
+                    value={aidMode === '%'
+                      ? (aidAmount != null && totalTtc > 0 ? Math.round((aidAmount / totalTtc) * 10000) / 100 : '')
+                      : (aidAmount ?? '')}
+                    onChange={e => {
+                      if (e.target.value === '') { setAidAmount(null); scheduleHeaderSave({ aid_label: aidLabel || null, aid_amount: null }); return }
+                      const raw = parseFloat(e.target.value)
+                      const v = aidMode === '%'
+                        ? Math.round(Math.min(100, Math.max(0, raw)) * totalTtc) / 100
+                        : Math.min(totalTtc, Math.max(0, raw))
+                      setAidAmount(v)
+                      scheduleHeaderSave({ aid_label: aidLabel || null, aid_amount: v })
+                    }}
+                    className="flex-1 px-3 py-2 text-sm bg-base dark:bg-white/5 border border-[var(--elevation-border)] focus:border-accent rounded-xl text-primary outline-none transition-all tabular-nums text-right"
+                  />
+                  <span className="text-sm text-secondary w-4">{aidMode === '%' ? '%' : (initialQuote?.currency === 'USD' ? '$' : '€')}</span>
+                </div>
+                {aidAmount != null && aidAmount > 0 && (
+                  <div className="pt-2 border-t border-[var(--elevation-border)]">
+                    <div className="flex justify-between text-sm text-secondary">
+                      <span>Total TTC</span><span className="tabular-nums">{fmt(totalTtc)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm text-green-600 dark:text-green-400">
+                      <span>{aidLabel || 'Aide'}</span><span className="tabular-nums">−{fmt(aidAmount)}</span>
+                    </div>
+                    <div className="h-px bg-[var(--elevation-border)] my-1" />
+                    <div className="flex justify-between font-bold text-primary">
+                      <span>Reste à charge</span>
+                      <span className="tabular-nums text-lg">{fmt(Math.max(0, totalTtc - aidAmount))}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Marge interne — visible uniquement si lignes internes */}
             {hasInternalItems && (
@@ -1365,7 +1620,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           )}
 
           {/* Intro text */}
-          <div className="rounded-3xl card p-8">
+          <div className="rounded-3xl card p-5 sm:p-8">
             <label className="text-sm font-semibold text-secondary block mb-3">Texte d'introduction</label>
             <textarea
               value={notesClient}
@@ -1376,8 +1631,29 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           </div>
 
           {/* Sections */}
+          {sections.length === 0 && (
+            <div className="rounded-3xl card p-12 text-center space-y-5">
+              <p className="text-secondary text-sm">Commencez par ajouter une section ou choisissez une prestation type.</p>
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={handleAddSection}
+                  disabled={isPending}
+                  className="flex items-center gap-2 text-sm font-bold text-accent hover:text-accent/80 px-5 py-2.5 rounded-full border border-accent/20 bg-accent/5 transition-colors disabled:opacity-60"
+                >
+                  <Plus className="w-4 h-4" />Ajouter une section
+                </button>
+                <button
+                  onClick={() => { setPrestationSearch(''); setPrestationOpen(true) }}
+                  disabled={isPending}
+                  className="flex items-center gap-2 text-sm font-bold text-primary hover:text-accent px-5 py-2.5 rounded-full border border-[var(--elevation-border)] bg-base/50 transition-colors disabled:opacity-60"
+                >
+                  <Layers className="w-4 h-4" />Prestation type
+                </button>
+              </div>
+            </div>
+          )}
           {sections.map(sec => (
-            <div key={sec._tempId} className="rounded-3xl card p-8 space-y-5">
+            <div key={sec._tempId} className="rounded-3xl card p-4 sm:p-8 space-y-5">
               <div className="flex items-center justify-between border-b border-[var(--elevation-border)] pb-4">
                 <input
                   type="text"
@@ -1508,6 +1784,55 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                         </div>
                       </div>
 
+                      {/* Panneau transport interne */}
+                      {item.transport_prix_l !== null && (
+                        <div className="px-3 pb-3 pt-2 border-t border-amber-200/60 dark:border-amber-500/20 space-y-2 rounded-b-xl bg-amber-500/3">
+                          <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <Truck className="w-3 h-3" />Détail transport (coût interne — non visible client)
+                          </p>
+                          <div className="flex flex-wrap items-end gap-3">
+                            <label className="flex flex-col gap-1 text-xs text-secondary">
+                              Distance aller-retour (km)
+                              <input
+                                type="number"
+                                min={1}
+                                value={item.transport_km ?? ''}
+                                onChange={e => handleTransportMetaChange(sec._tempId, item._tempId, 'transport_km', e.target.value === '' ? null : Number(e.target.value))}
+                                className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400"
+                              />
+                            </label>
+                            <span className="text-secondary text-sm pb-1.5">×</span>
+                            <label className="flex flex-col gap-1 text-xs text-secondary">
+                              Conso (L/100 km)
+                              <input
+                                type="number"
+                                min={1}
+                                step={0.1}
+                                value={item.transport_conso ?? DEFAULT_CONSUMPTION_L_PER_100KM}
+                                onChange={e => handleTransportMetaChange(sec._tempId, item._tempId, 'transport_conso', Number(e.target.value))}
+                                className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400"
+                              />
+                            </label>
+                            <span className="text-secondary text-sm pb-1.5">×</span>
+                            <label className="flex flex-col gap-1 text-xs text-secondary">
+                              Prix carburant (€/L)
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={item.transport_prix_l ?? DEFAULT_FUEL_PRICE_EUR_PER_L}
+                                onChange={e => handleTransportMetaChange(sec._tempId, item._tempId, 'transport_prix_l', Number(e.target.value))}
+                                className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400"
+                              />
+                            </label>
+                            <span className="text-secondary text-sm pb-1.5">=</span>
+                            <span className="font-bold text-amber-600 dark:text-amber-400 text-sm tabular-nums pb-1">
+                              {item.quantity.toFixed(2)} L &mdash; {fmt(item.quantity * (item.transport_prix_l ?? DEFAULT_FUEL_PRICE_EUR_PER_L))}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Detail panel */}
                       {isExpanded && (
                         <div className="px-3 pb-3 pt-1 border-t border-[var(--elevation-border)]/50 space-y-3">
@@ -1596,6 +1921,12 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                 >
                   <Truck className="w-4 h-4" />Transport
                 </button>
+                <button
+                  onClick={() => { setEquipmentTarget(sec._tempId); setEquipmentName(''); setEquipmentPurchase(0); setEquipmentUses(100); setShowEquipment(true) }}
+                  className="flex items-center gap-2 text-sm font-semibold text-purple-600 hover:text-purple-500 px-4 py-2 rounded-full border border-purple-200 dark:border-purple-500/20 bg-purple-500/10 transition-colors"
+                >
+                  <Package className="w-4 h-4" />Équipement
+                </button>
               </div>
             </div>
           ))}
@@ -1621,8 +1952,8 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
       {/* Modal Transport */}
       {showTransport && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-sm shadow-2xl p-8 space-y-5">
+        <div className="modal-overlay z-[300]">
+          <div className="modal-panel space-y-5 sm:max-w-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center">
@@ -1677,10 +2008,66 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         </div>
       )}
 
+      {/* Modal Équipement amorti */}
+      {showEquipment && (
+        <div className="modal-overlay z-[300]">
+          <div className="modal-panel space-y-5 sm:max-w-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                  <Package className="w-5 h-5 text-purple-500" />
+                </div>
+                <h3 className="text-lg font-bold text-primary">Équipement amorti</h3>
+              </div>
+              <button onClick={() => setShowEquipment(false)} className="text-secondary hover:text-primary transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-sm font-semibold text-secondary">Nom de l&apos;équipement</label>
+                <input type="text" value={equipmentName} onChange={e => setEquipmentName(e.target.value)} placeholder="ex: Aspirateur industriel"
+                  className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-secondary">Prix d&apos;achat (€)</label>
+                  <input type="number" min={0} step={0.01} value={equipmentPurchase || ''} onChange={e => setEquipmentPurchase(Number(e.target.value))}
+                    className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 tabular-nums" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-secondary">Usages sur la vie</label>
+                  <input type="number" min={1} step={1} value={equipmentUses} onChange={e => setEquipmentUses(Number(e.target.value))}
+                    className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 tabular-nums" />
+                </div>
+              </div>
+              {equipmentPurchase > 0 && (
+                <div className="p-4 rounded-xl bg-purple-50 dark:bg-purple-500/5 border border-purple-200 dark:border-purple-500/20 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-secondary">Coût par usage</span>
+                    <span className="font-bold text-purple-600 tabular-nums">{equipmentCostPerUse.toFixed(2)} €</span>
+                  </div>
+                  <p className="text-xs text-purple-600 flex items-center gap-1 pt-1 border-t border-purple-200 dark:border-purple-500/20 mt-2">
+                    <EyeOff className="w-3 h-3 shrink-0" />
+                    Ligne interne — coût de revient, non visible sur le PDF client
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setShowEquipment(false)}
+                className="px-5 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold">Annuler</button>
+              <button type="button" onClick={handleAddEquipment} disabled={equipmentPurchase <= 0 || equipmentUses <= 0}
+                className="px-5 py-2.5 rounded-full bg-purple-500 text-white font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-purple-500/20 disabled:opacity-40 disabled:hover:scale-100">
+                <Plus className="w-4 h-4" />Ajouter la ligne
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal nouveau client inline */}
       {newClientOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="card w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-200">
+        <div className="modal-overlay z-[200]">
+          <div className="modal-panel animate-in fade-in duration-200 sm:max-w-md">
             <button onClick={() => setNewClientOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary"><X className="w-5 h-5" /></button>
             <h2 className="text-xl font-bold text-primary mb-6">Nouveau client</h2>
 

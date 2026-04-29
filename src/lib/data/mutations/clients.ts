@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
+import { CreateClientInlineSchema } from '@/lib/validations/clients'
 
 // ─── Create Client (status: active) ──────────────────────────────────────────
 
@@ -15,6 +17,8 @@ export async function createClient(
   _prevState: CreateClientState,
   formData: FormData,
 ): Promise<CreateClientState> {
+  if (!(await hasPermission('clients.create'))) return { error: 'Permission refusée.', success: false }
+
   const supabase = await createSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Vous devez être connecté pour effectuer cette action.', success: false }
@@ -91,6 +95,11 @@ export type CreateClientInlineInput = {
 export async function createClientInline(
   data: CreateClientInlineInput,
 ): Promise<{ error: string | null; id: string | null }> {
+  if (!(await hasPermission('clients.create'))) return { error: 'Permission refusée.', id: null }
+
+  const parsed = CreateClientInlineSchema.safeParse(data)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Données invalides.', id: null }
+
   const supabase = await createSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.', id: null }
@@ -101,10 +110,6 @@ export async function createClientInline(
   const companyName = data.company_name?.trim() || null
   const firstName   = data.first_name?.trim() || null
   const lastName    = data.last_name?.trim() || null
-
-  if (!companyName && !lastName && !firstName) {
-    return { error: 'Le nom ou la raison sociale est requis.', id: null }
-  }
 
   const { data: row, error } = await supabase
     .from('clients')
@@ -146,6 +151,8 @@ export async function updateClient(
   _prevState: UpdateClientState,
   formData: FormData,
 ): Promise<UpdateClientState> {
+  if (!(await hasPermission('clients.edit'))) return { error: 'Permission refusée.', success: false }
+
   const supabase = await createSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.', success: false }
@@ -208,6 +215,8 @@ export async function updateClient(
 // ─── Conversion lead → prospect → client ─────────────────────────────────────
 
 export async function convertToProspect(clientId: string): Promise<{ error: string | null }> {
+  if (!(await hasPermission('clients.edit'))) return { error: 'Permission refusée.' }
+
   const supabase = await createSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
@@ -232,6 +241,8 @@ export async function convertToProspect(clientId: string): Promise<{ error: stri
 }
 
 export async function convertToClient(clientId: string): Promise<{ error: string | null }> {
+  if (!(await hasPermission('clients.edit'))) return { error: 'Permission refusée.' }
+
   const supabase = await createSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
@@ -257,6 +268,8 @@ export async function convertToClient(clientId: string): Promise<{ error: string
 // ─── Delete (soft) ────────────────────────────────────────────────────────────
 
 export async function deleteClient(clientId: string): Promise<{ error: string | null }> {
+  if (!(await hasPermission('clients.delete'))) return { error: 'Permission refusée.' }
+
   const supabase = await createSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
@@ -291,6 +304,8 @@ export async function importClients(
   _prevState: ImportClientsState,
   formData: FormData,
 ): Promise<ImportClientsState> {
+  if (!(await hasPermission('import.clients'))) return { error: 'Permission refusée.', imported: 0, skipped: 0 }
+
   const supabase = await createSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.', imported: 0, skipped: 0 }

@@ -8,9 +8,13 @@
     "build": "node ./node_modules/next/dist/bin/next build",
     "start": "node ./node_modules/next/dist/bin/next start",
     "lint": "node ./node_modules/next/dist/bin/next lint",
-    "preview": "node_modules/.bin/opennextjs-cloudflare build && node_modules/.bin/opennextjs-cloudflare preview",
+    "preview": "node_modules/.bin/opennextjs-cloudflare build --dangerouslyUseUnsupportedNextVersion && node_modules/.bin/opennextjs-cloudflare preview",
     "deploy": "bash ./scripts/run-production-deploy.sh",
-    "cf-typegen": "node ./node_modules/wrangler/bin/wrangler.js types --env-interface CloudflareEnv cloudflare-env.d.ts"
+    "preflight:client": "node scripts/preflight-client.mjs",
+    "cf:env": "node scripts/prepare-cloudflare-env.mjs",
+    "cf-typegen": "node ./node_modules/wrangler/bin/wrangler.js types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -40,7 +44,8 @@
     "resend": "^6.9.4",
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@fontsource/inter": "^5.2.8",
@@ -49,12 +54,15 @@
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.1.6",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.5",
     "wrangler": "^4.84.1"
   }
 }

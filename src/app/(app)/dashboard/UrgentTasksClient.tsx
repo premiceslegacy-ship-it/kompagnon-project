@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useTransition } from 'react'
-import { AlertTriangle, Clock, CheckCircle2, Mail, Check, Loader2, Repeat, Landmark } from 'lucide-react'
+import { AlertTriangle, Clock, CheckCircle2, Mail, Check, Loader2, Repeat, Landmark, Send } from 'lucide-react'
 import Link from 'next/link'
 import type { UrgentItem } from '@/lib/data/queries/dashboard'
 import { markQuoteAccepted } from '@/lib/data/mutations/reminders'
@@ -69,6 +69,10 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
   const overdueCount = items.filter(i => i.type === 'overdue_invoice').length
   const recurringCount = items.filter(i => i.type === 'pending_recurring').length
   const balanceDueCount = items.filter(i => i.type === 'balance_due').length
+  const recentlySentCount = items.filter(i => i.type === 'recently_sent').length
+
+  const actionItems = items.filter(i => i.type !== 'recently_sent')
+  const sentItems = items.filter(i => i.type === 'recently_sent')
 
   return (
     <>
@@ -94,7 +98,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
         </div>
       </div>
 
-      {items.length === 0 ? (
+      {actionItems.length === 0 && sentItems.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-center py-8 gap-3">
           <CheckCircle2 className="w-10 h-10 text-secondary opacity-20" />
           <p className="font-semibold text-primary">Aucune tâche urgente</p>
@@ -104,7 +108,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
         </div>
       ) : (
         <div className="flex flex-col gap-3 flex-1 overflow-y-auto">
-          {items.map(item => (
+          {actionItems.map(item => (
             <div key={item.id} className="flex flex-col gap-1">
               <div
                 className={`flex items-center justify-between p-4 rounded-2xl border ${
@@ -134,6 +138,9 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                     }`}>
                       {item.label}
                     </p>
+                    {item.clientName && (
+                      <p className="text-xs text-secondary truncate">{item.clientName}</p>
+                    )}
                     {item.date && (
                       <p className="text-xs text-secondary mt-0.5">
                         {item.type === 'overdue_invoice' ? 'Échéance : '
@@ -152,16 +159,16 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                   )}
                   {item.type === 'pending_recurring' && item.invoiceId && (
                     <Link
-                      href={`/finances/invoice-editor?id=${item.invoiceId}`}
+                      href={`/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`}
                       title="Vérifier et modifier le brouillon"
                       className="px-3 py-1.5 rounded-lg text-xs font-bold text-violet-700 dark:text-violet-400 bg-violet-100 dark:bg-violet-500/10 hover:bg-violet-200 dark:hover:bg-violet-500/20 transition-colors"
                     >
-                      Vérifier
+                      Modifier
                     </Link>
                   )}
                   {item.type === 'balance_due' && item.invoiceId && (
                     <Link
-                      href={`/finances/invoice-editor?id=${item.invoiceId}`}
+                      href={`/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`}
                       title="Voir la facture d'acompte"
                       className="px-3 py-1.5 rounded-lg text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10 hover:bg-amber-200 dark:hover:bg-amber-500/20 transition-colors"
                     >
@@ -209,6 +216,44 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
               )}
             </div>
           ))}
+
+          {/* Section envois automatiques récents */}
+          {sentItems.length > 0 && (
+            <div className="mt-2">
+              <p className="text-xs font-bold text-secondary uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Send className="w-3 h-3" />
+                Envoyé automatiquement (7 derniers jours)
+              </p>
+              <div className="flex flex-col gap-2">
+                {sentItems.map(item => {
+                  const isRelance = item.subtype === 'auto_reminder_invoice' || item.subtype === 'auto_reminder_quote'
+                  const dAgo = item.date
+                    ? Math.floor((Date.now() - new Date(item.date).getTime()) / 86400000)
+                    : null
+                  return (
+                    <div key={item.id} className="flex items-center justify-between p-3 rounded-xl bg-green-50 dark:bg-green-500/5 border border-green-200 dark:border-green-500/15">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-primary truncate">{item.label}</p>
+                          <p className="text-xs text-secondary truncate">
+                            {item.clientName && <>{item.clientName} · </>}
+                            {isRelance
+                              ? `${item.subtype === 'auto_reminder_invoice' ? 'Relance facture' : 'Relance devis'}${item.rank && item.rank > 1 ? ` n°${item.rank}` : ''}`
+                              : 'Facture récurrente'
+                            }
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-xs text-secondary whitespace-nowrap flex-shrink-0 ml-3">
+                        {dAgo === 0 ? "Aujourd'hui" : dAgo === 1 ? 'Hier' : `Il y a ${dAgo}j`}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

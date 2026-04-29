@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from './clients'
+import { todayParis } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -18,6 +19,7 @@ export type Chantier = {
   end_date: string | null
   estimated_end_date: string | null
   budget_ht: number
+  target_margin_pct: number
   quote_id: string | null
   created_at: string
   // Contact référent
@@ -56,19 +58,21 @@ export type Tache = {
   due_date: string | null
   completed_at: string | null
   created_at: string
+  jalon_id: string | null
 }
 
 export type Pointage = {
   id: string
   chantier_id: string
   tache_id: string | null
-  user_id: string
+  user_id: string | null
+  member_id: string | null
   date: string
   hours: number
   description: string | null
   created_at: string
   start_time: string | null  // "HH:MM" format
-  user_name: string
+  user_name: string          // nom affiché (user ou membre fantôme)
   tache_title: string | null
 }
 
@@ -77,19 +81,23 @@ export type ChantierPhoto = {
   chantier_id: string
   tache_id: string | null
   storage_path: string
+  title: string | null
   caption: string | null
   taken_at: string
   created_at: string
   uploaded_by_name: string
   url: string | null
+  include_in_report: boolean
+  shared_with_client_at: string | null
 }
 
 export type GlobalPointage = {
   id: string
   chantier_id: string
   chantier_title: string
-  user_id: string
-  user_name: string
+  user_id: string | null
+  member_id: string | null
+  user_name: string          // nom affiché (user ou membre fantôme)
   date: string
   hours: number
   description: string | null
@@ -117,6 +125,7 @@ export type EquipeMembre = {
   name: string
   role_label: string | null
   profile_id: string | null
+  taux_horaire: number | null
 }
 
 export type Equipe = {
@@ -136,6 +145,7 @@ export type ChantierPlanning = {
   start_time: string | null   // HH:MM
   end_time: string | null     // HH:MM
   equipe_id: string | null
+  member_id: string | null
   label: string
   team_size: number
   notes: string | null
@@ -155,7 +165,7 @@ export async function getChantiers(): Promise<Chantier[]> {
       id, title, description, status,
       address_line1, postal_code, city,
       start_date, end_date, estimated_end_date,
-      budget_ht, quote_id, created_at,
+      budget_ht, target_margin_pct, quote_id, created_at,
       contact_name, contact_email, contact_phone,
       recurrence, recurrence_times, recurrence_team_size,
       recurrence_duration_h, recurrence_notes,
@@ -186,7 +196,7 @@ export async function getChantierById(chantierId: string): Promise<ChantierDetai
           id, title, description, status,
           address_line1, postal_code, city,
           start_date, end_date, estimated_end_date,
-          budget_ht, quote_id, created_at,
+          budget_ht, target_margin_pct, quote_id, created_at,
           contact_name, contact_email, contact_phone,
           recurrence, recurrence_times, recurrence_team_size,
           recurrence_duration_h, recurrence_notes,
@@ -254,8 +264,9 @@ export async function getChantierPointages(chantierId: string): Promise<Pointage
   const { data, error } = await supabase
     .from('chantier_pointages')
     .select(`
-      id, chantier_id, tache_id, user_id, date, hours, description, created_at, start_time,
+      id, chantier_id, tache_id, user_id, member_id, date, hours, description, created_at, start_time,
       profile:profiles(full_name),
+      membre:chantier_equipe_membres(prenom, name),
       tache:chantier_taches(title)
     `)
     .eq('chantier_id', chantierId)
@@ -266,19 +277,25 @@ export async function getChantierPointages(chantierId: string): Promise<Pointage
     return []
   }
 
-  return (data ?? []).map((p: any) => ({
-    id: p.id,
-    chantier_id: p.chantier_id,
-    tache_id: p.tache_id,
-    user_id: p.user_id,
-    date: p.date,
-    hours: p.hours,
-    description: p.description,
-    created_at: p.created_at,
-    start_time: p.start_time ?? null,
-    user_name: p.profile?.full_name ?? 'Inconnu',
-    tache_title: p.tache?.title ?? null,
-  }))
+  return (data ?? []).map((p: any) => {
+    const membreName = p.membre
+      ? `${p.membre.prenom ?? ''} ${p.membre.name}`.trim()
+      : null
+    return {
+      id: p.id,
+      chantier_id: p.chantier_id,
+      tache_id: p.tache_id,
+      user_id: p.user_id ?? null,
+      member_id: p.member_id ?? null,
+      date: p.date,
+      hours: p.hours,
+      description: p.description,
+      created_at: p.created_at,
+      start_time: p.start_time ?? null,
+      user_name: p.profile?.full_name ?? membreName ?? 'Inconnu',
+      tache_title: p.tache?.title ?? null,
+    }
+  })
 }
 
 export async function getChantierPhotos(chantierId: string): Promise<ChantierPhoto[]> {
@@ -287,7 +304,8 @@ export async function getChantierPhotos(chantierId: string): Promise<ChantierPho
   const { data, error } = await supabase
     .from('chantier_photos')
     .select(`
-      id, chantier_id, tache_id, storage_path, caption, taken_at, created_at,
+      id, chantier_id, tache_id, storage_path, title, caption, taken_at, created_at,
+      include_in_report, shared_with_client_at,
       uploader:profiles(full_name)
     `)
     .eq('chantier_id', chantierId)
@@ -314,11 +332,14 @@ export async function getChantierPhotos(chantierId: string): Promise<ChantierPho
     chantier_id: p.chantier_id,
     tache_id: p.tache_id,
     storage_path: p.storage_path,
+    title: p.title ?? null,
     caption: p.caption,
     taken_at: p.taken_at,
     created_at: p.created_at,
     uploaded_by_name: p.uploader?.full_name ?? 'Inconnu',
     url: urlMap.get(p.storage_path) ?? null,
+    include_in_report: p.include_in_report ?? false,
+    shared_with_client_at: p.shared_with_client_at ?? null,
   }))
 }
 
@@ -349,8 +370,9 @@ export async function getAllPointagesGlobal(opts?: { from?: string; to?: string 
   let q = supabase
     .from('chantier_pointages')
     .select(`
-      id, chantier_id, user_id, date, hours, description,
+      id, chantier_id, user_id, member_id, date, hours, description,
       profile:profiles(full_name),
+      membre:chantier_equipe_membres(prenom, name),
       tache:chantier_taches(title),
       chantier:chantiers!inner(title, organization_id)
     `)
@@ -367,17 +389,23 @@ export async function getAllPointagesGlobal(opts?: { from?: string; to?: string 
     return []
   }
 
-  return (data ?? []).map((p: any) => ({
-    id: p.id,
-    chantier_id: p.chantier_id,
-    chantier_title: p.chantier?.title ?? '-',
-    user_id: p.user_id,
-    user_name: p.profile?.full_name ?? 'Inconnu',
-    date: p.date,
-    hours: p.hours,
-    description: p.description,
-    tache_title: p.tache?.title ?? null,
-  }))
+  return (data ?? []).map((p: any) => {
+    const membreName = p.membre
+      ? `${p.membre.prenom ?? ''} ${p.membre.name}`.trim()
+      : null
+    return {
+      id: p.id,
+      chantier_id: p.chantier_id,
+      chantier_title: p.chantier?.title ?? '-',
+      user_id: p.user_id ?? null,
+      member_id: p.member_id ?? null,
+      user_name: p.profile?.full_name ?? membreName ?? 'Inconnu',
+      date: p.date,
+      hours: p.hours,
+      description: p.description,
+      tache_title: p.tache?.title ?? null,
+    }
+  })
 }
 
 export async function getChantierNotes(chantierId: string): Promise<ChantierNote[]> {
@@ -412,8 +440,11 @@ export async function getChantierStats(): Promise<ChantierStats> {
   if (!orgId) return { total: 0, enCours: 0, terminesCeMois: 0, heuresCeMois: 0 }
 
   const now = new Date()
-  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
-  const firstOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString().split('T')[0]
+  const [cy, cm] = todayParis().split('-').map(Number)
+  const firstOfMonth = `${cy}-${String(cm).padStart(2, '0')}-01`
+  const nm = cm === 12 ? 1 : cm + 1
+  const ny = cm === 12 ? cy + 1 : cy
+  const firstOfNextMonth = `${ny}-${String(nm).padStart(2, '0')}-01`
 
   const [{ data: chantiers }] = await Promise.all([
     supabase
@@ -471,7 +502,7 @@ export async function getEquipes(): Promise<Equipe[]> {
     .from('chantier_equipes')
     .select(`
       id, organization_id, name, color, description, created_at,
-      membres:chantier_equipe_membres(id, equipe_id, name, role_label, profile_id)
+      membres:chantier_equipe_membres(id, equipe_id, name, role_label, profile_id, taux_horaire)
     `)
     .eq('organization_id', orgId)
     .order('name', { ascending: true })
@@ -492,7 +523,7 @@ export async function getChantierEquipes(chantierId: string): Promise<Equipe[]> 
     .select(`
       equipe:chantier_equipes(
         id, organization_id, name, color, description, created_at,
-        membres:chantier_equipe_membres(id, equipe_id, name, role_label, profile_id)
+        membres:chantier_equipe_membres(id, equipe_id, name, role_label, profile_id, taux_horaire)
       )
     `)
     .eq('chantier_id', chantierId)
@@ -526,7 +557,7 @@ export async function getAllPlannings(opts?: {
     .from('chantier_plannings')
     .select(`
       id, chantier_id, planned_date, start_time, end_time,
-      equipe_id, label, team_size, notes, created_at,
+      equipe_id, member_id, label, team_size, notes, created_at,
       chantier:chantiers!inner(title, city, status, organization_id)
     `)
     .eq('chantier.organization_id', orgId)
@@ -557,6 +588,7 @@ export async function getAllPlannings(opts?: {
     start_time: row.start_time,
     end_time: row.end_time,
     equipe_id: row.equipe_id,
+    member_id: row.member_id,
     label: row.label,
     team_size: row.team_size,
     notes: row.notes,
@@ -573,7 +605,7 @@ export async function getChantierPlannings(chantierId: string): Promise<Chantier
 
   const { data, error } = await supabase
     .from('chantier_plannings')
-    .select('id, chantier_id, planned_date, start_time, end_time, equipe_id, label, team_size, notes, created_at')
+    .select('id, chantier_id, planned_date, start_time, end_time, equipe_id, member_id, label, team_size, notes, created_at')
     .eq('chantier_id', chantierId)
     .order('planned_date', { ascending: true })
     .order('start_time', { ascending: true, nullsFirst: false })

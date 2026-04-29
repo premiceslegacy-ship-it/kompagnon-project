@@ -130,14 +130,12 @@ function xmlBuyer(client: NonNullable<InvoiceWithItems['client']>): string {
       </ram:SpecifiedTaxRegistration>`
     : ''
 
-  const hasAddress = client.address_line1 || client.postal_code || client.city
-
   return `<ram:BuyerTradeParty>
       <ram:Name>${esc(name)}</ram:Name>
       ${legalOrgBlock}
-      ${hasAddress ? `<ram:PostalTradeAddress>
+      <ram:PostalTradeAddress>
         ${xmlAddress({ line1: client.address_line1, postcode: client.postal_code, city: client.city })}
-      </ram:PostalTradeAddress>` : ''}
+      </ram:PostalTradeAddress>
       ${client.email ? `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${esc(client.email)}</ram:URIID></ram:URIUniversalCommunication>` : ''}
       ${vatBlock}
     </ram:BuyerTradeParty>`

@@ -8,17 +8,20 @@ import { type CatalogMaterial, type CatalogLaborRate, type PrestationType, type 
 import {
   createMaterial, updateMaterial, deleteMaterial,
   createLaborRate, updateLaborRate, deleteLaborRate,
-  importMaterials, importLaborRates,
+  importMaterials, importLaborRates, importPrestationTypes,
   createPrestationType, updatePrestationType, deletePrestationType, setPrestationTypeItems,
   type CreateMaterialState, type CreateLaborRateState, type ImportCatalogState,
 } from '@/lib/data/mutations/catalog'
-import { Search, Plus, Trash2, X, Package, AlertCircle, Loader2, FileUp, Download, CheckCircle2, Layers, Pencil, ToggleLeft, ToggleRight, Eye, EyeOff, Wrench, Truck, Tag, Copy } from 'lucide-react'
+import { importSuppliers, createSupplier, updateSupplier, deleteSupplier, type ImportSuppliersState } from '@/lib/data/mutations/suppliers'
+import type { Supplier } from '@/lib/data/queries/suppliers'
+import { Search, Plus, Trash2, X, Package, AlertCircle, Loader2, FileUp, Download, CheckCircle2, Layers, Pencil, ToggleLeft, ToggleRight, Eye, EyeOff, Wrench, Truck, Tag, Copy, Bot, Building2, Mail, Phone, MapPin, Cog } from 'lucide-react'
 import { EditMaterialModal } from './EditMaterialModal'
 import { UnitSelect } from '@/components/ui/UnitSelect'
 import DimensionConfigEditor, { type EditableDimensionSchemaState, type EditableVariantState } from '@/components/catalog/DimensionConfigEditor'
 import { displayUnitToMeters, formatDimensionLabel, getDimensionFieldDefinition, normalizeDimensionSchema, type DimensionPricingMode } from '@/lib/catalog-pricing'
 import type { ResolvedCatalogContext } from '@/lib/catalog-context'
 import { getCatalogLabelsForProfile, getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
+import CatalogAIPanel from '@/components/catalog/CatalogAIPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,7 +29,9 @@ type Props = {
   initialMaterials: CatalogMaterial[]
   initialLaborRates: CatalogLaborRate[]
   initialPrestationTypes: PrestationType[]
+  initialSuppliers?: Supplier[]
   catalogContext: ResolvedCatalogContext
+  catalogAIEnabled?: boolean
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -87,12 +92,14 @@ function NewMaterialModal({
   categories,
   defaultKind,
   catalogContext,
+  suppliers = [],
 }: {
   isOpen: boolean
   onClose: () => void
   categories: string[]
   defaultKind: 'article' | 'service'
   catalogContext: ResolvedCatalogContext
+  suppliers?: Supplier[]
 }) {
   const [state, formAction] = useFormState(createMaterial, initMaterialState)
   const [purchasePrice, setPurchasePrice] = useState('')
@@ -118,7 +125,7 @@ function NewMaterialModal({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+    <div className="modal-overlay">
       <div className="rounded-3xl card w-full max-w-2xl max-h-[92vh] flex flex-col relative animate-in fade-in zoom-in duration-300">
         <div className="px-8 pt-8 pb-4 shrink-0 flex items-start justify-between">
           <h2 className="text-2xl font-bold text-primary">{kindLabels.createLabel}</h2>
@@ -228,6 +235,15 @@ function NewMaterialModal({
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-secondary">€</span>
               </div>
             </div>
+            {defaultKind !== 'service' && suppliers.length > 0 && (
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-secondary">Fournisseur</label>
+                <select name="supplier_id" className={`${inputCls} appearance-none`}>
+                  <option value="">— Aucun —</option>
+                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="md:col-span-2 card p-4 space-y-4 dark:bg-white/4">
               <p className="text-sm font-semibold text-primary">Tarification selon dimensions</p>
               <p className="text-sm text-secondary">
@@ -340,13 +356,28 @@ function NewLaborRateModal({ isOpen, onClose, categories, catalogContext }: { is
   const [costRate, setCostRate] = useState('')
   const [newCatMode, setNewCatMode] = useState(false)
   const [unit, setUnit] = useState(catalogContext.unitSetsByKind.laborRate[0] ?? 'h')
+  const [resourceType, setResourceType] = useState(catalogContext.resourceTypeOptions[0]?.value ?? 'human')
+  const [equipmentPurchase, setEquipmentPurchase] = useState('')
+  const [equipmentUses, setEquipmentUses] = useState('100')
+  const isEquipment = resourceType === 'equipment'
+  const equipmentCostPerUse = (() => {
+    const purchase = parseFloat(equipmentPurchase)
+    const uses = parseInt(equipmentUses, 10)
+    if (!Number.isFinite(purchase) || purchase <= 0 || !Number.isFinite(uses) || uses <= 0) return ''
+    return (Math.round((purchase / uses) * 100) / 100).toFixed(2)
+  })()
 
   React.useEffect(() => { if (state.success) onClose() }, [state.success, onClose])
+  React.useEffect(() => {
+    if (!isEquipment) return
+    setUnit('usage')
+    setCostRate(equipmentCostPerUse)
+  }, [equipmentCostPerUse, isEquipment])
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300">
+    <div className="modal-overlay">
+      <div className="modal-panel animate-in fade-in duration-300">
         <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <h2 className="text-2xl font-bold text-primary mb-6">{catalogContext.laborRateUi.modalTitle}</h2>
 
@@ -360,10 +391,21 @@ function NewLaborRateModal({ isOpen, onClose, categories, catalogContext }: { is
         <form action={formAction} className="space-y-6">
           <input type="hidden" name="unit" value={unit} />
           <input type="hidden" name="rate" value={costRate} />
+          {isEquipment && (
+            <>
+              <input type="hidden" name="purchase_price" value={equipmentPurchase} />
+              <input type="hidden" name="lifetime_uses" value={equipmentUses} />
+            </>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-semibold text-secondary">{catalogContext.laborRateUi.tableColumnType}</label>
-              <select name="type" className={`${inputCls} appearance-none`}>
+              <select
+                name="type"
+                value={resourceType}
+                onChange={e => setResourceType(e.target.value)}
+                className={`${inputCls} appearance-none`}
+              >
                 {catalogContext.resourceTypeOptions.map(option => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
@@ -400,10 +442,32 @@ function NewLaborRateModal({ isOpen, onClose, categories, catalogContext }: { is
               <label className="text-sm font-semibold text-secondary">{catalogContext.laborRateUi.costLabel}</label>
               <div className="relative">
                 <input name="cost_rate" type="number" step="0.01" placeholder="0.00" value={costRate}
-                  onChange={e => setCostRate(e.target.value)} className={`${inputCls} pr-14`} />
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-secondary text-sm">€/u</span>
+                  readOnly={isEquipment}
+                  onChange={e => setCostRate(e.target.value)} className={`${inputCls} pr-14 ${isEquipment ? 'text-purple-500 font-semibold' : ''}`} />
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-secondary text-sm">{isEquipment ? '€/usage' : '€/u'}</span>
               </div>
             </div>
+            {isEquipment && (
+              <div className="md:col-span-2 rounded-2xl border border-purple-500/25 bg-purple-500/10 p-4">
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-4 items-end">
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-secondary">Prix d'achat HT</label>
+                    <div className="relative">
+                      <input type="number" min={0} step="0.01" value={equipmentPurchase} onChange={e => setEquipmentPurchase(e.target.value)} placeholder="0.00" className={`${inputCls} pr-10`} />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-secondary text-sm">€</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-secondary">Nombre d'usages estimé</label>
+                    <input type="number" min={1} step={1} value={equipmentUses} onChange={e => setEquipmentUses(e.target.value)} className={inputCls} />
+                  </div>
+                  <div className="rounded-xl border border-purple-500/30 bg-base/60 px-4 py-3 text-right">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-secondary">Coût / usage</p>
+                    <p className="text-lg font-bold text-purple-500 tabular-nums">{equipmentCostPerUse ? `${equipmentCostPerUse} €` : '—'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="md:col-span-2 rounded-2xl border border-[var(--elevation-border)] bg-base/30 p-4">
               <p className="text-xs text-secondary">
                 Cette ressource sert a calculer vos couts internes et vos marges. La TVA et la revente se reglent ensuite dans le devis ou la facture.
@@ -449,11 +513,12 @@ type ModalSection = {
 }
 
 const ITEM_TYPE_CONFIG: Record<PrestationItemType, { color: string; defaultInternal: boolean }> = {
-  service:   { color: 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30',      defaultInternal: false },
-  labor:     { color: 'bg-blue-500/15 text-blue-500 border-blue-500/30',       defaultInternal: true  },
-  transport: { color: 'bg-orange-500/15 text-orange-500 border-orange-500/30', defaultInternal: true  },
-  material:  { color: 'bg-teal-500/15 text-teal-500 border-teal-500/30',       defaultInternal: false },
-  free:      { color: 'bg-secondary/15 text-secondary border-secondary/30',    defaultInternal: false },
+  service:   { color: 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30',        defaultInternal: false },
+  labor:     { color: 'bg-blue-500/15 text-blue-500 border-blue-500/30',         defaultInternal: true  },
+  transport: { color: 'bg-orange-500/15 text-orange-500 border-orange-500/30',   defaultInternal: true  },
+  material:  { color: 'bg-teal-500/15 text-teal-500 border-teal-500/30',         defaultInternal: false },
+  free:      { color: 'bg-secondary/15 text-secondary border-secondary/30',      defaultInternal: false },
+  equipment: { color: 'bg-purple-500/15 text-purple-500 border-purple-500/30',   defaultInternal: true  },
 }
 
 const emptyPrestationHeader = (): PrestationHeaderForm => ({
@@ -467,7 +532,7 @@ const newLocalItem = (type: PrestationItemType = 'free'): LocalItem => ({
   labor_rate_id: null,
   designation: '',
   quantity: '1',
-  unit: type === 'labor' ? 'h' : type === 'transport' ? 'L' : type === 'service' ? 'forfait' : 'u',
+  unit: type === 'labor' ? 'h' : type === 'transport' ? 'L' : type === 'service' ? 'forfait' : type === 'equipment' ? 'usage' : 'u',
   unit_price_ht: '0',
   unit_cost_ht: '0',
   is_internal: ITEM_TYPE_CONFIG[type].defaultInternal,
@@ -515,6 +580,21 @@ function ItemRow({
   const [transPrixL, setTransPrixL] = React.useState(() => item.item_type === 'transport' ? parseFloat(item.unit_cost_ht) || 1.85 : 1.85)
   const transLiters = Math.round(transKm * transConso / 100 * 100) / 100
 
+  // ── Calculateur amortissement (equipment uniquement) ──────────────────────
+  const [equipPurchase, setEquipPurchase] = React.useState(() => item.item_type === 'equipment' ? parseFloat(item.unit_cost_ht) * (parseFloat(item.quantity) || 1) || 0 : 0)
+  const [equipUses, setEquipUses] = React.useState(() => item.item_type === 'equipment' ? Math.round(1 / (parseFloat(item.unit_cost_ht) / equipPurchase || 1)) || 100 : 100)
+  const equipCostPerUse = equipUses > 0 ? Math.round((equipPurchase / equipUses) * 100) / 100 : 0
+
+  React.useEffect(() => {
+    if (item.item_type !== 'equipment' || equipPurchase <= 0 || equipUses <= 0) return
+    patch({
+      unit_cost_ht: String(equipCostPerUse),
+      unit_price_ht: '0',
+      unit: 'usage',
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [equipPurchase, equipUses])
+
   React.useEffect(() => {
     if (item.item_type !== 'transport' || transKm <= 0) return
     patch({
@@ -547,7 +627,7 @@ function ItemRow({
           value={item.item_type}
           onChange={e => {
             const t = e.target.value as PrestationItemType
-            patch({ item_type: t, is_internal: ITEM_TYPE_CONFIG[t].defaultInternal, material_id: null, labor_rate_id: null, unit: t === 'labor' ? 'h' : t === 'transport' ? 'L' : t === 'service' ? 'forfait' : item.unit })
+            patch({ item_type: t, is_internal: ITEM_TYPE_CONFIG[t].defaultInternal, material_id: null, labor_rate_id: null, unit: t === 'labor' ? 'h' : t === 'transport' ? 'L' : t === 'service' ? 'forfait' : t === 'equipment' ? 'usage' : item.unit })
           }}
           className={`px-2 py-1 rounded-lg text-xs font-bold border appearance-none cursor-pointer ${cfg.color} bg-transparent`}
         >
@@ -615,6 +695,28 @@ function ItemRow({
               )}
             </div>
           </div>
+        ) : item.item_type === 'equipment' ? (
+          <div className="space-y-1.5">
+            <input type="text" value={item.designation} onChange={e => patch({ designation: e.target.value })} placeholder="ex: Aspirateur industriel" className="w-full px-2 py-1 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-lg text-primary text-sm outline-none" />
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <label className="flex items-center gap-1 text-xs text-secondary whitespace-nowrap">
+                Prix achat
+                <input type="number" min={0} step={0.01} value={equipPurchase || ''} onChange={e => setEquipPurchase(Number(e.target.value))}
+                  className="w-20 px-1.5 py-0.5 bg-base dark:bg-white/5 border border-[var(--elevation-border)] focus:border-accent rounded text-primary tabular-nums text-right text-xs outline-none" />
+                <span className="text-secondary/60">€</span>
+              </label>
+              <label className="flex items-center gap-1 text-xs text-secondary whitespace-nowrap">
+                Usages vie
+                <input type="number" min={1} step={1} value={equipUses} onChange={e => setEquipUses(Number(e.target.value))}
+                  className="w-16 px-1.5 py-0.5 bg-base dark:bg-white/5 border border-[var(--elevation-border)] focus:border-accent rounded text-primary tabular-nums text-right text-xs outline-none" />
+              </label>
+              {equipPurchase > 0 && (
+                <span className="px-2 py-0.5 text-xs rounded-md bg-purple-500/15 text-purple-600 font-semibold border border-purple-500/30 whitespace-nowrap">
+                  = {equipCostPerUse.toFixed(2)} €/usage
+                </span>
+              )}
+            </div>
+          </div>
         ) : (
           <input type="text" value={item.designation} onChange={e => patch({ designation: e.target.value })} placeholder="Désignation..." className="w-full px-2 py-1 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-lg text-primary text-sm outline-none" />
         )}
@@ -624,6 +726,8 @@ function ItemRow({
       <td className="px-3 py-2">
         {item.item_type === 'transport' ? (
           <span className="block w-14 px-2 py-1 text-primary text-sm text-right tabular-nums opacity-60">{transLiters > 0 ? transLiters.toFixed(2) : '—'}</span>
+        ) : item.item_type === 'equipment' ? (
+          <span className="block w-14 px-2 py-1 text-primary text-sm text-right tabular-nums opacity-60">1</span>
         ) : (
           <input type="number" step="0.01" value={item.quantity} onChange={e => patch({ quantity: e.target.value })} className="w-14 px-2 py-1 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-lg text-primary text-sm text-right tabular-nums outline-none" />
         )}
@@ -633,6 +737,8 @@ function ItemRow({
       <td className="px-3 py-2">
         {item.item_type === 'transport' ? (
           <span className="block px-2 py-1 text-primary text-sm opacity-60">L</span>
+        ) : item.item_type === 'equipment' ? (
+          <span className="block px-2 py-1 text-primary text-sm opacity-60">usage</span>
         ) : (
           <select value={item.unit} onChange={e => patch({ unit: e.target.value })} className="px-2 py-1 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-lg text-primary text-sm outline-none appearance-none">
             {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
@@ -645,6 +751,8 @@ function ItemRow({
       <td className="px-3 py-2">
         {item.item_type === 'transport' ? (
           <span className="block w-20 px-2 py-1 text-right tabular-nums text-sm opacity-60">{transPrixL.toFixed(2)} €</span>
+        ) : item.item_type === 'equipment' ? (
+          <span className="block w-20 px-2 py-1 text-right tabular-nums text-sm opacity-40">—</span>
         ) : (
           <div className="relative">
             <input type="number" step="0.01" value={item.unit_price_ht} onChange={e => patch({ unit_price_ht: e.target.value })} disabled={item.is_internal} className="w-20 px-2 py-1 pr-5 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-lg text-primary text-sm text-right tabular-nums outline-none disabled:opacity-40" />
@@ -655,10 +763,14 @@ function ItemRow({
 
       {/* CR HT */}
       <td className="px-3 py-2">
-        <div className="relative">
-          <input type="number" step="0.01" value={item.unit_cost_ht} onChange={e => patch({ unit_cost_ht: e.target.value })} className="w-20 px-2 py-1 pr-5 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-lg text-primary text-sm text-right tabular-nums outline-none" />
-          <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-secondary text-xs">€</span>
-        </div>
+        {item.item_type === 'equipment' ? (
+          <span className="block w-20 px-2 py-1 text-right tabular-nums text-sm font-semibold text-purple-500">{equipCostPerUse > 0 ? `${equipCostPerUse.toFixed(2)} €` : '—'}</span>
+        ) : (
+          <div className="relative">
+            <input type="number" step="0.01" value={item.unit_cost_ht} onChange={e => patch({ unit_cost_ht: e.target.value })} className="w-20 px-2 py-1 pr-5 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-lg text-primary text-sm text-right tabular-nums outline-none" />
+            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-secondary text-xs">€</span>
+          </div>
+        )}
       </td>
 
       {/* Interne toggle */}
@@ -684,7 +796,7 @@ function NewPrestationModal({
   isOpen: boolean
   onClose: () => void
   editing: PrestationType | null
-  onSaved: () => void
+  onSaved: (updated: PrestationType) => void
   categories?: string[]
   materials: CatalogMaterial[]
   laborRates: CatalogLaborRate[]
@@ -795,7 +907,7 @@ function NewPrestationModal({
       const res = await setPrestationTypeItems(prestationId, itemsPayload)
       if (res.error) { setError(res.error); return }
 
-      onSaved()
+      if (res.prestation) onSaved(res.prestation)
       onClose()
     })
   }
@@ -806,7 +918,7 @@ function NewPrestationModal({
     setForm(prev => ({ ...prev, [k]: e.target.value }))
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+    <div className="modal-overlay">
       <div className="rounded-3xl card w-full max-w-5xl max-h-[92vh] flex flex-col relative animate-in fade-in zoom-in duration-300">
         {/* Header */}
         <div className="flex items-center justify-between px-8 pt-8 pb-4 shrink-0">
@@ -856,12 +968,12 @@ function NewPrestationModal({
                     className="flex-1 px-3 py-1.5 bg-transparent border border-transparent focus:border-accent rounded-lg text-sm font-semibold text-primary outline-none placeholder:font-normal placeholder:text-secondary/50"
                   />
                   {/* Add item buttons */}
-                  <div className="flex items-center gap-1.5">
-                    {(['service', 'labor', 'material', 'transport', 'free'] as PrestationItemType[]).map(type => {
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                    {(['service', 'labor', 'material', 'transport', 'equipment', 'free'] as PrestationItemType[]).map(type => {
                       const cfg = ITEM_TYPE_CONFIG[type]
-                      const Icon = type === 'service' ? Package : type === 'labor' ? Wrench : type === 'material' ? Tag : type === 'transport' ? Truck : Plus
+                      const Icon = type === 'service' ? Package : type === 'labor' ? Wrench : type === 'material' ? Tag : type === 'transport' ? Truck : type === 'equipment' ? Cog : Plus
                       return (
-                        <button key={type} type="button" onClick={() => addItemToSection(section.tempId, type)} className={`px-2.5 py-1 rounded-lg text-xs font-bold border flex items-center gap-1 hover:scale-105 transition-all ${cfg.color}`}>
+                        <button key={type} type="button" onClick={() => addItemToSection(section.tempId, type)} className={`shrink-0 whitespace-nowrap px-2.5 py-1 rounded-lg text-xs font-bold border flex items-center gap-1 hover:scale-105 transition-all ${cfg.color}`}>
                           <Icon className="w-3 h-3" />{catalogContext.bundleTemplateUi.lineTypeLabels[type]}
                         </button>
                       )
@@ -884,13 +996,13 @@ function NewPrestationModal({
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-base/20">
-                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-left w-20">Type</th>
-                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-left">Désignation</th>
-                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-right w-16">Qté</th>
-                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider w-20">Unité</th>
-                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-right w-24">PU HT</th>
-                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-right w-24">CR HT</th>
-                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-center w-12" title="Interne (caché du devis client)">Int.</th>
+                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-left w-20 whitespace-nowrap">Type</th>
+                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-left whitespace-nowrap">Désignation</th>
+                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-right w-16 whitespace-nowrap">Qté</th>
+                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider w-20 whitespace-nowrap">Unité</th>
+                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-right w-24 whitespace-nowrap">PU HT</th>
+                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-right w-24 whitespace-nowrap">CR HT</th>
+                          <th className="px-3 py-2 text-xs font-bold text-secondary uppercase tracking-wider text-center w-12" title="Interne (caché du devis client) whitespace-nowrap">Int.</th>
                           <th className="w-10 px-2" />
                         </tr>
                       </thead>
@@ -1160,8 +1272,8 @@ function ImportModal({ isOpen, onClose, title, fields, templateFilename, serverA
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300">
+    <div className="modal-overlay">
+      <div className="modal-panel animate-in fade-in duration-300">
         <button onClick={handleClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <h2 className="text-2xl font-bold text-primary mb-2">{title}</h2>
 
@@ -1313,28 +1425,34 @@ function ImportModal({ isOpen, onClose, title, fields, templateFilename, serverA
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function CatalogClient({ initialMaterials, initialLaborRates, initialPrestationTypes, catalogContext }: Props) {
+export default function CatalogClient({ initialMaterials, initialLaborRates, initialPrestationTypes, initialSuppliers = [], catalogContext, catalogAIEnabled = false }: Props) {
   const router = useRouter()
   const profileLabels = getCatalogLabelsForProfile(catalogContext)
-  const [activeTab, setActiveTab] = useState<'materials' | 'services' | 'labor' | 'prestations'>('materials')
+  const [activeTab, setActiveTab] = useState<'materials' | 'services' | 'labor' | 'prestations' | 'suppliers'>('materials')
   const [searchTerm, setSearchTerm] = useState('')
   const [isNewMaterialOpen, setIsNewMaterialOpen] = useState(false)
   const [isNewLaborOpen, setIsNewLaborOpen] = useState(false)
   const [isImportMaterialsOpen, setIsImportMaterialsOpen] = useState(false)
   const [isImportLaborOpen, setIsImportLaborOpen] = useState(false)
   const [isNewPrestationOpen, setIsNewPrestationOpen] = useState(false)
+  const [isImportPrestationsOpen, setIsImportPrestationsOpen] = useState(false)
+  const [isImportSuppliersOpen, setIsImportSuppliersOpen] = useState(false)
+  const [isNewSupplierOpen, setIsNewSupplierOpen] = useState(false)
   const [editingPrestation, setEditingPrestation] = useState<PrestationType | null>(null)
   const [editingMaterial, setEditingMaterial] = useState<CatalogMaterial | null>(null)
+  const [isAIPanelOpen, setIsAIPanelOpen] = useState(false)
 
   // Données locales
   const [materials, setMaterials] = useState<CatalogMaterial[]>(initialMaterials)
   const [laborRates, setLaborRates] = useState<CatalogLaborRate[]>(initialLaborRates)
   const [prestationTypes, setPrestationTypes] = useState<PrestationType[]>(initialPrestationTypes)
+  const [suppliers, setSuppliers] = useState<Supplier[]>(initialSuppliers)
 
   // Sync state quand le server component repasse de nouvelles props
   useEffect(() => { setMaterials(initialMaterials) }, [initialMaterials])
   useEffect(() => { setLaborRates(initialLaborRates) }, [initialLaborRates])
   useEffect(() => { setPrestationTypes(initialPrestationTypes) }, [initialPrestationTypes])
+  useEffect(() => { setSuppliers(initialSuppliers) }, [initialSuppliers])
 
   const [isPending, startTransition] = useTransition()
 
@@ -1605,10 +1723,10 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <main className="flex-1 p-8 max-w-[1400px] mx-auto w-full space-y-8">
+    <main className="page-container space-y-6 md:space-y-8">
 
       {/* Modales création */}
-      <NewMaterialModal isOpen={isNewMaterialOpen} onClose={() => setIsNewMaterialOpen(false)} categories={activeTab === 'services' ? serviceCategories : materialCategories} defaultKind={activeTab === 'services' ? 'service' : 'article'} catalogContext={catalogContext} />
+      <NewMaterialModal isOpen={isNewMaterialOpen} onClose={() => setIsNewMaterialOpen(false)} categories={activeTab === 'services' ? serviceCategories : materialCategories} defaultKind={activeTab === 'services' ? 'service' : 'article'} catalogContext={catalogContext} suppliers={suppliers} />
       <NewLaborRateModal isOpen={isNewLaborOpen} onClose={() => setIsNewLaborOpen(false)} categories={laborCategories} catalogContext={catalogContext} />
 
       {/* Modal édition matériau */}
@@ -1629,7 +1747,12 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
         materials={materials}
         laborRates={laborRates}
         catalogContext={catalogContext}
-        onSaved={() => router.refresh()}
+        onSaved={(updated) => {
+          setPrestationTypes(prev => {
+            const exists = prev.some(p => p.id === updated.id)
+            return exists ? prev.map(p => p.id === updated.id ? updated : p) : [updated, ...prev]
+          })
+        }}
       />
 
       {/* Modales import */}
@@ -1653,10 +1776,46 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
         serverAction={importLaborRates}
         onSuccess={() => router.refresh()}
       />
+      <ImportPrestationsModal
+        isOpen={isImportPrestationsOpen}
+        onClose={() => setIsImportPrestationsOpen(false)}
+        onSuccess={() => router.refresh()}
+      />
+      <ImportSuppliersModal
+        isOpen={isImportSuppliersOpen}
+        onClose={() => setIsImportSuppliersOpen(false)}
+        onSuccess={() => router.refresh()}
+      />
+      <NewSupplierModal
+        isOpen={isNewSupplierOpen}
+        onClose={() => setIsNewSupplierOpen(false)}
+        onSaved={() => router.refresh()}
+      />
+      {/* Bouton flottant IA + panneau */}
+      {catalogAIEnabled && (
+        <>
+          {isAIPanelOpen && (
+            <CatalogAIPanel
+              open={isAIPanelOpen}
+              onClose={() => setIsAIPanelOpen(false)}
+              onCreated={() => { router.refresh(); setIsAIPanelOpen(false) }}
+            />
+          )}
+          {!isAIPanelOpen && (
+            <button
+              onClick={() => setIsAIPanelOpen(true)}
+              title="Assistant IA catalogue"
+              className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center transition-colors hover:from-violet-600 hover:to-indigo-700"
+            >
+              <Bot className="w-5 h-5 text-white" />
+            </button>
+          )}
+        </>
+      )}
 
       {/* Confirmation mise à jour prix de vente */}
       {priceConfirm.isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+        <div className="modal-overlay">
           <div className="rounded-3xl card w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-300">
             <AlertCircle className="w-6 h-6 text-accent mb-6" />
             <h2 className="text-2xl font-bold text-primary mb-2">Mise à jour du prix</h2>
@@ -1685,99 +1844,120 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
       )}
 
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-4xl font-bold text-primary">{catalogContext.labelSet.catalogTitle}</h1>
-          <p className="text-secondary text-lg">{catalogContext.labelSet.catalogSubtitle} Cliquez sur une cellule pour modifier.</p>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="relative">
-            <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-secondary" />
-            <input
-              type="text"
-              placeholder="Rechercher..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="w-full md:w-72 pl-12 pr-4 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all"
-            />
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl sm:text-4xl font-bold text-primary">{catalogContext.labelSet.catalogTitle}</h1>
+            <p className="text-secondary text-sm sm:text-lg mt-0.5">
+              <span>{catalogContext.labelSet.catalogSubtitle}</span>
+              <br />
+              <span>Cliquez sur une cellule pour modifier.</span>
+            </p>
           </div>
-          {activeTab !== 'prestations' && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative flex-1 sm:flex-none">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-secondary" />
+              <input
+                type="text"
+                placeholder="Rechercher..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="w-full sm:w-56 md:w-72 pl-10 pr-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all text-sm"
+              />
+            </div>
             <button
-              onClick={() => activeTab === 'labor' ? setIsImportLaborOpen(true) : setIsImportMaterialsOpen(true)}
-              className="px-6 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-bold flex items-center gap-2 hover:scale-105 transition-all whitespace-nowrap"
+              onClick={() => {
+                if (activeTab === 'materials' || activeTab === 'services') setIsImportMaterialsOpen(true)
+                else if (activeTab === 'labor') setIsImportLaborOpen(true)
+                else if (activeTab === 'prestations') setIsImportPrestationsOpen(true)
+                else if (activeTab === 'suppliers') setIsImportSuppliersOpen(true)
+              }}
+              className="px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:scale-105 transition-all whitespace-nowrap text-sm"
             >
               <FileUp className="w-4 h-4" />
               Importer
             </button>
-          )}
-          <button
-            onClick={() => {
-              if (activeTab === 'materials' || activeTab === 'services') setIsNewMaterialOpen(true)
-              else if (activeTab === 'labor') setIsNewLaborOpen(true)
-              else setIsNewPrestationOpen(true)
-            }}
-            className="px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap"
-          >
-            <Plus className="w-4 h-4" />
-            {activeTab === 'materials'
-              ? catalogContext.labelSet.material.createLabel
-              : activeTab === 'services'
-                ? catalogContext.labelSet.service.createLabel
-                : activeTab === 'labor'
-                  ? catalogContext.labelSet.laborRate.createLabel
-                  : catalogContext.labelSet.bundleTemplate.createLabel}
-          </button>
+            <button
+              onClick={() => {
+                if (activeTab === 'materials' || activeTab === 'services') setIsNewMaterialOpen(true)
+                else if (activeTab === 'labor') setIsNewLaborOpen(true)
+                else if (activeTab === 'prestations') setIsNewPrestationOpen(true)
+                else setIsNewSupplierOpen(true)
+              }}
+              className="px-4 py-2.5 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap text-sm"
+            >
+              <Plus className="w-4 h-4" />
+              {activeTab === 'materials'
+                ? catalogContext.labelSet.material.createLabel
+                : activeTab === 'services'
+                  ? catalogContext.labelSet.service.createLabel
+                  : activeTab === 'labor'
+                    ? catalogContext.labelSet.laborRate.createLabel
+                    : activeTab === 'suppliers'
+                      ? 'Nouveau fournisseur'
+                      : catalogContext.labelSet.bundleTemplate.createLabel}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-2 p-1 bg-base/50 rounded-full w-fit border border-[var(--elevation-border)]">
-        <button onClick={() => setActiveTab('materials')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'materials' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
-          {catalogContext.labelSet.material.plural}
-        </button>
-        <button onClick={() => setActiveTab('services')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'services' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
-          {catalogContext.labelSet.service.plural}
-        </button>
-        <button onClick={() => setActiveTab('labor')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'labor' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
-          {catalogContext.labelSet.laborRate.plural}
-        </button>
-        <button onClick={() => setActiveTab('prestations')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'prestations' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
-          <Layers className="w-3.5 h-3.5" />
-          {catalogContext.labelSet.bundleTemplate.plural}
-        </button>
+      <div className="overflow-x-auto pb-1">
+        <div className="flex items-center gap-1.5 p-1 bg-base/50 rounded-full w-max min-w-full sm:w-fit sm:min-w-0 border border-[var(--elevation-border)]">
+          <button onClick={() => setActiveTab('materials')} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'materials' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
+            {catalogContext.labelSet.material.plural}
+          </button>
+          <button onClick={() => setActiveTab('services')} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'services' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
+            {catalogContext.labelSet.service.plural}
+          </button>
+          <button onClick={() => setActiveTab('labor')} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'labor' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
+            {catalogContext.labelSet.laborRate.plural}
+          </button>
+          <button onClick={() => setActiveTab('prestations')} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'prestations' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
+            <Layers className="w-3.5 h-3.5" />
+            {catalogContext.labelSet.bundleTemplate.plural}
+          </button>
+          <button onClick={() => setActiveTab('suppliers')} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'suppliers' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
+            <Building2 className="w-3.5 h-3.5" />
+            Fournisseurs
+          </button>
+        </div>
       </div>
 
       {/* Table — Articles / Main d'oeuvre */}
-      {activeTab !== 'prestations' && (
+      {activeTab !== 'prestations' && activeTab !== 'suppliers' && (
         <div className={`rounded-3xl card overflow-hidden transition-opacity ${isPending ? 'opacity-80' : ''}`}>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-base/30 border-b border-[var(--elevation-border)]">
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Référence</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Référence</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">
                     {activeTab === 'materials' ? catalogContext.labelSet.material.singular : activeTab === 'services' ? catalogContext.labelSet.service.singular : catalogContext.labelSet.laborRate.singular}
                   </th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Catégorie</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Catégorie</th>
                   {activeTab === 'labor' && (
-                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Type</th>
+                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Type</th>
                   )}
                   {activeTab === 'labor' && (
-                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Unité</th>
+                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Unité</th>
                   )}
                   {(activeTab === 'materials' || activeTab === 'services') && (
-                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Tarif dim.</th>
+                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Tarif dim.</th>
                   )}
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">
+                  {activeTab === 'materials' && (
+                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Fournisseur</th>
+                  )}
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">
                     {activeTab === 'materials' || activeTab === 'services' ? "Coût HT" : profileLabels.resourceCostLabel}
                   </th>
                   {(activeTab === 'materials' || activeTab === 'services') && (
-                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Marge (%)</th>
+                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">Marge (%)</th>
                   )}
                   {(activeTab === 'materials' || activeTab === 'services') && (
-                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Prix de vente HT</th>
+                    <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">Prix de vente HT</th>
                   )}
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
@@ -1811,6 +1991,23 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                             ? <span className="px-2 py-1 rounded-lg bg-accent/10 text-accent text-xs font-bold">{formatDimensionLabel(item)}</span>
                             : <span className="text-xs text-secondary">Standard</span>}
                         </td>
+                        {activeTab === 'materials' && (
+                          <td className="px-6 py-4">
+                            <select
+                              value={item.supplier_id ?? ''}
+                              onChange={e => {
+                                const supplierId = e.target.value || null
+                                const supplierName = supplierId ? (suppliers.find(s => s.id === supplierId)?.name ?? null) : null
+                                setMaterials(prev => prev.map(m => m.id === item.id ? { ...m, supplier_id: supplierId, supplier: supplierName } : m))
+                                startTransition(async () => { await updateMaterial(item.id, { supplier_id: supplierId } as Parameters<typeof updateMaterial>[1]) })
+                              }}
+                              className="text-xs px-2 py-1.5 rounded-lg bg-base dark:bg-white/5 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-1 focus:ring-accent/50 max-w-[160px]"
+                            >
+                              <option value="">—</option>
+                              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          </td>
+                        )}
                         <td className="px-6 py-4 text-right">
                           <InlineNumber id={item.id} field="purchase_price" value={item.purchase_price} onSave={v => saveMaterialField(item, 'purchase_price', v)} />
                         </td>
@@ -1840,6 +2037,11 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                           <div className="flex flex-col gap-0.5">
                             <InlineText id={item.id} field="designation" value={item.designation} onSave={v => saveLaborField(item, 'designation', v)} />
                             {item.category && <span className="text-xs text-secondary/60 px-2">{item.category}</span>}
+                            {item.type === 'equipment' && item.purchase_price != null && item.lifetime_uses != null && (
+                              <span className="text-xs text-purple-500/80 px-2">
+                                Achat {formatCurrency(item.purchase_price)} / {item.lifetime_uses} usages
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -1896,7 +2098,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                           </p>
                         </div>
                         {!searchTerm && (
-                          <button onClick={() => activeTab === 'labor' ? setIsNewLaborOpen(true) : setIsNewMaterialOpen(true)} className="mt-2 px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20">
+                          <button onClick={() => activeTab === 'labor' ? setIsNewLaborOpen(true) : setIsNewMaterialOpen(true)} className="mt-2 px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap">
                             <Plus className="w-4 h-4" />{activeTab === 'materials' ? catalogContext.labelSet.material.createLabel : activeTab === 'services' ? catalogContext.labelSet.service.createLabel : catalogContext.labelSet.laborRate.createLabel}
                           </button>
                         )}
@@ -1917,14 +2119,14 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-base/30 border-b border-[var(--elevation-border)]">
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">Nom</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">{profileLabels.templateColumns.usage}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">{profileLabels.templateColumns.composition}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">{profileLabels.templateColumns.clientPrice}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">{profileLabels.templateColumns.internalCost}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">{profileLabels.templateColumns.margin}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">{profileLabels.templateColumns.active}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Nom</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.usage}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.composition}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.clientPrice}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.internalCost}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.margin}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.active}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
@@ -1981,7 +2183,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                           </p>
                         </div>
                         {!searchTerm && (
-                          <button onClick={() => setIsNewPrestationOpen(true)} className="mt-2 px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20">
+                          <button onClick={() => setIsNewPrestationOpen(true)} className="mt-2 px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap">
                             <Plus className="w-4 h-4" />{catalogContext.labelSet.bundleTemplate.createLabel}
                           </button>
                         )}
@@ -1994,6 +2196,347 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
           </div>
         </div>
       )}
+      {/* Table — Fournisseurs */}
+      {activeTab === 'suppliers' && (
+        <div className={`rounded-3xl card overflow-hidden transition-opacity ${isPending ? 'opacity-80' : ''}`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-base/30 border-b border-[var(--elevation-border)]">
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Nom</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Contact</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Email</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Téléphone</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">SIRET</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Conditions paiement</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--elevation-border)]">
+                {suppliers.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).length > 0
+                  ? suppliers
+                      .filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                      .map(supplier => (
+                    <tr key={supplier.id} className="hover:bg-accent/5 transition-colors group">
+                      <td className="px-6 py-4">
+                        <p className="font-semibold text-primary">{supplier.name}</p>
+                        {supplier.address && <p className="text-xs text-secondary mt-0.5 truncate max-w-[200px]">{supplier.address}</p>}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm text-primary">{supplier.contact_name ?? '—'}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                        {supplier.email
+                          ? <a href={`mailto:${supplier.email}`} className="text-sm text-accent hover:underline flex items-center gap-1"><Mail className="w-3.5 h-3.5" />{supplier.email}</a>
+                          : <span className="text-sm text-secondary">—</span>}
+                      </td>
+                      <td className="px-6 py-4">
+                        {supplier.phone
+                          ? <a href={`tel:${supplier.phone}`} className="text-sm text-primary flex items-center gap-1"><Phone className="w-3.5 h-3.5" />{supplier.phone}</a>
+                          : <span className="text-sm text-secondary">—</span>}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm text-secondary font-mono">{supplier.siret ?? '—'}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm text-secondary">{supplier.payment_terms ?? '—'}</span>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                          <ActionMenu actions={[
+                            { label: 'Supprimer', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => {
+                              startTransition(async () => {
+                                await deleteSupplier(supplier.id)
+                                setSuppliers(prev => prev.filter(s => s.id !== supplier.id))
+                              })
+                            }},
+                          ]} />
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                  : (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-20 text-center">
+                        <div className="flex flex-col items-center gap-4">
+                          <Building2 className="w-10 h-10 text-secondary opacity-20" />
+                          <div>
+                            <p className="text-xl font-bold text-primary">
+                              {searchTerm ? 'Aucun fournisseur trouvé' : "Aucun fournisseur pour l'instant"}
+                            </p>
+                            <p className="text-secondary mt-1">
+                              {searchTerm ? 'Essayez de modifier vos critères.' : 'Ajoutez vos fournisseurs pour les associer à vos produits.'}
+                            </p>
+                          </div>
+                          {!searchTerm && (
+                            <button onClick={() => setIsNewSupplierOpen(true)} className="mt-2 px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap">
+                              <Plus className="w-4 h-4" />Nouveau fournisseur
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </main>
+  )
+}
+
+// ─── ImportPrestationsModal ───────────────────────────────────────────────────
+
+const initImportPrestationsState: ImportCatalogState = { error: null, imported: 0, skipped: 0, skipped_reasons: [] }
+const initImportSuppliersState: ImportSuppliersState = { error: null, imported: 0, skipped: 0, skipped_reasons: [] }
+
+function ImportPrestationsModal({ isOpen, onClose, onSuccess }: { isOpen: boolean; onClose: () => void; onSuccess: () => void }) {
+  const [state, formAction] = useFormState(importPrestationTypes, initImportPrestationsState)
+  const [headersFile, setHeadersFile] = useState<File | null>(null)
+  const [linesFile, setLinesFile] = useState<File | null>(null)
+  const [parsing, setParsing] = useState(false)
+
+  useEffect(() => {
+    if (state.imported > 0) { onSuccess(); onClose() }
+  }, [state, onSuccess, onClose])
+
+  if (!isOpen) return null
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!headersFile) return
+    setParsing(true)
+
+    try {
+      const xlsx = await import('xlsx')
+
+      async function parseFile(file: File): Promise<Record<string, string>[]> {
+        const buf = await file.arrayBuffer()
+        const workbook = xlsx.read(buf, { type: 'array' })
+        const sheet = workbook.Sheets[workbook.SheetNames[0]]
+        return xlsx.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '' })
+      }
+
+      const headers = await parseFile(headersFile)
+      const lines = linesFile ? await parseFile(linesFile) : []
+
+      const fd = new FormData()
+      fd.append('headers_json', JSON.stringify(headers))
+      fd.append('lines_json', JSON.stringify(lines))
+      fd.append('file_name', headersFile.name)
+
+      formAction(fd)
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="w-full max-w-lg rounded-3xl card p-8 flex flex-col gap-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold text-primary">Importer des modèles de devis</h2>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="text-sm text-secondary space-y-2">
+          <p>Importez <strong className="text-primary">deux fichiers CSV/Excel liés</strong> par une colonne <code className="bg-base px-1 rounded">template_ref</code> :</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Fichier modèles</strong> : <code className="bg-base px-1 rounded">template_ref, name, description, unit, category, base_price_ht, base_cost_ht, vat_rate</code></li>
+            <li><strong>Fichier lignes</strong> (optionnel) : <code className="bg-base px-1 rounded">template_ref, position, item_type, designation, quantity, unit, unit_price_ht, unit_cost_ht</code></li>
+          </ul>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div>
+            <label className="text-sm font-semibold text-primary block mb-2">Fichier modèles *</label>
+            <input type="file" accept=".csv,.xlsx,.xls" onChange={e => setHeadersFile(e.target.files?.[0] ?? null)} className="w-full text-sm text-secondary file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-accent/10 file:text-accent hover:file:bg-accent/20 cursor-pointer" />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-primary block mb-2">Fichier lignes (optionnel)</label>
+            <input type="file" accept=".csv,.xlsx,.xls" onChange={e => setLinesFile(e.target.files?.[0] ?? null)} className="w-full text-sm text-secondary file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-accent/10 file:text-accent hover:file:bg-accent/20 cursor-pointer" />
+          </div>
+
+          {state.error && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-600 dark:text-red-400">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />{state.error}
+            </div>
+          )}
+          {state.imported > 0 && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-green-500/10 border border-green-500/20 text-xs text-green-600 dark:text-green-400">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />{state.imported} modèle(s) importé(s){state.skipped > 0 ? `, ${state.skipped} ignoré(s)` : ''}.
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={onClose} className="px-6 py-2.5 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
+            <button type="submit" disabled={!headersFile || parsing} className="px-8 py-2.5 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+              {parsing && <Loader2 className="w-4 h-4 animate-spin" />}Importer
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── ImportSuppliersModal ─────────────────────────────────────────────────────
+
+function ImportSuppliersModal({ isOpen, onClose, onSuccess }: { isOpen: boolean; onClose: () => void; onSuccess: () => void }) {
+  const [state, formAction] = useFormState(importSuppliers, initImportSuppliersState)
+  const [parsing, setParsing] = useState(false)
+
+  useEffect(() => {
+    if (state.imported > 0) { onSuccess(); onClose() }
+  }, [state, onSuccess, onClose])
+
+  if (!isOpen) return null
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setParsing(true)
+    try {
+      const xlsx = await import('xlsx')
+      const buf = await file.arrayBuffer()
+      const workbook = xlsx.read(buf, { type: 'array' })
+      const sheet = workbook.Sheets[workbook.SheetNames[0]]
+      const rows = xlsx.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '' })
+      const fd = new FormData()
+      fd.append('items_json', JSON.stringify(rows))
+      fd.append('file_name', file.name)
+      formAction(fd)
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="w-full max-w-lg rounded-3xl card p-8 flex flex-col gap-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold text-primary">Importer des fournisseurs</h2>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="text-sm text-secondary">
+          <p>Colonnes attendues : <code className="bg-base px-1 rounded">name, contact_name, email, phone, address, siret, payment_terms, notes</code></p>
+          <p className="mt-1">Seule la colonne <strong className="text-primary">name</strong> est obligatoire.</p>
+        </div>
+
+        <div>
+          <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange} disabled={parsing} className="w-full text-sm text-secondary file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-accent/10 file:text-accent hover:file:bg-accent/20 cursor-pointer disabled:opacity-50" />
+        </div>
+
+        {parsing && <div className="flex items-center gap-2 text-sm text-secondary"><Loader2 className="w-4 h-4 animate-spin" />Traitement…</div>}
+        {state.error && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-600 dark:text-red-400">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />{state.error}
+          </div>
+        )}
+        {state.imported > 0 && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-green-500/10 border border-green-500/20 text-xs text-green-600 dark:text-green-400">
+            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />{state.imported} fournisseur(s) importé(s).
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <button onClick={onClose} className="px-6 py-2.5 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Fermer</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── NewSupplierModal ─────────────────────────────────────────────────────────
+
+function NewSupplierModal({ isOpen, onClose, onSaved }: { isOpen: boolean; onClose: () => void; onSaved: () => void }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  if (!isOpen) return null
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const fd = new FormData(e.currentTarget)
+    setSaving(true)
+    setError(null)
+    const result = await createSupplier({
+      name: fd.get('name') as string,
+      contact_name: fd.get('contact_name') as string || null,
+      email: fd.get('email') as string || null,
+      phone: fd.get('phone') as string || null,
+      address: fd.get('address') as string || null,
+      siret: fd.get('siret') as string || null,
+      payment_terms: fd.get('payment_terms') as string || null,
+      notes: fd.get('notes') as string || null,
+    })
+    setSaving(false)
+    if (result.error) { setError(result.error) } else { onSaved(); onClose() }
+  }
+
+  const inputCls = 'w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all text-sm'
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-panel flex flex-col gap-6 sm:max-w-lg">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold text-primary">Nouveau fournisseur</h2>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div>
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Nom *</label>
+            <input name="name" type="text" required placeholder="ex: ArcelorMittal" className={inputCls} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Contact</label>
+              <input name="contact_name" type="text" placeholder="ex: Paul Martin" className={inputCls} />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Téléphone</label>
+              <input name="phone" type="text" placeholder="ex: 06 12 34 56 78" className={inputCls} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Email</label>
+            <input name="email" type="email" placeholder="ex: contact@fournisseur.fr" className={inputCls} />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Adresse</label>
+            <input name="address" type="text" placeholder="ex: 12 rue de l'Acier, 75001 Paris" className={inputCls} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">SIRET</label>
+              <input name="siret" type="text" placeholder="ex: 12345678901234" className={inputCls} />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Conditions paiement</label>
+              <input name="payment_terms" type="text" placeholder="ex: 30 jours net" className={inputCls} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Notes</label>
+            <textarea name="notes" rows={2} placeholder="Notes internes…" className={`${inputCls} resize-none`} />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-600 dark:text-red-400">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />{error}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={onClose} className="px-6 py-2.5 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
+            <button type="submit" disabled={saving} className="px-8 py-2.5 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 flex items-center gap-2">
+              {saving && <Loader2 className="w-4 h-4 animate-spin" />}Créer
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }

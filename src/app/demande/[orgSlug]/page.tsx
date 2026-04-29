@@ -19,6 +19,13 @@ export type PublicMaterial = {
   price_variants: MaterialPriceVariant[]
 }
 
+export type PublicLaborRate = {
+  id: string
+  designation: string
+  unit: string | null
+  category: string | null
+}
+
 export type PublicPrestationLine = {
   id: string
   item_type: 'material' | 'service' | 'labor' | 'transport' | 'free'
@@ -68,6 +75,7 @@ async function getOrgPublicData(slug: string): Promise<{
   org: OrgPublicData
   catalogContext: ResolvedCatalogContext
   materials: PublicMaterial[]
+  laborRates: PublicLaborRate[]
   prestationTypes: PublicPrestationType[]
 } | null> {
   const admin = createAdminClient()
@@ -83,6 +91,7 @@ async function getOrgPublicData(slug: string): Promise<{
   const publicIds: Array<{ id: string; item_type: string }> = org.public_form_catalog_item_ids ?? []
 
   const materialIds = publicIds.filter(x => x.item_type === 'material').map(x => x.id)
+  const laborIds = publicIds.filter(x => x.item_type === 'labor').map(x => x.id)
   const prestationIds = publicIds.filter(x => x.item_type === 'prestation').map(x => x.id)
 
   // Matériaux avec catégorie
@@ -102,6 +111,19 @@ async function getOrgPublicData(slug: string): Promise<{
       return material ? { ...material, dimension_schema: material.dimension_schema ?? null, price_variants: material.price_variants ?? [] } : null
     })
     .filter((m): m is PublicMaterial => m != null)
+
+  const laborRes = laborIds.length > 0
+    ? await admin
+        .from('labor_rates')
+        .select('id, designation, unit, category')
+        .in('id', laborIds)
+        .eq('is_active', true)
+    : { data: [] as Array<PublicLaborRate> }
+
+  const laborRatesRaw = (laborRes.data ?? []) as PublicLaborRate[]
+  const laborRates: PublicLaborRate[] = laborIds
+    .map(id => laborRatesRaw.find(l => l.id === id) ?? null)
+    .filter((l): l is PublicLaborRate => l != null)
 
   // Prestations types avec leurs lignes non-internes
   let prestationTypes: PublicPrestationType[] = []
@@ -179,7 +201,7 @@ async function getOrgPublicData(slug: string): Promise<{
     }
   }
 
-  if (publicIds.length > 0 && materials.length === 0 && prestationTypes.length === 0) {
+  if (publicIds.length > 0 && materials.length === 0 && laborRates.length === 0 && prestationTypes.length === 0) {
     console.warn('[DemandePage] IDs configurés mais aucun item retourné. Vérifier is_active dans le catalogue.', { publicIds })
   }
 
@@ -187,6 +209,7 @@ async function getOrgPublicData(slug: string): Promise<{
     org: org as OrgPublicData,
     catalogContext: resolveCatalogContext(org),
     materials,
+    laborRates,
     prestationTypes,
   }
 }
@@ -195,7 +218,7 @@ export default async function DemandePage({ params }: { params: { orgSlug: strin
   const result = await getOrgPublicData(params.orgSlug)
   if (!result) notFound()
 
-  const { org, catalogContext, materials, prestationTypes } = result
+  const { org, catalogContext, materials, laborRates, prestationTypes } = result
 
   if (!org.public_form_enabled) {
     return (
@@ -218,6 +241,7 @@ export default async function DemandePage({ params }: { params: { orgSlug: strin
       logoUrl={org.logo_url}
       welcomeMessage={org.public_form_welcome_message}
       materials={materials}
+      laborRates={laborRates}
       prestationTypes={prestationTypes}
       customModeEnabled={org.public_form_custom_mode_enabled}
       catalogContext={catalogContext}

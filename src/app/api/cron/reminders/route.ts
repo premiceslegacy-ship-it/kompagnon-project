@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+
+export const dynamic = 'force-dynamic';
 import { sendEmail } from '@/lib/email'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { getClientGreetingName } from '@/lib/client'
+import { verifyCronSecret } from '@/lib/cron-auth'
 
 // ─── Interpolation ─────────────────────────────────────────────────────────────
 
@@ -20,16 +23,16 @@ function wrapHtml(orgName: string, bodyText: string): string {
 // Protégé par le header Authorization: Bearer CRON_SECRET.
 
 export async function GET(req: NextRequest) {
-  // Vérification du secret cron
+  // Vérification du secret cron (supporte Authorization: Bearer <secret> et x-cron-secret)
   const authHeader = req.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!verifyCronSecret(bearerToken ?? req.headers.get('x-cron-secret'))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const admin = createAdminClient()
   const today = new Date()
-  const todayStr = today.toISOString().split('T')[0]
+  const todayStr = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(today).split('/').reverse().join('-')
 
   let invoicesSent = 0
   let quotesSent = 0
@@ -77,7 +80,7 @@ export async function GET(req: NextRequest) {
       // Factures dont l'échéance était exactement il y a `delayDays` jours
       const targetDate = new Date(today)
       targetDate.setDate(targetDate.getDate() - delayDays)
-      const targetDateStr = targetDate.toISOString().split('T')[0]
+      const targetDateStr = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(targetDate).split('/').reverse().join('-')
 
       const { data: invoices } = await admin
         .from('invoices')

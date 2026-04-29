@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { APP_NAME } from '@/lib/brand'
+import { dateParis } from '@/lib/utils'
 import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -17,14 +18,26 @@ export type PlanningSlotInput = {
   teamSize?: number
   notes?: string | null
   equipeId?: string | null
+  memberId?: string | null  // Membre individuel — exclusif avec equipeId
 }
 
 export type AIPlanningSlot = PlanningSlotInput & {
   chantierTitle: string     // pour l'affichage dans la preview
 }
 
+export type AIPlanningDeletion = {
+  id: string
+  chantierId: string
+  chantierTitle: string
+  plannedDate: string
+  startTime?: string | null
+  endTime?: string | null
+  label: string
+}
+
 export type AIPlanningResult = {
   slots: AIPlanningSlot[]
+  deletions: AIPlanningDeletion[]
   summary: string           // résumé en langage naturel de ce qui va être créé
   error?: string
 }
@@ -45,11 +58,13 @@ export async function createPlanningSlot(data: PlanningSlotInput): Promise<{ err
     team_size: data.teamSize ?? 1,
     notes: data.notes ?? null,
     equipe_id: data.equipeId ?? null,
+    member_id: data.memberId ?? null,
     created_by: user.id,
   })
 
   if (error) return { error: error.message }
   revalidatePath('/chantiers/planning')
+  revalidatePath(`/chantiers/${data.chantierId}`)
   return { error: null }
 }
 
@@ -67,6 +82,7 @@ export async function createPlanningSlots(slots: PlanningSlotInput[]): Promise<{
     team_size: s.teamSize ?? 1,
     notes: s.notes ?? null,
     equipe_id: s.equipeId ?? null,
+    member_id: s.memberId ?? null,
     created_by: user.id,
   }))
 
@@ -74,6 +90,9 @@ export async function createPlanningSlots(slots: PlanningSlotInput[]): Promise<{
   if (error) return { error: error.message, created: 0 }
 
   revalidatePath('/chantiers/planning')
+  for (const chantierId of new Set(slots.map(s => s.chantierId))) {
+    revalidatePath(`/chantiers/${chantierId}`)
+  }
   return { error: null, created: slots.length }
 }
 
@@ -101,6 +120,7 @@ export async function deletePlanningSlot(id: string): Promise<{ error: string | 
 
   if (error) return { error: error.message }
   revalidatePath('/chantiers/planning')
+  revalidatePath(`/chantiers/${planning.chantier_id}`)
   return { error: null }
 }
 
@@ -109,7 +129,7 @@ export async function deletePlanningSlot(id: string): Promise<{ error: string | 
 export async function planWeekWithAI(prompt: string, weekMondayDate: string): Promise<AIPlanningResult> {
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
-  if (!orgId) return { slots: [], summary: '', error: 'Organisation introuvable.' }
+  if (!orgId) return { slots: [], deletions: [], summary: '', error: 'Organisation introuvable.' }
 
   // Récupérer les chantiers actifs pour que Claude puisse les matcher
   const { data: chantiers } = await supabase
@@ -121,8 +141,30 @@ export async function planWeekWithAI(prompt: string, weekMondayDate: string): Pr
     .limit(20)
 
   if (!chantiers?.length) {
-    return { slots: [], summary: '', error: 'Aucun chantier actif trouvé. Créez d\'abord un chantier.' }
+    return { slots: [], deletions: [], summary: '', error: 'Aucun chantier actif trouvé. Créez d\'abord un chantier.' }
   }
+
+  // Récupérer les équipes et membres individuels pour permettre à l'IA de les nommer
+  const [{ data: equipes }, { data: membres }] = await Promise.all([
+    supabase
+      .from('chantier_equipes')
+      .select('id, name')
+      .eq('organization_id', orgId)
+      .order('name', { ascending: true })
+      .limit(50),
+    supabase
+      .from('chantier_equipe_membres')
+      .select('id, prenom, name')
+      .eq('organization_id', orgId)
+      .order('name', { ascending: true })
+      .limit(80),
+  ])
+
+  const equipesContext = (equipes ?? []).map(e => `- EQUIPE_ID: ${e.id} | "${e.name}"`).join('\n') || '(aucune équipe)'
+  const membresContext = (membres ?? []).map(m => {
+    const full = [m.prenom, m.name].filter(Boolean).join(' ')
+    return `- MEMBER_ID: ${m.id} | "${full}"`
+  }).join('\n') || '(aucun membre individuel)'
 
   // Calculer les dates de la semaine
   const monday = new Date(weekMondayDate)
@@ -131,15 +173,41 @@ export async function planWeekWithAI(prompt: string, weekMondayDate: string): Pr
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday)
     d.setDate(monday.getDate() + i)
-    weekDays[dayNames[i]] = d.toISOString().split('T')[0]
+    weekDays[dayNames[i]] = dateParis(d.getTime())
   }
 
   const chantiersContext = chantiers.map(c => `- ID: ${c.id} | "${c.title}"${c.city ? ` (${c.city})` : ''}`).join('\n')
+  const weekEndDate = weekDays['dimanche']
+
+  const { data: existingPlannings } = await supabase
+    .from('chantier_plannings')
+    .select(`
+      id, chantier_id, planned_date, start_time, end_time, label,
+      chantier:chantiers!inner(title, organization_id)
+    `)
+    .eq('chantier.organization_id', orgId)
+    .gte('planned_date', weekMondayDate)
+    .lte('planned_date', weekEndDate)
+    .order('planned_date', { ascending: true })
+    .order('start_time', { ascending: true, nullsFirst: false })
+
+  const existingContext = (existingPlannings ?? []).map((p: any) => (
+    `- SLOT_ID: ${p.id} | CHANTIER_ID: ${p.chantier_id} | "${p.chantier?.title ?? 'Chantier'}" | ${p.planned_date} ${p.start_time ?? 'sans heure'}${p.end_time ? `-${p.end_time}` : ''} | ${p.label}`
+  )).join('\n') || '(aucun créneau existant cette semaine)'
 
   const systemPrompt = `Tu es un assistant de planification pour un artisan BTP. Tu dois parser une description de planning en langage naturel et retourner un JSON structuré.
 
 Chantiers disponibles :
 ${chantiersContext}
+
+Équipes disponibles :
+${equipesContext}
+
+Membres individuels disponibles :
+${membresContext}
+
+Créneaux existants cette semaine, supprimables uniquement si l'utilisateur le demande explicitement :
+${existingContext}
 
 Dates de la semaine du ${weekMondayDate} :
 - lundi: ${weekDays['lundi']}
@@ -152,12 +220,18 @@ Dates de la semaine du ${weekMondayDate} :
 
 Règles :
 - Matcher chaque mention de chantier avec l'ID le plus proche dans la liste (correspondance approximative par nom)
+- Si une mention nomme une **équipe** existante, remplir equipeId avec son EQUIPE_ID, memberId = null
+- Si une mention nomme une **personne individuelle** (prénom/nom) qui figure dans les membres listés, remplir memberId avec son MEMBER_ID, equipeId = null
+- equipeId et memberId sont **mutuellement exclusifs** (jamais les deux dans le même slot)
+- Si la personne/équipe n'est pas dans la liste, laisser equipeId et memberId à null et mettre le nom dans label
 - start_time et end_time au format "HH:MM", null si non précisé
-- team_size = nombre de personnes (1 si non précisé)
+- team_size = nombre de personnes (1 si non précisé ou si memberId rempli)
 - label = nom de l'équipe ou des personnes mentionnées, sinon "Équipe"
 - Si un créneau couvre "toute la journée", start_time = "08:00", end_time = "17:00"
 - Si "matin" : start_time = "08:00", end_time = "12:00"
 - Si "après-midi" : start_time = "13:00", end_time = "17:00"
+- Si l'utilisateur demande de supprimer/retirer/annuler un créneau existant, remplir deletions avec le SLOT_ID correspondant
+- Ne mets jamais un créneau en deletions par déduction vague : il faut une correspondance claire avec les créneaux existants
 
 Retourne UNIQUEMENT ce JSON (sans markdown) :
 {
@@ -170,7 +244,20 @@ Retourne UNIQUEMENT ce JSON (sans markdown) :
       "endTime": "HH:MM" | null,
       "label": "Équipe Martin",
       "teamSize": 2,
-      "notes": null
+      "notes": null,
+      "equipeId": "uuid" | null,
+      "memberId": "uuid" | null
+    }
+  ],
+  "deletions": [
+    {
+      "id": "slot_id",
+      "chantierId": "uuid",
+      "chantierTitle": "titre pour affichage",
+      "plannedDate": "YYYY-MM-DD",
+      "startTime": "HH:MM" | null,
+      "endTime": "HH:MM" | null,
+      "label": "libellé existant"
     }
   ],
   "summary": "Résumé en 1-2 phrases de ce qui va être planifié"
@@ -181,7 +268,7 @@ Retourne UNIQUEMENT ce JSON (sans markdown) :
       organizationId: orgId,
       provider: 'openrouter',
       feature: 'planning_ai',
-      model: 'anthropic/claude-sonnet-4-6',
+      model: 'deepseek/deepseek-v4-flash',
       inputKind: 'text',
       request: {
         body: {
@@ -202,18 +289,45 @@ Retourne UNIQUEMENT ce JSON (sans markdown) :
     const text: string = data.choices?.[0]?.message?.content?.trim() ?? ''
     // Nettoyer le JSON si Claude a ajouté des backticks malgré la consigne
     const cleaned = text.replace(/^```json\s*/i, '').replace(/\s*```$/, '').trim()
-    const parsed = JSON.parse(cleaned) as { slots: AIPlanningSlot[]; summary: string }
+    const parsed = JSON.parse(cleaned) as { slots?: AIPlanningSlot[]; deletions?: AIPlanningDeletion[]; summary: string }
 
     // Valider que les chantierId existent bien
-    const validIds = new Set(chantiers.map(c => c.id))
-    const validSlots = parsed.slots.filter(s => validIds.has(s.chantierId))
+    const validChantierIds = new Set(chantiers.map(c => c.id))
+    const validEquipeIds = new Set((equipes ?? []).map(e => e.id))
+    const validMemberIds = new Set((membres ?? []).map(m => m.id))
+    const existingById = new Map((existingPlannings ?? []).map((p: any) => [p.id, p]))
 
-    return { slots: validSlots, summary: parsed.summary ?? '' }
+    const validSlots = (parsed.slots ?? [])
+      .filter(s => validChantierIds.has(s.chantierId))
+      .map(s => ({
+        ...s,
+        equipeId: s.equipeId && validEquipeIds.has(s.equipeId) ? s.equipeId : null,
+        memberId: s.memberId && validMemberIds.has(s.memberId) ? s.memberId : null,
+      }))
+      // Garantir l'exclusivité (member prioritaire si la personne est nommément citée)
+      .map(s => s.memberId ? { ...s, equipeId: null } : s)
+
+    const validDeletions = (parsed.deletions ?? [])
+      .filter(d => existingById.has(d.id))
+      .map(d => {
+        const existing: any = existingById.get(d.id)
+        return {
+          id: existing.id,
+          chantierId: existing.chantier_id,
+          chantierTitle: existing.chantier?.title ?? d.chantierTitle ?? 'Chantier',
+          plannedDate: existing.planned_date,
+          startTime: existing.start_time,
+          endTime: existing.end_time,
+          label: existing.label,
+        }
+      })
+
+    return { slots: validSlots, deletions: validDeletions, summary: parsed.summary ?? '' }
   } catch (error) {
     if (error instanceof AIModuleDisabledError) {
-      return { slots: [], summary: '', error: 'Module IA planning désactivé.' }
+      return { slots: [], deletions: [], summary: '', error: 'Module IA planning désactivé.' }
     }
 
-    return { slots: [], summary: '', error: 'Réponse IA invalide. Reformulez votre demande.' }
+    return { slots: [], deletions: [], summary: '', error: 'Réponse IA invalide. Reformulez votre demande.' }
   }
 }

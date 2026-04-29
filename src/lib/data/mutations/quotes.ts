@@ -4,6 +4,7 @@ import React from 'react'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { CreateQuoteSchema, UpdateQuoteSchema, UpsertQuoteItemSchema } from '@/lib/validations/quotes'
 import { getQuoteById } from '@/lib/data/queries/quotes'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { sendEmail } from '@/lib/email'
@@ -13,8 +14,133 @@ import { renderToBuffer } from '@react-pdf/renderer'
 import QuotePDF from '@/components/pdf/QuotePDF'
 import type { Client } from '@/lib/data/queries/clients'
 import { coerceLegalVatRate } from '@/lib/utils'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 type Result = { error: string | null }
+
+type AIQuoteDraftInput = {
+  title?: string | null
+  clientName?: string | null
+  sections: Array<{
+    title?: string | null
+    items: Array<{
+      description?: string | null
+      quantity: number
+      unit?: string | null
+      unit_price: number
+      vat_rate?: number
+      is_internal?: boolean
+      is_estimated?: boolean
+    }>
+  }>
+}
+
+function normalizeSearchText(value: string | null | undefined) {
+  return (value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z0-9@.]+/g, ' ')
+    .trim()
+}
+
+function looksInternalLine(sectionTitle: string | null | undefined, description: string | null | undefined) {
+  const haystack = normalizeSearchText(`${sectionTitle ?? ''} ${description ?? ''}`)
+  return [
+    'main d oeuvre',
+    'main d',
+    'mo interne',
+    'ressource interne',
+    'cout interne',
+    'cout de revient',
+    'deplacement',
+    'transport',
+    'carburant',
+    'frais de route',
+    'coordination interne',
+    'preparation interne',
+  ].some(token => haystack.includes(token))
+}
+
+async function ensureQuoteEditable(quoteId: string, orgId: string): Promise<boolean> {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('quotes')
+    .select('id')
+    .eq('id', quoteId)
+    .eq('organization_id', orgId)
+    .single()
+
+  return Boolean(data)
+}
+
+async function getQuoteIdForSection(sectionId: string, orgId: string): Promise<string | null> {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('quote_sections')
+    .select('quote_id, quotes!inner(organization_id)')
+    .eq('id', sectionId)
+    .eq('quotes.organization_id', orgId)
+    .single()
+
+  return data?.quote_id ?? null
+}
+
+async function getQuoteIdForItem(itemId: string, orgId: string): Promise<string | null> {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('quote_items')
+    .select('quote_id, quotes!inner(organization_id)')
+    .eq('id', itemId)
+    .eq('quotes.organization_id', orgId)
+    .single()
+
+  return data?.quote_id ?? null
+}
+
+async function findClientIdBySearch(searchRaw: string | null | undefined): Promise<string | null> {
+  const search = normalizeSearchText(searchRaw)
+  if (!search) return null
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return null
+
+  const { data: clients } = await supabase
+    .from('clients')
+    .select('id, company_name, contact_name, first_name, last_name, email, phone')
+    .eq('organization_id', orgId)
+    .eq('is_archived', false)
+
+  let best: { id: string; score: number } | null = null
+  for (const client of clients ?? []) {
+    const fields = [
+      client.company_name,
+      client.contact_name,
+      [client.first_name, client.last_name].filter(Boolean).join(' '),
+      client.email,
+      client.phone,
+    ].filter(Boolean) as string[]
+
+    let score = 0
+    for (const field of fields) {
+      const normalized = normalizeSearchText(field)
+      if (!normalized) continue
+      if (normalized === search) score = Math.max(score, 100)
+      else if (normalized.includes(search) || search.includes(normalized)) score = Math.max(score, 80)
+      else {
+        const searchTokens = search.split(' ').filter(token => token.length >= 2)
+        const fieldTokens = normalized.split(' ').filter(token => token.length >= 2)
+        const matches = searchTokens.filter(token => fieldTokens.some(fieldToken => fieldToken === token || fieldToken.includes(token) || token.includes(fieldToken))).length
+        if (matches > 0) score = Math.max(score, Math.round((matches / searchTokens.length) * 70))
+      }
+    }
+
+    if (!best || score > best.score) best = { id: client.id, score }
+  }
+
+  return best && best.score >= 45 ? best.id : null
+}
 
 // ─── Create ───────────────────────────────────────────────────────────────────
 
@@ -23,6 +149,11 @@ export async function createQuote(data: {
   title?: string
   currency?: string
 }): Promise<{ quoteId: string | null; error: string | null }> {
+  if (!(await hasPermission('quotes.create'))) return { quoteId: null, error: 'Permission refusée.' }
+
+  const parsed = CreateQuoteSchema.safeParse(data)
+  if (!parsed.success) return { quoteId: null, error: parsed.error.issues[0]?.message ?? 'Données invalides.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { quoteId: null, error: 'Non authentifié.' }
@@ -52,6 +183,46 @@ export async function createQuote(data: {
   return { quoteId: quote.id, error: null }
 }
 
+export async function createQuoteFromAIResult(aiQuote: AIQuoteDraftInput): Promise<{ quoteId: string | null; clientId: string | null; error: string | null }> {
+  const clientId = await findClientIdBySearch(aiQuote.clientName)
+  const quoteRes = await createQuote({
+    clientId,
+    title: aiQuote.title?.trim() || 'Nouveau devis',
+  })
+  if (quoteRes.error || !quoteRes.quoteId) {
+    return { quoteId: null, clientId, error: quoteRes.error ?? 'Impossible de créer le devis.' }
+  }
+
+  const quoteId = quoteRes.quoteId
+  for (let si = 0; si < aiQuote.sections.length; si++) {
+    const section = aiQuote.sections[si]
+    const secRes = await upsertQuoteSection({
+      quote_id: quoteId,
+      title: section.title?.trim() || `Section ${si + 1}`,
+      position: si + 1,
+    })
+    if (!secRes.sectionId) continue
+
+    for (let ii = 0; ii < section.items.length; ii++) {
+      const item = section.items[ii]
+      await upsertQuoteItem({
+        quote_id: quoteId,
+        section_id: secRes.sectionId,
+        type: 'custom',
+        description: item.description ?? '',
+        quantity: item.quantity,
+        unit: item.unit ?? 'u',
+        unit_price: item.unit_price,
+        vat_rate: item.vat_rate,
+        position: ii + 1,
+        is_internal: item.is_internal === true || looksInternalLine(section.title, item.description),
+      })
+    }
+  }
+
+  return { quoteId, clientId, error: null }
+}
+
 // ─── Update header ────────────────────────────────────────────────────────────
 
 export async function updateQuote(
@@ -66,8 +237,15 @@ export async function updateQuote(
     discount_rate?: number | null
     deposit_rate?: number | null
     client_request_visible_on_pdf?: boolean
+    aid_label?: string | null
+    aid_amount?: number | null
   },
 ): Promise<Result> {
+  if (!(await hasPermission('quotes.edit'))) return { error: 'Permission refusée.' }
+
+  const parsed = UpdateQuoteSchema.safeParse(updates)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Données invalides.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -95,9 +273,14 @@ export async function upsertQuoteSection(section: {
   title: string
   position: number
 }): Promise<{ sectionId: string | null; error: string | null }> {
+  if (!(await hasPermission('quotes.edit'))) return { sectionId: null, error: 'Permission refusée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { sectionId: null, error: 'Non authentifié.' }
+  if (!(await ensureQuoteEditable(section.quote_id, orgId))) {
+    return { sectionId: null, error: 'Devis introuvable.' }
+  }
 
   const payload = section.id
     ? { id: section.id, quote_id: section.quote_id, title: section.title, position: section.position }
@@ -114,9 +297,18 @@ export async function upsertQuoteSection(section: {
 }
 
 export async function deleteQuoteSection(sectionId: string): Promise<Result> {
+  if (!(await hasPermission('quotes.edit'))) return { error: 'Permission refusée.' }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Non authentifié.' }
+
+  const quoteId = await getQuoteIdForSection(sectionId, orgId)
+  if (!quoteId) return { error: 'Section introuvable.' }
+
   const { error } = await supabase.from('quote_sections').delete().eq('id', sectionId)
   if (error) return { error: error.message }
+  await recalcQuoteTotals(quoteId, orgId)
   revalidatePath('/finances')
   return { error: null }
 }
@@ -141,7 +333,23 @@ export async function upsertQuoteItem(item: {
   height_m?: number | null
   is_internal?: boolean
 }): Promise<{ itemId: string | null; error: string | null }> {
+  if (!(await hasPermission('quotes.edit'))) return { itemId: null, error: 'Permission refusée.' }
+
+  const parsed = UpsertQuoteItemSchema.safeParse(item)
+  if (!parsed.success) return { itemId: null, error: parsed.error.issues[0]?.message ?? 'Données invalides.' }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { itemId: null, error: 'Non authentifié.' }
+  if (!(await ensureQuoteEditable(item.quote_id, orgId))) {
+    return { itemId: null, error: 'Devis introuvable.' }
+  }
+  if (item.section_id) {
+    const sectionQuoteId = await getQuoteIdForSection(item.section_id, orgId)
+    if (sectionQuoteId !== item.quote_id) {
+      return { itemId: null, error: 'Section introuvable pour ce devis.' }
+    }
+  }
 
   const total_ht = item.quantity * item.unit_price
 
@@ -163,22 +371,32 @@ export async function upsertQuoteItem(item: {
   }
 
   // Recalcul des totaux du devis
-  await recalcQuoteTotals(item.quote_id)
+  await recalcQuoteTotals(item.quote_id, orgId)
   return { itemId: data.id, error: null }
 }
 
 export async function deleteQuoteItem(itemId: string, quoteId: string): Promise<Result> {
+  if (!(await hasPermission('quotes.edit'))) return { error: 'Permission refusée.' }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Non authentifié.' }
+
+  const itemQuoteId = await getQuoteIdForItem(itemId, orgId)
+  if (itemQuoteId !== quoteId) return { error: 'Ligne introuvable.' }
+
   const { error } = await supabase.from('quote_items').delete().eq('id', itemId)
   if (error) return { error: error.message }
-  await recalcQuoteTotals(quoteId)
+  await recalcQuoteTotals(quoteId, orgId)
   return { error: null }
 }
 
 // ─── Recalcul totaux ──────────────────────────────────────────────────────────
 
-async function recalcQuoteTotals(quoteId: string) {
+async function recalcQuoteTotals(quoteId: string, orgId: string) {
   const supabase = await createClient()
+  if (!(await ensureQuoteEditable(quoteId, orgId))) return
+
   const { data: items } = await supabase
     .from('quote_items')
     .select('quantity, unit_price, vat_rate, is_internal')
@@ -196,11 +414,14 @@ async function recalcQuoteTotals(quoteId: string) {
     .from('quotes')
     .update({ total_ht, total_tva, total_ttc })
     .eq('id', quoteId)
+    .eq('organization_id', orgId)
 }
 
 // ─── Send ─────────────────────────────────────────────────────────────────────
 
 export async function sendQuote(quoteId: string): Promise<Result & { signUrl?: string }> {
+  if (!(await hasPermission('quotes.send'))) return { error: 'Permission refusée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -225,7 +446,7 @@ export async function sendQuote(quoteId: string): Promise<Result & { signUrl?: s
   const signUrl = `${appUrl}/sign/${signatureToken}`
 
   // Forcer le recalcul des totaux avant lecture (garantit que total_ttc est à jour)
-  await recalcQuoteTotals(quoteId)
+  await recalcQuoteTotals(quoteId, orgId)
 
   // Charger les infos du devis + client + org pour l'email
   const { data: quote } = await supabase
@@ -271,6 +492,7 @@ export async function sendQuote(quoteId: string): Promise<Result & { signUrl?: s
           currency: quote.currency ?? 'EUR',
           validUntil: quote.valid_until,
           signUrl,
+          emailSignature: organization.email_signature ?? null,
         })
         subject = built.subject
         html = built.html
@@ -332,6 +554,8 @@ export async function sendQuote(quoteId: string): Promise<Result & { signUrl?: s
  * Met le statut à 'accepted' et enregistre signed_at.
  */
 export async function markQuoteAccepted(quoteId: string): Promise<Result> {
+  if (!(await hasPermission('quotes.edit'))) return { error: 'Permission refusée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -351,6 +575,8 @@ export async function markQuoteAccepted(quoteId: string): Promise<Result> {
 // ─── Duplicate ────────────────────────────────────────────────────────────────
 
 export async function duplicateQuote(quoteId: string): Promise<{ quoteId: string | null; error: string | null }> {
+  if (!(await hasPermission('quotes.create'))) return { quoteId: null, error: 'Permission refusée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   const { data: { user } } = await supabase.auth.getUser()
@@ -416,7 +642,7 @@ export async function duplicateQuote(quoteId: string): Promise<{ quoteId: string
       section_id: rest.section_id ? (sectionMap[rest.section_id] ?? null) : null,
     }))
     await supabase.from('quote_items').insert(newItems)
-    await recalcQuoteTotals(newId)
+    await recalcQuoteTotals(newId, orgId)
   }
 
   revalidatePath('/finances')
@@ -426,6 +652,8 @@ export async function duplicateQuote(quoteId: string): Promise<{ quoteId: string
 // ─── Archive ──────────────────────────────────────────────────────────────────
 
 export async function archiveQuote(quoteId: string): Promise<Result> {
+  if (!(await hasPermission('quotes.delete'))) return { error: 'Permission refusée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -452,6 +680,8 @@ export async function getQuoteItemsForSuggestions(quoteId: string): Promise<Quot
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { visible: [], internal: [] }
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId || !(await ensureQuoteEditable(quoteId, orgId))) return { visible: [], internal: [] }
 
   const { data } = await supabase
     .from('quote_items')

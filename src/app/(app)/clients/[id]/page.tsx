@@ -43,7 +43,7 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
         || 'Client sans nom';
 
     return (
-        <main className="flex-1 p-8 max-w-[1400px] mx-auto w-full space-y-8">
+        <main className="page-container space-y-6 md:space-y-8">
             {/* Back */}
             <Link href="/clients" className="flex items-center gap-2 text-secondary hover:text-primary transition-colors font-medium text-sm">
                 <ArrowLeft className="w-4 h-4" />
@@ -104,7 +104,7 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
                 <div className="flex items-center gap-3 w-full lg:w-auto">
                     <ClientActions client={client} />
                     <Link
-                        href={`/finances/quote-editor?client=${client.id}`}
+                        href={`/finances/quote-editor?client=${client.id}&returnTo=${encodeURIComponent(`/clients/${client.id}`)}`}
                         className="flex-1 lg:flex-none px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20"
                     >
                         <Bot className="w-4 h-4" /> Nouveau devis
@@ -146,7 +146,7 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
                         <p className="font-bold text-primary mb-1">Aucun document pour l&apos;instant</p>
                         <p className="text-sm text-secondary max-w-sm">Les devis et factures associés à ce client apparaîtront ici automatiquement.</p>
                         <Link
-                            href={`/finances/quote-editor?client=${client.id}`}
+                            href={`/finances/quote-editor?client=${client.id}&returnTo=${encodeURIComponent(`/clients/${client.id}`)}`}
                             className="mt-6 px-6 py-2.5 rounded-full bg-accent text-black font-bold text-sm hover:scale-105 transition-all shadow-lg shadow-accent/20 flex items-center gap-2"
                         >
                             <Bot className="w-4 h-4" />Créer un devis

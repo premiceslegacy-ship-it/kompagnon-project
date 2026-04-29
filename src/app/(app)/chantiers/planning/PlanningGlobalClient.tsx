@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo, useTransition } from 'react'
+import React, { useState, useMemo, useTransition, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Calendar,
@@ -19,8 +19,9 @@ import {
   Clock,
 } from 'lucide-react'
 import type { GlobalPlanning, Chantier } from '@/lib/data/queries/chantiers'
-import { planWeekWithAI, createPlanningSlots } from '@/lib/data/mutations/planning'
-import type { AIPlanningSlot } from '@/lib/data/mutations/planning'
+import { planWeekWithAI, createPlanningSlots, deletePlanningSlot } from '@/lib/data/mutations/planning'
+import type { AIPlanningDeletion, AIPlanningSlot } from '@/lib/data/mutations/planning'
+import { todayParis } from '@/lib/utils'
 
 // ─── Palette de couleurs (12 couleurs pour les chantiers) ────────────────────
 
@@ -60,6 +61,11 @@ function getLocalDateStr(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+function dateFromYmd(date: string): Date {
+  const [year, month, day] = date.split('-').map(Number)
+  return new Date(year, month - 1, day, 12, 0, 0)
+}
+
 function fmtWeekLabel(monday: Date): string {
   const sunday = new Date(monday)
   sunday.setDate(monday.getDate() + 6)
@@ -78,39 +84,143 @@ function fmtTime(t: string): string {
   return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, '0')}`
 }
 
+type TimedPlanningLayout = {
+  planning: GlobalPlanning
+  topPx: number
+  heightPx: number
+  startH: number
+  endH: number
+  lane: number
+  laneCount: number
+}
+
+function timeToHour(time: string): number {
+  const [h, m] = time.split(':').map(Number)
+  return h + m / 60
+}
+
+function buildTimedPlanningLayout(plannings: GlobalPlanning[]): TimedPlanningLayout[] {
+  const positioned = plannings
+    .filter(p => p.start_time)
+    .map(p => {
+      const startH = timeToHour(p.start_time!)
+      const endH = p.end_time ? timeToHour(p.end_time) : startH + 2
+      return {
+        planning: p,
+        startH,
+        endH: Math.max(endH, startH + 0.25),
+        topPx: Math.max(0, (startH - CAL_START_H) * ROW_H),
+        heightPx: Math.max((Math.max(endH, startH + 0.25) - startH) * ROW_H, 36),
+        lane: 0,
+        laneCount: 1,
+      }
+    })
+    .sort((a, b) => a.startH - b.startH || a.endH - b.endH)
+
+  const groups: TimedPlanningLayout[][] = []
+  let current: TimedPlanningLayout[] = []
+  let currentEnd = -Infinity
+
+  for (const item of positioned) {
+    if (current.length === 0 || item.startH < currentEnd) {
+      current.push(item)
+      currentEnd = Math.max(currentEnd, item.endH)
+    } else {
+      groups.push(current)
+      current = [item]
+      currentEnd = item.endH
+    }
+  }
+  if (current.length > 0) groups.push(current)
+
+  for (const group of groups) {
+    const laneEnds: number[] = []
+
+    for (const item of group) {
+      const freeLane = laneEnds.findIndex(end => end <= item.startH)
+      item.lane = freeLane >= 0 ? freeLane : laneEnds.length
+      laneEnds[item.lane] = item.endH
+    }
+
+    const laneCount = Math.max(1, laneEnds.length)
+    for (const item of group) item.laneCount = laneCount
+  }
+
+  return positioned
+}
+
 // ─── Props ───────────────────────────────────────────────────────────────────
 
 interface Props {
   initialPlannings: GlobalPlanning[]
   chantiers: Chantier[]
   planningAiEnabled: boolean
+  orgId: string | null
+  icalToken: string | null
 }
 
 // ─── Composant principal ─────────────────────────────────────────────────────
 
-export default function PlanningGlobalClient({ initialPlannings, chantiers, planningAiEnabled }: Props) {
+export default function PlanningGlobalClient({ initialPlannings, chantiers, planningAiEnabled, orgId, icalToken }: Props) {
   const router = useRouter()
 
   // State
-  const [weekStart, setWeekStart] = useState(() => getMonday(new Date()))
-  const [viewMode, setViewMode] = useState<'semaine' | 'liste'>('semaine')
+  const [plannings, setPlannings] = useState(initialPlannings)
+  
+  const [selectedDate, setSelectedDate] = useState(() => dateFromYmd(todayParis()))
+  const weekStart = useMemo(() => getMonday(selectedDate), [selectedDate])
+
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+
+  const [viewMode, setViewMode] = useState<'jour' | 'semaine' | 'liste' | null>(null)
+  const effectiveView = viewMode ?? (isMobile ? 'jour' : 'semaine')
+
   const [filterChantier, setFilterChantier] = useState<string>('tous')
   const [filterStatus, setFilterStatus] = useState<string>('tous')
+
+  const [showIcalModal, setShowIcalModal] = useState(false)
+  const [icalCopied, setIcalCopied] = useState(false)
+
+  const icalUrl = orgId && icalToken
+    ? `${typeof window !== 'undefined' ? window.location.origin : process.env.NEXT_PUBLIC_APP_URL ?? ''}/api/planning/ical?orgId=${orgId}&token=${icalToken}`
+    : null
+
+  const webcalUrl = icalUrl ? icalUrl.replace(/^https?:\/\//, 'webcal://') : null
+
+  function copyIcalUrl() {
+    if (!icalUrl) return
+    navigator.clipboard.writeText(icalUrl).then(() => {
+      setIcalCopied(true)
+      setTimeout(() => setIcalCopied(false), 2000)
+    })
+  }
 
   // ─── Agent IA ────────────────────────────────────────────────────────────────
   const [aiModalOpen, setAiModalOpen] = useState(false)
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiStatus, setAiStatus] = useState<'idle' | 'loading' | 'preview' | 'saving' | 'done' | 'error'>('idle')
   const [aiSlots, setAiSlots] = useState<AIPlanningSlot[]>([])
+  const [aiDeletions, setAiDeletions] = useState<AIPlanningDeletion[]>([])
   const [aiSummary, setAiSummary] = useState('')
   const [aiError, setAiError] = useState('')
   const [, startTransition] = useTransition()
+
+  useEffect(() => {
+    setPlannings(initialPlannings)
+  }, [initialPlannings])
 
   function openAiModal() {
     if (!planningAiEnabled) return
     setAiPrompt('')
     setAiStatus('idle')
     setAiSlots([])
+    setAiDeletions([])
     setAiSummary('')
     setAiError('')
     setAiModalOpen(true)
@@ -122,12 +232,13 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
     setAiError('')
     const weekDateStr = `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, '0')}-${String(weekStart.getDate()).padStart(2, '0')}`
     const result = await planWeekWithAI(aiPrompt, weekDateStr)
-    if (result.error || !result.slots.length) {
-      setAiError(result.error ?? 'Aucun créneau détecté. Reformulez votre demande.')
+    if (result.error || (!result.slots.length && !result.deletions.length)) {
+      setAiError(result.error ?? 'Aucune action détectée. Reformulez votre demande.')
       setAiStatus('error')
       return
     }
     setAiSlots(result.slots)
+    setAiDeletions(result.deletions)
     setAiSummary(result.summary)
     setAiStatus('preview')
   }
@@ -135,32 +246,65 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
   async function handleAiConfirm() {
     setAiStatus('saving')
     startTransition(async () => {
-      const { error } = await createPlanningSlots(aiSlots.map(s => ({
-        chantierId: s.chantierId,
-        plannedDate: s.plannedDate,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        label: s.label,
-        teamSize: s.teamSize,
-        notes: s.notes,
-      })))
+      let error: string | null = null
+
+      for (const deletion of aiDeletions) {
+        const result = await deletePlanningSlot(deletion.id)
+        if (result.error) {
+          error = result.error
+          break
+        }
+      }
+
+      if (!error && aiSlots.length > 0) {
+        const result = await createPlanningSlots(aiSlots.map(s => ({
+          chantierId: s.chantierId,
+          plannedDate: s.plannedDate,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          label: s.label,
+          teamSize: s.teamSize,
+          notes: s.notes,
+          equipeId: s.equipeId ?? null,
+          memberId: s.memberId ?? null,
+        })))
+        error = result.error
+      }
+
       if (error) {
         setAiError(error)
         setAiStatus('error')
       } else {
+        setPlannings(prev => prev.filter(p => !aiDeletions.some(d => d.id === p.id)))
         setAiStatus('done')
         setTimeout(() => { setAiModalOpen(false); router.refresh() }, 1200)
       }
     })
   }
 
+  async function handleDeletePlanning(planning: GlobalPlanning) {
+    if (!confirm(`Supprimer le créneau "${planning.label}" du ${planning.planned_date} ?`)) return
+    setPlannings(prev => prev.filter(p => p.id !== planning.id))
+    const { error } = await deletePlanningSlot(planning.id)
+    if (error) {
+      setPlannings(prev => [...prev, planning].sort((a, b) =>
+        a.planned_date.localeCompare(b.planned_date) || (a.start_time ?? '').localeCompare(b.start_time ?? '')
+      ))
+      alert(error)
+      return
+    }
+    router.refresh()
+  }
+
   // Valeurs dérivées
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart)
-    d.setDate(weekStart.getDate() + i)
+  const days = Array.from({ length: effectiveView === 'jour' ? 1 : 7 }, (_, i) => {
+    const d = new Date(effectiveView === 'jour' ? selectedDate : weekStart)
+    if (effectiveView !== 'jour') {
+      d.setDate(weekStart.getDate() + i)
+    }
     return d
   })
-  const todayStr = getLocalDateStr(new Date())
+  const todayStr = todayParis()
   const dayNames = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
   const timeLabels = Array.from({ length: CAL_HOURS }, (_, i) =>
     `${String(CAL_START_H + i).padStart(2, '0')}:00`
@@ -170,13 +314,13 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
 
   const filteredPlannings = useMemo(
     () =>
-      initialPlannings.filter(p => {
+      plannings.filter(p => {
         if (filterChantier !== 'tous' && p.chantier_id !== filterChantier) return false
         const chantier = chantiers.find(c => c.id === p.chantier_id)
         if (filterStatus !== 'tous' && chantier?.status !== filterStatus) return false
         return true
       }),
-    [initialPlannings, filterChantier, filterStatus, chantiers]
+    [plannings, filterChantier, filterStatus, chantiers]
   )
 
   const weekPlannings = useMemo(
@@ -216,17 +360,17 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
   }, [weekPlannings])
 
   // Navigation semaine
-  const prevWeek = () => {
-    const d = new Date(weekStart)
-    d.setDate(d.getDate() - 7)
-    setWeekStart(d)
+  const prevDate = () => {
+    const d = new Date(selectedDate)
+    d.setDate(d.getDate() - (effectiveView === 'jour' ? 1 : 7))
+    setSelectedDate(d)
   }
-  const nextWeek = () => {
-    const d = new Date(weekStart)
-    d.setDate(d.getDate() + 7)
-    setWeekStart(d)
+  const nextDate = () => {
+    const d = new Date(selectedDate)
+    d.setDate(d.getDate() + (effectiveView === 'jour' ? 1 : 7))
+    setSelectedDate(d)
   }
-  const goToday = () => setWeekStart(getMonday(new Date()))
+  const goToday = () => setSelectedDate(dateFromYmd(todayParis()))
 
   // Heure actuelle pour la ligne rouge
   const now = new Date()
@@ -249,30 +393,92 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
   }, [weekStats.jourLePlusCharge])
 
   return (
-    <div className="p-6 md:p-8 space-y-6 max-w-[1400px] mx-auto">
+    <div className="page-container space-y-6">
       {/* ── En-tête ── */}
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={() => router.back()}
-          className="p-2 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors border border-[var(--elevation-border)]"
+          className="p-2 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors border border-[var(--elevation-border)] flex-shrink-0"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-extrabold text-primary flex items-center gap-3">
-            <Calendar className="w-6 h-6 text-accent" />
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl sm:text-2xl font-extrabold text-primary flex items-center gap-2">
+            <Calendar className="w-5 h-5 sm:w-6 sm:h-6 text-accent flex-shrink-0" />
             Planning global
           </h1>
-          <p className="text-sm text-secondary mt-0.5">Vue d&apos;ensemble de tous les chantiers actifs</p>
+          <p className="text-sm text-secondary mt-0.5 hidden sm:block">Vue d&apos;ensemble de tous les chantiers actifs</p>
         </div>
-        <a
-          href="/chantiers/heures"
-          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-all"
-        >
-          <Clock className="w-4 h-4" />
-          Heures pointées
-        </a>
+        <div className="flex items-center gap-2 flex-wrap">
+          <a
+            href="/chantiers/heures"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-all whitespace-nowrap"
+          >
+            <Clock className="w-4 h-4" />
+            <span className="hidden sm:inline">Heures pointées</span>
+          </a>
+          {icalUrl && (
+            <button
+              onClick={() => setShowIcalModal(true)}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-all whitespace-nowrap"
+              title="Synchroniser avec votre calendrier"
+            >
+              <CalendarDays className="w-4 h-4" />
+              <span className="hidden sm:inline">Sync calendrier</span>
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* ── Modal iCal ── */}
+      {showIcalModal && icalUrl && webcalUrl && (
+        <div className="modal-overlay">
+          <div className="modal-panel space-y-4 sm:max-w-md">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-primary flex items-center gap-2">
+                <CalendarDays className="w-4 h-4 text-accent" />
+                Synchroniser avec votre calendrier
+              </h2>
+              <button onClick={() => setShowIcalModal(false)} className="p-1.5 rounded-lg text-secondary hover:text-primary hover:bg-[var(--elevation-1)] transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm text-secondary">
+              Ce lien de souscription permet à Google Calendar, Apple Calendar ou Outlook de synchroniser automatiquement votre planning chantier.
+            </p>
+            <div className="space-y-3">
+              <a
+                href={webcalUrl}
+                className="btn-primary w-full flex items-center justify-center gap-2 text-sm"
+              >
+                <CalendarDays className="w-4 h-4" />
+                Ouvrir dans mon calendrier
+              </a>
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-secondary">Ou copier le lien manuellement :</p>
+                <div className="flex gap-2">
+                  <input
+                    readOnly
+                    value={icalUrl}
+                    className="input flex-1 text-xs text-secondary"
+                    onClick={e => (e.target as HTMLInputElement).select()}
+                  />
+                  <button
+                    onClick={copyIcalUrl}
+                    className="btn-secondary px-3 flex items-center gap-1.5 text-sm flex-shrink-0"
+                  >
+                    {icalCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <CalendarDays className="w-3.5 h-3.5" />}
+                    {icalCopied ? 'Copié !' : 'Copier'}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-secondary/70">
+              Ce lien est personnel à votre organisation. Ne le partagez pas publiquement.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── Stats ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -350,41 +556,53 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
         {/* Toggle vue */}
         <div className="flex items-center rounded-lg border border-[var(--elevation-border)] overflow-hidden">
           <button
+            onClick={() => setViewMode('jour')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
+              effectiveView === 'jour'
+                ? 'bg-accent text-white'
+                : 'text-secondary hover:text-primary hover:bg-[var(--elevation-1)]'
+            }`}
+          >
+            Jour
+          </button>
+          <button
             onClick={() => setViewMode('semaine')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
-              viewMode === 'semaine'
+              effectiveView === 'semaine'
                 ? 'bg-accent text-white'
                 : 'text-secondary hover:text-primary hover:bg-[var(--elevation-1)]'
             }`}
           >
             <CalendarDays className="w-4 h-4" />
-            Semaine
+            <span className="hidden sm:inline">Semaine</span>
           </button>
           <button
             onClick={() => setViewMode('liste')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
-              viewMode === 'liste'
+              effectiveView === 'liste'
                 ? 'bg-accent text-white'
                 : 'text-secondary hover:text-primary hover:bg-[var(--elevation-1)]'
             }`}
           >
             <LayoutList className="w-4 h-4" />
-            Liste
+            <span className="hidden sm:inline">Liste</span>
           </button>
         </div>
       </div>
 
-      {/* ── Navigation semaine ── */}
+      {/* ── Navigation semaine/jour ── */}
       <div className="flex items-center justify-between gap-4">
         <button
-          onClick={prevWeek}
+          onClick={prevDate}
           className="p-2 rounded-lg border border-[var(--elevation-border)] hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors"
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
         <div className="flex items-center gap-3">
           <span className="text-sm font-semibold text-primary">
-            {fmtWeekLabel(weekStart)}
+            {effectiveView === 'jour'
+              ? selectedDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+              : fmtWeekLabel(weekStart)}
           </span>
           <button
             onClick={goToday}
@@ -394,7 +612,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
           </button>
         </div>
         <button
-          onClick={nextWeek}
+          onClick={nextDate}
           className="p-2 rounded-lg border border-[var(--elevation-border)] hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors"
         >
           <ChevronRight className="w-4 h-4" />
@@ -452,19 +670,21 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
           byDay={byDay}
           nowTopPx={nowTopPx}
           nowH={nowH}
+          onDeletePlanning={handleDeletePlanning}
         />
       ) : (
         <ListeView
           days={days}
           todayStr={todayStr}
           byDay={byDay}
+          onDeletePlanning={handleDeletePlanning}
         />
       )}
 
       {/* ── Modal IA planning ── */}
       {aiModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-surface dark:bg-[#1a1a1a] border border-[var(--elevation-border)] rounded-2xl shadow-2xl w-full max-w-lg">
+        <div className="modal-overlay">
+          <div className="modal-panel sm:max-w-lg">
 
             {/* Header */}
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[var(--elevation-border)]">
@@ -494,14 +714,15 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
                     <p>• &quot;Chantier Martin lundi 8h-12h, équipe Karim + Ahmed (2 pers)&quot;</p>
                     <p>• &quot;Dupont toute la journée mardi et mercredi, moi seul&quot;</p>
                     <p>• &quot;Visite Excella jeudi après-midi&quot;</p>
+                    <p>• &quot;Supprime le créneau Dupont mardi matin&quot;</p>
                   </div>
                   <textarea
                     value={aiPrompt}
                     onChange={e => setAiPrompt(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleAiGenerate() }}
                     placeholder="Décrivez votre planning de la semaine..."
-                    rows={5}
-                    className="w-full px-4 py-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm resize-none focus:outline-none focus:border-accent"
+                    rows={7}
+                    className="w-full min-h-[11rem] max-h-[24rem] overflow-y-auto px-4 py-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm resize-y focus:outline-none focus:border-accent"
                     autoFocus
                   />
                   {aiStatus === 'error' && (
@@ -532,6 +753,25 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
                 <>
                   <p className="text-sm text-secondary">{aiSummary}</p>
                   <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {aiDeletions.map((slot, i) => (
+                      <div key={`delete-${slot.id}-${i}`} className="flex items-start gap-3 p-3 rounded-xl bg-red-500/5 border border-red-500/20">
+                        <div className="w-2 h-2 rounded-full bg-red-500 mt-1.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-primary truncate">Supprimer : {slot.chantierTitle}</p>
+                          <div className="flex items-center gap-3 mt-0.5">
+                            <span className="text-xs text-secondary">
+                              {new Date(slot.plannedDate + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}
+                            </span>
+                            {slot.startTime && (
+                              <span className="text-xs text-secondary flex items-center gap-1">
+                                <Clock className="w-3 h-3" />{slot.startTime}{slot.endTime ? `–${slot.endTime}` : ''}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-secondary/70 mt-0.5">{slot.label}</p>
+                        </div>
+                      </div>
+                    ))}
                     {aiSlots.map((slot, i) => (
                       <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-base border border-[var(--elevation-border)]">
                         <div className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
@@ -569,6 +809,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
                       className="flex-1 py-2.5 rounded-xl bg-accent text-black text-sm font-bold hover:scale-[1.02] transition-all"
                     >
                       Confirmer ({aiSlots.length} créneau{aiSlots.length > 1 ? 'x' : ''})
+                      {aiDeletions.length > 0 ? `, ${aiDeletions.length} suppression${aiDeletions.length > 1 ? 's' : ''}` : ''}
                     </button>
                   </div>
                 </>
@@ -632,6 +873,7 @@ interface SemaineViewProps {
   byDay: Record<string, GlobalPlanning[]>
   nowTopPx: number
   nowH: number
+  onDeletePlanning: (planning: GlobalPlanning) => void
 }
 
 function SemaineView({
@@ -643,11 +885,17 @@ function SemaineView({
   byDay,
   nowTopPx,
   nowH,
+  onDeletePlanning,
 }: SemaineViewProps) {
   return (
     <div className="card overflow-hidden">
+      <div className="overflow-x-auto">
+      <div style={{ minWidth: days.length === 1 ? '100%' : '560px' }}>
       {/* En-tête jours */}
-      <div className="grid grid-cols-[56px_repeat(7,1fr)] border-b border-[var(--elevation-border)]">
+      <div 
+        className="grid border-b border-[var(--elevation-border)]"
+        style={{ gridTemplateColumns: `48px repeat(${days.length}, 1fr)` }}
+      >
         <div className="border-r border-[var(--elevation-border)]" />
         {days.map((day, i) => {
           const dateStr = getLocalDateStr(day)
@@ -660,7 +908,7 @@ function SemaineView({
               }`}
             >
               <p className="text-[10px] font-semibold text-secondary uppercase tracking-wide">
-                {dayNames[i]}
+                {day.toLocaleDateString('fr-FR', { weekday: 'short' })}
               </p>
               <p
                 className={`text-sm font-bold mt-0.5 w-7 h-7 flex items-center justify-center rounded-full mx-auto ${
@@ -678,7 +926,10 @@ function SemaineView({
 
       {/* Grille horaire */}
       <div className="overflow-y-auto max-h-[680px]">
-        <div className="grid grid-cols-[56px_repeat(7,1fr)]">
+        <div 
+          className="grid"
+          style={{ gridTemplateColumns: `48px repeat(${days.length}, 1fr)` }}
+        >
           {/* Colonne heures */}
           <div className="border-r border-[var(--elevation-border)]" style={{ height: TOTAL_H }}>
             {timeLabels.map(t => (
@@ -697,7 +948,7 @@ function SemaineView({
             const dateStr = getLocalDateStr(day)
             const isToday = dateStr === todayStr
             const dayPlannings = byDay[dateStr] ?? []
-            const withTime = dayPlannings.filter(p => p.start_time)
+            const timedLayouts = buildTimedPlanningLayout(dayPlannings)
             const withoutTime = dayPlannings.filter(p => !p.start_time)
 
             return (
@@ -729,38 +980,46 @@ function SemaineView({
                 )}
 
                 {/* Créneaux avec heure */}
-                {withTime.map(p => {
-                  const [h, m] = p.start_time!.split(':').map(Number)
-                  const startH = h + m / 60
-                  const topPx = Math.max(0, (startH - CAL_START_H) * ROW_H)
-                  const endH = p.end_time
-                    ? (() => {
-                        const [eh, em] = p.end_time!.split(':').map(Number)
-                        return eh + em / 60
-                      })()
-                    : startH + 2
-                  const heightPx = Math.max((endH - startH) * ROW_H, 36)
+                {timedLayouts.map(({ planning: p, topPx, heightPx, startH, endH, lane, laneCount }) => {
                   const col = CHANTIER_COLORS[p.chantier_color_idx]
+                  const hasOverlap = laneCount > 1
+                  const widthPct = 100 / laneCount
+                  const leftPct = lane * widthPct
 
                   return (
                     <div
                       key={p.id}
-                      style={{ top: topPx, height: heightPx }}
-                      className={`absolute left-0.5 right-0.5 rounded-lg border px-1.5 py-1 overflow-hidden z-10 ${col.bg} ${col.border}`}
+                      style={{
+                        top: topPx,
+                        height: heightPx,
+                        left: `calc(${leftPct}% + 2px)`,
+                        width: `calc(${widthPct}% - 4px)`,
+                      }}
+                      title={`${p.chantier_title} · ${fmtTime(p.start_time!)}${p.end_time ? ` à ${fmtTime(p.end_time)}` : ''}${hasOverlap ? ' · Créneau en conflit visuel' : ''}`}
+                      className={`absolute rounded-sm sm:rounded-lg border p-0.5 sm:px-1.5 sm:py-1 overflow-hidden z-10 group/slot shadow-sm transition-shadow hover:z-30 hover:shadow-lg ${col.bg} ${col.border} ${
+                        hasOverlap ? 'ring-1 ring-white/70 dark:ring-black/40' : ''
+                      }`}
                     >
+                      <button
+                        onClick={() => onDeletePlanning(p)}
+                        className="absolute top-1 right-1 rounded bg-white/80 p-0.5 text-red-500 opacity-0 transition-opacity hover:text-red-600 group-hover/slot:opacity-100 dark:bg-black/50"
+                        title="Supprimer ce créneau"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
                       {/* Plage horaire */}
-                      <p className={`text-[9px] font-semibold leading-tight ${col.text} opacity-90`}>
+                      <p className={`text-[8px] sm:text-[9px] font-semibold leading-tight ${col.text} opacity-90 truncate pr-4`}>
                         {fmtTime(p.start_time!)}{p.end_time ? ` à ${fmtTime(p.end_time)}` : ''}
                       </p>
                       {/* Titre chantier */}
-                      <p className={`text-[10px] font-bold leading-tight truncate mt-0.5 ${col.text}`}>
+                      <p className={`text-[9px] sm:text-[10px] font-bold leading-tight truncate mt-0.5 ${col.text}`}>
                         {p.chantier_title}
                       </p>
-                      <p className={`text-[10px] leading-tight truncate ${col.text} opacity-80`}>
+                      <p className={`text-[8px] sm:text-[10px] leading-tight truncate ${col.text} opacity-80`}>
                         {p.label}
                       </p>
                       {heightPx > 44 && (
-                        <div className={`text-[9px] leading-tight ${col.text} flex flex-col mt-0.5 overflow-hidden gap-0.5`}>
+                        <div className={`text-[8px] sm:text-[9px] leading-tight ${col.text} flex flex-col mt-0.5 overflow-hidden gap-0.5`}>
                           {/* Durée calculée */}
                           {p.end_time && (
                             <p className="font-bold opacity-90">{fmtHours(endH - startH)}</p>
@@ -769,6 +1028,9 @@ function SemaineView({
                             <Users className="w-2.5 h-2.5" />
                             {p.team_size} pers.
                           </p>
+                          {hasOverlap && heightPx > 62 && (
+                            <p className="opacity-80 truncate">Chevauchement</p>
+                          )}
                           {p.notes && (
                             <p className="opacity-80 mt-0.5 whitespace-pre-wrap break-words overflow-y-auto">{p.notes}</p>
                           )}
@@ -786,7 +1048,7 @@ function SemaineView({
                       return (
                         <div
                           key={p.id}
-                          className={`rounded px-1.5 py-0.5 border ${col.bg} ${col.border} flex items-center gap-1`}
+                          className={`rounded px-1.5 py-0.5 border ${col.bg} ${col.border} flex items-center gap-1 group/slot`}
                         >
                           <span
                             className="w-1.5 h-1.5 rounded-full flex-shrink-0"
@@ -795,6 +1057,13 @@ function SemaineView({
                           <p className={`text-[9px] font-semibold truncate ${col.text}`}>
                             {p.chantier_title}
                           </p>
+                          <button
+                            onClick={() => onDeletePlanning(p)}
+                            className="ml-auto text-red-500 opacity-0 transition-opacity hover:text-red-600 group-hover/slot:opacity-100"
+                            title="Supprimer ce créneau"
+                          >
+                            <X className="w-2.5 h-2.5" />
+                          </button>
                         </div>
                       )
                     })}
@@ -804,6 +1073,8 @@ function SemaineView({
             )
           })}
         </div>
+      </div>
+      </div>
       </div>
     </div>
   )
@@ -815,9 +1086,10 @@ interface ListeViewProps {
   days: Date[]
   todayStr: string
   byDay: Record<string, GlobalPlanning[]>
+  onDeletePlanning: (planning: GlobalPlanning) => void
 }
 
-function ListeView({ days, todayStr, byDay }: ListeViewProps) {
+function ListeView({ days, todayStr, byDay, onDeletePlanning }: ListeViewProps) {
   const daysWithPlannings = days.filter(d => {
     const dateStr = getLocalDateStr(d)
     return (byDay[dateStr]?.length ?? 0) > 0
@@ -913,6 +1185,13 @@ function ListeView({ days, todayStr, byDay }: ListeViewProps) {
                           {p.chantier_city}
                         </span>
                       )}
+                      <button
+                        onClick={() => onDeletePlanning(p)}
+                        className="rounded-lg p-1 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"
+                        title="Supprimer ce créneau"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
                     </div>
                     {p.notes && (

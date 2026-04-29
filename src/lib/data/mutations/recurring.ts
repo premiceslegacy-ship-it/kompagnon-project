@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { computeNextSendDate } from '@/lib/data/recurring-utils'
 import type { RecurringFrequency } from '@/lib/data/recurring-utils'
+import { dateParis } from '@/lib/utils'
 import { coerceLegalVatRate } from '@/lib/utils'
 
 type Result = { error: string | null }
@@ -248,7 +249,7 @@ export async function skipSchedule(scheduleId: string): Promise<Result> {
     )
     await supabase
       .from('recurring_invoices')
-      .update({ next_send_date: next.toISOString().split('T')[0] })
+      .update({ next_send_date: dateParis(next.getTime()) })
       .eq('id', schedule.recurring_invoice_id)
   }
 

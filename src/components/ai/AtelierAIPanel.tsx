@@ -3,9 +3,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import {
   X, Mic, MicOff, FileText, Bot, Loader2, Upload,
-  ChevronRight, Plus, CheckCircle2, AlertCircle, RotateCcw, ImageIcon,
+  ChevronRight, ChevronLeft, Plus, CheckCircle2, AlertCircle, RotateCcw, ImageIcon,
 } from 'lucide-react'
-import type { AIQuoteResult, AIQuoteItem } from '@/app/api/ai/analyze-quote/route'
+import type { AIQuoteResult, AIQuoteSection, AIQuoteItem } from '@/app/api/ai/analyze-quote/route'
 import { AI_NAME } from '@/lib/brand'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -48,55 +48,60 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
   const [file, setFile] = useState<File | null>(null)
   const [pdfDescription, setPdfDescription] = useState('')
   const [isRecording, setIsRecording] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [result, setResult] = useState<AIQuoteResult | null>(null)
+  const [results, setResults] = useState<AIQuoteResult[]>([])
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [importedIndexes, setImportedIndexes] = useState<Set<number>>(new Set())
   const [error, setError] = useState<string | null>(null)
-  const [imported, setImported] = useState(false)
 
-  const recognitionRef = useRef<any>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // ─── Web Speech API ────────────────────────────────────────────────────────
+  // ─── MediaRecorder → Mistral transcription ────────────────────────────────
 
-  const startRecording = useCallback(() => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      setError('La saisie vocale n\'est pas supportée par ce navigateur. Utilisez Chrome ou Edge.')
-      return
-    }
-
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'fr-FR'
-    recognition.continuous = true
-    recognition.interimResults = true
-
-    recognition.onresult = (event: any) => {
-      const transcript = Array.from(event.results as any[])
-        .map((r: any) => r[0].transcript)
-        .join(' ')
-      setText(transcript)
-    }
-
-    recognition.onerror = (event: any) => {
-      if (event.error !== 'aborted') setError('Erreur micro : ' + event.error)
-      setIsRecording(false)
-    }
-
-    recognition.onend = () => setIsRecording(false)
-
-    recognitionRef.current = recognition
-    recognition.start()
-    setIsRecording(true)
+  const startRecording = useCallback(async () => {
     setError(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      chunksRef.current = []
+
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        setIsTranscribing(true)
+        try {
+          const fd = new FormData()
+          fd.append('audio', blob, 'recording.webm')
+          const res = await fetch('/api/ai/transcribe-audio', { method: 'POST', body: fd })
+          const data = await res.json()
+          if (!res.ok) setError(data.error ?? 'Erreur transcription')
+          else setText(data.text ?? '')
+        } catch {
+          setError('Impossible de transcrire l\'audio.')
+        } finally {
+          setIsTranscribing(false)
+        }
+      }
+
+      mediaRecorderRef.current = recorder
+      recorder.start()
+      setIsRecording(true)
+    } catch {
+      setError('Accès micro refusé ou non disponible.')
+    }
   }, [])
 
   const stopRecording = useCallback(() => {
-    recognitionRef.current?.stop()
+    mediaRecorderRef.current?.stop()
     setIsRecording(false)
   }, [])
 
-  useEffect(() => () => recognitionRef.current?.stop(), [])
+  useEffect(() => () => { mediaRecorderRef.current?.stop() }, [])
 
   // ─── AI Analysis ──────────────────────────────────────────────────────────
 
@@ -104,8 +109,9 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
     if (isRecording) stopRecording()
     setIsAnalyzing(true)
     setError(null)
-    setResult(null)
-    setImported(false)
+    setResults([])
+    setCurrentIndex(0)
+    setImportedIndexes(new Set())
 
     try {
       let res: Response
@@ -123,7 +129,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
       }
       const data = await res.json()
       if (!res.ok) setError(data.error ?? 'Erreur inconnue')
-      else setResult(data as AIQuoteResult)
+      else setResults((data as { quotes: AIQuoteResult[] }).quotes ?? [])
     } catch {
       setError('Impossible de contacter l\'IA. Vérifiez votre connexion.')
     } finally {
@@ -131,19 +137,24 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
     }
   }
 
-  function handleImport() {
-    if (!result) return
-    onImport(result)
-    setImported(true)
+  function handleImport(index: number) {
+    const q = results[index]
+    if (!q) return
+    onImport(q)
+    const nextImported = new Set(importedIndexes).add(index)
+    setImportedIndexes(nextImported)
+    const nextIndex = results.findIndex((_, i) => i !== index && !nextImported.has(i))
+    if (nextIndex >= 0) setCurrentIndex(nextIndex)
   }
 
   function handleReset() {
     setText('')
     setFile(null)
     setPdfDescription('')
-    setResult(null)
+    setResults([])
+    setCurrentIndex(0)
+    setImportedIndexes(new Set())
     setError(null)
-    setImported(false)
   }
 
   function handleModeChange(m: Mode) {
@@ -153,8 +164,9 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
     handleReset()
   }
 
+  const currentQuote = results[currentIndex] ?? null
   const canAnalyze = mode === 'pdf' ? !!file : text.trim().length >= 5
-  const totalItems = result?.sections.reduce((sum, s) => sum + s.items.length, 0) ?? 0
+  const totalItems = currentQuote?.sections.reduce((sum: number, s: AIQuoteSection) => sum + s.items.length, 0) ?? 0
   const availableModes: Array<{ id: Mode; label: string; icon: typeof Mic }> = voiceInputEnabled
     ? [{ id: 'voice', label: 'Vocal', icon: Mic }, ...BASE_MODES]
     : BASE_MODES
@@ -212,7 +224,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
 
           {/* Input zone */}
-          {!result && (
+          {!currentQuote && (
             <div className="space-y-3">
 
               {/* Voice mode */}
@@ -222,7 +234,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                   <div className="flex flex-col items-center gap-4 py-6">
                     <button
                       onClick={isRecording ? stopRecording : startRecording}
-                      className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                      className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
                         isRecording
                           ? 'bg-red-500 hover:bg-red-600 animate-pulse'
                           : 'bg-gradient-to-br from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700'
@@ -231,9 +243,15 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                       {isRecording ? <MicOff className="w-8 h-8 text-white" /> : <Mic className="w-8 h-8 text-white" />}
                     </button>
                     <p className="text-sm text-secondary">
-                      {isRecording ? 'En cours d\'écoute... (cliquez pour arrêter)' : 'Cliquez pour parler'}
+                      {isRecording ? 'En cours d\'enregistrement... (cliquez pour arrêter)' : isTranscribing ? 'Transcription en cours...' : 'Cliquez pour parler'}
                     </p>
                   </div>
+                  {isTranscribing && (
+                    <div className="flex items-center gap-2 text-sm text-secondary">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Transcription Mistral en cours...
+                    </div>
+                  )}
                   {text && (
                     <div className="p-3 rounded-xl bg-black/5 dark:bg-white/5 border border-[var(--elevation-border)]">
                       <p className="text-xs text-secondary mb-1 font-medium">Transcription</p>
@@ -252,7 +270,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                     onChange={e => setText(e.target.value)}
                     placeholder="Ex: Rénovation d'une salle de bain de 8m2 : dépose ancien carrelage, pose nouveau carrelage 60×60, remplacement baignoire par douche italienne, changement lavabo..."
                     rows={10}
-                    className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
+                    className="w-full min-h-[14rem] max-h-[28rem] overflow-y-auto p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm resize-y focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
                   />
                 </>
               )}
@@ -317,8 +335,8 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                           value={pdfDescription}
                           onChange={e => setPdfDescription(e.target.value)}
                           placeholder="Ex: Concentre-toi sur la partie électricité. Ignorer les annexes administratives. TVA à 10% car rénovation logement existant."
-                          rows={3}
-                          className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
+                          rows={5}
+                          className="w-full min-h-[8rem] max-h-[16rem] overflow-y-auto p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm resize-y focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
                         />
                       </div>
                     </div>
@@ -337,13 +355,14 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
           )}
 
           {/* Result preview */}
-          {result && (
+          {currentQuote && (
             <div className="space-y-3">
+              {/* En-tête : pagination + compteurs */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-green-500" />
                   <span className="text-sm font-semibold text-primary">
-                    {result.sections.length} section{result.sections.length > 1 ? 's' : ''} · {totalItems} ligne{totalItems > 1 ? 's' : ''}
+                    {currentQuote.sections.length} section{currentQuote.sections.length > 1 ? 's' : ''} · {totalItems} ligne{totalItems > 1 ? 's' : ''}
                   </span>
                 </div>
                 <button onClick={handleReset} className="flex items-center gap-1.5 text-xs text-secondary hover:text-primary transition-colors">
@@ -351,13 +370,36 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                 </button>
               </div>
 
-              {result.title && (
-                <div className="px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/20">
-                  <p className="text-xs text-secondary uppercase tracking-wide font-semibold mb-0.5">Titre généré</p>
-                  <p className="text-sm font-bold text-primary">{result.title}</p>
+              {/* Navigation pagination si plusieurs devis */}
+              {results.length > 1 && (
+                <div className="flex items-center justify-between px-1">
+                  <button
+                    onClick={() => setCurrentIndex(i => Math.max(0, i - 1))}
+                    disabled={currentIndex === 0}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className="text-xs font-semibold text-secondary">
+                    Devis {currentIndex + 1} / {results.length}
+                  </span>
+                  <button
+                    onClick={() => setCurrentIndex(i => Math.min(results.length - 1, i + 1))}
+                    disabled={currentIndex === results.length - 1}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
                 </div>
               )}
-              {result.sections.map((section, si) => (
+
+              {currentQuote.title && (
+                <div className="px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/20">
+                  <p className="text-xs text-secondary uppercase tracking-wide font-semibold mb-0.5">Titre généré</p>
+                  <p className="text-sm font-bold text-primary">{currentQuote.title}</p>
+                </div>
+              )}
+              {currentQuote.sections.map((section: AIQuoteSection, si: number) => (
                 <div key={si} className="rounded-xl border border-[var(--elevation-border)] overflow-hidden">
                   <div className="px-3 py-2 bg-black/5 dark:bg-white/5 border-b border-[var(--elevation-border)]">
                     <p className="text-xs font-bold text-primary uppercase tracking-wide">{section.title}</p>
@@ -378,7 +420,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                 </div>
               ))}
 
-              {imported && (
+              {importedIndexes.has(currentIndex) && (
                 <div className="flex items-center gap-2 p-3 rounded-xl bg-green-500/10 border border-green-500/20">
                   <CheckCircle2 className="w-4 h-4 text-green-500" />
                   <p className="text-xs text-green-700 dark:text-green-400 font-medium">Lignes ajoutées au devis avec succès</p>
@@ -390,11 +432,11 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-[var(--elevation-border)] space-y-2">
-          {!result ? (
+          {!currentQuote ? (
             <button
               onClick={handleAnalyze}
               disabled={!canAnalyze || isAnalyzing}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-sm font-semibold hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-sm font-semibold hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               {isAnalyzing ? (
                 <><Loader2 className="w-4 h-4 animate-spin" />Analyse en cours...</>
@@ -404,19 +446,31 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
             </button>
           ) : (
             <>
-              {!imported ? (
+              {!importedIndexes.has(currentIndex) ? (
                 <button
-                  onClick={handleImport}
-                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-sm font-semibold hover:from-violet-600 hover:to-indigo-700 transition-all shadow-sm"
+                  onClick={() => handleImport(currentIndex)}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-sm font-semibold hover:from-violet-600 hover:to-indigo-700 transition-colors"
                 >
-                  <Plus className="w-4 h-4" />Importer dans le devis<ChevronRight className="w-4 h-4" />
+                  <Plus className="w-4 h-4" />
+                  {results.length > 1 ? `Importer devis ${currentIndex + 1}` : 'Importer dans le devis'}
+                  <ChevronRight className="w-4 h-4" />
                 </button>
-              ) : (
+              ) : importedIndexes.size >= results.length ? (
                 <button
                   onClick={onClose}
                   className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-green-500 text-white text-sm font-semibold hover:bg-green-600 transition-all"
                 >
                   <CheckCircle2 className="w-4 h-4" />Terminé, fermer le panneau
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    const nextIndex = results.findIndex((_, i) => !importedIndexes.has(i))
+                    if (nextIndex >= 0) setCurrentIndex(nextIndex)
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-surface border border-[var(--elevation-border)] text-primary text-sm font-semibold hover:bg-base transition-all"
+                >
+                  <ChevronRight className="w-4 h-4" />Voir le prochain devis à importer
                 </button>
               )}
             </>

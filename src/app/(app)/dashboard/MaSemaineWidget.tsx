@@ -1,24 +1,34 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState } from 'react'
 import { Bot, Sparkles, Loader2, RefreshCw, X } from 'lucide-react'
 import { getWeeklySummary } from '@/lib/data/mutations/ai-summary'
+import { cleanMarkdown } from '@/lib/utils'
 
 export default function MaSemaineWidget() {
   const [summary, setSummary] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [isPending, startTransition] = useTransition()
+  const [isPending, setIsPending] = useState(false)
 
-  function handleGenerate() {
+  async function handleGenerate() {
+    if (isPending) return
     setError(null)
-    startTransition(async () => {
+    setIsPending(true)
+    try {
       const res = await getWeeklySummary()
       if (res.error) {
         setError(res.error)
+      } else if (!res.summary) {
+        setError("L'IA n'a pas retourné de résumé. Réessayez dans un instant.")
       } else {
         setSummary(res.summary)
       }
-    })
+    } catch (err) {
+      console.error('[MaSemaineWidget.handleGenerate]', err)
+      setError("Impossible de générer le résumé IA pour le moment.")
+    } finally {
+      setIsPending(false)
+    }
   }
 
   function handleClose() {
@@ -77,7 +87,7 @@ export default function MaSemaineWidget() {
 
         {summary && (
           <div className="space-y-3">
-            <p className="text-sm text-primary leading-relaxed whitespace-pre-line">{summary}</p>
+            <p className="text-sm text-primary leading-relaxed whitespace-pre-line">{cleanMarkdown(summary)}</p>
             <button
               onClick={handleGenerate}
               disabled={isPending}

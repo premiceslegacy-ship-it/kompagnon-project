@@ -73,6 +73,20 @@ INSERT INTO public.permissions (key, label, category, position) VALUES
   ('settings.edit_roles',   'Configurer les rôles',             'settings', 6),
   ('einvoicing.configure',  'Configurer la PA (B2Brouter)',     'settings', 7),
 
+  -- ── Chantiers ──────────────────────────────────────────────────────────────
+  ('chantiers.view',        'Voir les chantiers',        'chantiers', 1),
+  ('chantiers.create',      'Créer des chantiers',       'chantiers', 2),
+  ('chantiers.edit',        'Modifier des chantiers',    'chantiers', 3),
+  ('chantiers.delete',      'Supprimer des chantiers',   'chantiers', 4),
+  ('chantiers.pointage',    'Pointer ses heures',        'chantiers', 5),
+  ('chantiers.manage_team', 'Gérer l''équipe chantier',  'chantiers', 6),
+  ('chantiers.view_tasks',  'Voir les tâches',           'chantiers', 7),
+  ('chantiers.manage_tasks','Gérer les tâches',          'chantiers', 8),
+
+  -- ── Leads / Demandes ───────────────────────────────────────────────────────
+  ('leads.view',   'Voir les demandes (leads)',     'leads', 1),
+  ('leads.manage', 'Traiter et gérer les demandes', 'leads', 2),
+
   -- ── Rapports ───────────────────────────────────────────────────────────────
   ('reports.view', 'Voir les rapports', 'reports', 0)
 

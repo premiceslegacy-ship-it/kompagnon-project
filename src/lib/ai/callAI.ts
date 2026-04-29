@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { isModuleEnabledAdmin } from '@/lib/data/queries/organization-modules'
 import type { OrganizationModuleKey } from '@/lib/organization-modules'
 import { getOperatorSourceInstance, signOperatorPayload, type OperatorUsageEventPayload } from '@/lib/operator'
+import { checkAIRateLimit } from '@/lib/rate-limit'
 
 export type AIProvider = 'openrouter' | 'mistral'
 export type AIInputKind = 'text' | 'image' | 'audio' | 'mixed'
@@ -18,6 +19,8 @@ export type AIFeature =
   | 'reminder_draft'
   | 'auto_reminder_draft'
   | 'chantier_report_summary'
+  | 'chantier_assistant'
+  | 'catalog_extract'
 
 type AIUsageLogStatus = 'success' | 'error'
 
@@ -67,6 +70,8 @@ const MODULE_BY_FEATURE: Record<AIFeature, OrganizationModuleKey> = {
   reminder_draft: 'quote_ai',
   auto_reminder_draft: 'quote_ai',
   chantier_report_summary: 'quote_ai',
+  chantier_assistant: 'planning_ai',
+  catalog_extract: 'catalog_ai',
 }
 
 export class AIModuleDisabledError extends Error {
@@ -78,6 +83,20 @@ export class AIModuleDisabledError extends Error {
     this.name = 'AIModuleDisabledError'
     this.moduleKey = moduleKey
     this.feature = feature
+  }
+}
+
+export class AIRateLimitError extends Error {
+  readonly feature: AIFeature
+  readonly limit: number
+  readonly windowSeconds: number
+
+  constructor(feature: AIFeature, limit: number, windowSeconds: number) {
+    super('Trop de requêtes IA pour cette organisation. Réessayez plus tard.')
+    this.name = 'AIRateLimitError'
+    this.feature = feature
+    this.limit = limit
+    this.windowSeconds = windowSeconds
   }
 }
 
@@ -249,6 +268,13 @@ function withTimeout(timeoutMs: number | undefined) {
 
 export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> {
   await ensureFeatureEnabled(params.organizationId, params.feature)
+  const rateLimit = await checkAIRateLimit({
+    organizationId: params.organizationId,
+    feature: params.feature,
+  })
+  if (!rateLimit.allowed) {
+    throw new AIRateLimitError(params.feature, rateLimit.limit, rateLimit.windowSeconds)
+  }
 
   const occurredAt = new Date().toISOString()
   const startedAt = Date.now()

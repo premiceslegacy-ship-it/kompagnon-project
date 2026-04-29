@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { resolveCatalogContext } from '@/lib/catalog-context'
+import { resolveCatalogContext, getBusinessActivityById } from '@/lib/catalog-context'
 import { getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { APP_NAME } from '@/lib/brand'
-import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { fetchRAGContext } from '@/lib/ai/rag'
 
 export type AIQuoteItem = {
@@ -14,6 +14,7 @@ export type AIQuoteItem = {
   unit_price: number
   vat_rate: number
   is_estimated: boolean  // true = prix estimé par l'IA (absent du catalogue)
+  is_internal?: boolean  // true = coût interne masqué du devis client
 }
 
 export type AIQuoteSection = {
@@ -23,7 +24,12 @@ export type AIQuoteSection = {
 
 export type AIQuoteResult = {
   title: string
+  clientName?: string | null
   sections: AIQuoteSection[]
+}
+
+export type AIQuoteMultiResult = {
+  quotes: AIQuoteResult[]
 }
 
 const TEXT_MODEL = 'google/gemini-2.5-flash-lite'
@@ -32,13 +38,96 @@ const VISION_MODEL = 'google/gemini-2.5-flash-lite'
 function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
   if (fenced) return fenced[1].trim()
+  // Essaie un objet, puis un tableau
   const obj = text.match(/\{[\s\S]*\}/)
   if (obj) return obj[0]
+  const arr = text.match(/\[[\s\S]*\]/)
+  if (arr) return arr[0]
   return text.trim()
 }
 
+function looksInternalLine(sectionTitle: string | null | undefined, description: string | null | undefined): boolean {
+  const haystack = `${sectionTitle ?? ''} ${description ?? ''}`
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+
+  return [
+    'main d oeuvre',
+    'main-d oeuvre',
+    'main doeuvre',
+    'mo interne',
+    'ressource interne',
+    'ressources internes',
+    'cout interne',
+    'cout de revient',
+    'deplacement',
+    'transport',
+    'carburant',
+    'frais de route',
+    'coordination interne',
+    'preparation interne',
+  ].some(token => haystack.includes(token))
+}
+
+function quoteTotals(quote: AIQuoteResult): { visibleHt: number; internalHt: number } {
+  return quote.sections.reduce(
+    (totals, section) => {
+      for (const item of section.items) {
+        const amount = Math.max(0, Number(item.quantity) || 0) * Math.max(0, Number(item.unit_price) || 0)
+        if (item.is_internal) totals.internalHt += amount
+        else totals.visibleHt += amount
+      }
+      return totals
+    },
+    { visibleHt: 0, internalHt: 0 },
+  )
+}
+
+function enforceNonDeficitMargin(quote: AIQuoteResult): AIQuoteResult {
+  const { visibleHt, internalHt } = quoteTotals(quote)
+  if (internalHt <= 0 || visibleHt <= 0) return quote
+
+  // Minimum 20% de marge brute sur les coûts internes estimés.
+  const minimumVisibleHt = Math.ceil(internalHt * 1.2 * 100) / 100
+  if (visibleHt >= minimumVisibleHt) return quote
+
+  const upliftFactor = minimumVisibleHt / visibleHt
+
+  return {
+    ...quote,
+    sections: quote.sections.map(section => ({
+      ...section,
+      items: section.items.map(item => {
+        if (item.is_internal) return item
+        return {
+          ...item,
+          unit_price: Math.ceil((Number(item.unit_price) || 0) * upliftFactor * 100) / 100,
+          is_estimated: item.is_estimated || upliftFactor > 1.01,
+        }
+      }),
+    })),
+  }
+}
+
+function normalizeAIQuote(quote: AIQuoteResult): AIQuoteResult {
+  const normalized = {
+    ...quote,
+    clientName: typeof quote.clientName === 'string' && quote.clientName.trim() ? quote.clientName.trim() : null,
+    sections: quote.sections.map(section => ({
+      ...section,
+      items: section.items.map(item => ({
+        ...item,
+        is_internal: item.is_internal === true || looksInternalLine(section.title, item.description),
+      })),
+    })),
+  }
+
+  return enforceNonDeficitMargin(normalized)
+}
+
 // Charge le catalogue, les postes récents et les infos de l'org pour enrichir le contexte IA
-async function loadCatalogContext(orgId: string): Promise<{ context: string; sector: string; activityId: string | null }> {
+async function loadCatalogContext(orgId: string): Promise<{ context: string; sector: string; activityId: string | null; activityDescription: string | null }> {
   const supabase = await createClient()
 
   const [
@@ -95,9 +184,10 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
   const catalogContextConfig = resolveCatalogContext({
     sector: org?.sector,
     business_profile: org?.business_profile,
+    business_activity_id: org?.business_activity_id,
   })
-  const sector = org?.sector ?? catalogContextConfig.sectorFallback
-  const activityHint = org?.business_activity_id ? ` (activité : ${org.business_activity_id})` : ''
+  const sector = catalogContextConfig.sectorFallback
+  const activityHint = sector ? ` — métier : ${sector}` : ''
   const lines: string[] = []
 
   if (materials && materials.length > 0) {
@@ -141,45 +231,63 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
     }
   }
 
-  return { context: lines.join('\n'), sector, activityId: org?.business_activity_id ?? null }
+  const activity = getBusinessActivityById(org?.business_activity_id ?? null)
+  const activityDescription = activity?.description ?? null
+
+  return { context: lines.join('\n'), sector, activityId: org?.business_activity_id ?? null, activityDescription }
 }
 
-function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string): string {
+function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string, activityDescription: string | null): string {
   const hasCatalog = catalogContext.trim().length > 0
+  const activityContext = activityDescription ? `\nSpécificité métier : ${activityDescription}` : ''
 
-  return `Tu es un assistant IA expert en devis pour une entreprise française du secteur : **${sector}**. À partir d'une description de travaux, tu dois extraire et structurer les postes de travaux en sections et lignes de devis, ET estimer la main-d'œuvre nécessaire.
+  return `Tu es un assistant IA expert en devis pour une entreprise française du métier : **${sector}**.${activityContext} À partir d'une description de travaux, tu dois extraire et structurer les postes de travaux en sections et lignes de devis, ET estimer la main-d'œuvre nécessaire.
 ${hasCatalog ? `
 ${catalogContext}
 
-## Instructions de pricing (3 règles, dans l'ordre de priorité) :
+## Instructions de pricing et catalogue (priorité absolue)
 1. **Correspondance catalogue** : si la désignation correspond EXACTEMENT ou TRÈS ÉTROITEMENT à un élément du catalogue ci-dessus → utilise son prix et son unité. Si l'article a des variantes (ex: couleur, dimensions, matière), choisis la variante la plus pertinente et note-la dans la description. Mets \`is_estimated: false\`.
 2. **Correspondance devis récents** : si le poste correspond à un poste déjà facturé → utilise ce prix. Mets \`is_estimated: false\`.
 3. **Estimation IA** : si aucune correspondance → estime un prix réaliste pour le secteur **${sector}** et le corps de métier concerné. Mets \`is_estimated: true\`. Arrondis toujours à la dizaine supérieure (ex: 47 → 50, 123 → 130).
 - Les articles marqués **[prix dimensionnel]** ont un prix calculé selon les dimensions (m², ml, m³) : utilise la surface ou longueur mentionnée dans la description comme quantité.
 - Les éléments marqués **[service]** sont des prestations de main-d'œuvre ou services : inclus-les dans la section "Main-d'œuvre" ou dans la section concernée selon le contexte.
 - Ne jamais laisser unit_price à 0.
+- Ne crée jamais un devis déficitaire : les coûts internes doivent être répercutés dans les lignes visibles par le client, par exemple en ajustant les quantités, forfaits ou prix visibles.
+- Si tu utilises des prix catalogue visibles mais que les coûts internes rendent le devis déficitaire, ajoute une marge de sécurité dans les lignes visibles tout en gardant les coûts internes masqués.
 ` : `
 - Si le prix n'est pas mentionné dans la description, estime un prix réaliste pour le secteur **${sector}** et mets \`is_estimated: true\`. Arrondis toujours à la dizaine supérieure.
+- Ne crée jamais un devis déficitaire : répercute les coûts internes dans les lignes visibles par le client.
 `}
+## Détection de plusieurs devis
+Si la description contient plusieurs projets ou chantiers **clairement distincts et séparés** (ex: "chantier A : ... / chantier B : ...", ou plusieurs adresses, ou plusieurs clients), génère un devis séparé pour chacun.
+Si c'est un seul projet (même s'il a plusieurs corps de métier), génère un seul devis.
+
 Retourne UNIQUEMENT un objet JSON valide avec cette structure exacte :
 {
-  "title": "Titre court du projet (5-8 mots, professionnel, ex: Réfection toiture bâtiment nord)",
-  "sections": [
+  "quotes": [
     {
-      "title": "Nom de la section (ex: Maçonnerie, Électricité, Plomberie...)",
-      "items": [
+      "clientName": "Nom du client mentionné, ou null si aucun client clair",
+      "title": "Titre court du projet (5-8 mots, professionnel, ex: Réfection toiture bâtiment nord)",
+      "sections": [
         {
-          "description": "Description précise du poste de travaux",
-          "quantity": 1,
-          "unit": "u",
-          "unit_price": 0,
-          "vat_rate": 20,
-          "is_estimated": false
+          "title": "Nom de la section (ex: Maçonnerie, Électricité, Plomberie...)",
+          "items": [
+            {
+              "description": "Description précise du poste de travaux",
+              "quantity": 1,
+              "unit": "u",
+              "unit_price": 0,
+              "vat_rate": 20,
+              "is_estimated": false,
+              "is_internal": false
+            }
+          ]
         }
       ]
     }
   ]
 }
+Le tableau "quotes" contient toujours au moins 1 élément.
 
 ## Main-d'œuvre — règle importante :
 Dans un cahier des charges, le client décrit rarement la main-d'œuvre à déployer, c'est l'entreprise qui en décide. Si la MO n'est PAS mentionnée dans le document, tu dois estimer et inclure les postes de main-d'œuvre nécessaires pour réaliser les travaux :
@@ -188,8 +296,12 @@ Dans un cahier des charges, le client décrit rarement la main-d'œuvre à dépl
 - Si la MO est déjà explicitement mentionnée dans le document (nombre de personnes, heures, équipes…) → extrais-la telle quelle et n'en rajoute pas d'autre.
 - Regroupe les postes MO dans une section dédiée "Main-d'œuvre" ou intègre-les dans les sections pertinentes selon le contexte.
 - Estime des quantités d'heures réalistes en fonction de l'ampleur des travaux décrits.
+- Toutes les lignes de main-d'œuvre, déplacement, transport, carburant, frais de route, marge interne, préparation interne, coordination interne ou coût de revient doivent avoir \`is_internal: true\`.
+- Ces lignes internes servent au calcul de marge de l'entreprise et ne doivent pas être visibles sur le devis client.
+- Après avoir ajouté ces coûts internes, vérifie la marge : le total HT visible client doit toujours couvrir les coûts internes avec une marge positive. Si ce n'est pas le cas, augmente les quantités, forfaits ou prix des lignes visibles, jamais les lignes internes.
 
 ${ragContext ? `\n## Mémoire de l'entreprise (devis et tarifs de référence issus de projets passés) :\n${ragContext}\n\n` : ''}Règles générales :
+- Si un nom de client, entreprise, particulier, adresse email ou contact est mentionné, renseigne \`clientName\` avec la chaîne la plus précise. Pour plusieurs devis avec plusieurs clients, renseigne le bon \`clientName\` sur chaque devis.
 - Le champ \`title\` doit synthétiser le projet en un titre court et professionnel. Si un titre ou nom de chantier est explicitement mentionné dans le document, utilise-le. Sinon, forge un titre clair (ex: "Bardage acier façade entrepôt B", "Rénovation cuisine appartement 3e étage").
 - Regroupe les postes par corps de métier ou par zone (ex: Cuisine, Salle de bain)
 - TVA : 10% pour rénovation logement existant, 20% par défaut (neuf, travaux neufs)
@@ -231,15 +343,15 @@ export async function POST(req: NextRequest) {
   }
 
   // Catalogue + RAG en parallèle
-  const [{ context: catalogContext, sector, activityId }, ragContext_] = await Promise.all([
-    orgId ? loadCatalogContext(orgId) : Promise.resolve({ context: '', sector: 'BTP', activityId: null }),
+  const [{ context: catalogContext, sector, activityId, activityDescription }, ragContext_] = await Promise.all([
+    orgId ? loadCatalogContext(orgId) : Promise.resolve({ context: '', sector: 'BTP', activityId: null, activityDescription: null }),
     orgId ? fetchRAGContext(orgId, queryText) : Promise.resolve(''),
   ])
   // Re-fetch RAG avec le filtre activityId maintenant qu'on l'a (best-effort, pas bloquant)
   const ragContext = activityId && orgId
     ? await fetchRAGContext(orgId, queryText, { activityId })
     : ragContext_
-  const systemPrompt = buildSystemPrompt(catalogContext, sector, ragContext)
+  const systemPrompt = buildSystemPrompt(catalogContext, sector, ragContext, activityDescription)
 
   if (contentType.includes('multipart/form-data')) {
     const formData = formDataCache!
@@ -302,22 +414,48 @@ export async function POST(req: NextRequest) {
 
     const raw = data.choices?.[0]?.message?.content ?? ''
 
-    let result: AIQuoteResult
+    let parsed: unknown
     try {
-      result = JSON.parse(extractJson(raw))
+      parsed = JSON.parse(extractJson(raw))
     } catch {
       console.error('[ai/analyze-quote] JSON parse error, raw:', raw.slice(0, 300))
       return NextResponse.json({ error: 'Réponse IA invalide, veuillez réessayer' }, { status: 500 })
     }
 
-    if (!result.sections || !Array.isArray(result.sections)) {
+    // Normalise : accepte { quotes: [...] } ou { title, sections } (rétrocompat) ou [{...}, ...]
+    let quotes: AIQuoteResult[]
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>
+      if (Array.isArray(obj.quotes)) {
+        quotes = obj.quotes as AIQuoteResult[]
+      } else if (Array.isArray(obj.sections)) {
+        // Ancien format mono-devis
+        quotes = [parsed as AIQuoteResult]
+      } else {
+        return NextResponse.json({ error: 'Structure IA invalide' }, { status: 500 })
+      }
+    } else if (Array.isArray(parsed)) {
+      quotes = parsed as AIQuoteResult[]
+    } else {
       return NextResponse.json({ error: 'Structure IA invalide' }, { status: 500 })
     }
+
+    quotes = quotes
+      .filter(q => Array.isArray(q.sections) && q.sections.length > 0)
+      .map(normalizeAIQuote)
+    if (quotes.length === 0) {
+      return NextResponse.json({ error: 'Structure IA invalide' }, { status: 500 })
+    }
+
+    const result: AIQuoteMultiResult = { quotes }
 
     return NextResponse.json(result)
   } catch (err: any) {
     if (err instanceof AIModuleDisabledError) {
       return NextResponse.json({ error: 'Module IA devis désactivé pour cette organisation.' }, { status: 403 })
+    }
+    if (err instanceof AIRateLimitError) {
+      return NextResponse.json({ error: err.message }, { status: 429 })
     }
     console.error('[ai/analyze-quote]', err)
     return NextResponse.json({ error: 'Erreur lors de l\'analyse IA' }, { status: 500 })

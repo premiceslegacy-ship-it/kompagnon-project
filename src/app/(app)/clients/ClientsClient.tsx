@@ -10,8 +10,9 @@ import {
 } from '@/lib/data/mutations/clients'
 import { formatCurrency, ActionMenu } from '@/components/shared'
 import { getClientDisplayName } from '@/lib/client'
+import { todayParis } from '@/lib/utils'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   Search, Upload, Download, Users, Euro, Filter,
   FileText, Eye, Edit2, X, Loader2, CheckCircle2, AlertCircle, Building2, Trash2,
@@ -20,7 +21,13 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Props = { initialClients: Client[] }
+type Props = {
+  initialClients: Client[]
+  canCreate: boolean
+  canEdit: boolean
+  canDelete: boolean
+  canImport: boolean
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -208,8 +215,8 @@ function NewClientModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
+    <div className="modal-overlay">
+      <div className="modal-panel animate-in fade-in duration-300">
         <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <h2 className="text-2xl font-bold text-primary mb-2">Nouveau Client</h2>
         <p className="text-secondary text-sm mb-6">Client ayant déjà travaillé avec vous ou dont le devis a été accepté.</p>
@@ -283,8 +290,8 @@ function NewLeadModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
+    <div className="modal-overlay">
+      <div className="modal-panel animate-in fade-in duration-300">
         <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <div className="flex items-center gap-3 mb-2">
           <Target className="w-6 h-6 text-accent" />
@@ -357,8 +364,8 @@ function EditClientModal({ client, onClose }: { client: Client; onClose: () => v
   }, [state.success, onClose])
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl card w-full max-w-2xl p-8 relative animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
+    <div className="modal-overlay">
+      <div className="modal-panel animate-in fade-in duration-300">
         <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <h2 className="text-2xl font-bold text-primary mb-6">Modifier le contact</h2>
 
@@ -543,8 +550,8 @@ function ImportCSVModal({ isOpen, onClose, isLeads = false }: { isOpen: boolean;
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl card w-full max-w-3xl p-8 relative animate-in fade-in zoom-in duration-300">
+    <div className="modal-overlay">
+      <div className="modal-panel animate-in fade-in duration-300 sm:max-w-3xl">
         <button onClick={handleClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
         <h2 className="text-2xl font-bold text-primary mb-1">{isLeads ? 'Importer des leads' : 'Importer des clients'}</h2>
         <p className="text-sm text-secondary mb-6">
@@ -671,8 +678,9 @@ function EmptyState({ filtered }: { filtered: boolean }) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function ClientsClient({ initialClients }: Props) {
+export default function ClientsClient({ initialClients, canCreate, canEdit, canDelete, canImport }: Props) {
   const router = useRouter()
+  const pathname = usePathname()
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [sortBy, setSortBy] = useState('created_at')
@@ -680,6 +688,8 @@ export default function ClientsClient({ initialClients }: Props) {
   const [isNewLeadModalOpen, setIsNewLeadModalOpen] = useState(false)
   const [isImportCSVModalOpen, setIsImportCSVModalOpen] = useState(false)
   const [importIsLeads, setImportIsLeads] = useState(false)
+  const [isImportDropdownOpen, setIsImportDropdownOpen] = useState(false)
+  const importDropdownRef = useRef<HTMLDivElement>(null)
   const [editingClient, setEditingClient] = useState<Client | null>(null)
   const [isPending, startTransition] = useTransition()
 
@@ -736,7 +746,7 @@ export default function ClientsClient({ initialClients }: Props) {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
-    link.download = `contacts_export_${new Date().toISOString().split('T')[0]}.csv`
+    link.download = `contacts_export_${todayParis()}.csv`
     link.click()
   }
 
@@ -761,7 +771,8 @@ export default function ClientsClient({ initialClients }: Props) {
     if (client.status === 'lead_hot' || client.status === 'lead_cold') {
       await convertToProspect(client.id)
     }
-    router.push(`/finances/quote-editor?client=${client.id}`)
+    const params = new URLSearchParams({ client: client.id, returnTo: pathname })
+    router.push(`/finances/quote-editor?${params}`)
   }
 
   const openImport = (forLeads: boolean) => {
@@ -772,7 +783,7 @@ export default function ClientsClient({ initialClients }: Props) {
   const isFiltered = searchTerm !== '' || statusFilter !== 'All'
 
   return (
-    <main className="flex-1 p-8 max-w-[1400px] mx-auto w-full space-y-8">
+    <main className="page-container space-y-6 md:space-y-8">
       <NewClientModal isOpen={isNewClientModalOpen} onClose={() => setIsNewClientModalOpen(false)} />
       <NewLeadModal isOpen={isNewLeadModalOpen} onClose={() => setIsNewLeadModalOpen(false)} />
       <ImportCSVModal isOpen={isImportCSVModalOpen} onClose={() => setIsImportCSVModalOpen(false)} isLeads={importIsLeads} />
@@ -787,30 +798,42 @@ export default function ClientsClient({ initialClients }: Props) {
           </div>
           <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
             {/* Import dropdown */}
-            <div className="relative group flex-1 md:flex-none">
-              <button className="w-full px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all text-sm">
-                <Upload className="w-4 h-4" />Importer
-              </button>
-              <div className="absolute right-0 top-full pt-1.5 w-48 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all z-20">
-                <div className="w-full rounded-2xl bg-white dark:bg-[#111] border border-[var(--elevation-border)] shadow-lg overflow-hidden">
-                  <button onClick={() => openImport(false)} className="w-full text-left px-4 py-3 text-sm font-semibold text-primary hover:bg-accent/5 transition-colors">
-                    Importer des clients
-                  </button>
-                  <button onClick={() => openImport(true)} className="w-full text-left px-4 py-3 text-sm font-semibold text-primary hover:bg-accent/5 transition-colors border-t border-[var(--elevation-border)]">
-                    Importer des leads
-                  </button>
-                </div>
+            {canImport && (
+              <div className="relative flex-1 md:flex-none" ref={importDropdownRef}>
+                <button
+                  onClick={() => setIsImportDropdownOpen(v => !v)}
+                  className="w-full px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all text-sm whitespace-nowrap"
+                >
+                  <Upload className="w-4 h-4" />Importer
+                </button>
+                {isImportDropdownOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setIsImportDropdownOpen(false)} />
+                    <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1.5 w-52 rounded-2xl bg-surface dark:bg-[#1a1a1a] border border-[var(--elevation-border)] shadow-xl overflow-hidden z-20 animate-in fade-in slide-in-from-top-2 duration-150">
+                      <button onClick={() => { openImport(false); setIsImportDropdownOpen(false) }} className="w-full text-left px-4 py-3 text-sm font-semibold text-primary hover:bg-accent/5 transition-colors">
+                        Importer des clients
+                      </button>
+                      <button onClick={() => { openImport(true); setIsImportDropdownOpen(false) }} className="w-full text-left px-4 py-3 text-sm font-semibold text-primary hover:bg-accent/5 transition-colors border-t border-[var(--elevation-border)]">
+                        Importer des leads
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
-            <button onClick={handleExportCSV} className="flex-1 md:flex-none px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all text-sm">
+            )}
+            <button onClick={handleExportCSV} className="flex-1 md:flex-none px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all text-sm whitespace-nowrap">
               <Download className="w-4 h-4" />Exporter
             </button>
-            <button onClick={() => setIsNewLeadModalOpen(true)} className="flex-1 md:flex-none px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all text-sm">
-              <Target className="w-4 h-4" />Nouveau Lead
-            </button>
-            <button onClick={() => setIsNewClientModalOpen(true)} className="flex-1 md:flex-none px-6 py-2.5 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 text-sm">
-              <UserCheck className="w-4 h-4" />Nouveau Client
-            </button>
+            {canCreate && (
+              <button onClick={() => setIsNewLeadModalOpen(true)} className="flex-1 md:flex-none px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all text-sm whitespace-nowrap">
+                <Target className="w-4 h-4" />Nouveau Lead
+              </button>
+            )}
+            {canCreate && (
+              <button onClick={() => setIsNewClientModalOpen(true)} className="flex-1 md:flex-none px-6 py-2.5 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 text-sm whitespace-nowrap">
+                <UserCheck className="w-4 h-4" />Nouveau Client
+              </button>
+            )}
           </div>
         </div>
 
@@ -871,13 +894,13 @@ export default function ClientsClient({ initialClients }: Props) {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-[var(--elevation-border)] bg-base/30">
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">Contact</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">Email / Tél.</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">Statut</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">Source</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right">CA Total</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider">Paiement</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right">Actions</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Contact</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Email / Tél.</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Source</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">CA Total</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Paiement</th>
+                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className={`divide-y divide-[var(--elevation-border)] ${isPending ? 'opacity-60 pointer-events-none' : ''}`}>
@@ -922,13 +945,13 @@ export default function ClientsClient({ initialClients }: Props) {
                       <ActionMenu actions={[
                         { label: 'Voir la fiche', icon: <Eye className="w-4 h-4" />, onClick: () => router.push(`/clients/${client.id}`) },
                         { label: 'Créer un devis', icon: <FileText className="w-4 h-4" />, onClick: () => handleCreateQuote(client) },
-                        ...(isLead ? [{
+                        ...(isLead && canEdit ? [{
                           label: 'Convertir en client',
                           icon: <ArrowRight className="w-4 h-4" />,
                           onClick: () => handleConvertToClient(client.id, name),
                         }] : []),
-                        { label: 'Éditer', icon: <Edit2 className="w-4 h-4" />, onClick: () => setEditingClient(client) },
-                        { label: 'Supprimer', icon: <Trash2 className="w-4 h-4" />, onClick: () => handleDelete(client.id, name), danger: true },
+                        ...(canEdit ? [{ label: 'Éditer', icon: <Edit2 className="w-4 h-4" />, onClick: () => setEditingClient(client) }] : []),
+                        ...(canDelete ? [{ label: 'Supprimer', icon: <Trash2 className="w-4 h-4" />, onClick: () => handleDelete(client.id, name), danger: true }] : []),
                       ]} />
                     </td>
                   </tr>

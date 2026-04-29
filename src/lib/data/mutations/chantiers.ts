@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
+import { todayParis } from '@/lib/utils'
 
 type Result = { error: string | null }
 
@@ -29,6 +31,7 @@ export async function createChantier(data: {
   recurrenceDurationSlots?: number[] | null
   recurrenceNotes?: string | null
 }): Promise<{ chantierId: string | null; error: string | null }> {
+  if (!await hasPermission('chantiers.create')) return { chantierId: null, error: 'Action non autorisée.' }
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { chantierId: null, error: 'Non authentifié.' }
@@ -57,7 +60,7 @@ export async function createChantier(data: {
       contact_email: data.contactEmail || null,
       contact_phone: data.contactPhone || null,
       quote_id: data.quoteId || null,
-      status: (data.startDate && data.startDate > new Date().toISOString().split('T')[0]) ? 'planifie' : 'en_cours',
+      status: (data.startDate && data.startDate > todayParis()) ? 'planifie' : 'en_cours',
       created_by: user.id,
       recurrence: data.recurrence ?? 'none',
       recurrence_times: data.recurrenceTimes ?? 1,
@@ -162,12 +165,14 @@ export async function updateChantier(
     endDate?: string | null
     estimatedEndDate?: string | null
     budgetHt?: number
+    targetMarginPct?: number
     contactName?: string | null
     contactEmail?: string | null
     contactPhone?: string | null
     quoteId?: string | null
   },
 ): Promise<Result> {
+  if (!await hasPermission('chantiers.edit')) return { error: 'Action non autorisée.' }
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -185,6 +190,7 @@ export async function updateChantier(
       ...(data.endDate !== undefined && { end_date: data.endDate }),
       ...(data.estimatedEndDate !== undefined && { estimated_end_date: data.estimatedEndDate }),
       ...(data.budgetHt !== undefined && { budget_ht: data.budgetHt }),
+      ...(data.targetMarginPct !== undefined && { target_margin_pct: data.targetMarginPct }),
       ...(data.contactName !== undefined && { contact_name: data.contactName }),
       ...(data.contactEmail !== undefined && { contact_email: data.contactEmail }),
       ...(data.contactPhone !== undefined && { contact_phone: data.contactPhone }),
@@ -204,6 +210,7 @@ export async function updateChantier(
 }
 
 export async function deleteChantier(chantierId: string): Promise<Result> {
+  if (!await hasPermission('chantiers.delete')) return { error: 'Action non autorisée.' }
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -368,6 +375,41 @@ export async function createPointage(
   return { error: null }
 }
 
+export async function createMemberPointageAdmin(
+  chantierId: string,
+  memberId: string,
+  data: {
+    date: string
+    hours: number
+    description?: string | null
+  },
+): Promise<Result> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Non authentifié.' }
+
+  if (data.hours <= 0 || data.hours > 24) {
+    return { error: 'Le nombre d\'heures doit être compris entre 0.5 et 24.' }
+  }
+
+  const { error } = await supabase.from('chantier_pointages').insert({
+    chantier_id: chantierId,
+    member_id: memberId,
+    date: data.date,
+    hours: data.hours,
+    description: data.description ?? null,
+  })
+
+  if (error) {
+    console.error('[createMemberPointageAdmin]', error)
+    return { error: 'Erreur lors de l\'enregistrement du pointage.' }
+  }
+
+  revalidatePath(`/chantiers/${chantierId}`)
+  revalidatePath('/chantiers/heures')
+  return { error: null }
+}
+
 export async function deletePointage(pointageId: string, chantierId: string): Promise<Result> {
   const supabase = await createClient()
 
@@ -526,6 +568,42 @@ export async function updateChantierPhotoCaption(
   return { error: null }
 }
 
+export async function updateChantierPhotoTitle(
+  photoId: string,
+  chantierId: string,
+  title: string | null,
+): Promise<Result> {
+  const supabase = await createClient()
+
+  const { error } = await supabase
+    .from('chantier_photos')
+    .update({ title })
+    .eq('id', photoId)
+
+  if (error) return { error: 'Erreur lors de la mise à jour du titre.' }
+
+  revalidatePath(`/chantiers/${chantierId}`)
+  return { error: null }
+}
+
+export async function togglePhotoReportFlag(
+  photoId: string,
+  chantierId: string,
+  include: boolean,
+): Promise<Result> {
+  const supabase = await createClient()
+
+  const { error } = await supabase
+    .from('chantier_photos')
+    .update({ include_in_report: include })
+    .eq('id', photoId)
+
+  if (error) return { error: 'Erreur lors de la mise à jour du flag rapport.' }
+
+  revalidatePath(`/chantiers/${chantierId}`)
+  return { error: null }
+}
+
 // ─── Situation de travaux ─────────────────────────────────────────────────────
 
 /**
@@ -604,6 +682,7 @@ export async function generateSituationInvoice(
       organization_id: orgId,
       client_id: chantier.client_id ?? null,
       quote_id: chantier.quote_id,
+      chantier_id: chantier.id,
       invoice_type: 'situation',
       title,
       currency: quote.currency ?? 'EUR',
@@ -733,6 +812,8 @@ export async function addEquipeMembre(
   data: {
     name: string
     roleLabel?: string | null
+    tauxHoraire?: number | null
+    profileId?: string | null
   },
 ): Promise<{ membreId: string | null; error: string | null }> {
   const supabase = await createClient()
@@ -747,6 +828,8 @@ export async function addEquipeMembre(
       equipe_id: equipeId,
       name: data.name.trim(),
       role_label: data.roleLabel ?? null,
+      taux_horaire: data.tauxHoraire ?? null,
+      profile_id: data.profileId ?? null,
     })
     .select('id')
     .single()
@@ -758,6 +841,46 @@ export async function addEquipeMembre(
 
   revalidatePath('/chantiers')
   return { membreId: membre.id, error: null }
+}
+
+export async function updateEquipeMembreProfile(
+  membreId: string,
+  profileId: string | null,
+): Promise<Result> {
+  const supabase = await createClient()
+
+  const { error } = await supabase
+    .from('chantier_equipe_membres')
+    .update({ profile_id: profileId })
+    .eq('id', membreId)
+
+  if (error) {
+    console.error('[updateEquipeMembreProfile]', error)
+    return { error: 'Erreur lors du lien au compte utilisateur.' }
+  }
+
+  revalidatePath('/chantiers')
+  return { error: null }
+}
+
+export async function updateEquipeMembreTaux(
+  membreId: string,
+  tauxHoraire: number | null,
+): Promise<Result> {
+  const supabase = await createClient()
+
+  const { error } = await supabase
+    .from('chantier_equipe_membres')
+    .update({ taux_horaire: tauxHoraire })
+    .eq('id', membreId)
+
+  if (error) {
+    console.error('[updateEquipeMembreTaux]', error)
+    return { error: 'Erreur lors de la mise à jour du taux horaire.' }
+  }
+
+  revalidatePath('/chantiers')
+  return { error: null }
 }
 
 export async function removeEquipeMembre(membreId: string): Promise<Result> {
@@ -829,6 +952,7 @@ export async function createChantierPlanning(
     startTime?: string | null
     endTime?: string | null
     equipeId?: string | null
+    memberId?: string | null
     label: string
     teamSize?: number
     notes?: string | null
@@ -849,6 +973,7 @@ export async function createChantierPlanning(
       start_time:   data.startTime  || null,
       end_time:     data.endTime    || null,
       equipe_id:    data.equipeId   || null,
+      member_id:    data.memberId   || null,
       label:        data.label.trim(),
       team_size:    data.teamSize   ?? 1,
       notes:        data.notes      || null,
@@ -863,6 +988,7 @@ export async function createChantierPlanning(
   }
 
   revalidatePath(`/chantiers/${chantierId}`)
+  revalidatePath('/chantiers/planning')
   return { planningId: row.id, error: null }
 }
 
@@ -873,6 +999,7 @@ export async function deleteChantierPlanning(planningId: string, chantierId: str
     .from('chantier_plannings')
     .delete()
     .eq('id', planningId)
+    .eq('chantier_id', chantierId)
 
   if (error) {
     console.error('[deleteChantierPlanning]', error)
@@ -880,5 +1007,6 @@ export async function deleteChantierPlanning(planningId: string, chantierId: str
   }
 
   revalidatePath(`/chantiers/${chantierId}`)
+  revalidatePath('/chantiers/planning')
   return { error: null }
 }

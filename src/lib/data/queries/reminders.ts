@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { todayParis } from '@/lib/utils'
 
 export type OverdueInvoice = {
   id: string
@@ -43,7 +44,7 @@ export async function getRemindersData(): Promise<RemindersData> {
   if (!orgId) return { overdueInvoices: [], pendingQuotes: [] }
 
   const today = new Date()
-  const todayStr = today.toISOString().split('T')[0]
+  const todayStr = todayParis()
   const todayMidnight = new Date(todayStr)
   const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
   const cooldownCutoff = new Date(todayMidnight.getTime() - COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString()

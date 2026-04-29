@@ -23,10 +23,12 @@ import { createClientInline } from '@/lib/data/mutations/clients'
 import { getClientDisplayName } from '@/lib/client'
 import { UnitSelect } from '@/components/ui/UnitSelect'
 import {
-  ArrowLeft, Eye, Send, Plus, Trash2, FileText, Search, X, Loader2, Save, EyeOff, Truck, ChevronDown, ChevronUp, Ruler,
+  ArrowLeft, Eye, Send, Plus, Trash2, FileText, Search, X, Loader2, Save, EyeOff, Truck, ChevronDown, ChevronUp, Ruler, Package,
 } from 'lucide-react'
 import type { ResolvedCatalogContext } from '@/lib/catalog-context'
 import { getCatalogDocumentVatRate, getInternalResourceUnitCost } from '@/lib/catalog-ui'
+import { todayParis, dateParis } from '@/lib/utils'
+import { computeFuel, DEFAULT_CONSUMPTION_L_PER_100KM, DEFAULT_FUEL_PRICE_EUR_PER_L } from '@/lib/utils/fuel'
 
 type LocalItem = {
   id: number
@@ -41,6 +43,15 @@ type LocalItem = {
   dimension_pricing_mode: DimensionPricingMode | null
   is_internal: boolean
   material_id: string | null
+  transport_km: number | null
+  transport_conso: number | null
+  transport_prix_l: number | null
+}
+
+function getSafeReturnTo(value: string | null, fallback: string) {
+  if (!value) return fallback
+  if (!value.startsWith('/') || value.startsWith('//')) return fallback
+  return value
 }
 
 function inferDimensionMode(item: {
@@ -75,6 +86,25 @@ function getModeUnit(mode: DimensionPricingMode, fallbackUnit: string): string {
   }
 }
 
+function getTransportMeta(item: {
+  description?: string | null
+  quantity?: number | null
+  unit?: string | null
+  unit_price?: number | null
+  is_internal?: boolean | null
+}) {
+  const label = (item.description ?? '').toLowerCase()
+  const isTransportLine = item.is_internal === true && item.unit === 'L' && (label.includes('carburant') || label.includes('transport') || label.includes('trajet'))
+  if (!isTransportLine) return { transport_km: null, transport_conso: null, transport_prix_l: null }
+  const kmMatch = label.match(/(\d+(?:[,.]\d+)?)\s*km/)
+  const kmFromLabel = kmMatch ? Number(kmMatch[1].replace(',', '.')) : null
+  return {
+    transport_km: kmFromLabel ?? Math.round(((item.quantity ?? 0) / DEFAULT_CONSUMPTION_L_PER_100KM) * 100),
+    transport_conso: DEFAULT_CONSUMPTION_L_PER_100KM,
+    transport_prix_l: item.unit_price ?? DEFAULT_FUEL_PRICE_EUR_PER_L,
+  }
+}
+
 function computeDimensionQuantity(
   mode: DimensionPricingMode,
   lengthM: number | null,
@@ -101,6 +131,8 @@ function clientDisplayName(c: Client): string {
 const fmt = (n: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n)
 
+type LinkableChantier = { id: string; title: string; client_id: string | null }
+
 type Props = {
   clients: Client[]
   acceptedQuotes: QuoteWithItems[]
@@ -110,6 +142,9 @@ type Props = {
   prestationTypes: PrestationType[]
   catalogContext: ResolvedCatalogContext
   vatConfig: VatConfig
+  linkableChantiers?: LinkableChantier[]
+  defaultChantierId?: string | null
+  returnTo?: string | null
 }
 
 export default function InvoiceEditorClient({
@@ -121,13 +156,17 @@ export default function InvoiceEditorClient({
   prestationTypes,
   catalogContext,
   vatConfig,
+  linkableChantiers = [],
+  defaultChantierId = null,
+  returnTo: rawReturnTo = null,
 }: Props) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const defaultVatRate = getCatalogDocumentVatRate(vatConfig)
+  const returnTo = getSafeReturnTo(rawReturnTo, '/finances?tab=invoices')
 
-  const today = new Date().toISOString().split('T')[0]
-  const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  const today = todayParis()
+  const nextMonth = dateParis(Date.now() + 30 * 24 * 60 * 60 * 1000)
 
   // ── Clients ──────────────────────────────────────────────────────────────────
   const [clients, setClients] = useState<Client[]>(initialClients)
@@ -173,6 +212,11 @@ export default function InvoiceEditorClient({
   const [issueDate, setIssueDate] = useState(existingInvoice?.issue_date ?? today)
   const [dueDate, setDueDate] = useState(existingInvoice?.due_date ?? nextMonth)
   const [importedQuoteId, setImportedQuoteId] = useState<string | null>(existingInvoice?.quote_id ?? null)
+  const [chantierId, setChantierId] = useState<string | null>((existingInvoice as any)?.chantier_id ?? defaultChantierId ?? null)
+  const [aidLabel, setAidLabel] = useState<string>(existingInvoice?.aid_label ?? '')
+  const [aidAmount, setAidAmount] = useState<number | null>(existingInvoice?.aid_amount ?? null)
+  const [showAid, setShowAid] = useState<boolean>(!!(existingInvoice?.aid_label || existingInvoice?.aid_amount))
+  const [aidMode, setAidMode] = useState<'€' | '%'>('€')
   const [items, setItems] = useState<LocalItem[]>(
     existingInvoice?.items?.length
       ? existingInvoice.items.map((i, idx) => ({
@@ -188,8 +232,9 @@ export default function InvoiceEditorClient({
           dimension_pricing_mode: inferDimensionMode(i),
           is_internal: i.is_internal ?? false,
           material_id: i.material_id ?? null,
+          ...getTransportMeta(i),
         }))
-      : [{ id: 1, desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_internal: false, material_id: null }],
+      : [{ id: 1, desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_internal: false, material_id: null, transport_km: null, transport_conso: null, transport_prix_l: null }],
   )
   const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set())
 
@@ -224,6 +269,9 @@ export default function InvoiceEditorClient({
       dimension_pricing_mode: null,
       is_internal: isInternal,
       material_id: null,
+      transport_km: null,
+      transport_conso: null,
+      transport_prix_l: null,
     }
     setItems(prev => replaceOrAppend(prev, [newItem]))
     setIsCatalogModalOpen(false)
@@ -245,6 +293,9 @@ export default function InvoiceEditorClient({
       dimension_pricing_mode: material.dimension_pricing_mode ?? null,
       is_internal: false,
       material_id: material.id,
+      transport_km: null,
+      transport_conso: null,
+      transport_prix_l: null,
     }
     setItems(prev => replaceOrAppend(prev, [newItem]))
     setIsCatalogModalOpen(false)
@@ -265,6 +316,13 @@ export default function InvoiceEditorClient({
       dimension_pricing_mode: null,
       is_internal: item.is_internal,
       material_id: null,
+      ...getTransportMeta({
+        description: item.designation,
+        quantity: item.quantity,
+        unit: item.unit,
+        unit_price: item.unit_price_ht,
+        is_internal: item.is_internal,
+      }),
     }))
     setItems(prev => replaceOrAppend(prev, newItems))
     setIsCatalogModalOpen(false)
@@ -293,9 +351,43 @@ export default function InvoiceEditorClient({
       dimension_pricing_mode: null,
       is_internal: true,
       material_id: null,
+      transport_km: transportKm,
+      transport_conso: transportConso,
+      transport_prix_l: transportPrixL,
     }
     setItems(prev => replaceOrAppend(prev, [newItem]))
     setShowTransport(false)
+  }
+
+  // ── Équipement amorti ────────────────────────────────────────────────────────
+  const [showEquipment, setShowEquipment] = useState(false)
+  const [equipmentName, setEquipmentName] = useState('')
+  const [equipmentPurchase, setEquipmentPurchase] = useState(0)
+  const [equipmentUses, setEquipmentUses] = useState(100)
+  const equipmentCostPerUse = equipmentUses > 0 ? Math.round((equipmentPurchase / equipmentUses) * 100) / 100 : 0
+
+  function handleAddEquipment() {
+    if (equipmentPurchase <= 0 || equipmentUses <= 0) return
+    const desc = equipmentName.trim() || `Équipement amorti (${equipmentPurchase} € / ${equipmentUses} usages)`
+    const newItem = {
+      id: Date.now(),
+      desc,
+      qty: 1,
+      unit: 'usage',
+      pu: equipmentCostPerUse,
+      vat: defaultVatRate,
+      length_m: null,
+      width_m: null,
+      height_m: null,
+      dimension_pricing_mode: null,
+      is_internal: true,
+      material_id: null,
+      transport_km: null,
+      transport_conso: null,
+      transport_prix_l: null,
+    }
+    setItems(prev => replaceOrAppend(prev, [newItem]))
+    setShowEquipment(false)
   }
 
   // ── Autres modals ─────────────────────────────────────────────────────────────
@@ -306,8 +398,31 @@ export default function InvoiceEditorClient({
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
-  function updateItem(id: number, field: keyof LocalItem, value: string | number | boolean) {
+  function updateItem(id: number, field: keyof LocalItem, value: string | number | boolean | null) {
     setItems(prev => prev.map(i => i.id === id ? { ...i, [field]: value } : i))
+  }
+
+  function handleTransportMetaChange(
+    id: number,
+    field: 'transport_km' | 'transport_conso' | 'transport_prix_l',
+    value: number | null,
+  ) {
+    setItems(prev => prev.map(item => {
+      if (item.id !== id) return item
+      const updated = { ...item, [field]: value }
+      const km = updated.transport_km ?? 0
+      const conso = updated.transport_conso ?? DEFAULT_CONSUMPTION_L_PER_100KM
+      const prixL = updated.transport_prix_l ?? DEFAULT_FUEL_PRICE_EUR_PER_L
+      const { liters } = computeFuel({ km, consumption: conso, pricePerLiter: prixL })
+      return {
+        ...updated,
+        desc: `Carburant - trajet ${km} km`,
+        qty: liters,
+        unit: 'L',
+        pu: prixL,
+        is_internal: true,
+      }
+    }))
   }
 
   function toggleItemExpand(id: number) {
@@ -346,7 +461,7 @@ export default function InvoiceEditorClient({
   }
 
   function addItem() {
-    setItems(prev => [...prev, { id: Date.now(), desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_internal: false, material_id: null }])
+    setItems(prev => [...prev, { id: Date.now(), desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_internal: false, material_id: null, transport_km: null, transport_conso: null, transport_prix_l: null }])
   }
 
   function removeItem(id: number) {
@@ -369,6 +484,13 @@ export default function InvoiceEditorClient({
           dimension_pricing_mode: inferDimensionMode(item),
           is_internal: (item as any).is_internal ?? false,
           material_id: (item as any).material_id ?? null,
+          ...getTransportMeta({
+            description: item.description,
+            quantity: item.quantity,
+            unit: (item as any).unit,
+            unit_price: item.unit_price,
+            is_internal: (item as any).is_internal,
+          }),
         })),
       ),
       ...quote.unsectionedItems.map(item => ({
@@ -384,17 +506,24 @@ export default function InvoiceEditorClient({
         dimension_pricing_mode: inferDimensionMode(item),
         is_internal: (item as any).is_internal ?? false,
         material_id: (item as any).material_id ?? null,
+        ...getTransportMeta({
+          description: item.description,
+          quantity: item.quantity,
+          unit: (item as any).unit,
+          unit_price: item.unit_price,
+          is_internal: (item as any).is_internal,
+        }),
       })),
     ]
     if (quote.client?.id) setClientId(quote.client.id)
     if (quote.title) setTitle(quote.title)
-    setItems(newItems.length > 0 ? newItems : [{ id: Date.now(), desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_internal: false, material_id: null }])
+    setItems(newItems.length > 0 ? newItems : [{ id: Date.now(), desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_internal: false, material_id: null, transport_km: null, transport_conso: null, transport_prix_l: null }])
     setImportedQuoteId(quote.id)
     setIsQuoteModalOpen(false)
   }
 
   function getMeta() {
-    return { clientId: clientId || null, issueDate, dueDate, title: title || 'Facture', quoteId: importedQuoteId }
+    return { clientId: clientId || null, issueDate, dueDate, title: title || 'Facture', quoteId: importedQuoteId, chantierId: chantierId || null, aidLabel: aidLabel || null, aidAmount }
   }
 
   function getItemsPayload() {
@@ -414,7 +543,7 @@ export default function InvoiceEditorClient({
 
   async function ensureInvoiceId(): Promise<string | null> {
     if (invoiceId) return invoiceId
-    const res = await createInvoice({ clientId: clientId || null, title: title || 'Facture', quoteId: importedQuoteId })
+    const res = await createInvoice({ clientId: clientId || null, title: title || 'Facture', quoteId: importedQuoteId, chantierId: chantierId || null })
     if (res.error || !res.invoiceId) { setError(res.error ?? 'Erreur création facture'); return null }
     setInvoiceId(res.invoiceId)
     return res.invoiceId
@@ -456,7 +585,7 @@ export default function InvoiceEditorClient({
       if (saveRes.error) { setError(saveRes.error); setIsSending(false); return }
       const sendRes = await sendInvoice(id)
       if (sendRes.error) { setError(sendRes.error); setIsSending(false); return }
-      router.push('/finances')
+      router.push(returnTo)
     })
   }
 
@@ -474,12 +603,12 @@ export default function InvoiceEditorClient({
   const isEditing = !!existingInvoice
 
   return (
-    <main className="flex-1 p-8 max-w-[1200px] mx-auto w-full space-y-8">
+    <main className="page-container space-y-6 md:space-y-8">
 
       {/* ── Modal Catalogue ── */}
       {isCatalogModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
+        <div className="modal-overlay">
+          <div className="modal-panel flex flex-col">
             <div className="flex items-center justify-between p-6 pb-4 border-b border-[var(--elevation-border)]">
               <h3 className="text-lg font-bold text-primary">Ajouter depuis le catalogue</h3>
               <button onClick={() => { setIsCatalogModalOpen(false); setCatalogSearch('') }} className="text-secondary hover:text-primary transition-colors"><X className="w-5 h-5" /></button>
@@ -566,8 +695,8 @@ export default function InvoiceEditorClient({
 
       {/* ── Modal Transport ── */}
       {showTransport && (
-        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-sm shadow-2xl p-8 space-y-5">
+        <div className="modal-overlay z-[150]">
+          <div className="modal-panel space-y-5 sm:max-w-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center">
@@ -622,10 +751,66 @@ export default function InvoiceEditorClient({
         </div>
       )}
 
+      {/* ── Modal Équipement amorti ── */}
+      {showEquipment && (
+        <div className="modal-overlay z-[150]">
+          <div className="modal-panel space-y-5 sm:max-w-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                  <Package className="w-5 h-5 text-purple-500" />
+                </div>
+                <h3 className="text-lg font-bold text-primary">Équipement amorti</h3>
+              </div>
+              <button onClick={() => setShowEquipment(false)} className="text-secondary hover:text-primary transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-sm font-semibold text-secondary">Nom de l&apos;équipement</label>
+                <input type="text" value={equipmentName} onChange={e => setEquipmentName(e.target.value)} placeholder="ex: Aspirateur industriel"
+                  className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-secondary">Prix d&apos;achat (€)</label>
+                  <input type="number" min={0} step={0.01} value={equipmentPurchase || ''} onChange={e => setEquipmentPurchase(Number(e.target.value))}
+                    className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 tabular-nums" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-secondary">Usages sur la vie</label>
+                  <input type="number" min={1} step={1} value={equipmentUses} onChange={e => setEquipmentUses(Number(e.target.value))}
+                    className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 tabular-nums" />
+                </div>
+              </div>
+              {equipmentPurchase > 0 && (
+                <div className="p-4 rounded-xl bg-purple-50 dark:bg-purple-500/5 border border-purple-200 dark:border-purple-500/20 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-secondary">Coût par usage</span>
+                    <span className="font-bold text-purple-600 tabular-nums">{equipmentCostPerUse.toFixed(2)} €</span>
+                  </div>
+                  <p className="text-xs text-purple-600 flex items-center gap-1 pt-1 border-t border-purple-200 dark:border-purple-500/20 mt-2">
+                    <EyeOff className="w-3 h-3 shrink-0" />
+                    Ligne interne — coût de revient, non visible sur la facture client
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setShowEquipment(false)}
+                className="px-5 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold">Annuler</button>
+              <button type="button" onClick={handleAddEquipment} disabled={equipmentPurchase <= 0 || equipmentUses <= 0}
+                className="px-5 py-2.5 rounded-full bg-purple-500 text-white font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-purple-500/20 disabled:opacity-40 disabled:hover:scale-100">
+                <Plus className="w-4 h-4" />Ajouter la ligne
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Modal Devis ── */}
       {isQuoteModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="card w-full max-w-2xl p-8 relative max-h-[80vh] flex flex-col">
+        <div className="modal-overlay">
+          <div className="modal-panel flex flex-col">
             <button onClick={() => setIsQuoteModalOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
             <h2 className="text-2xl font-bold text-primary mb-6">Importer un devis accepté</h2>
             <div className="flex-1 overflow-y-auto space-y-3 pr-1">
@@ -654,30 +839,30 @@ export default function InvoiceEditorClient({
       )}
 
       {/* ── Topbar ── */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/finances" className="w-10 h-10 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] flex items-center justify-center text-secondary hover:text-primary transition-colors">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Link href={returnTo} className="w-10 h-10 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] flex items-center justify-center text-secondary hover:text-primary transition-colors flex-shrink-0">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-primary">{isEditing ? 'Modifier la facture' : 'Nouvelle facture'}</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-primary">{isEditing ? 'Modifier la facture' : 'Nouvelle facture'}</h1>
             {existingInvoice?.number && <p className="text-sm text-secondary">{existingInvoice.number}</p>}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button onClick={handlePreview} disabled={isSaving || isSending}
-            className="px-5 py-2.5 rounded-full text-secondary hover:text-primary hover:bg-base/50 transition-colors font-semibold flex items-center gap-2 disabled:opacity-50">
+            className="px-4 py-2.5 rounded-full text-secondary hover:text-primary hover:bg-base/50 transition-colors font-semibold flex items-center gap-2 disabled:opacity-50 whitespace-nowrap">
             {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
-            Aperçu PDF
+            <span className="hidden sm:inline">Aperçu PDF</span>
           </button>
           <button onClick={handleSaveDraft} disabled={isSaving || isSending}
-            className="px-5 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold flex items-center gap-2 disabled:opacity-50">
-            <Save className="w-4 h-4" />Brouillon
+            className="px-4 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold flex items-center gap-2 disabled:opacity-50 whitespace-nowrap">
+            <Save className="w-4 h-4" /><span className="hidden sm:inline">Brouillon</span>
           </button>
           <button onClick={handleSend} disabled={isSaving || isSending}
-            className="px-6 py-2.5 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 disabled:scale-100">
+            className="px-4 sm:px-6 py-2.5 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 disabled:scale-100 whitespace-nowrap">
             {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            Valider & Envoyer
+            <span className="hidden sm:inline">Valider &</span> Envoyer
           </button>
         </div>
       </div>
@@ -687,8 +872,8 @@ export default function InvoiceEditorClient({
       )}
 
       {/* ── Paramètres ── */}
-      <div className="rounded-3xl card p-8 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="rounded-3xl card p-5 sm:p-8 space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           <div className="space-y-2 lg:col-span-2">
             <label className="text-sm font-semibold text-secondary">Intitulé de la facture</label>
             <input type="text" value={title} onChange={e => setTitle(e.target.value)}
@@ -740,22 +925,41 @@ export default function InvoiceEditorClient({
             <span className="text-sm text-secondary">Aucun devis accepté</span>
           )}
         </div>
+
+        {/* Lien chantier (optionnel) */}
+        {linkableChantiers.length > 0 && (
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-secondary">Chantier rattaché (optionnel)</label>
+            <select
+              value={chantierId ?? ''}
+              onChange={e => setChantierId(e.target.value || null)}
+              className="w-full p-4 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none"
+            >
+              <option value="">Aucun chantier</option>
+              {linkableChantiers
+                .map(c => (
+                  <option key={c.id} value={c.id}>{c.title}</option>
+                ))}
+            </select>
+            <p className="text-xs text-secondary">Cette facture apparaîtra dans la rentabilité du chantier sélectionné.</p>
+          </div>
+        )}
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8 items-start">
+      <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 items-start">
         {/* ── Lignes ── */}
-        <div className="rounded-3xl card p-8 flex-1 w-full overflow-hidden">
+        <div className="rounded-3xl card p-4 sm:p-8 flex-1 w-full overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse" style={{ minWidth: 760 }}>
               <thead>
                 <tr className="border-b border-[var(--elevation-border)]">
-                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[36%]">Désignation</th>
-                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[7%] text-right">Qté</th>
-                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[8%] text-center">Unité</th>
-                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[14%] text-right">PU HT</th>
-                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[9%] text-right">TVA</th>
-                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[13%] text-right">Total HT</th>
-                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[7%] text-center" title="Interne (non facturé au client)">Int.</th>
+                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[36%] whitespace-nowrap">Désignation</th>
+                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[7%] text-right whitespace-nowrap">Qté</th>
+                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[8%] text-center whitespace-nowrap">Unité</th>
+                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[14%] text-right whitespace-nowrap">PU HT</th>
+                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[9%] text-right whitespace-nowrap">TVA</th>
+                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[13%] text-right whitespace-nowrap">Total HT</th>
+                  <th className="pb-4 text-xs font-bold text-secondary uppercase tracking-wider w-[7%] text-center" title="Interne (non facturé au client) whitespace-nowrap">Int.</th>
                   <th className="pb-4 w-8"></th>
                 </tr>
               </thead>
@@ -818,7 +1022,7 @@ export default function InvoiceEditorClient({
                             onClick={() => updateItem(item.id, 'is_internal', !item.is_internal)}
                             title={item.is_internal ? 'Ligne interne (cliquer pour rendre visible)' : 'Rendre interne (coût non facturé au client)'}
                             className={`p-1.5 rounded-lg transition-all ${item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-secondary/30 hover:text-secondary'}`}>
-                            <EyeOff className="w-3.5 h-3.5" />
+                            {item.is_internal ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
                         </td>
                         <td className="py-3 text-right">
@@ -839,6 +1043,57 @@ export default function InvoiceEditorClient({
                           </div>
                         </td>
                       </tr>
+                      {item.transport_prix_l !== null && (
+                        <tr>
+                          <td colSpan={8} className="pb-4 pt-0">
+                            <div className="mx-2 rounded-xl border border-amber-200/60 dark:border-amber-500/20 bg-amber-500/5 px-4 py-3 space-y-2">
+                              <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                                <Truck className="w-3 h-3" />Détail transport (coût interne — non visible client)
+                              </p>
+                              <div className="flex flex-wrap items-end gap-3">
+                                <label className="flex flex-col gap-1 text-xs text-secondary">
+                                  Distance aller-retour (km)
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={item.transport_km ?? ''}
+                                    onChange={e => handleTransportMetaChange(item.id, 'transport_km', e.target.value === '' ? null : Number(e.target.value))}
+                                    className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400"
+                                  />
+                                </label>
+                                <span className="text-secondary text-sm pb-1.5">×</span>
+                                <label className="flex flex-col gap-1 text-xs text-secondary">
+                                  Conso (L/100 km)
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    step={0.1}
+                                    value={item.transport_conso ?? DEFAULT_CONSUMPTION_L_PER_100KM}
+                                    onChange={e => handleTransportMetaChange(item.id, 'transport_conso', Number(e.target.value))}
+                                    className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400"
+                                  />
+                                </label>
+                                <span className="text-secondary text-sm pb-1.5">×</span>
+                                <label className="flex flex-col gap-1 text-xs text-secondary">
+                                  Prix carburant (€/L)
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={0.01}
+                                    value={item.transport_prix_l ?? DEFAULT_FUEL_PRICE_EUR_PER_L}
+                                    onChange={e => handleTransportMetaChange(item.id, 'transport_prix_l', Number(e.target.value))}
+                                    className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400"
+                                  />
+                                </label>
+                                <span className="text-secondary text-sm pb-1.5">=</span>
+                                <span className="font-bold text-amber-600 dark:text-amber-400 text-sm tabular-nums pb-1">
+                                  {Number(item.qty).toFixed(2)} L · {fmt(Number(item.qty) * (item.transport_prix_l ?? DEFAULT_FUEL_PRICE_EUR_PER_L))}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
                       {isExpanded && isDimensioned && (
                         <tr>
                           <td colSpan={8} className="pb-4 pt-0">
@@ -919,6 +1174,10 @@ export default function InvoiceEditorClient({
               className="flex items-center gap-2 text-sm font-semibold text-amber-600 hover:text-amber-500 transition-colors px-4 py-2 rounded-lg bg-amber-500/10">
               <Truck className="w-4 h-4" />Transport
             </button>
+            <button onClick={() => { setEquipmentName(''); setEquipmentPurchase(0); setEquipmentUses(100); setShowEquipment(true) }}
+              className="flex items-center gap-2 text-sm font-semibold text-purple-600 hover:text-purple-500 transition-colors px-4 py-2 rounded-lg bg-purple-500/10">
+              <Package className="w-4 h-4" />Équipement
+            </button>
           </div>
           {hasInternal && (
             <p className="mt-3 text-xs text-amber-500 flex items-center gap-1.5">
@@ -929,7 +1188,7 @@ export default function InvoiceEditorClient({
         </div>
 
         {/* ── Récapitulatif ── */}
-        <div className="rounded-3xl card p-8 w-full lg:w-[320px] shrink-0 sticky top-24 space-y-4">
+        <div className="rounded-3xl card p-5 sm:p-8 w-full lg:w-[320px] shrink-0 lg:sticky top-24 space-y-4">
           <h3 className="text-lg font-bold text-primary">Récapitulatif</h3>
           <div className="space-y-3 text-sm">
             <div className="flex justify-between text-secondary">
@@ -954,6 +1213,95 @@ export default function InvoiceEditorClient({
             <span className="text-secondary font-semibold text-sm">TOTAL TTC</span>
             <span className="text-3xl font-bold text-primary tabular-nums tracking-tight">{fmt(totalTtc)}</span>
           </div>
+
+          {/* Aide déductible (MaPrimeRénov, CEE…) */}
+          {!showAid ? (
+            <button
+              onClick={() => setShowAid(true)}
+              className="w-full text-xs text-secondary hover:text-accent transition-colors flex items-center gap-1.5 pt-1"
+            >
+              <Plus className="w-3 h-3" />Ajouter une aide / subvention
+            </button>
+          ) : (
+            <div className="pt-3 mt-1 border-t border-[var(--elevation-border)] space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-secondary uppercase tracking-wider">Aide / Subvention</p>
+                <div className="flex items-center gap-2">
+                  <div className="flex rounded-lg border border-[var(--elevation-border)] overflow-hidden text-xs">
+                    {(['€', '%'] as const).map(m => (
+                      <button key={m} type="button" onClick={() => setAidMode(m)}
+                        className={`px-2.5 py-1 transition-colors ${aidMode === m ? 'bg-accent text-white' : 'text-secondary hover:text-primary'}`}>
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => { setShowAid(false); setAidLabel(''); setAidAmount(null) }}
+                    className="text-secondary hover:text-red-500 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {['MaPrimeRénov\'', 'CEE', 'Éco-PTZ', 'Anah'].map(preset => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setAidLabel(preset)}
+                    className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${aidLabel === preset ? 'bg-accent text-white border-accent' : 'border-[var(--elevation-border)] text-secondary hover:border-accent hover:text-accent'}`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="text"
+                placeholder="Ou saisir un autre libellé…"
+                value={aidLabel}
+                onChange={e => setAidLabel(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-base dark:bg-white/5 border border-[var(--elevation-border)] focus:border-accent rounded-xl text-primary outline-none transition-all"
+              />
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-secondary">−</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={aidMode === '%' ? 100 : totalTtc}
+                  step={aidMode === '%' ? 1 : 0.01}
+                  placeholder="0"
+                  value={aidMode === '%'
+                    ? (aidAmount != null && totalTtc > 0 ? Math.round((aidAmount / totalTtc) * 10000) / 100 : '')
+                    : (aidAmount ?? '')}
+                  onChange={e => {
+                    if (e.target.value === '') { setAidAmount(null); return }
+                    const raw = parseFloat(e.target.value)
+                    const v = aidMode === '%'
+                      ? Math.round(Math.min(100, Math.max(0, raw)) * totalTtc) / 100
+                      : Math.min(totalTtc, Math.max(0, raw))
+                    setAidAmount(v)
+                  }}
+                  className="flex-1 px-3 py-2 text-sm bg-base dark:bg-white/5 border border-[var(--elevation-border)] focus:border-accent rounded-xl text-primary outline-none transition-all tabular-nums text-right"
+                />
+                <span className="text-sm text-secondary w-4">{aidMode === '%' ? '%' : '€'}</span>
+              </div>
+              {aidAmount != null && aidAmount > 0 && (
+                <div className="pt-2 border-t border-[var(--elevation-border)]">
+                  <div className="flex justify-between text-sm text-secondary">
+                    <span>Total TTC</span><span className="tabular-nums">{fmt(totalTtc)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-green-600 dark:text-green-400">
+                    <span>{aidLabel || 'Aide'}</span><span className="tabular-nums">−{fmt(aidAmount)}</span>
+                  </div>
+                  <div className="h-px bg-[var(--elevation-border)] my-1" />
+                  <div className="flex justify-between font-bold text-primary">
+                    <span>Reste à charge</span>
+                    <span className="tabular-nums text-lg">{fmt(Math.max(0, totalTtc - aidAmount))}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {hasInternal && (
             <>
@@ -980,8 +1328,8 @@ export default function InvoiceEditorClient({
 
       {/* Modal nouveau client inline */}
       {newClientOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="card w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-200">
+        <div className="modal-overlay z-[200]">
+          <div className="modal-panel animate-in fade-in duration-200 sm:max-w-md">
             <button onClick={() => setNewClientOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary"><X className="w-5 h-5" /></button>
             <h2 className="text-xl font-bold text-primary mb-6">Nouveau client</h2>
 

@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { headers } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { getCatalogDocumentVatRate, getInternalResourceUnitCost } from '@/lib/catalog-ui'
@@ -8,6 +9,7 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { buildMaterialSelectionPricing, type DimensionPricingMode, type MaterialPriceVariant } from '@/lib/catalog-pricing'
 import { sendAuthEmail } from '@/lib/email'
 import { buildQuoteRequestNotificationEmail } from '@/lib/email/templates'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
 function splitContactName(fullName: string | null | undefined): { firstName: string | null; lastName: string | null } {
   const trimmed = fullName?.trim() ?? ''
@@ -120,6 +122,17 @@ export async function submitQuoteRequest(
     try { catalog_items = JSON.parse(catalogItemsRaw) } catch { /* ignore */ }
   }
 
+  let attachments = null
+  const attachmentsRaw = formData.get('attachments') as string | null
+  if (attachmentsRaw) {
+    try {
+      const parsed = JSON.parse(attachmentsRaw)
+      attachments = Array.isArray(parsed) ? parsed : null
+    } catch {
+      attachments = null
+    }
+  }
+
   const admin = createAdminClient()
   const { data: org, error: orgError } = await admin
     .from('organizations')
@@ -129,6 +142,19 @@ export async function submitQuoteRequest(
 
   if (orgError || !org) {
     return { error: "Organisation introuvable. Vérifiez le lien utilisé.", success: false }
+  }
+
+  const requestHeaders = await headers()
+  const ip = getClientIp(requestHeaders)
+  const publicFormLimit = await checkRateLimit({
+    scope: 'public_quote_request',
+    identifier: `${org.id}:${email.toLowerCase()}:${ip}`,
+    limit: Number.parseInt(process.env.PUBLIC_FORM_RATE_LIMIT_PER_HOUR ?? '5', 10),
+    windowSeconds: 60 * 60,
+  })
+
+  if (!publicFormLimit.allowed) {
+    return { error: "Trop de demandes envoyées récemment. Veuillez réessayer plus tard ou contacter directement l'entreprise.", success: false }
   }
 
   // ── Rate limiting : max 3 soumissions par email par 24h
@@ -149,7 +175,7 @@ export async function submitQuoteRequest(
     name, email, phone, company_name, subject, description,
     prestation_type, dimensions, attachment_url,
     chantier_address_line1, chantier_postal_code, chantier_city,
-    type, catalog_items,
+    type, catalog_items, attachments,
     status: 'new',
   })
 
@@ -378,7 +404,7 @@ export async function convertRequestToLeadAndQuote(
 
 type CatalogItem = {
   id: string
-  item_type: 'material' | 'prestation'
+  item_type: 'material' | 'labor' | 'prestation'
   description: string
   unit: string | null
   quantity: number
@@ -458,7 +484,11 @@ export async function createQuoteFromCatalogRequest(
     return { error: 'Erreur lors de la création du client.', clientId: null, quoteId: null }
   }
 
-  const title = req.subject || `Demande catalogue — ${req.company_name || req.name}`
+  const catalogItems: CatalogItem[] = Array.isArray(req.catalog_items) ? req.catalog_items : []
+  const itemsLabel = catalogItems.length > 0
+    ? catalogItems.map(i => i.description).filter(Boolean).join(', ')
+    : null
+  const title = req.subject || itemsLabel || req.description?.slice(0, 80) || `Devis ${req.company_name || req.name}`
   const { data: newQuote, error: quoteErr } = await adminClient
     .from('quotes')
     .insert({
@@ -476,8 +506,6 @@ export async function createQuoteFromCatalogRequest(
     console.error('[createQuoteFromCatalogRequest] quote error', quoteErr)
     return { error: 'Erreur lors de la création du devis.', clientId: newClient.id, quoteId: null }
   }
-
-  const catalogItems: CatalogItem[] = Array.isArray(req.catalog_items) ? req.catalog_items : []
   const { data: orgConfig } = await adminClient
     .from('organizations')
     .select('is_vat_subject, default_vat_rate')
@@ -490,6 +518,7 @@ export async function createQuoteFromCatalogRequest(
 
   if (catalogItems.length > 0) {
     const materialIds = catalogItems.filter(ci => ci.item_type === 'material').map(ci => ci.id)
+    const laborIds = catalogItems.filter(ci => ci.item_type === 'labor').map(ci => ci.id)
     const prestationMaterialIds = catalogItems.flatMap(ci =>
       ci.item_type === 'prestation'
         ? (ci.lines ?? []).map(line => line.material_id).filter((id): id is string => Boolean(id))
@@ -505,6 +534,15 @@ export async function createQuoteFromCatalogRequest(
       : { data: [] }
 
     const matMap = new Map((materialsData ?? []).map(m => [m.id, m]))
+
+    const { data: laborData } = laborIds.length > 0
+      ? await adminClient
+          .from('labor_rates')
+          .select('id, designation, unit, rate, cost_rate')
+          .in('id', laborIds)
+      : { data: [] }
+
+    const laborMap = new Map((laborData ?? []).map(l => [l.id, l]))
 
     const { data: section, error: sectionErr } = await adminClient
       .from('quote_sections')
@@ -577,6 +615,40 @@ export async function createQuoteFromCatalogRequest(
             length_m: usesDimensionPricing ? pricing.lengthM : null,
             width_m: usesDimensionPricing ? pricing.widthM : null,
             height_m: usesDimensionPricing ? pricing.heightM : null,
+            is_internal: true,
+          })
+        }
+        continue
+      }
+
+      if (ci.item_type === 'labor') {
+        const labor = laborMap.get(ci.id)
+        visibleItems.push({
+          quote_id: newQuote.id,
+          section_id: section.id,
+          type: 'labor',
+          labor_rate_id: ci.id,
+          description: ci.description,
+          unit: labor?.unit ?? ci.unit ?? 'h',
+          quantity: ci.quantity,
+          unit_price: labor?.rate ?? 0,
+          vat_rate: defaultVatRate,
+          position: position++,
+          is_internal: false,
+        })
+
+        if (labor?.cost_rate) {
+          internalItems.push({
+            quote_id: newQuote.id,
+            section_id: section.id,
+            type: 'labor',
+            labor_rate_id: ci.id,
+            description: ci.description,
+            unit: labor.unit ?? ci.unit ?? 'h',
+            quantity: ci.quantity,
+            unit_price: labor.cost_rate,
+            vat_rate: defaultVatRate,
+            position: position++,
             is_internal: true,
           })
         }
@@ -668,7 +740,7 @@ export async function createQuoteFromCatalogRequest(
 export type PublicFormSettings = {
   public_form_enabled: boolean
   public_form_welcome_message: string | null
-  public_form_catalog_item_ids: Array<{ id: string; item_type: 'material' | 'prestation' }>
+  public_form_catalog_item_ids: Array<{ id: string; item_type: 'material' | 'labor' | 'prestation' }>
   public_form_custom_mode_enabled: boolean
   public_form_notification_email: string | null
 }

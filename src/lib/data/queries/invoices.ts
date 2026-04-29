@@ -61,6 +61,8 @@ export type InvoiceWithItems = {
   created_at: string
   notes_client: string | null
   payment_conditions: string | null
+  aid_label: string | null
+  aid_amount: number | null
   quote_id: string | null
   client_id: string | null
   client: {
@@ -117,7 +119,7 @@ export async function getInvoiceById(invoiceId: string): Promise<InvoiceWithItem
     .select(`
       id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, currency,
       issue_date, due_date, sent_at, paid_at, created_at,
-      notes_client, payment_conditions, quote_id, client_id,
+      notes_client, payment_conditions, aid_label, aid_amount, quote_id, chantier_id, client_id,
       client:clients(id, company_name, contact_name, first_name, last_name, email, phone,
         address_line1, postal_code, city, siret, siren, vat_number, type),
       items:invoice_items(id, description, quantity, unit, unit_price, vat_rate, position, length_m, width_m, height_m, is_internal, material_id)
@@ -158,4 +160,34 @@ export async function getClientInvoices(clientId: string): Promise<Invoice[]> {
   }
 
   return (data ?? []) as unknown as Invoice[]
+}
+
+export type InvoiceStub = {
+  id: string
+  number: string | null
+  title: string | null
+  status: InvoiceStatus
+  total_ht: number | null
+  chantier_id: string | null
+  issue_date: string | null
+}
+
+export async function getInvoiceStubs(): Promise<InvoiceStub[]> {
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return []
+
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('id, number, title, status, total_ht, chantier_id, issue_date')
+    .eq('organization_id', orgId)
+    .eq('is_archived', false)
+    .neq('status', 'cancelled')
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('[getInvoiceStubs]', error)
+    return []
+  }
+  return (data ?? []) as InvoiceStub[]
 }

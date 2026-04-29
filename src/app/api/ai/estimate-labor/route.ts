@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { APP_NAME } from '@/lib/brand'
-import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { fetchRAGContext } from '@/lib/ai/rag'
+import { getBusinessContext } from '@/lib/ai/business-context'
 
 const TEXT_MODEL = 'google/gemini-2.5-flash-lite'
 
@@ -47,9 +48,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Description et profils requis' }, { status: 400 })
   }
 
-  const [profileList, ragContext] = await Promise.all([
+  const [profileList, ragContext, businessCtx] = await Promise.all([
     Promise.resolve(profiles.map(p => `- ${p.designation} | ${p.rate}€/${p.unit}`).join('\n')),
     fetchRAGContext(orgId, description.trim()),
+    getBusinessContext(orgId),
   ])
 
   const ragSection = ragContext
@@ -59,7 +61,7 @@ export async function POST(req: NextRequest) {
   const messages = [
     {
       role: 'system',
-      content: `Tu es un assistant expert en estimation pour artisan BTP. Tu reçois la description d'un chantier et une liste de profils de main d'œuvre. Estime le nombre d'unités nécessaires pour chaque profil (heures, jours, etc. selon l'unité). Sois réaliste et légèrement conservateur. Réponds UNIQUEMENT avec un tableau JSON valide, rien d'autre.${ragSection}`,
+      content: `Tu es un assistant expert en estimation pour une entreprise du métier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}. Tu reçois la description d'un chantier et une liste de profils de main d'œuvre. Estime le nombre d'unités nécessaires pour chaque profil (heures, jours, etc. selon l'unité) en tenant compte des cadences et spécificités propres à ce métier. Sois réaliste et légèrement conservateur. Réponds UNIQUEMENT avec un tableau JSON valide, rien d'autre.${ragSection}`,
     },
     {
       role: 'user',
@@ -105,6 +107,9 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     if (err instanceof AIModuleDisabledError) {
       return NextResponse.json({ error: 'Module IA devis désactivé pour cette organisation.' }, { status: 403 })
+    }
+    if (err instanceof AIRateLimitError) {
+      return NextResponse.json({ error: err.message }, { status: 429 })
     }
     console.error('[ai/estimate-labor]', err)
     return NextResponse.json({ error: "Erreur lors de l'estimation IA" }, { status: 500 })

@@ -18,7 +18,7 @@ import {
 } from '@/lib/data/mutations/recurring'
 import { createClientInline } from '@/lib/data/mutations/clients'
 import { getClientDisplayName } from '@/lib/client'
-import { LEGAL_VAT_RATES, type VatConfig } from '@/lib/utils'
+import { LEGAL_VAT_RATES, type VatConfig, dateParis } from '@/lib/utils'
 import { getCatalogDocumentVatRate, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ export default function RecurringClient({
   const [formSendDay, setFormSendDay] = useState(1)
   const [formCustomDays, setFormCustomDays] = useState(30)
   const [formFirstDate, setFormFirstDate] = useState(
-    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    dateParis(Date.now() + 30 * 24 * 60 * 60 * 1000),
   )
   const [formConfirmDelay, setFormConfirmDelay] = useState(3)
   const [formAutoSendDelay, setFormAutoSendDelay] = useState<number | null>(null)
@@ -164,7 +164,7 @@ export default function RecurringClient({
     setFormFreq('monthly')
     setFormSendDay(1)
     setFormCustomDays(30)
-    setFormFirstDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+    setFormFirstDate(dateParis(Date.now() + 30 * 24 * 60 * 60 * 1000))
     setFormConfirmDelay(3)
     setFormAutoSendDelay(null)
     setFormItems([{ id: 1, desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, is_internal: false }])
@@ -346,7 +346,7 @@ export default function RecurringClient({
         </div>
         <button
           onClick={() => { resetForm(); setShowForm(true) }}
-          className="px-6 py-2.5 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20"
+          className="px-6 py-2.5 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap"
         >
           <Plus className="w-4 h-4" />
           Nouveau modèle
@@ -381,7 +381,7 @@ export default function RecurringClient({
                 <div className="flex items-center gap-2 ml-4 shrink-0">
                   {s.invoice_id && (
                     <Link
-                      href={`/finances/invoice-editor?id=${s.invoice_id}`}
+                      href={`/finances/invoice-editor?id=${s.invoice_id}&returnTo=${encodeURIComponent('/finances/recurring')}`}
                       className="px-4 py-2 rounded-full bg-accent text-black font-bold text-sm flex items-center gap-1.5 hover:scale-105 transition-all"
                     >
                       Vérifier & Envoyer
@@ -459,8 +459,8 @@ export default function RecurringClient({
 
       {/* ── Modal Transport ── */}
       {showTransport && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-sm shadow-2xl p-8 space-y-5">
+        <div className="modal-overlay z-[300]">
+          <div className="modal-panel space-y-5 sm:max-w-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center">
@@ -517,8 +517,8 @@ export default function RecurringClient({
 
       {/* ── Modal catalogue ── */}
       {showCatalog && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
+        <div className="modal-overlay z-[200]">
+          <div className="modal-panel flex flex-col">
             <div className="flex items-center justify-between p-6 pb-4 border-b border-[var(--elevation-border)]">
               <h3 className="text-lg font-bold text-primary">Ajouter depuis le catalogue</h3>
               <button onClick={() => { setShowCatalog(false); setCatalogSearch('') }} className="text-secondary hover:text-primary transition-colors"><X className="w-5 h-5" /></button>
@@ -616,8 +616,8 @@ export default function RecurringClient({
 
       {/* ── Modal nouveau client inline ── */}
       {newClientOpen && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="rounded-3xl bg-surface dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-lg shadow-2xl p-8 space-y-5">
+        <div className="modal-overlay z-[300]">
+          <div className="modal-panel space-y-5 sm:max-w-lg">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold text-primary">Nouveau client</h3>
               <button onClick={() => setNewClientOpen(false)} className="text-secondary hover:text-primary transition-colors"><X className="w-5 h-5" /></button>

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { AddressLink } from '@/components/shared/AddressLink'
@@ -22,19 +22,29 @@ import {
 } from 'lucide-react'
 import type { ChantierDetail, Tache, TacheStatus, Pointage, ChantierPhoto, ChantierNote, Equipe, ChantierPlanning } from '@/lib/data/queries/chantiers'
 import type { QuoteStub } from '@/lib/data/queries/quotes'
+import type { TeamMember } from '@/lib/data/queries/team'
 import { getQuoteItemsForSuggestions } from '@/lib/data/mutations/quotes'
 import {
   createTache, updateTache, deleteTache, reorderTaches,
   createPointage, deletePointage,
   createChantierNote, deleteChantierNote,
-  uploadChantierPhoto, deleteChantierPhoto, updateChantierPhotoCaption,
+  uploadChantierPhoto, deleteChantierPhoto, updateChantierPhotoCaption, updateChantierPhotoTitle,
+  togglePhotoReportFlag,
   generateSituationInvoice,
   updateChantier,
-  createEquipe, deleteEquipe, addEquipeMembre, removeEquipeMembre,
+  createEquipe, deleteEquipe, addEquipeMembre, removeEquipeMembre, updateEquipeMembreTaux, updateEquipeMembreProfile,
   assignEquipeToChantier, removeEquipeFromChantier,
   createChantierPlanning, deleteChantierPlanning,
 } from '@/lib/data/mutations/chantiers'
 import { sendChantierReportEmail } from '@/lib/data/mutations/chantier-report-email'
+import { sendChantierPhotosEmail } from '@/lib/data/mutations/chantier-photos-email'
+import { todayParis } from '@/lib/utils'
+import RentabiliteTab from './RentabiliteTab'
+import IndividualMembersSection from './IndividualMembersSection'
+import JalonsTab from './JalonsTab'
+import type { ChantierProfitability } from '@/lib/data/queries/chantier-profitability'
+import type { ChantierJalon } from '@/lib/data/queries/chantier-jalons'
+import ChantierAIAssistant from '@/components/ai/ChantierAIAssistant'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -48,7 +58,7 @@ function fmtHours(hours: number): string {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'taches' | 'planning' | 'pointages' | 'photos' | 'notes' | 'equipes'
+type Tab = 'taches' | 'jalons' | 'planning' | 'pointages' | 'photos' | 'notes' | 'equipes' | 'rentabilite'
 
 const STATUS_CYCLE: Record<TacheStatus, TacheStatus> = {
   a_faire: 'en_cours',
@@ -98,10 +108,15 @@ const USER_COLORS = [
   { bg: 'bg-orange-500/20', border: 'border-orange-400/50', text: 'text-orange-600 dark:text-orange-300' },
 ]
 
-function getUserColorIdx(userId: string): number {
+function getUserColorIdx(userId: string | null | undefined): number {
+  if (!userId) return 0
   let hash = 0
   for (const ch of userId) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffffffff
   return Math.abs(hash) % USER_COLORS.length
+}
+
+function getPointageKey(p: { user_id: string | null | undefined; member_id?: string | null }): string {
+  return p.user_id ?? `member_${p.member_id ?? 'unknown'}`
 }
 
 function getMonday(date: Date): Date {
@@ -118,6 +133,11 @@ function getLocalDateStr(date: Date): string {
   const m = String(date.getMonth() + 1).padStart(2, '0')
   const d = String(date.getDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
+}
+
+function dateFromYmd(date: string): Date {
+  const [year, month, day] = date.split('-').map(Number)
+  return new Date(year, month - 1, day, 12, 0, 0)
 }
 
 function fmtWeekLabel(monday: Date): string {
@@ -246,6 +266,7 @@ function WeeklyPlanningView({
   plannings,
   chantier,
   equipes,
+  individualMembers,
   onAddPlanning,
   onDeletePlanning,
 }: {
@@ -253,26 +274,43 @@ function WeeklyPlanningView({
   plannings: ChantierPlanning[]
   chantier: ChantierDetail
   equipes: Equipe[]
-  onAddPlanning: (data: { plannedDate: string; startTime: string; endTime: string; label: string; equipeId: string | null; teamSize: number; notes: string }) => Promise<void>
+  individualMembers: import('@/lib/data/queries/members').IndividualMember[]
+  onAddPlanning: (data: { plannedDate: string; startTime: string; endTime: string; label: string; equipeId: string | null; memberId: string | null; teamSize: number; notes: string }) => Promise<string | null>
   onDeletePlanning: (id: string) => Promise<void>
 }) {
-  const [weekStart, setWeekStart] = useState(() => getMonday(new Date()))
+  const [selectedDate, setSelectedDate] = useState(() => dateFromYmd(todayParis()))
+  const weekStart = useMemo(() => getMonday(selectedDate), [selectedDate])
+
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+
+  const [viewMode, setViewMode] = useState<'jour' | 'semaine' | null>(null)
+  const effectiveView = viewMode ?? (isMobile ? 'jour' : 'semaine')
+
   const [showAddForm, setShowAddForm] = useState(false)
-  const [addForm, setAddForm] = useState({ date: '', startTime: '08:00', endTime: '12:00', label: '', equipeId: '', teamSize: 1, notes: '' })
+  const [addForm, setAddForm] = useState(() => ({ date: todayParis(), startTime: '08:00', endTime: '12:00', label: '', equipeId: '', memberId: '', teamSize: 1, notes: '' }))
   const [addLoading, setAddLoading] = useState(false)
+  const [addError, setAddError] = useState<string | null>(null)
 
   const byDayPlannings = plannings.reduce<Record<string, ChantierPlanning[]>>((acc, p) => {
     acc[p.planned_date] = [...(acc[p.planned_date] ?? []), p]
     return acc
   }, {})
 
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart)
-    d.setDate(weekStart.getDate() + i)
+  const days = Array.from({ length: effectiveView === 'jour' ? 1 : 7 }, (_, i) => {
+    const d = new Date(effectiveView === 'jour' ? selectedDate : weekStart)
+    if (effectiveView !== 'jour') {
+      d.setDate(weekStart.getDate() + i)
+    }
     return d
   })
 
-  const todayStr = getLocalDateStr(new Date())
+  const todayStr = todayParis()
   const dayNames = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 
   const byDay = pointages.reduce<Record<string, Pointage[]>>((acc, p) => {
@@ -309,34 +347,45 @@ function WeeklyPlanningView({
       )}
 
       <div className="card p-4">
-        <div className="flex items-center justify-between mb-4">
-          <button
-            onClick={() => { const d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeekStart(d) }}
-            className="p-2 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors border border-[var(--elevation-border)]"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <div className="text-center">
-            <p className="text-sm font-bold text-primary">{fmtWeekLabel(weekStart)}</p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+          <div className="flex items-center justify-between sm:justify-start w-full sm:w-auto gap-2">
             <button
-              onClick={() => setWeekStart(getMonday(new Date()))}
-              className="text-xs text-accent hover:underline mt-0.5"
+              onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() - (effectiveView === 'jour' ? 1 : 7)); setSelectedDate(d) }}
+              className="p-2 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors border border-[var(--elevation-border)]"
             >
-              Aujourd'hui
+              <ChevronLeft className="w-4 h-4" />
             </button>
-          </div>
-          <div className="flex items-center gap-2">
+            <div className="text-center flex-1 sm:flex-none sm:min-w-[140px]">
+              <p className="text-sm font-bold text-primary">
+                {effectiveView === 'jour'
+                  ? selectedDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short' })
+                  : fmtWeekLabel(weekStart)}
+              </p>
+              <button
+                onClick={() => setSelectedDate(dateFromYmd(todayParis()))}
+                className="text-xs text-accent hover:underline mt-0.5"
+              >
+                Aujourd'hui
+              </button>
+            </div>
             <button
-              onClick={() => setShowAddForm(v => !v)}
-              className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors flex items-center gap-1.5 ${showAddForm ? 'bg-accent/10 border-accent/40 text-accent' : 'border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
-            >
-              <Plus className="w-3 h-3" /> Planifier
-            </button>
-            <button
-              onClick={() => { const d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeekStart(d) }}
+              onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() + (effectiveView === 'jour' ? 1 : 7)); setSelectedDate(d) }}
               className="p-2 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors border border-[var(--elevation-border)]"
             >
               <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+          
+          <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-2">
+            <div className="flex bg-base/50 p-1 rounded-lg border border-[var(--elevation-border)]">
+               <button onClick={() => setViewMode('jour')} className={`px-3 py-1.5 text-xs rounded font-medium ${effectiveView === 'jour' ? 'bg-surface shadow-sm text-primary' : 'text-secondary hover:text-primary'}`}>Jour</button>
+               <button onClick={() => setViewMode('semaine')} className={`px-3 py-1.5 text-xs rounded font-medium ${effectiveView === 'semaine' ? 'bg-surface shadow-sm text-primary' : 'text-secondary hover:text-primary'}`}><span className="hidden sm:inline">Semaine</span><span className="sm:hidden">Sem.</span></button>
+            </div>
+            <button
+              onClick={() => setShowAddForm(v => !v)}
+              className={`text-xs font-semibold px-3 py-2 rounded-lg border transition-colors flex items-center gap-1.5 ${showAddForm ? 'bg-accent/10 border-accent/40 text-accent' : 'border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
+            >
+              <Plus className="w-3 h-3" /> <span className="hidden sm:inline">Planifier</span>
             </button>
           </div>
         </div>
@@ -350,15 +399,30 @@ function WeeklyPlanningView({
                 <input type="date" className="input w-full text-sm" value={addForm.date} onChange={e => setAddForm(f => ({...f, date: e.target.value}))} />
               </div>
               <div>
-                <label className="text-xs font-semibold text-secondary block mb-1">Équipe / Personne *</label>
+                <label className="text-xs font-semibold text-secondary block mb-1">Équipe</label>
                 <select className="input w-full text-sm" value={addForm.equipeId} onChange={e => {
                   const eq = equipes.find(eq => eq.id === e.target.value)
-                  setAddForm(f => ({...f, equipeId: e.target.value, label: eq ? eq.name : f.label, teamSize: eq ? eq.membres.length || 1 : f.teamSize}))
+                  setAddForm(f => ({...f, equipeId: e.target.value, memberId: '', label: eq ? eq.name : f.label, teamSize: eq ? eq.membres.length || 1 : f.teamSize}))
                 }}>
-                  <option value="">Saisie libre</option>
+                  <option value="">— Aucune équipe —</option>
                   {equipes.map(eq => <option key={eq.id} value={eq.id}>{eq.name} ({eq.membres.length} pers.)</option>)}
                 </select>
               </div>
+              {individualMembers.length > 0 && (
+                <div>
+                  <label className="text-xs font-semibold text-secondary block mb-1">Membre individuel</label>
+                  <select className="input w-full text-sm" value={addForm.memberId} onChange={e => {
+                    const m = individualMembers.find(m => m.id === e.target.value)
+                    setAddForm(f => ({...f, memberId: e.target.value, equipeId: '', label: m ? [m.prenom, m.name].filter(Boolean).join(' ') : f.label, teamSize: 1}))
+                  }}>
+                    <option value="">— Aucun membre —</option>
+                    {individualMembers.map(m => {
+                      const fullName = [m.prenom, m.name].filter(Boolean).join(' ') || m.name
+                      return <option key={m.id} value={m.id}>{fullName}{m.role_label ? ` · ${m.role_label}` : ''}{m.taux_horaire != null ? ` · ${m.taux_horaire}€/h` : ''}</option>
+                    })}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="text-xs font-semibold text-secondary block mb-1">Libellé *</label>
                 <input className="input w-full text-sm" placeholder="Équipe A, Jean-Pierre, Sous-traitant..." value={addForm.label} onChange={e => setAddForm(f => ({...f, label: e.target.value}))} />
@@ -392,16 +456,25 @@ function WeeklyPlanningView({
               <label className="text-xs font-semibold text-secondary block mb-1">Notes</label>
               <input className="input w-full text-sm" placeholder="Consignes, accès, matériel..." value={addForm.notes} onChange={e => setAddForm(f => ({...f, notes: e.target.value}))} />
             </div>
+            {addError && (
+              <p className="text-xs text-red-500 px-1">{addError}</p>
+            )}
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setShowAddForm(false)} className="text-xs text-secondary hover:text-primary px-3 py-1.5">Annuler</button>
+              <button onClick={() => { setShowAddForm(false); setAddError(null) }} className="text-xs text-secondary hover:text-primary px-3 py-1.5">Annuler</button>
               <button
                 disabled={addLoading || !addForm.date || !addForm.label.trim()}
                 onClick={async () => {
                   setAddLoading(true)
-                  await onAddPlanning({ plannedDate: addForm.date, startTime: addForm.startTime, endTime: addForm.endTime, label: addForm.label, equipeId: addForm.equipeId || null, teamSize: addForm.teamSize, notes: addForm.notes })
+                  setAddError(null)
+                  const err = await onAddPlanning({ plannedDate: addForm.date, startTime: addForm.startTime, endTime: addForm.endTime, label: addForm.label, equipeId: addForm.equipeId || null, memberId: addForm.memberId || null, teamSize: addForm.teamSize, notes: addForm.notes })
                   setAddLoading(false)
-                  setShowAddForm(false)
-                  setAddForm(f => ({...f, date: '', label: '', equipeId: '', notes: ''}))
+                  if (err) {
+                    setAddError(err)
+                  } else {
+                    setShowAddForm(false)
+                    setAddError(null)
+                    setAddForm(f => ({...f, date: todayParis(), label: '', equipeId: '', memberId: '', notes: ''}))
+                  }
                 }}
                 className="btn-primary text-xs py-1.5 px-4"
               >
@@ -412,7 +485,7 @@ function WeeklyPlanningView({
         )}
 
         <div className="overflow-x-auto">
-          <div style={{ minWidth: 700 }}>
+          <div style={{ minWidth: days.length === 1 ? '100%' : 700 }}>
             {/* Day headers */}
             <div className="flex mb-1 ml-14">
               {days.map((day, i) => {
@@ -422,7 +495,7 @@ function WeeklyPlanningView({
                 return (
                   <div key={i} className={`flex-1 text-center py-2 rounded-t-lg ${isToday ? 'bg-accent/10' : ''}`}>
                     <p className={`text-xs font-semibold uppercase tracking-wider ${isToday ? 'text-accent' : 'text-secondary'}`}>
-                      {dayNames[i]}
+                      {day.toLocaleDateString('fr-FR', { weekday: 'short' })}
                     </p>
                     <div className="flex justify-center mt-1 mb-0.5">
                       <div className={`w-7 h-7 flex items-center justify-center rounded-full text-sm font-bold ${isToday ? 'bg-accent text-white' : 'text-primary'}`}>
@@ -496,16 +569,16 @@ function WeeklyPlanningView({
                       const startH = h + m / 60
                       const topPx = Math.max(0, (startH - CAL_START_H) * ROW_H)
                       const heightPx = Math.max(p.hours * ROW_H, 26)
-                      const col = USER_COLORS[getUserColorIdx(p.user_id)]
+                      const col = USER_COLORS[getUserColorIdx(getPointageKey(p))]
                       return (
                         <div
                           key={p.id}
-                          className={`absolute left-0.5 right-0.5 rounded-lg px-1.5 py-1 border z-10 overflow-hidden ${col.bg} ${col.border}`}
+                          className={`absolute left-0.5 right-0.5 rounded sm:rounded-lg p-0.5 sm:px-1.5 sm:py-1 border z-10 overflow-hidden ${col.bg} ${col.border}`}
                           style={{ top: topPx, height: heightPx }}
                           title={`${p.user_name} · ${fmtHours(p.hours)}${p.tache_title ? ` · ${p.tache_title}` : ''}`}
                         >
-                          <p className={`text-[10px] font-bold leading-tight truncate ${col.text}`}>{p.user_name}</p>
-                          <p className={`text-[10px] leading-tight opacity-80 truncate ${col.text}`}>{p.start_time.slice(0, 5)} · {fmtHours(p.hours)}</p>
+                          <p className={`text-[9px] sm:text-[10px] font-bold leading-tight truncate ${col.text}`}>{p.user_name}</p>
+                          <p className={`text-[8px] sm:text-[10px] leading-tight opacity-80 truncate ${col.text}`}>{p.start_time.slice(0, 5)} · {fmtHours(p.hours)}</p>
                         </div>
                       )
                     })}
@@ -513,7 +586,7 @@ function WeeklyPlanningView({
                     {noTime.length > 0 && (
                       <div className="absolute top-1 left-0.5 right-0.5 z-10 flex flex-col gap-0.5">
                         {noTime.map(p => {
-                          const col = USER_COLORS[getUserColorIdx(p.user_id)]
+                          const col = USER_COLORS[getUserColorIdx(getPointageKey(p))]
                           return (
                             <div
                               key={p.id}
@@ -539,16 +612,16 @@ function WeeklyPlanningView({
                       return (
                         <div
                           key={`pl-${pl.id}`}
-                          className="absolute left-0.5 right-0.5 rounded-lg p-1.5 z-5 overflow-hidden group/pl cursor-default flex flex-col"
+                          className="absolute left-0.5 right-0.5 rounded sm:rounded-lg p-0.5 sm:p-1.5 z-5 overflow-hidden group/pl cursor-default flex flex-col"
                           style={{ top: topPx, height: heightPx, backgroundColor: bgColor, border: `1.5px dashed ${borderColor}` }}
                           title={`PRÉVU · ${pl.label} · ${pl.team_size} pers.${pl.notes ? ` · ${pl.notes}` : ''}`}
                         >
-                          <p className="text-[9px] font-bold leading-tight truncate flex items-center gap-1" style={{ color: borderColor }}>
-                            <span className="text-[8px] font-bold uppercase tracking-widest px-1 py-0.5 rounded-[3px]" style={{ backgroundColor: borderColor, color: 'white' }}>Prévu</span>
+                          <p className="text-[8px] sm:text-[9px] font-bold leading-tight truncate flex items-center gap-1" style={{ color: borderColor }}>
+                            <span className="text-[7px] sm:text-[8px] font-bold uppercase tracking-widest px-1 py-0.5 rounded-[3px]" style={{ backgroundColor: borderColor, color: 'white' }}>Prévu</span>
                             {pl.label}
                           </p>
-                          <p className="text-[9px] leading-tight opacity-70 truncate mt-0.5" style={{ color: borderColor }}>{pl.team_size} pers. · {pl.start_time.slice(0, 5)}{pl.end_time ? `→${pl.end_time.slice(0, 5)}` : ''}</p>
-                          {pl.notes && <p className="text-[9px] leading-tight opacity-80 mt-1 whitespace-pre-wrap break-words overflow-y-auto" style={{ color: borderColor }}>{pl.notes}</p>}
+                          <p className="text-[8px] sm:text-[9px] leading-tight opacity-70 truncate mt-0.5" style={{ color: borderColor }}>{pl.team_size} pers. · {pl.start_time.slice(0, 5)}{pl.end_time ? `→${pl.end_time.slice(0, 5)}` : ''}</p>
+                          {pl.notes && <p className="text-[8px] sm:text-[9px] leading-tight opacity-80 mt-1 whitespace-pre-wrap break-words overflow-y-auto" style={{ color: borderColor }}>{pl.notes}</p>}
                           <button onClick={() => onDeletePlanning(pl.id)} className="absolute top-1 right-1 opacity-0 group-hover/pl:opacity-100 transition-opacity text-red-500 hover:text-red-600 bg-[#fff9] rounded p-0.5"><X className="w-2.5 h-2.5" /></button>
                         </div>
                       )
@@ -667,11 +740,13 @@ function EquipesTab({
   allEquipes: initialAllEquipes,
   chantierEquipes: initialChantierEquipes,
   linkedQuoteId,
+  orgMembers,
 }: {
   chantierId: string
   allEquipes: Equipe[]
   chantierEquipes: Equipe[]
   linkedQuoteId?: string | null
+  orgMembers: TeamMember[]
 }) {
   const [allEquipes, setAllEquipes] = useState(initialAllEquipes)
   const [assignedIds, setAssignedIds] = useState<Set<string>>(
@@ -682,7 +757,8 @@ function EquipesTab({
   const [newEquipeColor, setNewEquipeColor] = useState('#6366f1')
   const [createLoading, setCreateLoading] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [memberForms, setMemberForms] = useState<Record<string, { name: string; role: string }>>({})
+  const [memberForms, setMemberForms] = useState<Record<string, { name: string; role: string; taux: string; profileId: string | null }>>({})
+  const [editingMembreTaux, setEditingMembreTaux] = useState<Record<string, string>>({})
 
   // Team suggestions from quote MO lines
   const [teamSuggestions, setTeamSuggestions] = useState<TeamSuggestion[]>([])
@@ -770,14 +846,27 @@ function EquipesTab({
   const handleAddMembre = async (equipeId: string) => {
     const form = memberForms[equipeId]
     if (!form?.name.trim()) return
-    const { membreId, error } = await addEquipeMembre(equipeId, { name: form.name.trim(), roleLabel: form.role.trim() || null })
+    const taux = form.taux ? parseFloat(form.taux) : null
+    const profileId = form.profileId ?? null
+    const { membreId, error } = await addEquipeMembre(equipeId, { name: form.name.trim(), roleLabel: form.role.trim() || null, tauxHoraire: taux, profileId })
     if (!error && membreId) {
       setAllEquipes(prev => prev.map(e => e.id !== equipeId ? e : {
         ...e,
-        membres: [...e.membres, { id: membreId, equipe_id: equipeId, name: form.name.trim(), role_label: form.role.trim() || null, profile_id: null }],
+        membres: [...e.membres, { id: membreId, equipe_id: equipeId, name: form.name.trim(), role_label: form.role.trim() || null, profile_id: profileId, taux_horaire: taux }],
       }))
-      setMemberForms(prev => ({ ...prev, [equipeId]: { name: '', role: '' } }))
+      setMemberForms(prev => ({ ...prev, [equipeId]: { name: '', role: '', taux: '', profileId: null } }))
     }
+  }
+
+  const handleSaveMembreTaux = async (equipeId: string, membreId: string) => {
+    const raw = editingMembreTaux[membreId]
+    const taux = raw ? parseFloat(raw) : null
+    await updateEquipeMembreTaux(membreId, taux)
+    setAllEquipes(prev => prev.map(e => e.id !== equipeId ? e : {
+      ...e,
+      membres: e.membres.map(m => m.id !== membreId ? m : { ...m, taux_horaire: taux }),
+    }))
+    setEditingMembreTaux(prev => { const s = { ...prev }; delete s[membreId]; return s })
   }
 
   const handleRemoveMembre = async (equipeId: string, membreId: string) => {
@@ -903,7 +992,7 @@ function EquipesTab({
       {allEquipes.map(equipe => {
         const isAssigned = assignedIds.has(equipe.id)
         const isOpen = expanded.has(equipe.id)
-        const mForm = memberForms[equipe.id] ?? { name: '', role: '' }
+        const mForm = memberForms[equipe.id] ?? { name: '', role: '', taux: '', profileId: null }
         return (
           <div key={equipe.id} className={`card overflow-hidden border-2 transition-colors ${isAssigned ? 'border-accent/40' : 'border-[var(--elevation-border)]'}`}>
             <div className="flex items-center gap-3 p-4">
@@ -942,38 +1031,247 @@ function EquipesTab({
                       {m.name[0]?.toUpperCase() ?? '?'}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-primary truncate">{m.name}</p>
+                      <p className="text-sm font-semibold text-primary truncate flex items-center gap-1.5">
+                        {m.name}
+                        {m.profile_id ? (
+                          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500" title="Lié à un compte — taux appliqué aux pointages">Lié</span>
+                        ) : (
+                          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500" title="Externe — pas de pointage relié">Externe</span>
+                        )}
+                      </p>
                       {m.role_label && <p className="text-xs text-secondary">{m.role_label}</p>}
+                      {!m.profile_id && orgMembers.length > 0 && (
+                        <select
+                          className="mt-1 input text-xs py-0.5 px-1 max-w-[180px]"
+                          defaultValue=""
+                          onChange={async e => {
+                            const uid = e.target.value
+                            if (!uid) return
+                            await updateEquipeMembreProfile(m.id, uid)
+                            setAllEquipes(prev => prev.map(eq => eq.id !== equipe.id ? eq : {
+                              ...eq,
+                              membres: eq.membres.map(mm => mm.id !== m.id ? mm : { ...mm, profile_id: uid }),
+                            }))
+                          }}
+                        >
+                          <option value="" disabled>Lier à un compte…</option>
+                          {orgMembers.map(om => (
+                            <option key={om.user_id} value={om.user_id}>
+                              {om.full_name ?? om.email}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </div>
+                    {/* Taux horaire inline */}
+                    {editingMembreTaux[m.id] !== undefined ? (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          className="input w-20 text-sm py-1 px-2"
+                          placeholder="€/h"
+                          value={editingMembreTaux[m.id]}
+                          onChange={e => setEditingMembreTaux(prev => ({ ...prev, [m.id]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') handleSaveMembreTaux(equipe.id, m.id) }}
+                          autoFocus
+                        />
+                        <button onClick={() => handleSaveMembreTaux(equipe.id, m.id)} className="p-1 text-accent hover:text-accent/80 transition-colors">
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => setEditingMembreTaux(prev => { const s = { ...prev }; delete s[m.id]; return s })} className="p-1 text-secondary hover:text-primary transition-colors">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setEditingMembreTaux(prev => ({ ...prev, [m.id]: m.taux_horaire != null ? String(m.taux_horaire) : '' }))}
+                        className="flex items-center gap-1 text-xs text-secondary hover:text-primary transition-colors flex-shrink-0 px-2 py-1 rounded-lg hover:bg-[var(--elevation-1)]"
+                        title="Définir le taux horaire"
+                      >
+                        {m.taux_horaire != null ? (
+                          <><Euro className="w-3 h-3" />{m.taux_horaire}€/h<Pencil className="w-3 h-3 ml-0.5 opacity-50" /></>
+                        ) : (
+                          <><Euro className="w-3 h-3 opacity-40" /><span className="opacity-40">€/h</span></>
+                        )}
+                      </button>
+                    )}
                     <button onClick={() => handleRemoveMembre(equipe.id, m.id)} className="text-secondary hover:text-red-500 transition-colors flex-shrink-0">
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 ))}
-                <div className="flex gap-2 pt-1">
-                  <input
-                    className="input flex-1 text-sm"
-                    placeholder="Prénom Nom"
-                    value={mForm.name}
-                    onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, name: e.target.value } }))}
-                    onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
-                  />
-                  <input
-                    className="input w-36 text-sm"
-                    placeholder="Rôle (opt.)"
-                    value={mForm.role}
-                    onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, role: e.target.value } }))}
-                    onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
-                  />
-                  <button onClick={() => handleAddMembre(equipe.id)} disabled={!mForm.name.trim()} className="btn-primary px-3 flex items-center gap-1">
-                    <UserPlus className="w-3.5 h-3.5" />
-                  </button>
+                <div className="space-y-2 pt-1">
+                  {/* Sélectionner un membre de l'orga (lie au compte → taux suit les pointages) */}
+                  {orgMembers.length > 0 && (
+                    <div className="flex gap-2">
+                      <select
+                        className="input flex-1 text-sm"
+                        onChange={e => {
+                          const member = orgMembers.find(m => m.user_id === e.target.value)
+                          if (member) {
+                            setMemberForms(prev => ({ ...prev, [equipe.id]: {
+                              name: member.full_name ?? member.email,
+                              role: member.job_title ?? '',
+                              taux: member.labor_cost_per_hour != null ? String(member.labor_cost_per_hour) : '',
+                              profileId: member.user_id,
+                            } }))
+                            e.target.value = ''
+                          }
+                        }}
+                        defaultValue=""
+                      >
+                        <option value="" disabled>Lier à un compte (recommandé)…</option>
+                        {orgMembers
+                          .filter(m => !equipe.membres.some(em => em.profile_id === m.user_id))
+                          .map(m => (
+                            <option key={m.user_id} value={m.user_id}>
+                              {m.full_name ?? m.email}{m.job_title ? ` — ${m.job_title}` : ''}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
+                  {/* Ou saisie libre (intervenant externe sans compte) */}
+                  <div className="flex gap-2">
+                    <input
+                      className="input flex-1 text-sm"
+                      placeholder={mForm.profileId ? "Nom (lié au compte)" : "Ou saisir un nom manuellement"}
+                      value={mForm.name}
+                      onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, name: e.target.value } }))}
+                      onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
+                    />
+                    <input
+                      className="input w-28 text-sm"
+                      placeholder="Rôle (opt.)"
+                      value={mForm.role}
+                      onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, role: e.target.value } }))}
+                      onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      className="input w-20 text-sm"
+                      placeholder="€/h"
+                      value={mForm.taux ?? ''}
+                      onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, taux: e.target.value } }))}
+                      onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
+                    />
+                    <button onClick={() => handleAddMembre(equipe.id)} disabled={!mForm.name.trim()} className="btn-primary px-3 flex items-center gap-1">
+                      <UserPlus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {mForm.profileId && (
+                    <p className="text-xs text-emerald-500 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Lié au compte — son taux sera utilisé pour ses pointages
+                      <button
+                        type="button"
+                        onClick={() => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, profileId: null } }))}
+                        className="ml-1 text-secondary hover:text-primary underline"
+                      >
+                        annuler le lien
+                      </button>
+                    </p>
+                  )}
                 </div>
               </div>
             )}
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// ─── Rapports PDF membres individuels ────────────────────────────────────────
+
+type ReportMember = {
+  id: string          // member_id (fantôme) ou user_id (auth)
+  idType: 'member' | 'user'
+  fullName: string
+  roleLabel?: string | null
+}
+
+function MemberHoursReports({
+  pointages,
+  individualMembers,
+}: {
+  pointages: Pointage[]
+  individualMembers: import('@/lib/data/queries/members').IndividualMember[]
+}) {
+  // Construire la liste dédupliquée de tous les membres qui ont pointé
+  const members = React.useMemo<ReportMember[]>(() => {
+    const seen = new Set<string>()
+    const result: ReportMember[] = []
+
+    for (const p of pointages) {
+      if (p.member_id && !seen.has(p.member_id)) {
+        seen.add(p.member_id)
+        const info = individualMembers.find(m => m.id === p.member_id)
+        const fullName = info
+          ? ([info.prenom, info.name].filter(Boolean).join(' ') || info.name)
+          : p.user_name
+        result.push({ id: p.member_id, idType: 'member', fullName, roleLabel: info?.role_label })
+      } else if (p.user_id && !seen.has(p.user_id)) {
+        seen.add(p.user_id)
+        result.push({ id: p.user_id, idType: 'user', fullName: p.user_name })
+      }
+    }
+
+    return result.sort((a, b) => a.fullName.localeCompare(b.fullName, 'fr'))
+  }, [pointages, individualMembers])
+
+  const thisMonth = new Date().toISOString().slice(0, 7)
+  const [reportMonths, setReportMonths] = React.useState<Record<string, string>>({})
+  const getMonth = (id: string) => reportMonths[id] ?? thisMonth
+
+  const handleDownload = (m: ReportMember) => {
+    const month = getMonth(m.id)
+    const [y, mo] = month.split('-').map(Number)
+    const dateFrom = `${month}-01`
+    const dateTo = new Date(y, mo, 0).toISOString().slice(0, 10)
+    const params = new URLSearchParams({ from: dateFrom, to: dateTo, download: '1', type: m.idType })
+    window.open(`/api/pdf/member/${m.id}?${params.toString()}`, '_blank')
+  }
+
+  if (members.length === 0) return null
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="p-4 border-b border-[var(--elevation-border)] flex items-center gap-2">
+        <Download className="w-4 h-4 text-accent" />
+        <p className="font-bold text-primary text-sm">Rapports d&apos;heures — par membre</p>
+      </div>
+      <div className="divide-y divide-[var(--elevation-border)]">
+        {members.map(m => (
+          <div key={m.id} className="flex items-center gap-3 p-3">
+            <div className="w-8 h-8 rounded-full bg-accent/15 text-accent flex items-center justify-center font-bold text-sm flex-shrink-0">
+              {(m.fullName?.[0] ?? '?').toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm text-primary truncate">{m.fullName}</p>
+              {m.roleLabel && <p className="text-xs text-secondary">{m.roleLabel}</p>}
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <input
+                type="month"
+                className="input text-xs px-1.5 py-1 h-7 w-32"
+                value={getMonth(m.id)}
+                onChange={e => setReportMonths(prev => ({ ...prev, [m.id]: e.target.value }))}
+              />
+              <button
+                onClick={() => handleDownload(m)}
+                className="btn-secondary text-xs flex items-center gap-1.5 py-1 px-2.5"
+                title="Télécharger le rapport d'heures PDF"
+              >
+                <Download className="w-3.5 h-3.5" /> PDF
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -991,6 +1289,14 @@ export default function ChantierDetailClient({
   initialPlannings,
   linkableQuotes,
   taskLibraryTitles,
+  orgMembers,
+  initialProfitability,
+  initialJalons,
+  initialIndividualMembers = [],
+  orgPhantomMembers = [],
+  invoiceStubs = [],
+  orgSector = null,
+  materials = [],
 }: {
   chantier: ChantierDetail
   initialTaches: Tache[]
@@ -1002,6 +1308,14 @@ export default function ChantierDetailClient({
   initialPlannings: ChantierPlanning[]
   linkableQuotes: QuoteStub[]
   taskLibraryTitles: string[]
+  orgMembers: TeamMember[]
+  initialProfitability: ChantierProfitability
+  initialJalons: ChantierJalon[]
+  initialIndividualMembers?: import('@/lib/data/queries/members').IndividualMember[]
+  orgPhantomMembers?: import('@/lib/data/queries/members').IndividualMember[]
+  invoiceStubs?: import('@/lib/data/queries/invoices').InvoiceStub[]
+  orgSector?: string | null
+  materials?: import('@/lib/data/queries/catalog').CatalogMaterial[]
 }) {
   const router = useRouter()
 
@@ -1013,13 +1327,17 @@ export default function ChantierDetailClient({
   const [plannings, setPlannings] = useState(initialPlannings)
   const [tab, setTab] = useState<Tab>('taches')
 
+  useEffect(() => {
+    setPlannings(initialPlannings)
+  }, [initialPlannings])
+
   // Tâches
   const [newTacheTitle, setNewTacheTitle] = useState('')
   const [newTacheDue, setNewTacheDue] = useState('')
   const [tacheLoading, setTacheLoading] = useState(false)
 
   // Pointages
-  const [ptDate, setPtDate] = useState(new Date().toISOString().split('T')[0])
+  const [ptDate, setPtDate] = useState(todayParis())
   const [ptStartTime, setPtStartTime] = useState('')
   const [ptHoursInt, setPtHoursInt] = useState('')
   const [ptMinutes, setPtMinutes] = useState('0')
@@ -1036,8 +1354,16 @@ export default function ChantierDetailClient({
   const [photoLoading, setPhotoLoading] = useState(false)
   // Lightbox
   const [lightboxPhoto, setLightboxPhoto] = useState<ChantierPhoto | null>(null)
+  const [lightboxTitle, setLightboxTitle] = useState('')
   const [lightboxCaption, setLightboxCaption] = useState('')
   const [lightboxSaving, setLightboxSaving] = useState(false)
+  // Sélection multiple + envoi client
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<string>>(new Set())
+  const [showSendPhotosPanel, setShowSendPhotosPanel] = useState(false)
+  const [photosEmailMsg, setPhotosEmailMsg] = useState('')
+  const [photosEmailStatus, setPhotosEmailStatus] = useState<'idle'|'sending'|'done'|'error'>('idle')
+  const [photosEmailError, setPhotosEmailError] = useState<string | null>(null)
+  const [photosEmailRecipient, setPhotosEmailRecipient] = useState('')
 
   // Contact référent — édition inline
   const [editContact, setEditContact] = useState(false)
@@ -1052,6 +1378,9 @@ export default function ChantierDetailClient({
   const [editQuoteLink, setEditQuoteLink] = useState(false)
   const [quoteLinkValue, setQuoteLinkValue] = useState(chantier.quote_id ?? '')
   const [quoteLinkSaving, setQuoteLinkSaving] = useState(false)
+
+  // Assistant IA chantier
+  const [showAIAssistant, setShowAIAssistant] = useState(false)
 
   const linkedQuote = linkableQuotes.find(q => q.id === linkedQuoteId) ?? null
 
@@ -1167,6 +1496,7 @@ export default function ChantierDetailClient({
         progress_note: null,
         completed_at: null,
         created_at: new Date().toISOString(),
+        jalon_id: null,
       }])
       setNewTacheTitle('')
       setNewTacheDue('')
@@ -1249,7 +1579,7 @@ export default function ChantierDetailClient({
         id: tacheId, chantier_id: chantier.id, title: sugg.title.trim(),
         description: null, status: 'a_faire', position: prev.length,
         assigned_to: null, due_date: null, progress_note: null,
-        completed_at: null, created_at: new Date().toISOString(),
+        completed_at: null, created_at: new Date().toISOString(), jalon_id: null,
       }])
       setTaskSuggestions(prev => prev.filter(s => s._id !== id))
       if (taskSuggestions.length === 1) setShowTaskSuggestions(false)
@@ -1267,7 +1597,7 @@ export default function ChantierDetailClient({
           id: tacheId, chantier_id: chantier.id, title: remaining[i].title.trim(),
           description: null, status: 'a_faire', position: startPos + i,
           assigned_to: null, due_date: null, progress_note: null,
-          completed_at: null, created_at: new Date().toISOString(),
+          completed_at: null, created_at: new Date().toISOString(), jalon_id: null,
         })
       }
     }
@@ -1278,17 +1608,19 @@ export default function ChantierDetailClient({
 
   // ── Plannings ──
 
-  const handleAddPlanning = async (data: { plannedDate: string; startTime: string; endTime: string; label: string; equipeId: string | null; teamSize: number; notes: string }) => {
+  const handleAddPlanning = async (data: { plannedDate: string; startTime: string; endTime: string; label: string; equipeId: string | null; memberId: string | null; teamSize: number; notes: string }): Promise<string | null> => {
     const { planningId, error } = await createChantierPlanning(chantier.id, {
       plannedDate: data.plannedDate,
       startTime: data.startTime || null,
       endTime: data.endTime || null,
       equipeId: data.equipeId,
+      memberId: data.memberId,
       label: data.label,
       teamSize: data.teamSize,
       notes: data.notes || null,
     })
-    if (!error && planningId) {
+    if (error) return error
+    if (planningId) {
       setPlannings(prev => [...prev, {
         id: planningId,
         chantier_id: chantier.id,
@@ -1296,12 +1628,14 @@ export default function ChantierDetailClient({
         start_time: data.startTime || null,
         end_time: data.endTime || null,
         equipe_id: data.equipeId,
+        member_id: data.memberId,
         label: data.label,
         team_size: data.teamSize,
         notes: data.notes || null,
         created_at: new Date().toISOString(),
       }])
     }
+    return null
   }
 
   const handleDeletePlanning = async (planningId: string) => {
@@ -1325,6 +1659,7 @@ export default function ChantierDetailClient({
       chantier_id: chantier.id,
       tache_id: ptTacheId || null,
       user_id: 'temp',
+      member_id: null,
       date: ptDate,
       hours,
       description: ptDesc || null,
@@ -1407,6 +1742,7 @@ export default function ChantierDetailClient({
       id: tempId, chantier_id: chantier.id, tache_id: null,
       storage_path: '', caption: null, taken_at: new Date().toISOString(),
       created_at: new Date().toISOString(), uploaded_by_name: 'Moi', url: localUrl,
+      include_in_report: false, shared_with_client_at: null, title: null,
     }, ...prev])
     if (fileInputRef.current) fileInputRef.current.value = ''
 
@@ -1418,7 +1754,7 @@ export default function ChantierDetailClient({
 
     if (!result.error && result.photo) {
       const rp = result.photo
-      setPhotos(prev => prev.map(p => p.id === tempId ? { ...rp, chantier_id: chantier.id, tache_id: null } : p))
+      setPhotos(prev => prev.map(p => p.id === tempId ? { ...rp, chantier_id: chantier.id, tache_id: null, include_in_report: false, shared_with_client_at: null, title: null } : p))
       URL.revokeObjectURL(localUrl)
     } else {
       setPhotos(prev => prev.filter(p => p.id !== tempId))
@@ -1441,7 +1777,9 @@ export default function ChantierDetailClient({
     setSituationLoading(false)
     if (error) return setSituationError(error)
     setShowSituationModal(false)
-    router.push(`/finances/invoice-editor?id=${invoiceId}`)
+    if (!invoiceId) return
+    const params = new URLSearchParams({ id: invoiceId, returnTo: `/chantiers/${chantier.id}` })
+    router.push(`/finances/invoice-editor?${params}`)
   }
 
   const statusCfg = CHANTIER_STATUS_CONFIG[chantier.status as keyof typeof CHANTIER_STATUS_CONFIG]
@@ -1450,16 +1788,18 @@ export default function ChantierDetailClient({
   // donePct est calculé plus haut depuis le state vivant `taches`
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: 'taches',    label: 'Tâches',    count: taches.length },
-    { id: 'planning',  label: 'Planning'   },
-    { id: 'pointages', label: 'Pointages', count: pointages.length },
-    { id: 'photos',    label: 'Photos',    count: photos.length },
-    { id: 'notes',     label: 'Journal',   count: notes.length },
-    { id: 'equipes',   label: 'Équipes'    },
+    { id: 'taches',      label: 'Tâches',      count: taches.length },
+    { id: 'jalons',      label: 'Jalons'       },
+    { id: 'planning',    label: 'Planning'     },
+    { id: 'pointages',   label: 'Pointages',   count: pointages.length },
+    { id: 'photos',      label: 'Photos',      count: photos.length },
+    { id: 'notes',       label: 'Journal',     count: notes.length },
+    { id: 'equipes',     label: 'Équipes'      },
+    { id: 'rentabilite', label: 'Rentabilité'  },
   ]
 
   return (
-    <div className="p-8 space-y-6 max-w-6xl mx-auto">
+    <div className="page-container space-y-6" style={{ maxWidth: '72rem' }}>
       {/* Back + planning global */}
       <div className="flex items-center justify-between">
         <button onClick={() => router.back()} className="flex items-center gap-2 text-sm text-secondary hover:text-primary transition-colors">
@@ -1584,7 +1924,7 @@ export default function ChantierDetailClient({
                 {linkedQuote ? (
                   <>
                     <Link
-                      href={`/finances/quote-editor?id=${linkedQuote.id}`}
+                      href={`/finances/quote-editor?id=${linkedQuote.id}&returnTo=${encodeURIComponent(`/chantiers/${chantier.id}`)}`}
                       className="text-sm flex items-center gap-1.5 text-accent hover:underline"
                     >
                       <FileText className="w-3.5 h-3.5 flex-shrink-0" />
@@ -1678,11 +2018,23 @@ export default function ChantierDetailClient({
                   <TrendingUp className="w-3.5 h-3.5" /> Situation de travaux
                 </button>
               )}
+              <Link
+                href={`/finances/invoice-editor?chantier=${chantier.id}&returnTo=${encodeURIComponent(`/chantiers/${chantier.id}`)}`}
+                className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+              >
+                <Euro className="w-3.5 h-3.5" /> Créer une facture
+              </Link>
               <button
                 onClick={() => setShowPdfPanel(v => !v)}
                 className={`btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5 ${showPdfPanel ? 'ring-2 ring-accent/40' : ''}`}
               >
                 <Download className="w-3.5 h-3.5" /> Rapport PDF
+              </button>
+              <button
+                onClick={() => setShowAIAssistant(true)}
+                className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Assistant IA
               </button>
             </div>
 
@@ -1771,26 +2123,43 @@ export default function ChantierDetailClient({
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-[var(--elevation-border)]">
-        {tabs.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`px-4 py-2.5 text-sm font-semibold transition-colors flex items-center gap-1.5 border-b-2 -mb-px ${
-              tab === t.id
-                ? 'border-accent text-primary'
-                : 'border-transparent text-secondary hover:text-primary'
-            }`}
+      {/* Tabs — select sur mobile, onglets sur desktop */}
+      <div>
+        {/* Mobile : select */}
+        <div className="sm:hidden">
+          <select
+            value={tab}
+            onChange={e => setTab(e.target.value as Tab)}
+            className="w-full px-4 py-2.5 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none"
           >
-            {t.label}
-            {t.count !== undefined && (
-              <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${tab === t.id ? 'bg-accent/20 text-accent' : 'bg-secondary/10 text-secondary'}`}>
-                {t.count}
-              </span>
-            )}
-          </button>
-        ))}
+            {tabs.map(t => (
+              <option key={t.id} value={t.id}>
+                {t.label}{t.count !== undefined ? ` (${t.count})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        {/* Desktop : onglets */}
+        <div className="hidden sm:flex gap-1 border-b border-[var(--elevation-border)] overflow-x-auto">
+          {tabs.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-2.5 text-sm font-semibold transition-colors flex items-center gap-1.5 border-b-2 -mb-px whitespace-nowrap flex-shrink-0 ${
+                tab === t.id
+                  ? 'border-accent text-primary'
+                  : 'border-transparent text-secondary hover:text-primary'
+              }`}
+            >
+              {t.label}
+              {t.count !== undefined && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${tab === t.id ? 'bg-accent/20 text-accent' : 'bg-secondary/10 text-secondary'}`}>
+                  {t.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── Tab: Tâches ── */}
@@ -1970,6 +2339,7 @@ export default function ChantierDetailClient({
           plannings={plannings}
           chantier={chantier}
           equipes={allEquipes}
+          individualMembers={initialIndividualMembers}
           onAddPlanning={handleAddPlanning}
           onDeletePlanning={handleDeletePlanning}
         />
@@ -2061,20 +2431,101 @@ export default function ChantierDetailClient({
               </tbody>
             </table>
           </div>
+
+          {/* Rapports PDF par membre */}
+          {pointages.length > 0 && (
+            <MemberHoursReports pointages={pointages} individualMembers={initialIndividualMembers} />
+          )}
         </div>
       )}
 
       {/* ── Tab: Photos ── */}
       {tab === 'photos' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-secondary">{photos.length} photo{photos.length > 1 ? 's' : ''}</p>
-            <label className="btn-primary flex items-center gap-2 cursor-pointer">
-              <Camera className="w-4 h-4" />
-              {photoLoading ? 'Upload...' : 'Ajouter une photo'}
-              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
-            </label>
+          {/* Barre d'actions */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-secondary">{photos.length} photo{photos.length > 1 ? 's' : ''}</p>
+              {selectedPhotoIds.size > 0 && (
+                <span className="text-xs bg-accent/20 text-accent font-semibold px-2 py-0.5 rounded-full">
+                  {selectedPhotoIds.size} sélectionnée{selectedPhotoIds.size > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {selectedPhotoIds.size > 0 && (
+                <>
+                  <button
+                    onClick={() => { setShowSendPhotosPanel(true); setPhotosEmailStatus('idle') }}
+                    className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+                  >
+                    <Send className="w-3.5 h-3.5" /> Envoyer au client ({selectedPhotoIds.size})
+                  </button>
+                  <button
+                    onClick={() => setSelectedPhotoIds(new Set())}
+                    className="btn-secondary text-xs py-1.5 px-3"
+                  >
+                    Désélectionner tout
+                  </button>
+                </>
+              )}
+              <label className="btn-primary flex items-center gap-2 cursor-pointer text-sm">
+                <Camera className="w-4 h-4" />
+                {photoLoading ? 'Upload...' : 'Ajouter'}
+                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+              </label>
+            </div>
           </div>
+
+          {/* Panel envoi email */}
+          {showSendPhotosPanel && (
+            <div className="card p-4 border border-accent/30 space-y-3">
+              <p className="text-sm font-semibold text-primary flex items-center gap-2">
+                <Send className="w-4 h-4" /> Envoyer {selectedPhotoIds.size} photo{selectedPhotoIds.size > 1 ? 's' : ''} au client
+              </p>
+              <textarea
+                className="input w-full text-sm resize-none"
+                rows={3}
+                placeholder="Message d'accompagnement (facultatif)..."
+                value={photosEmailMsg}
+                onChange={e => setPhotosEmailMsg(e.target.value)}
+              />
+              {photosEmailStatus === 'done' && (
+                <p className="text-xs text-green-600 flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5" /> Photos envoyées à {photosEmailRecipient}
+                </p>
+              )}
+              {photosEmailStatus === 'error' && (
+                <p className="text-xs text-red-500">{photosEmailError}</p>
+              )}
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setShowSendPhotosPanel(false)} className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5">
+                  <X className="w-3.5 h-3.5" /> Annuler
+                </button>
+                <button
+                  disabled={photosEmailStatus === 'sending'}
+                  onClick={async () => {
+                    setPhotosEmailStatus('sending')
+                    setPhotosEmailError(null)
+                    const { error, recipient } = await sendChantierPhotosEmail({
+                      chantierId: chantier.id,
+                      photoIds: Array.from(selectedPhotoIds),
+                      message: photosEmailMsg || `Veuillez trouver ci-joint des photos du chantier "${chantier.title}".`,
+                    })
+                    if (error) { setPhotosEmailStatus('error'); setPhotosEmailError(error); return }
+                    setPhotosEmailStatus('done')
+                    setPhotosEmailRecipient(recipient ?? '')
+                    setPhotos(prev => prev.map(p => selectedPhotoIds.has(p.id) ? { ...p, shared_with_client_at: new Date().toISOString() } : p))
+                  }}
+                  className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {photosEmailStatus === 'sending'
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Envoi…</>
+                    : <><Send className="w-3.5 h-3.5" /> Envoyer</>}
+                </button>
+              </div>
+            </div>
+          )}
 
           {photos.length === 0 && (
             <div className="card p-12 text-center">
@@ -2087,12 +2538,37 @@ export default function ChantierDetailClient({
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {photos.map(photo => {
               const displayUrl = photo.url ?? ''
+              const isSelected = selectedPhotoIds.has(photo.id)
               return (
                 <div
                   key={photo.id}
-                  className="group card overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
-                  onClick={() => { setLightboxPhoto(photo); setLightboxCaption(photo.caption ?? '') }}
+                  className={`group card overflow-hidden cursor-pointer hover:shadow-md transition-shadow relative ${isSelected ? 'ring-2 ring-accent' : ''}`}
+                  onClick={() => { setLightboxPhoto(photo); setLightboxTitle(photo.title ?? ''); setLightboxCaption(photo.caption ?? '') }}
                 >
+                  {/* Checkbox sélection */}
+                  <div
+                    className="absolute top-2 left-2 z-10"
+                    onClick={e => {
+                      e.stopPropagation()
+                      setSelectedPhotoIds(prev => {
+                        const next = new Set(prev)
+                        next.has(photo.id) ? next.delete(photo.id) : next.add(photo.id)
+                        return next
+                      })
+                    }}
+                  >
+                    <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-accent border-accent' : 'bg-black/50 border-white/70'}`}>
+                      {isSelected && <Check className="w-3 h-3 text-black" />}
+                    </div>
+                  </div>
+
+                  {/* Badge rapport */}
+                  {photo.include_in_report && (
+                    <div className="absolute top-2 right-2 z-10 bg-accent/90 text-black text-[9px] font-bold px-1.5 py-0.5 rounded">
+                      RAPPORT
+                    </div>
+                  )}
+
                   {/* Image */}
                   <div className="aspect-square overflow-hidden relative">
                     <img src={displayUrl} alt={photo.caption ?? ''} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
@@ -2104,7 +2580,12 @@ export default function ChantierDetailClient({
                       ? <p className="text-xs font-medium text-primary line-clamp-2 leading-snug">{photo.caption}</p>
                       : <p className="text-xs text-secondary/50 italic">Aucune description</p>
                     }
-                    <p className="text-[10px] text-secondary mt-0.5">{photo.uploaded_by_name}</p>
+                    <div className="flex items-center justify-between mt-0.5">
+                      <p className="text-[10px] text-secondary">{photo.uploaded_by_name}</p>
+                      {photo.shared_with_client_at && (
+                        <p className="text-[9px] text-green-500">✓ Envoyé</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               )
@@ -2117,7 +2598,7 @@ export default function ChantierDetailClient({
               className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4"
               onClick={(e) => { if (e.target === e.currentTarget) setLightboxPhoto(null) }}
             >
-              <div className="relative w-full max-w-4xl flex flex-col bg-surface rounded-2xl overflow-hidden shadow-2xl border border-[var(--elevation-border)] max-h-[90vh]">
+              <div className="relative w-full max-w-4xl flex flex-col bg-[#1a1a1a] rounded-2xl overflow-hidden shadow-2xl border border-white/10 max-h-[90vh]">
                 {/* Close */}
                 <button
                   onClick={() => setLightboxPhoto(null)}
@@ -2135,30 +2616,59 @@ export default function ChantierDetailClient({
                   />
                 </div>
 
-                {/* Footer: meta + description */}
-                <div className="p-4 space-y-3 border-t border-[var(--elevation-border)]">
-                  <p className="text-xs text-secondary">
-                    Par {lightboxPhoto.uploaded_by_name}
-                    {lightboxPhoto.taken_at && ` · ${new Date(lightboxPhoto.taken_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}`}
-                  </p>
+                {/* Footer: meta + description + rapport flag */}
+                <div className="p-4 space-y-3 border-t border-white/10">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-zinc-400">
+                      Par {lightboxPhoto.uploaded_by_name}
+                      {lightboxPhoto.taken_at && ` · ${new Date(lightboxPhoto.taken_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}`}
+                    </p>
+                    {/* Checkbox inclure dans le rapport */}
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={lightboxPhoto.include_in_report}
+                        onChange={async (e) => {
+                          const val = e.target.checked
+                          await togglePhotoReportFlag(lightboxPhoto.id, chantier.id, val)
+                          setPhotos(prev => prev.map(p => p.id === lightboxPhoto.id ? { ...p, include_in_report: val } : p))
+                          setLightboxPhoto(prev => prev ? { ...prev, include_in_report: val } : null)
+                        }}
+                        className="rounded accent-accent"
+                      />
+                      <span className="text-xs text-zinc-300">Inclure dans le rapport PDF</span>
+                    </label>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={lightboxTitle}
+                      onChange={e => setLightboxTitle(e.target.value)}
+                      placeholder="Titre (affiché dans le rapport PDF)..."
+                      className="flex-1 bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-white/40"
+                    />
+                  </div>
                   <div className="flex gap-2">
                     <input
                       type="text"
                       value={lightboxCaption}
                       onChange={e => setLightboxCaption(e.target.value)}
-                      placeholder="Ajouter une description..."
-                      className="input flex-1"
+                      placeholder="Description..."
+                      className="flex-1 bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-white/40"
                     />
                     <button
                       onClick={async () => {
                         setLightboxSaving(true)
-                        await updateChantierPhotoCaption(lightboxPhoto.id, chantier.id, lightboxCaption || null)
-                        setPhotos(prev => prev.map(p => p.id === lightboxPhoto.id ? { ...p, caption: lightboxCaption || null } : p))
-                        setLightboxPhoto(prev => prev ? { ...prev, caption: lightboxCaption || null } : null)
+                        await Promise.all([
+                          updateChantierPhotoTitle(lightboxPhoto.id, chantier.id, lightboxTitle || null),
+                          updateChantierPhotoCaption(lightboxPhoto.id, chantier.id, lightboxCaption || null),
+                        ])
+                        setPhotos(prev => prev.map(p => p.id === lightboxPhoto.id ? { ...p, title: lightboxTitle || null, caption: lightboxCaption || null } : p))
+                        setLightboxPhoto(prev => prev ? { ...prev, title: lightboxTitle || null, caption: lightboxCaption || null } : null)
                         setLightboxSaving(false)
                       }}
                       disabled={lightboxSaving}
-                      className="btn-primary flex items-center gap-1.5 px-4"
+                      className="bg-accent hover:bg-accent/90 text-black font-semibold text-sm px-4 rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50"
                     >
                       {lightboxSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                       Sauvegarder
@@ -2169,7 +2679,7 @@ export default function ChantierDetailClient({
                         await handleDeletePhoto(lightboxPhoto)
                         setLightboxPhoto(null)
                       }}
-                      className="w-10 h-10 rounded-xl border border-red-500/30 text-red-500 flex items-center justify-center hover:bg-red-500/10 transition-colors"
+                      className="w-10 h-10 rounded-xl border border-red-500/40 text-red-400 flex items-center justify-center hover:bg-red-500/20 transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -2229,20 +2739,52 @@ export default function ChantierDetailClient({
         </div>
       )}
 
+      {/* ── Tab: Jalons ── */}
+      {tab === 'jalons' && (
+        <JalonsTab
+          initialJalons={initialJalons}
+          chantierId={chantier.id}
+          budgetHt={chantier.budget_ht ?? 0}
+          taches={taches}
+        />
+      )}
+
+      {/* ── Tab: Rentabilité ── */}
+      {tab === 'rentabilite' && (
+        <RentabiliteTab
+          chantierId={chantier.id}
+          initialProfitability={initialProfitability}
+          orgMembers={orgMembers}
+          orgSector={orgSector}
+          materials={materials}
+          invoiceStubs={invoiceStubs}
+          targetMarginPct={chantier.target_margin_pct ?? 30}
+        />
+      )}
+
       {/* ── Tab: Équipes ── */}
       {tab === 'equipes' && (
-        <EquipesTab
-          chantierId={chantier.id}
-          allEquipes={allEquipes}
-          chantierEquipes={initialChantierEquipes}
-          linkedQuoteId={linkedQuoteId}
-        />
+        <div className="space-y-8">
+          <EquipesTab
+            chantierId={chantier.id}
+            allEquipes={allEquipes}
+            chantierEquipes={initialChantierEquipes}
+            linkedQuoteId={linkedQuoteId}
+            orgMembers={orgMembers}
+          />
+          <IndividualMembersSection
+            chantierId={chantier.id}
+            initialMembers={initialIndividualMembers}
+            orgMembers={orgMembers}
+            orgPhantomMembers={orgPhantomMembers}
+          />
+        </div>
       )}
 
       {/* ── Modal Situation de travaux ── */}
       {showSituationModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="card w-full max-w-md mx-4 p-6 space-y-5">
+        <div className="modal-overlay">
+          <div className="modal-panel space-y-5 sm:max-w-md">
             <h2 className="text-lg font-bold text-primary flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-accent" /> Situation de travaux
             </h2>
@@ -2290,6 +2832,16 @@ export default function ChantierDetailClient({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Assistant IA chantier ── */}
+      {showAIAssistant && (
+        <ChantierAIAssistant
+          chantierId={chantier.id}
+          chantierTitle={chantier.title}
+          onClose={() => setShowAIAssistant(false)}
+          onPlanningCreated={() => { setTab('planning'); router.refresh() }}
+        />
       )}
     </div>
   )

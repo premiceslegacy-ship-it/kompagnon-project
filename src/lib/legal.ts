@@ -103,7 +103,16 @@ export const LEGAL_COPY = {
   appName: APP_NAME,
   signature: APP_SIGNATURE,
   cookies:
-    "ATELIER utilise des cookies techniques strictement nécessaires à l'authentification et au maintien de session. Aucun mécanisme publicitaire ou de tracking marketing n'est intégré.",
+    "ATELIER utilise des cookies techniques strictement nécessaires à l'authentification et au maintien de session. Aucun cookie publicitaire, aucun tracker tiers, aucune régie publicitaire. Aucun consentement n'est requis pour ces cookies fonctionnels.",
   deletion:
-    "La suppression de compte nécessite de conserver légalement certains documents. Suite à une demande de fermeture, vous pourrez d'abord télécharger l'ensemble de vos données (informations clients, devis, factures), puis nous supprimerons ce qui n'est pas requis légalement.",
+    "La suppression de compte s'effectue en self-service en 3 étapes (export, confirmation, suppression). La purge est effective 30 jours après la demande, permettant une annulation pendant ce délai. Certaines pièces comptables sont conservées 10 ans conformément à la loi.",
 } as const
+
+export const DATA_RETENTION_TABLE = [
+  { type: 'Devis et factures', duration: '10 ans', base: 'Art. L123-22 Code de commerce' },
+  { type: 'Données de compte (nom, email, org)', duration: '3 ans après fermeture', base: 'Prescription civile' },
+  { type: 'Conversations WhatsApp', duration: '1 an', base: 'Nécessité opérationnelle' },
+  { type: 'Logs d\'activité et audit', duration: '1 an', base: 'Sécurité & conformité' },
+  { type: 'Données de session (cookies)', duration: 'Session / 7 jours max', base: 'Strictement nécessaire' },
+  { type: 'Exports ZIP générés', duration: '7 jours (lien de téléchargement)', base: 'Opérationnel' },
+] as const

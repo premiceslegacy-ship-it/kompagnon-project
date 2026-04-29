@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { FileText, Receipt } from 'lucide-react'
 import { DocumentActions } from './ClientActions'
 
@@ -40,6 +41,7 @@ const formatCurrency = (amount: number) =>
 
 export function HistoriqueClient({ initialDocuments }: { initialDocuments: Doc[] }) {
   const [documents, setDocuments] = useState(initialDocuments)
+  const pathname = usePathname()
 
   const handleStatusChange = (id: string, newStatus: string) => {
     setDocuments(prev => prev.map(doc => doc.id === id ? { ...doc, status: newStatus } : doc))
@@ -52,21 +54,22 @@ export function HistoriqueClient({ initialDocuments }: { initialDocuments: Doc[]
       <table className="w-full text-left border-collapse">
         <thead>
           <tr className="bg-base/30">
-            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider">Type</th>
-            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider">N° / Titre</th>
-            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider">Date</th>
-            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider text-right">Montant TTC</th>
-            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider">Statut</th>
-            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider">Actions</th>
+            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Type</th>
+            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider whitespace-nowrap">N° / Titre</th>
+            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Date</th>
+            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Montant TTC</th>
+            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
+            <th className="px-6 py-3 text-xs font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--elevation-border)]">
           {documents.map(doc => {
             const statusMap = doc.type === 'quote' ? QUOTE_STATUS : INVOICE_STATUS
             const st = statusMap[doc.status] ?? statusMap['draft']
+            const params = new URLSearchParams({ id: doc.id, returnTo: pathname })
             const href = doc.type === 'quote'
-              ? `/finances/quote-editor?id=${doc.id}`
-              : `/finances/invoice-editor?id=${doc.id}`
+              ? `/finances/quote-editor?${params}`
+              : `/finances/invoice-editor?${params}`
             return (
               <tr key={`${doc.type}-${doc.id}`} className="hover:bg-accent/5 transition-colors">
                 <td className="px-6 py-3">

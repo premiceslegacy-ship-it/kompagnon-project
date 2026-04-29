@@ -108,11 +108,20 @@ async function replaceMaterialPriceVariants(params: {
   materialId: string
   organizationId: string
   variants: MaterialVariantInput[]
-}) {
+}): Promise<Result> {
   const { supabase, materialId, organizationId, variants } = params
-  await supabase.from('material_price_variants').delete().eq('material_id', materialId)
+  const { error: deleteError } = await supabase
+    .from('material_price_variants')
+    .delete()
+    .eq('material_id', materialId)
+    .eq('organization_id', organizationId)
 
-  if (variants.length === 0) return
+  if (deleteError) {
+    console.error('[replaceMaterialPriceVariants:delete]', deleteError)
+    return { error: "Erreur lors de la mise à jour des variantes." }
+  }
+
+  if (variants.length === 0) return { error: null }
 
   const normalized = variants.map((variant, index) => ({
     material_id: materialId,
@@ -130,7 +139,13 @@ async function replaceMaterialPriceVariants(params: {
     normalized[0].is_default = true
   }
 
-  await supabase.from('material_price_variants').insert(normalized)
+  const { error: insertError } = await supabase.from('material_price_variants').insert(normalized)
+  if (insertError) {
+    console.error('[replaceMaterialPriceVariants:insert]', insertError)
+    return { error: "Erreur lors de la mise à jour des variantes." }
+  }
+
+  return { error: null }
 }
 
 // ─── Import ────────────────────────────────────────────────────────────────────
@@ -291,6 +306,7 @@ export async function createMaterial(
   const unit = (formData.get('unit') as string)?.trim() || null
   const category = (formData.get('category') as string)?.trim() || null
   const supplier = (formData.get('supplier') as string)?.trim() || null
+  const supplier_id = (formData.get('supplier_id') as string)?.trim() || null
   const purchase_price = parseFloat(formData.get('purchase_price') as string) || null
   const margin_rate = parseFloat(formData.get('margin_rate') as string) || 0
   const sale_price = parseFloat(formData.get('sale_price') as string) || null
@@ -305,7 +321,7 @@ export async function createMaterial(
 
   const { data: created, error } = await supabase.from('materials').insert({
     organization_id: organizationId,
-    name, reference, item_kind, unit, category, supplier,
+    name, reference, item_kind, unit, category, supplier, supplier_id,
     purchase_price, margin_rate, sale_price, vat_rate,
     dimension_pricing_mode, dimension_pricing_enabled,
     base_length_m, base_width_m, base_height_m,
@@ -318,7 +334,8 @@ export async function createMaterial(
   }
 
   if (created?.id) {
-    await replaceMaterialPriceVariants({ supabase, materialId: created.id, organizationId, variants })
+    const variantResult = await replaceMaterialPriceVariants({ supabase, materialId: created.id, organizationId, variants })
+    if (variantResult.error) return { error: variantResult.error, success: false }
   }
 
   revalidatePath('/catalog')
@@ -334,6 +351,7 @@ export async function updateMaterial(
     category?: string | null
     unit?: string | null
     supplier?: string | null
+    supplier_id?: string | null
     description?: string | null
     purchase_price?: number | null
     margin_rate?: number | null
@@ -355,10 +373,12 @@ export async function updateMaterial(
   const organizationId = await getCurrentOrganizationId()
   if (!organizationId) return { error: 'Organisation introuvable.' }
 
+  const { price_variants, ...materialUpdates } = updates
+
   const { error } = await supabase
     .from('materials')
     .update({
-      ...updates,
+      ...materialUpdates,
       ...(updates.vat_rate !== undefined ? { vat_rate: coerceLegalVatRate(updates.vat_rate) } : {}),
       ...(updates.dimension_schema !== undefined ? { dimension_schema: parseDimensionSchemaRaw(updates.dimension_schema, (updates.dimension_pricing_mode as any) ?? 'none') } : {}),
     })
@@ -370,8 +390,9 @@ export async function updateMaterial(
     return { error: "Erreur lors de la mise à jour." }
   }
 
-  if (updates.price_variants !== undefined) {
-    await replaceMaterialPriceVariants({ supabase, materialId, organizationId, variants: updates.price_variants })
+  if (price_variants !== undefined) {
+    const variantResult = await replaceMaterialPriceVariants({ supabase, materialId, organizationId, variants: price_variants })
+    if (variantResult.error) return variantResult
   }
 
   revalidatePath('/catalog')
@@ -427,11 +448,14 @@ export async function createLaborRate(
   const margin_rate = 0
   const rate = parseFloat(formData.get('rate') as string) || cost_rate
   const vat_rate = coerceLegalVatRate(formData.get('vat_rate'))
+  const purchase_price = parseFloat(formData.get('purchase_price') as string) || null
+  const lifetime_uses = parseInt(formData.get('lifetime_uses') as string, 10) || null
 
   const { error } = await supabase.from('labor_rates').insert({
     organization_id: organizationId,
     designation, reference, unit, category, type,
     cost_rate, margin_rate, rate, vat_rate,
+    purchase_price, lifetime_uses,
   })
 
   if (error) {
@@ -455,6 +479,8 @@ export async function updateLaborRate(
     margin_rate?: number | null
     rate?: number | null
     vat_rate?: number | null
+    purchase_price?: number | null
+    lifetime_uses?: number | null
   },
 ): Promise<Result> {
   const supabase = await createClient()
@@ -567,7 +593,7 @@ export type PrestationTypeItemInput = {
 export async function setPrestationTypeItems(
   prestationTypeId: string,
   items: PrestationTypeItemInput[],
-): Promise<{ error: string | null }> {
+): Promise<{ error: string | null; prestation?: import('@/lib/data/queries/catalog').PrestationType }> {
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
@@ -623,7 +649,14 @@ export async function setPrestationTypeItems(
   }
 
   revalidatePath('/catalog')
-  return { error: null }
+
+  const { data: updated } = await supabase
+    .from('prestation_types')
+    .select('*, items:prestation_type_items(*)')
+    .eq('id', prestationTypeId)
+    .single()
+
+  return { error: null, prestation: updated ?? undefined }
 }
 
 export type PrestationTypeInput = {
@@ -711,4 +744,120 @@ export async function deletePrestationType(id: string): Promise<{ error: string 
   if (error) return { error: error.message }
   revalidatePath('/catalog')
   return { error: null }
+}
+
+// ─── Import modèles de devis (2 fichiers CSV) ─────────────────────────────────
+
+type RawPrestationTypeRow = Record<string, string>
+type RawPrestationLineRow = Record<string, string>
+
+export async function importPrestationTypes(
+  _prevState: ImportCatalogState,
+  formData: FormData,
+): Promise<ImportCatalogState> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Non authentifié.', imported: 0, skipped: 0, skipped_reasons: [] }
+
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) return { error: 'Organisation introuvable.', imported: 0, skipped: 0, skipped_reasons: [] }
+
+  const headersJson = formData.get('headers_json') as string
+  const linesJson = formData.get('lines_json') as string | null
+
+  if (!headersJson) return { error: 'Aucune donnée de modèles à importer.', imported: 0, skipped: 0, skipped_reasons: [] }
+
+  let headerRows: RawPrestationTypeRow[]
+  let lineRows: RawPrestationLineRow[] = []
+
+  try { headerRows = JSON.parse(headersJson) } catch {
+    return { error: 'Format du fichier modèles invalide.', imported: 0, skipped: 0, skipped_reasons: [] }
+  }
+
+  if (linesJson) {
+    try { lineRows = JSON.parse(linesJson) } catch {
+      return { error: 'Format du fichier lignes invalide.', imported: 0, skipped: 0, skipped_reasons: [] }
+    }
+  }
+
+  // Grouper les lignes par template_ref
+  const linesByRef: Record<string, RawPrestationLineRow[]> = {}
+  for (const line of lineRows) {
+    const ref = line.template_ref?.trim()
+    if (!ref) continue
+    if (!linesByRef[ref]) linesByRef[ref] = []
+    linesByRef[ref].push(line)
+  }
+
+  const skippedReasons: string[] = []
+  let imported = 0
+
+  for (let i = 0; i < headerRows.length; i++) {
+    const row = headerRows[i]
+    if (!row.name?.trim()) {
+      skippedReasons.push(`Ligne ${i + 1} ignorée : nom manquant`)
+      continue
+    }
+
+    const templateRef = row.template_ref?.trim() || row.name.trim()
+
+    const { data: pt, error: ptErr } = await supabase
+      .from('prestation_types')
+      .insert({
+        organization_id: organizationId,
+        name: row.name.trim(),
+        description: row.description?.trim() || null,
+        unit: row.unit?.trim() || 'm²',
+        category: row.category?.trim() || null,
+        profile_kind: 'mixed',
+        base_price_ht: parseFloat(row.base_price_ht) || 0,
+        base_cost_ht: parseFloat(row.base_cost_ht) || 0,
+        distance_rules: [],
+        vat_rate: coerceLegalVatRate(row.vat_rate, 20),
+        is_active: true,
+        created_by: user.id,
+      })
+      .select('id')
+      .single()
+
+    if (ptErr || !pt) {
+      skippedReasons.push(`Ligne ${i + 1} (${row.name}) : ${ptErr?.message ?? 'erreur insertion'}`)
+      continue
+    }
+
+    // Insérer les lignes liées à ce template_ref
+    const matchedLines = linesByRef[templateRef] ?? []
+    if (matchedLines.length > 0) {
+      const itemsToInsert = matchedLines.map((line, idx) => ({
+        prestation_type_id: pt.id,
+        organization_id: organizationId,
+        position: parseInt(line.position ?? String(idx), 10) || idx,
+        section_title: '',
+        item_type: (['material', 'service', 'labor', 'transport', 'free', 'equipment'] as const).includes(line.item_type as PrestationItemType) ? line.item_type as PrestationItemType : 'free',
+        material_id: null,
+        labor_rate_id: null,
+        designation: line.designation?.trim() || '—',
+        quantity: parseFloat(line.quantity) || 1,
+        unit: line.unit?.trim() || 'u',
+        unit_price_ht: parseFloat(line.unit_price_ht) || 0,
+        unit_cost_ht: parseFloat(line.unit_cost_ht) || 0,
+        is_internal: false,
+      }))
+
+      await supabase.from('prestation_type_items').insert(itemsToInsert)
+    }
+
+    imported++
+  }
+
+  const skipped = headerRows.length - imported
+  await trackImportJob({
+    supabase, orgId: organizationId, userId: user.id,
+    type: 'quotes',
+    fileName: formData.get('file_name') as string | undefined,
+    totalRows: headerRows.length, importedRows: imported, skippedRows: skipped, skippedReasons,
+  })
+
+  revalidatePath('/catalog')
+  return { error: imported === 0 ? 'Aucun modèle importé.' : null, imported, skipped, skipped_reasons: skippedReasons }
 }

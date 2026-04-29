@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
-import { unstable_noStore as noStore } from 'next/cache';
 import './globals.css';
+
+export const dynamic = 'force-dynamic';
 import { ThemeProvider } from '@/components/theme-provider';
 import { APP_NAME, BRAND_ASSETS } from '@/lib/brand';
 import { getPublicRuntimeConfig, serializeRuntimeConfig } from '@/lib/supabase/config';
@@ -9,11 +10,13 @@ import { Plus_Jakarta_Sans, Inter } from 'next/font/google';
 
 const displayFont = Plus_Jakarta_Sans({
     subsets: ['latin'],
+    weight: ['600', '700', '800'],
     variable: '--font-jakarta'
 });
 
 const bodyFont = Inter({
     subsets: ['latin'],
+    weight: ['400', '500'],
     variable: '--font-inter'
 });
 
@@ -25,6 +28,7 @@ export const metadata: Metadata = {
         shortcut: BRAND_ASSETS.monogram.light,
         apple: BRAND_ASSETS.monogram.light,
     },
+    manifest: '/api/manifest',
 };
 
 export default function RootLayout({
@@ -32,8 +36,6 @@ export default function RootLayout({
 }: {
     children: React.ReactNode;
 }) {
-    noStore();
-
     const runtimeConfig = getPublicRuntimeConfig();
     const runtimeConfigScript = `window.__APP_RUNTIME_CONFIG__ = ${serializeRuntimeConfig(runtimeConfig)};`;
 

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { APP_NAME } from '@/lib/brand'
-import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { getBusinessContext } from '@/lib/ai/business-context'
 
 const TEXT_MODEL = 'google/gemini-2.5-flash-lite'
 
@@ -36,6 +37,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Aucune prestation fournie' }, { status: 400 })
   }
 
+  const businessCtx = await getBusinessContext(orgId)
+
   // Enrichir chaque ligne avec sa classification pour aider l'IA à ordonner les tâches
   const itemsList = items.map((i, idx) => {
     const kind = i.item_type ?? i.item_kind ?? null
@@ -50,12 +53,12 @@ export async function POST(req: NextRequest) {
   const messages = [
     {
       role: 'system',
-      content: `Tu es un assistant expert en gestion de chantier BTP. Tu reçois la liste des prestations d'un devis (avec leur nature : [fourniture] ou [main-d'œuvre]) et tu dois générer une liste de tâches concrètes, ordonnées et actionnables pour réaliser ce chantier.
+      content: `Tu es un assistant expert en gestion de chantier pour une entreprise du métier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}. Tu reçois la liste des prestations d'un devis (avec leur nature : [fourniture] ou [main-d'œuvre]) et tu dois générer une liste de tâches concrètes, ordonnées et actionnables pour réaliser ce chantier, en tenant compte des spécificités de ce métier.
 Règles d'ordonnancement :
 - Les livraisons de fournitures précèdent toujours les tâches de pose correspondantes
 - La préparation du chantier (protections, balisage, démolition) vient avant les travaux
 - Les finitions (peinture, nettoyage, réception) viennent en dernier
-- Chaque tâche doit être courte (5-8 mots max)
+- Chaque tâche doit être courte (5-8 mots max) et utiliser le vocabulaire propre au métier
 Réponds UNIQUEMENT avec un tableau JSON, rien d'autre.`,
     },
     {
@@ -102,6 +105,9 @@ Réponds UNIQUEMENT avec un tableau JSON, rien d'autre.`,
   } catch (err: unknown) {
     if (err instanceof AIModuleDisabledError) {
       return NextResponse.json({ error: 'Module IA planning désactivé pour cette organisation.' }, { status: 403 })
+    }
+    if (err instanceof AIRateLimitError) {
+      return NextResponse.json({ error: err.message }, { status: 429 })
     }
     console.error('[ai/suggest-tasks]', err)
     return NextResponse.json({ error: "Erreur lors de la génération des tâches" }, { status: 500 })

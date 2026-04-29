@@ -5,6 +5,7 @@ import {
   LEGAL_COPY,
   LEGAL_EDITOR,
   PLATFORM_MODEL,
+  DATA_RETENTION_TABLE,
   legalContactLabel,
 } from '@/lib/legal'
 
@@ -90,6 +91,38 @@ export default function PrivacyPage() {
             la durée strictement légale requise avant destruction définitive.
           </p>
         </div>
+      </section>
+
+      <section id="retention" className="space-y-4">
+        <h2 className="text-2xl font-bold">Durées de conservation par type de données</h2>
+        <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
+          Les durées ci-dessous s&apos;appliquent à compter de la dernière interaction ou de la fermeture du compte selon le type de donnée.
+        </p>
+        <div className="overflow-x-auto rounded-2xl border border-[var(--elevation-border)]">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[var(--elevation-border)] bg-slate-50 dark:bg-white/5">
+                <th className="px-4 py-3 text-left font-semibold text-slate-900 dark:text-white">Type de données</th>
+                <th className="px-4 py-3 text-left font-semibold text-slate-900 dark:text-white">Durée de conservation</th>
+                <th className="px-4 py-3 text-left font-semibold text-slate-900 dark:text-white">Base légale</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DATA_RETENTION_TABLE.map((row, i) => (
+                <tr key={i} className="border-b border-[var(--elevation-border)] last:border-0">
+                  <td className="px-4 py-3 text-slate-900 dark:text-white">{row.type}</td>
+                  <td className="px-4 py-3 text-slate-700 dark:text-zinc-300">{row.duration}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-zinc-400">{row.base}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="suppression" className="space-y-4">
+        <h2 className="text-2xl font-bold">Suppression de compte</h2>
+        <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">{LEGAL_COPY.deletion}</p>
       </section>
 
       <section className="space-y-4">

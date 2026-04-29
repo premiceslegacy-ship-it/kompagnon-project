@@ -58,6 +58,12 @@ export type QuoteWithItems = Quote & {
   unsectionedItems: QuoteItem[]
   client_request_description: string | null
   client_request_visible_on_pdf: boolean
+  notes_client: string | null
+  payment_conditions: string | null
+  discount_rate: number | null
+  deposit_rate: number | null
+  aid_label: string | null
+  aid_amount: number | null
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -69,6 +75,12 @@ export type QuoteStub = {
   client_name: string | null
   client_id: string | null
   total_ht: number | null
+  client_address_line1: string | null
+  client_postal_code: string | null
+  client_city: string | null
+  client_contact_name: string | null
+  client_contact_email: string | null
+  client_contact_phone: string | null
 }
 
 export async function getQuotesForLinking(): Promise<QuoteStub[]> {
@@ -78,7 +90,10 @@ export async function getQuotesForLinking(): Promise<QuoteStub[]> {
 
   const { data, error } = await supabase
     .from('quotes')
-    .select('id, number, title, total_ht, client_id, client:clients(company_name, contact_name)')
+    .select(`
+      id, number, title, total_ht, client_id,
+      client:clients(company_name, first_name, last_name, contact_name, email, phone, address_line1, postal_code, city)
+    `)
     .eq('organization_id', orgId)
     .eq('is_archived', false)
     .not('status', 'in', '("refused","cancelled","expired")')
@@ -86,14 +101,26 @@ export async function getQuotesForLinking(): Promise<QuoteStub[]> {
 
   if (error) { console.error('[getQuotesForLinking]', error); return [] }
 
-  return (data ?? []).map((q: any) => ({
-    id: q.id,
-    number: q.number,
-    title: q.title,
-    client_name: q.client?.company_name ?? null,
-    client_id: q.client_id ?? null,
-    total_ht: q.total_ht ?? null,
-  }))
+  return (data ?? []).map((q: any) => {
+    const c = q.client
+    // Nom contact : contact_name (société) > first_name + last_name (particulier)
+    const contactName = c?.contact_name
+      ?? (c?.first_name || c?.last_name ? [c?.first_name, c?.last_name].filter(Boolean).join(' ') : null)
+    return {
+      id: q.id,
+      number: q.number,
+      title: q.title,
+      client_name: c?.company_name ?? (c?.first_name || c?.last_name ? [c?.first_name, c?.last_name].filter(Boolean).join(' ') : null),
+      client_id: q.client_id ?? null,
+      total_ht: q.total_ht ?? null,
+      client_address_line1: c?.address_line1 ?? null,
+      client_postal_code: c?.postal_code ?? null,
+      client_city: c?.city ?? null,
+      client_contact_name: contactName,
+      client_contact_email: c?.email ?? null,
+      client_contact_phone: c?.phone ?? null,
+    }
+  })
 }
 
 export async function getQuotes(): Promise<Quote[]> {
@@ -192,6 +219,12 @@ export async function getAcceptedQuotesWithItems(): Promise<QuoteWithItems[]> {
       unsectionedItems: allItems.filter(i => i.quote_id === q.id && i.section_id === null),
       client_request_description: null,
       client_request_visible_on_pdf: false,
+      notes_client: null,
+      payment_conditions: null,
+      discount_rate: null,
+      deposit_rate: null,
+      aid_label: null,
+      aid_amount: null,
     }
   })
 }
@@ -207,6 +240,7 @@ export async function getQuoteById(id: string): Promise<QuoteWithItems | null> {
       id, number, title, status, total_ht, total_ttc, currency,
       validity_days, valid_until, sent_at, created_at,
       notes_client, payment_conditions, discount_rate, deposit_rate,
+      aid_label, aid_amount,
       client_request_description, client_request_visible_on_pdf,
       client:clients(id, company_name, contact_name, email)
     `)
@@ -236,7 +270,16 @@ export async function getQuoteById(id: string): Promise<QuoteWithItems | null> {
     items: allItems.filter(i => i.section_id === s.id),
   }))
 
-  const q = quote as unknown as Quote & { client_request_description: string | null; client_request_visible_on_pdf: boolean }
+  const q = quote as unknown as Quote & {
+    client_request_description: string | null
+    client_request_visible_on_pdf: boolean
+    notes_client: string | null
+    payment_conditions: string | null
+    discount_rate: number | null
+    deposit_rate: number | null
+    aid_label: string | null
+    aid_amount: number | null
+  }
   return {
     ...q,
     sections: sectionsWithItems,

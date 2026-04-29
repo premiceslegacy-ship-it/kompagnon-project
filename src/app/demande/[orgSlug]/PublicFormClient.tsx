@@ -15,9 +15,9 @@ import {
   CheckCircle2, Loader2, ChevronLeft, ChevronRight,
   User, Layers, MapPin, ClipboardList, Package,
   Plus, Minus, X, Paperclip, ChevronDown, ChevronUp,
-  Building2, Search,
+  Building2, Search, Wrench,
 } from 'lucide-react'
-import type { PublicMaterial, PublicPrestationType, PublicPrestationLine } from './page'
+import type { PublicLaborRate, PublicMaterial, PublicPrestationType, PublicPrestationLine } from './page'
 import type { ResolvedCatalogContext } from '@/lib/catalog-context'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -28,6 +28,7 @@ type Props = {
   logoUrl: string | null
   welcomeMessage: string | null
   materials: PublicMaterial[]
+  laborRates: PublicLaborRate[]
   prestationTypes: PublicPrestationType[]
   customModeEnabled: boolean
   catalogContext: ResolvedCatalogContext
@@ -80,6 +81,22 @@ type SelectedPrestation = {
   name: string
   category: string | null
   lines: PrestationLine[]
+}
+
+type SelectedLaborRate = {
+  id: string
+  designation: string
+  unit: string | null
+  quantity: number
+  details?: string
+}
+
+type AttachmentMeta = {
+  storage_path: string
+  filename: string
+  size: number
+  content_type: string | null
+  public_url: string
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -330,6 +347,78 @@ function MaterialCard({
   )
 }
 
+// ─── Carte opération ──────────────────────────────────────────────────────────
+
+function LaborCard({
+  labor, selected, quantity, details, onToggle, onQty, onSetQty, onSetDetails,
+}: {
+  labor: PublicLaborRate
+  selected: boolean
+  quantity: number
+  details: string
+  onToggle: () => void
+  onQty: (d: number) => void
+  onSetQty: (q: number) => void
+  onSetDetails: (v: string) => void
+}) {
+  return (
+    <div
+      onClick={onToggle}
+      className={`flex flex-col gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all select-none ${
+        selected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300 bg-white'
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
+          selected ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-400'
+        }`}>
+          <Wrench className="w-3.5 h-3.5" />
+        </div>
+        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+          selected ? 'bg-blue-500 border-blue-500' : 'border-gray-300'
+        }`}>
+          {selected && (
+            <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className={`text-sm font-semibold truncate ${selected ? 'text-blue-800' : 'text-gray-800'}`}>{labor.designation}</p>
+          <div className="flex items-center gap-2">
+            {labor.unit && <p className="text-xs text-gray-400">{formatPublicUnit(labor.unit)}</p>}
+            {labor.category && <p className="text-[11px] text-gray-400">{labor.category}</p>}
+          </div>
+        </div>
+      </div>
+
+      {selected && (
+        <div className="mt-1 pt-3 border-t border-blue-100 flex flex-col gap-3" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-1.5 self-end sm:self-auto">
+            <button type="button" onClick={() => onQty(-1)} className="w-8 h-8 rounded-full bg-gray-200 border border-gray-300 flex items-center justify-center hover:bg-gray-300 text-gray-800 shadow-sm transition-all focus:outline-none">
+              <Minus className="w-4 h-4" />
+            </button>
+            <input
+              type="number"
+              min="1"
+              value={quantity || 1}
+              onChange={e => {
+                const val = parseInt(e.target.value)
+                if (!isNaN(val)) onSetQty(Math.max(1, val))
+              }}
+              className="w-16 h-8 font-bold text-center tabular-nums text-gray-900 border border-gray-300 bg-white rounded-lg px-1 py-1 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            />
+            <button type="button" onClick={() => onQty(+1)} className="w-8 h-8 rounded-full bg-gray-200 border border-gray-300 flex items-center justify-center hover:bg-gray-300 text-gray-800 shadow-sm transition-all focus:outline-none">
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+          <input type="text" value={details} onChange={e => onSetDetails(e.target.value)} placeholder="Précisions utiles pour le devis..." className="w-full text-sm px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-blue-400" />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Carte prestation type ────────────────────────────────────────────────────
 
 function PrestationCard({
@@ -540,7 +629,7 @@ function PrestationCard({
 
 export default function PublicFormClient({
   orgSlug, orgName, logoUrl, welcomeMessage,
-  materials, prestationTypes, customModeEnabled, catalogContext,
+  materials, laborRates, prestationTypes, customModeEnabled, catalogContext,
 }: Props) {
   const [step, setStep] = useState(1)
   const [isPending, startTransition] = useTransition()
@@ -561,6 +650,7 @@ export default function PublicFormClient({
 
   // Étape 2 — Projet
   const [selectedMaterials, setSelectedMaterials] = useState<Record<string, SelectedMaterial>>({})
+  const [selectedLaborRates, setSelectedLaborRates] = useState<Record<string, SelectedLaborRate>>({})
   const [selectedPrestations, setSelectedPrestations] = useState<Record<string, SelectedPrestation>>({})
   const [freeDescription, setFreeDescription] = useState('')
   const [step2Error, setStep2Error] = useState<string | null>(null)
@@ -574,6 +664,7 @@ export default function PublicFormClient({
   const [extraNotes, setExtraNotes] = useState('')
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null)
   const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null)
+  const [attachmentMeta, setAttachmentMeta] = useState<AttachmentMeta | null>(null)
   const [isUploading, setIsUploading] = useState(false)
 
   // ── Helpers matériaux ───────────────────────────────────────────────────────
@@ -633,6 +724,46 @@ export default function PublicFormClient({
 
   function setMaterialDetails(id: string, details: string) {
     setSelectedMaterials(prev => {
+      if (!prev[id]) return prev
+      return { ...prev, [id]: { ...prev[id], details } }
+    })
+  }
+
+  function toggleLaborRate(labor: PublicLaborRate) {
+    setSelectedLaborRates(prev => {
+      if (prev[labor.id]) {
+        const next = { ...prev }
+        delete next[labor.id]
+        return next
+      }
+      return {
+        ...prev,
+        [labor.id]: {
+          id: labor.id,
+          designation: labor.designation,
+          unit: labor.unit,
+          quantity: 1,
+        },
+      }
+    })
+  }
+
+  function setLaborQty(id: string, delta: number) {
+    setSelectedLaborRates(prev => {
+      if (!prev[id]) return prev
+      return { ...prev, [id]: { ...prev[id], quantity: Math.max(1, prev[id].quantity + delta) } }
+    })
+  }
+
+  function setLaborExactQty(id: string, quantity: number) {
+    setSelectedLaborRates(prev => {
+      if (!prev[id]) return prev
+      return { ...prev, [id]: { ...prev[id], quantity } }
+    })
+  }
+
+  function setLaborDetails(id: string, details: string) {
+    setSelectedLaborRates(prev => {
       if (!prev[id]) return prev
       return { ...prev, [id]: { ...prev[id], details } }
     })
@@ -926,9 +1057,18 @@ export default function PublicFormClient({
       if (error) throw error
       const { data: urlData } = supabase.storage.from('quote-attachments').getPublicUrl(data.path)
       setAttachmentUrl(urlData.publicUrl)
+      setAttachmentMeta({
+        storage_path: data.path,
+        filename: file.name,
+        size: file.size,
+        content_type: file.type || null,
+        public_url: urlData.publicUrl,
+      })
     } catch {
       alert('Erreur lors de l\'upload. Vous pouvez continuer sans fichier joint.')
       setAttachmentFile(null)
+      setAttachmentUrl(null)
+      setAttachmentMeta(null)
     } finally {
       setIsUploading(false)
     }
@@ -955,9 +1095,10 @@ export default function PublicFormClient({
 
   function validateStep2(): boolean {
     const hasMat = Object.keys(selectedMaterials).length > 0
+    const hasLabor = Object.keys(selectedLaborRates).length > 0
     const hasPresta = Object.keys(selectedPrestations).length > 0
     const hasDesc = freeDescription.trim().length > 0
-    if (!hasMat && !hasPresta && !hasDesc) {
+    if (!hasMat && !hasLabor && !hasPresta && !hasDesc) {
       setStep2Error('Veuillez sélectionner au moins une prestation ou décrire votre projet.')
       return false
     }
@@ -981,6 +1122,10 @@ export default function PublicFormClient({
 
   function handleSubmit() {
     setSubmitError(null)
+    if (isUploading) {
+      setSubmitError('Le fichier est encore en cours d\'upload. Patientez quelques secondes avant d\'envoyer.')
+      return
+    }
     const fd = new FormData()
     fd.set('org_slug', orgSlug)
     fd.set('_hp_website', honeypot) // honeypot : doit rester vide
@@ -999,6 +1144,7 @@ export default function PublicFormClient({
 
     // Fichier
     if (attachmentUrl) fd.set('attachment_url', attachmentUrl)
+    if (attachmentMeta) fd.set('attachments', JSON.stringify([attachmentMeta]))
 
     // Construction du catalogue et de la description
     const catalogItems: Array<{
@@ -1060,6 +1206,23 @@ export default function PublicFormClient({
         m.dimension_pricing_mode !== 'none'
           ? `${m.name} (${formatDimensionSummary(m.dimension_pricing_mode, m.length_m, m.width_m, m.height_m)})${m.details ? ` [${m.details}]` : ''}`
           : `${m.name} x ${m.quantity}${m.unit ? ' ' + m.unit : ''}${m.details ? ` [${m.details}]` : ''}`,
+      ).join(', '))
+    }
+
+    // Opérations
+    const labor = Object.values(selectedLaborRates)
+    if (labor.length > 0) {
+      for (const l of labor) {
+        catalogItems.push({
+          id: l.id,
+          item_type: 'labor',
+          description: l.designation,
+          unit: l.unit,
+          quantity: l.quantity,
+        })
+      }
+      descParts.push('Opérations : ' + labor.map(l =>
+        `${l.designation} x ${l.quantity}${l.unit ? ' ' + l.unit : ''}${l.details ? ` [${l.details}]` : ''}`,
       ).join(', '))
     }
 
@@ -1134,10 +1297,13 @@ export default function PublicFormClient({
   const serviceMaterialGroups = groupByCategory(
     materials.filter(m => m.item_kind === 'service' && (!step2Q || m.name.toLowerCase().includes(step2Q))),
   )
+  const laborRateGroups = groupByCategory(
+    laborRates.filter(l => !step2Q || l.designation.toLowerCase().includes(step2Q)),
+  )
   const filteredPrestationGroups = groupByCategory(
     prestationTypes.filter(pt => !step2Q || pt.name.toLowerCase().includes(step2Q)),
   )
-  const hasCatalog = materials.length > 0 || prestationTypes.length > 0
+  const hasCatalog = materials.length > 0 || laborRates.length > 0 || prestationTypes.length > 0
 
   // ── Récap ───────────────────────────────────────────────────────────────────
 
@@ -1153,6 +1319,12 @@ export default function PublicFormClient({
         m.dimension_pricing_mode !== 'none'
           ? `${m.name} (${formatDimensionSummary(m.dimension_pricing_mode, m.length_m, m.width_m, m.height_m)})${m.details ? ` [${m.details}]` : ''}`
           : `${m.name} × ${m.quantity}${m.details ? ` [${m.details}]` : ''}`,
+      ).join(', '),
+    }] : []),
+    ...(Object.values(selectedLaborRates).length > 0 ? [{
+      label: catalogContext.labelSet.service.plural,
+      value: Object.values(selectedLaborRates).map(l =>
+        `${l.designation} x ${l.quantity}${l.unit ? ' ' + l.unit : ''}${l.details ? ` [${l.details}]` : ''}`,
       ).join(', '),
     }] : []),
     ...(Object.values(selectedPrestations).length > 0 ? [{
@@ -1288,7 +1460,7 @@ export default function PublicFormClient({
               )}
 
               {/* Aucun résultat pour la recherche */}
-              {hasCatalog && step2Q && articleMaterialGroups.length === 0 && serviceMaterialGroups.length === 0 && filteredPrestationGroups.length === 0 && (
+              {hasCatalog && step2Q && articleMaterialGroups.length === 0 && serviceMaterialGroups.length === 0 && laborRateGroups.length === 0 && filteredPrestationGroups.length === 0 && (
                 <div className="text-center py-6 text-sm text-gray-400">
                   Aucun résultat pour &laquo;&nbsp;{step2Search}&nbsp;&raquo;
                 </div>
@@ -1414,8 +1586,61 @@ export default function PublicFormClient({
                 </div>
               )}
 
+              {/* ── Opérations par catégorie ── */}
+              {laborRateGroups.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">
+                    {catalogContext.labelSet.service.plural}
+                  </p>
+                  {laborRateGroups.map(group => {
+                    const key = `labor-${group.label}`
+                    const selCount = group.items.filter(l => !!selectedLaborRates[l.id]).length
+                    const isOpen = !!step2Q || selCount > 0 || expandedCategories.has(key)
+                    return (
+                      <div key={group.label} className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+                        <button
+                          type="button"
+                          onClick={() => toggleCategory(key)}
+                          className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-50 transition-colors text-left"
+                        >
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="text-sm font-semibold text-gray-700 truncate">{group.label}</span>
+                            {selCount > 0 && (
+                              <span className="flex-shrink-0 text-[11px] font-bold text-blue-700 bg-blue-100 rounded-full px-2 py-0.5">
+                                {selCount}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0 text-gray-400">
+                            <span className="text-xs hidden sm:block">{group.items.length}&nbsp;{group.items.length > 1 ? 'opérations' : 'opération'}</span>
+                            {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </div>
+                        </button>
+                        {isOpen && (
+                          <div className="px-3 pb-3 pt-1 space-y-2 border-t border-gray-100">
+                            {group.items.map(l => (
+                              <LaborCard
+                                key={l.id}
+                                labor={l}
+                                selected={!!selectedLaborRates[l.id]}
+                                quantity={selectedLaborRates[l.id]?.quantity ?? 1}
+                                details={selectedLaborRates[l.id]?.details ?? ''}
+                                onToggle={() => toggleLaborRate(l)}
+                                onQty={d => setLaborQty(l.id, d)}
+                                onSetQty={q => setLaborExactQty(l.id, q)}
+                                onSetDetails={d => setLaborDetails(l.id, d)}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
               {/* Séparateur matériaux / prestations */}
-              {(articleMaterialGroups.length > 0 || serviceMaterialGroups.length > 0) && filteredPrestationGroups.length > 0 && (
+              {(articleMaterialGroups.length > 0 || serviceMaterialGroups.length > 0 || laborRateGroups.length > 0) && filteredPrestationGroups.length > 0 && (
                 <div className="h-px bg-gray-100" />
               )}
 
@@ -1568,7 +1793,7 @@ export default function PublicFormClient({
                     <>
                       <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
                       <span className="text-sm text-green-700 font-medium flex-1 truncate">{attachmentFile.name}</span>
-                      <button type="button" onClick={e => { e.stopPropagation(); setAttachmentFile(null); setAttachmentUrl(null) }}
+                      <button type="button" onClick={e => { e.stopPropagation(); setAttachmentFile(null); setAttachmentUrl(null); setAttachmentMeta(null) }}
                         className="text-gray-400 hover:text-red-500 transition-colors">
                         <X className="w-4 h-4" />
                       </button>

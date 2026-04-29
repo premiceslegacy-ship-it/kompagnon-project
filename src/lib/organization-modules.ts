@@ -4,6 +4,7 @@ export const ORGANIZATION_MODULE_KEYS = [
   'planning_ai',
   'quote_ai',
   'document_ai',
+  'catalog_ai',
 ] as const
 
 export type OrganizationModuleKey = typeof ORGANIZATION_MODULE_KEYS[number]
@@ -21,6 +22,7 @@ export const DEFAULT_MODULES_BY_PROFILE: Record<BusinessProfile, OrganizationMod
     planning_ai:    true,
     quote_ai:       true,
     document_ai:    true,
+    catalog_ai:     true,
   },
   cleaning: {
     whatsapp_agent: true,
@@ -28,6 +30,7 @@ export const DEFAULT_MODULES_BY_PROFILE: Record<BusinessProfile, OrganizationMod
     planning_ai:    true,
     quote_ai:       true,
     document_ai:    true,
+    catalog_ai:     true,
   },
   industry: {
     whatsapp_agent: true,
@@ -35,6 +38,7 @@ export const DEFAULT_MODULES_BY_PROFILE: Record<BusinessProfile, OrganizationMod
     planning_ai:    true,
     quote_ai:       true,
     document_ai:    true,
+    catalog_ai:     true,
   },
 }
 
@@ -45,6 +49,7 @@ export const DEFAULT_ORGANIZATION_MODULES: OrganizationModules = {
   planning_ai:    true,
   quote_ai:       true,
   document_ai:    true,
+  catalog_ai:     true,
 }
 
 export function getDefaultModulesForProfile(profile: string | null | undefined): OrganizationModules {

@@ -67,17 +67,33 @@ export async function middleware(request: NextRequest) {
   }
 
   // 3. Utilisateur connecté : vérifier onboarding_done
+  // Optimisation : on lit d'abord le cookie hint (posé après onboarding) pour éviter
+  // une query BDD à chaque navigation. Si absent, on retombe sur la query profiles.
   if (user && !pathname.startsWith('/onboarding') && !pathname.startsWith('/login') && !pathname.startsWith('/auth')) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('onboarding_done')
-      .eq('id', user.id)
-      .single()
+    const onboardedCookie = request.cookies.get('atelier_onboarded')
+    const cookieIsValid = onboardedCookie?.value === user.id
 
-    if (profile && profile.onboarding_done === false) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/onboarding'
-      return NextResponse.redirect(url)
+    if (!cookieIsValid) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('onboarding_done')
+        .eq('id', user.id)
+        .single()
+
+      if (profile && profile.onboarding_done === false) {
+        const url = request.nextUrl.clone()
+        url.pathname = '/onboarding'
+        return NextResponse.redirect(url)
+      }
+
+      if (profile?.onboarding_done === true) {
+        supabaseResponse.cookies.set('atelier_onboarded', user.id, {
+          httpOnly: true,
+          sameSite: 'strict',
+          maxAge: 60 * 60 * 24 * 365,
+          path: '/',
+        })
+      }
     }
   }
 

@@ -3,6 +3,7 @@
 import React from 'react'
 import { pdf } from '@react-pdf/renderer'
 import { sendEmail } from '@/lib/email'
+import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import {
   getChantierById,
@@ -12,7 +13,9 @@ import {
 } from '@/lib/data/queries/chantiers'
 import { getOrganization } from '@/lib/data/queries/organization'
 import ChantierPDF from '@/components/pdf/ChantierPDF'
+import type { ChantierPDFPhoto } from '@/components/pdf/ChantierPDF'
 import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
+import { renderEmailShell, renderInfoBox, escHtml } from '@/lib/email/layout'
 
 export async function sendChantierReportEmail(
   chantierId: string,
@@ -21,6 +24,7 @@ export async function sendChantierReportEmail(
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
 
+  const supabase = await createClient()
   const [chantier, allTaches, allPointages, allNotes, organization] = await Promise.all([
     getChantierById(chantierId),
     getChantierTaches(chantierId),
@@ -49,6 +53,27 @@ export async function sendChantierReportEmail(
     if (dateTo   && d > dateTo)   return false
     return true
   })
+
+  // ── Photos marquées include_in_report ─────────────────────────────────────
+  const { data: photoRows } = await supabase
+    .from('chantier_photos')
+    .select('id, storage_path, caption')
+    .eq('chantier_id', chantierId)
+    .eq('include_in_report', true)
+    .order('created_at', { ascending: true })
+
+  let reportPhotos: ChantierPDFPhoto[] = []
+  if (photoRows && photoRows.length > 0) {
+    const paths = photoRows.map(r => r.storage_path as string)
+    const { data: signedUrls } = await supabase.storage
+      .from('chantier-photos')
+      .createSignedUrls(paths, 3600)
+    const urlMap = new Map<string, string>()
+    signedUrls?.forEach(item => { if (item.signedUrl && item.path) urlMap.set(item.path, item.signedUrl) })
+    reportPhotos = photoRows
+      .map(p => ({ id: p.id, url: urlMap.get(p.storage_path) ?? '', caption: p.caption ?? null, title: null }))
+      .filter(p => p.url !== '')
+  }
 
   // ── AI intro ───────────────────────────────────────────────────────────────
   const tachesDone  = taches.filter(t => t.status === 'termine').length
@@ -80,6 +105,7 @@ export async function sendChantierReportEmail(
       organization,
       periodFrom: dateFrom ?? null,
       periodTo:   dateTo   ?? null,
+      reportPhotos,
     }),
   ).toBuffer()
 
@@ -133,6 +159,10 @@ Heures pointées : ${ctx.totalHours}h
 Dernière note de chantier : ${ctx.lastNote ?? 'aucune'}
 Signataire : ${ctx.orgName}
 
+Règles obligatoires :
+- Aucun emoji, aucun symbole décoratif
+- Aucun tiret cadratin (—) : utilise des virgules ou des points à la place
+- Français irréprochable
 Commence directement le message (pas de "Objet:", pas de signature, juste le corps du message).`
 
   try {
@@ -171,33 +201,19 @@ function buildEmailHtml(ctx: {
   chantierTitle: string
   orgName: string
 }): string {
-  const introHtml = ctx.intro.replace(/\n/g, '<br>')
-  return `<!DOCTYPE html>
-<html lang="fr">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
-        <tr><td style="background:#1a1a2e;padding:24px 32px;">
-          <p style="margin:0;color:#ffffff;font-size:20px;font-weight:700;">${ctx.orgName}</p>
-          <p style="margin:4px 0 0;color:rgba(255,255,255,.6);font-size:13px;">Rapport de chantier</p>
-        </td></tr>
-        <tr><td style="padding:32px;">
-          <p style="margin:0 0 16px;color:#374151;font-size:15px;">Bonjour${ctx.recipientName ? ' ' + ctx.recipientName : ''},</p>
-          <p style="margin:0 0 24px;color:#374151;font-size:15px;line-height:1.6;">${introHtml}</p>
-          <div style="background:#f9fafb;border-left:4px solid #6366f1;border-radius:4px;padding:16px 20px;margin-bottom:24px;">
-            <p style="margin:0;color:#6b7280;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Chantier</p>
-            <p style="margin:4px 0 0;color:#111827;font-size:16px;font-weight:700;">${ctx.chantierTitle}</p>
-          </div>
-          <p style="margin:0;color:#6b7280;font-size:13px;">Le rapport complet est joint en pièce attachée (PDF).</p>
-        </td></tr>
-        <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #e5e7eb;">
-          <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">${ctx.orgName} · Envoyé via ATELIER by Orsayn</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`
+  const introHtml = escHtml(ctx.intro).replace(/\n/g, '<br>')
+  const body = `
+<p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#A1A1AA;text-transform:uppercase;letter-spacing:0.8px;font-family:'Inter',sans-serif;">Rapport de chantier</p>
+<h1 style="margin:0 0 12px;font-size:22px;font-weight:800;color:#FFFFFF;line-height:1.3;letter-spacing:-0.04em;font-family:'Plus Jakarta Sans',sans-serif;">
+  Bonjour${ctx.recipientName ? ' ' + escHtml(ctx.recipientName) : ''} !
+</h1>
+<p style="margin:0 0 24px;font-size:15px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;">${introHtml}</p>
+${renderInfoBox([{ label: 'Chantier', value: escHtml(ctx.chantierTitle), large: true }])}
+<p style="margin:0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;">Le rapport complet est joint en pièce attachée (PDF).</p>`
+
+  return renderEmailShell({
+    title: `Rapport de chantier : ${ctx.chantierTitle}`,
+    headerName: ctx.orgName,
+    bodyHtml: body,
+  })
 }

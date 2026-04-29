@@ -206,8 +206,8 @@ export function EditMaterialModal({ material, categories, catalogContext, onClos
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="rounded-3xl card w-full max-w-2xl max-h-[92vh] flex flex-col relative animate-in fade-in zoom-in duration-300">
+    <div className="modal-overlay">
+      <div className="modal-panel flex flex-col animate-in fade-in duration-300">
         <div className="px-8 pt-8 pb-4 shrink-0 flex items-start justify-between">
           <div>
             <h2 className="text-2xl font-bold text-primary">Modifier {kindLabels.singular.toLowerCase()}</h2>

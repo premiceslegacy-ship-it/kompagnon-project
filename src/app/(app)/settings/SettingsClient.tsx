@@ -5,24 +5,27 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ActionMenu } from '@/components/shared';
 import {
-    Upload, Mail, Trash2, Plus, X, User, Building2, Users, Copy, Check, KeyRound, Save, Loader2, ImageIcon, Globe, Code2, ExternalLink, Inbox, Package, Layers, Wrench, ToggleLeft, ToggleRight, MessageSquare, RefreshCw, ShieldCheck, ChevronDown
+    Upload, Mail, Trash2, Plus, X, User, Building2, Users, Copy, Check, KeyRound, Save, Loader2, ImageIcon, Globe, Code2, ExternalLink, Inbox, Package, Layers, Wrench, ToggleLeft, ToggleRight, MessageSquare, RefreshCw, ShieldCheck, ChevronDown, Brain, Lock, RotateCcw, Edit3
 } from 'lucide-react';
 import type { TeamMember } from '@/lib/data/queries/team';
-import type { OrgRole } from '@/lib/data/queries/roles';
+import type { OrgRole, AllPermissionsData, RoleWithPermissions } from '@/lib/data/queries/roles';
 import type { Organization } from '@/lib/data/queries/organization';
 import type { OrganizationExportListItem } from '@/lib/data/queries/organization-exports';
 import { createClient } from '@/lib/supabase/client';
 import { updateMemberRole, removeMember, sendTeamInvite } from '@/lib/data/mutations/team';
+import { saveRolePermissions } from '@/lib/data/mutations/roles';
+import { categoryLabel, permissionLabel } from '@/lib/permissions/labels';
 import { updateOrganization } from '@/lib/data/mutations/organization';
 import { updateEmailSettings } from '@/lib/data/mutations/email-settings';
 import { updateProfile, updatePassword } from '@/lib/data/mutations/profile';
 import { updatePublicFormSettings } from '@/lib/data/mutations/quote-requests';
 import { saveWhatsAppConfig, deleteWhatsAppConfig } from '@/lib/data/mutations/whatsapp';
-import { createOrganizationExport } from '@/lib/data/mutations/organization-exports';
-import { updateOrganizationModules } from '@/lib/data/mutations/organization-modules';
+import { createOrganizationExport } from '@/lib/data/mutations/organization-exports'
+import { requestAccountDeletion, cancelAccountDeletion } from '@/lib/data/mutations/account-deletion';
+import { upsertEmailTemplate, resetEmailTemplate } from '@/lib/data/mutations/email-templates';
+import type { EmailTemplate, EmailTemplateSlug } from '@/lib/data/queries/emailTemplates';
 import type { WhatsAppConfig } from '@/lib/data/mutations/whatsapp';
-import type { CatalogMaterial, PrestationType } from '@/lib/data/queries/catalog';
-import type { OrganizationModules } from '@/lib/organization-modules';
+import type { CatalogLaborRate, CatalogMaterial, PrestationType } from '@/lib/data/queries/catalog';
 import {
     BUSINESS_ACTIVITIES_BY_PROFILE,
     resolveBusinessSelection,
@@ -61,15 +64,21 @@ type Props = {
     supabaseUrl: string;
     sharedWabaDisplayNumber: string | null;
     catalogMaterials: CatalogMaterial[];
+    catalogLaborRates: CatalogLaborRate[];
     catalogPrestationTypes: PrestationType[];
     whatsappConfig: WhatsAppConfig | null;
     catalogContext: ResolvedCatalogContext;
     currentRoleSlug: string | null;
     organizationExports: OrganizationExportListItem[];
-    modules: OrganizationModules;
+    emailTemplates: EmailTemplate[];
+    rolesWithPermissions: AllPermissionsData;
+    canInvite: boolean;
+    canRemoveMembers: boolean;
+    canEditRoles: boolean;
+    canEditOrg: boolean;
 };
 
-export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogPrestationTypes, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, modules }: Props) {
+export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg }: Props) {
     const router = useRouter()
     const webhookUrl = supabaseUrl
         ? `${supabaseUrl}/functions/v1/whatsapp-webhook`
@@ -142,6 +151,15 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         certifications: organization?.certifications ?? '',
     });
 
+    const [decennale, setDecennale] = useState({
+        enabled: organization?.decennale_enabled ?? false,
+        assureur: organization?.decennale_assureur ?? '',
+        police: organization?.decennale_police ?? '',
+        couverture: organization?.decennale_couverture ?? '',
+        date_debut: organization?.decennale_date_debut ?? '',
+        date_fin: organization?.decennale_date_fin ?? '',
+    });
+
     const [paymentDetails, setPaymentDetails] = useState({
         iban: organization?.iban ?? '',
         bic: organization?.bic ?? '',
@@ -157,26 +175,63 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         default_vat_rate: organization?.default_vat_rate ?? 20,
     });
 
+
+
     const [autoReminder, setAutoReminder] = useState({
         enabled: organization?.auto_reminder_enabled ?? false,
         invoiceDays: organization?.invoice_reminder_days ?? [2, 7],
         quoteDays: organization?.quote_reminder_days ?? [3, 7, 10],
         reminderHour: organization?.reminder_hour_utc ?? 8,
+        defaultQuoteValidityDays: organization?.default_quote_validity_days ?? 30,
     });
     const [autoReminderSaveStatus, setAutoReminderSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+    // ─── Rapport mensuel auto aux membres individuels (migration 073) ──────────
+    const [autoMemberReports, setAutoMemberReports] = useState<boolean>(
+        organization?.auto_send_member_reports ?? false,
+    );
+    const [autoMemberReportsSaveStatus, setAutoMemberReportsSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
     const [publicFormSettings, setPublicFormSettings] = useState({
         enabled: organization?.public_form_enabled ?? false,
         welcomeMessage: organization?.public_form_welcome_message ?? '',
         customModeEnabled: organization?.public_form_custom_mode_enabled ?? true,
         notificationEmail: organization?.public_form_notification_email ?? '',
-        catalogItemIds: (organization?.public_form_catalog_item_ids ?? []) as Array<{ id: string; item_type: 'material' | 'prestation' }>,
+        catalogItemIds: (organization?.public_form_catalog_item_ids ?? []) as Array<{ id: string; item_type: 'material' | 'labor' | 'prestation' }>,
     });
     const [publicFormSaveStatus, setPublicFormSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [exportSaveStatus, setExportSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [exportFeedback, setExportFeedback] = useState<string | null>(null);
-    const [moduleSettings, setModuleSettings] = useState<OrganizationModules>(modules);
-    const [modulesSaveStatus, setModulesSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+    // ─── Signature email + CGV + délai relance ───────────────────────────────
+    const [emailSignature, setEmailSignature] = useState(organization?.email_signature ?? '')
+    const [cgvText, setCgvText] = useState(organization?.cgv_text ?? '')
+    const [reminderFirstDelay, setReminderFirstDelay] = useState(organization?.reminder_first_delay_days ?? 2)
+    const [signatureSaveStatus, setSignatureSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+    // ─── Templates emails ─────────────────────────────────────────────────────
+    const [tplDraft, setTplDraft] = useState<Record<EmailTemplateSlug, { subject: string; body_text: string }>>(
+        Object.fromEntries(emailTemplates.map(t => [t.slug, { subject: t.subject, body_text: t.body_text }])) as Record<EmailTemplateSlug, { subject: string; body_text: string }>
+    )
+    const [tplSaveStatus, setTplSaveStatus] = useState<Record<EmailTemplateSlug, 'idle' | 'saving' | 'saved' | 'error'>>(
+        Object.fromEntries(emailTemplates.map(t => [t.slug, 'idle'])) as Record<EmailTemplateSlug, 'idle' | 'saving' | 'saved' | 'error'>
+    )
+    const [tplResetStatus, setTplResetStatus] = useState<Record<EmailTemplateSlug, 'idle' | 'pending' | 'done'>>(
+        Object.fromEntries(emailTemplates.map(t => [t.slug, 'idle'])) as Record<EmailTemplateSlug, 'idle' | 'pending' | 'done'>
+    )
+    const [expandedTpl, setExpandedTpl] = useState<EmailTemplateSlug | null>(null)
+
+    // ─── Sessions actives ─────────────────────────────────────────────────────
+    const [sessions, setSessions] = useState<Array<{ id: string; created_at: string | null; user_agent: string | null; ip: string | null }>>([])
+    const [sessionsLoaded, setSessionsLoaded] = useState(false)
+    const [revokeStatus, setRevokeStatus] = useState<Record<string, 'idle' | 'revoking' | 'done' | 'error'>>({})
+
+    // ─── Workflow suppression de compte RGPD ──────────────────────────────────
+    const [deletionStep, setDeletionStep] = useState<0 | 1 | 2 | 3>(0)
+    const [deletionConfirmText, setDeletionConfirmText] = useState('')
+    const [deletionStatus, setDeletionStatus] = useState<'idle' | 'pending' | 'done' | 'error'>('idle')
+    const [deletionError, setDeletionError] = useState<string | null>(null)
+    const [cancelDeletionStatus, setCancelDeletionStatus] = useState<'idle' | 'pending' | 'done'>('idle')
 
     // ─── WhatsApp ─────────────────────────────────────────────────────────────
     const [waPhoneNumberId, setWaPhoneNumberId] = useState(whatsappConfig?.phone_number_id ?? '')
@@ -199,7 +254,37 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     })
     const privacyContactLabel = legalContactLabel(LEGAL_CONTACT.privacyEmail ?? LEGAL_CONTACT.supportEmail)
     const isOwner = currentRoleSlug === 'owner'
+    const isAdmin = currentRoleSlug === 'admin' || isOwner
     const hasProcessingExport = organizationExports.some((item) => item.status === 'processing')
+
+    // ─── Rôles & Permissions ──────────────────────────────────────────────────
+    const [selectedRoleId, setSelectedRoleId] = useState<string>(
+        rolesWithPermissions.roles.find(r => r.slug !== 'owner')?.id ?? ''
+    )
+    const [localPerms, setLocalPerms] = useState<Record<string, Record<string, boolean>>>(() => {
+        const m: Record<string, Record<string, boolean>> = {}
+        for (const r of rolesWithPermissions.roles) m[r.id] = { ...r.permissions }
+        return m
+    })
+    const [permSaveStatus, setPermSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+    async function handleSavePermissions() {
+        if (!selectedRoleId) return
+        setPermSaveStatus('saving')
+        const { error } = await saveRolePermissions(selectedRoleId, localPerms[selectedRoleId] ?? {})
+        setPermSaveStatus(error ? 'error' : 'saved')
+        setTimeout(() => setPermSaveStatus('idle'), 2500)
+    }
+
+    function togglePerm(roleId: string, key: string) {
+        setLocalPerms(prev => ({
+            ...prev,
+            [roleId]: { ...prev[roleId], [key]: !prev[roleId]?.[key] },
+        }))
+    }
+
+    // CATEGORY_LABELS et permissionLabel : dictionnaire FR centralisé dans
+    // src/lib/permissions/labels.ts pour partage et fallback robuste.
 
     function formatExportDate(value: string | null) {
         if (!value) return 'En attente'
@@ -232,8 +317,8 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     }
 
     function exportStatusLabel(status: OrganizationExportListItem['status']) {
-        if (status === 'ready') return 'Pret'
-        if (status === 'failed') return 'Echoue'
+        if (status === 'ready') return 'Prêt'
+        if (status === 'failed') return 'Échoué'
         if (status === 'expired') return 'Expire'
         return 'En cours'
     }
@@ -251,36 +336,74 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             }
 
             setExportSaveStatus('saved')
-            setExportFeedback(result.warning ?? "L'export a ete genere. Un lien securise est disponible ci-dessous et un email a ete envoye a l'owner.")
+            setExportFeedback(result.warning ?? "L'export a été généré. Un lien sécurisé est disponible ci-dessous et un email a été envoyé à l'owner.")
             router.refresh()
             setTimeout(() => setExportSaveStatus('idle'), 3000)
         })
     }
 
-    function togglePublicCatalogItem(id: string, item_type: 'material' | 'prestation') {
+    function togglePublicCatalogItem(id: string, item_type: 'material' | 'labor' | 'prestation') {
         setPublicFormSettings(prev => {
-            const exists = prev.catalogItemIds.some(x => x.id === id)
+            const exists = prev.catalogItemIds.some(x => x.id === id && x.item_type === item_type)
             return {
                 ...prev,
                 catalogItemIds: exists
-                    ? prev.catalogItemIds.filter(x => x.id !== id)
+                    ? prev.catalogItemIds.filter(x => !(x.id === id && x.item_type === item_type))
                     : [...prev.catalogItemIds, { id, item_type }],
             }
         })
     }
 
-    function handleSaveModules() {
-        setModulesSaveStatus('saving');
+    function handleSaveSignatureAndCGV() {
+        setSignatureSaveStatus('saving')
         startTransition(async () => {
-            const result = await updateOrganizationModules(moduleSettings);
+            const result = await updateOrganization({
+                email_signature: emailSignature.trim() || null,
+                cgv_text: cgvText.trim() || null,
+                reminder_first_delay_days: reminderFirstDelay,
+            })
             if (result.error) {
-                setModulesSaveStatus('error');
-                setTimeout(() => setModulesSaveStatus('idle'), 3000);
+                setSignatureSaveStatus('error')
+                setTimeout(() => setSignatureSaveStatus('idle'), 3000)
             } else {
-                setModulesSaveStatus('saved');
-                setTimeout(() => setModulesSaveStatus('idle'), 2000);
+                setSignatureSaveStatus('saved')
+                setTimeout(() => setSignatureSaveStatus('idle'), 2000)
             }
-        });
+        })
+    }
+
+    function handleSaveEmailTemplate(slug: EmailTemplateSlug) {
+        setTplSaveStatus(s => ({ ...s, [slug]: 'saving' }))
+        startTransition(async () => {
+            const draft = tplDraft[slug]
+            const result = await upsertEmailTemplate({ slug, subject: draft.subject, body_text: draft.body_text })
+            if (result.error) {
+                setTplSaveStatus(s => ({ ...s, [slug]: 'error' }))
+                setTimeout(() => setTplSaveStatus(s => ({ ...s, [slug]: 'idle' })), 3000)
+            } else {
+                setTplSaveStatus(s => ({ ...s, [slug]: 'saved' }))
+                setTimeout(() => setTplSaveStatus(s => ({ ...s, [slug]: 'idle' })), 2000)
+            }
+        })
+    }
+
+    function handleResetEmailTemplate(slug: EmailTemplateSlug) {
+        setTplResetStatus(s => ({ ...s, [slug]: 'pending' }))
+        startTransition(async () => {
+            const result = await resetEmailTemplate(slug)
+            if (!result.error) {
+                const defaultTpl = emailTemplates.find(t => t.slug === slug)
+                if (defaultTpl) setTplDraft(d => ({ ...d, [slug]: { subject: defaultTpl.subject, body_text: defaultTpl.body_text } }))
+                setTplResetStatus(s => ({ ...s, [slug]: 'done' }))
+                setTimeout(() => setTplResetStatus(s => ({ ...s, [slug]: 'idle' })), 2000)
+            } else {
+                setTplResetStatus(s => ({ ...s, [slug]: 'idle' }))
+            }
+        })
+    }
+
+    function loadSecurityData() {
+        setSessionsLoaded(true)
     }
 
     function handleSavePublicForm() {
@@ -311,6 +434,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 invoice_reminder_days: autoReminder.invoiceDays.filter(d => d > 0),
                 quote_reminder_days: autoReminder.quoteDays.filter(d => d > 0),
                 reminder_hour_utc: autoReminder.reminderHour,
+                default_quote_validity_days: autoReminder.defaultQuoteValidityDays,
             });
             if (result.error) {
                 setAutoReminderSaveStatus('error');
@@ -318,6 +442,22 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             } else {
                 setAutoReminderSaveStatus('saved');
                 setTimeout(() => setAutoReminderSaveStatus('idle'), 2000);
+            }
+        });
+    }
+
+    function handleSaveAutoMemberReports(nextValue: boolean) {
+        setAutoMemberReports(nextValue);
+        setAutoMemberReportsSaveStatus('saving');
+        startTransition(async () => {
+            const result = await updateOrganization({ auto_send_member_reports: nextValue });
+            if (result.error) {
+                setAutoMemberReportsSaveStatus('error');
+                setAutoMemberReports(prev => !prev);
+                setTimeout(() => setAutoMemberReportsSaveStatus('idle'), 3000);
+            } else {
+                setAutoMemberReportsSaveStatus('saved');
+                setTimeout(() => setAutoMemberReportsSaveStatus('idle'), 2000);
             }
         });
     }
@@ -385,6 +525,12 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 rcs_ville: legalDetails.rcs_ville || null,
                 insurance_info: legalDetails.insurance_info || null,
                 certifications: legalDetails.certifications || null,
+                decennale_enabled: decennale.enabled,
+                decennale_assureur: decennale.assureur || null,
+                decennale_police: decennale.police || null,
+                decennale_couverture: decennale.couverture || null,
+                decennale_date_debut: decennale.date_debut || null,
+                decennale_date_fin: decennale.date_fin || null,
                 iban: paymentDetails.iban || null,
                 bic: paymentDetails.bic || null,
                 bank_name: paymentDetails.bank_name || null,
@@ -662,6 +808,87 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         </div>
                     </div>
                     <div className="h-px w-full bg-[var(--elevation-border)]"></div>
+                    {/* ── Garantie décennale ── */}
+                    <div>
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-3">
+                                <ShieldCheck className="w-5 h-5 text-accent" />
+                                <h2 className="text-2xl font-bold text-primary">Garantie décennale</h2>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setDecennale(d => ({ ...d, enabled: !d.enabled }))}
+                                className="flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--elevation-border)] text-sm font-semibold transition-all hover:border-accent"
+                            >
+                                {decennale.enabled
+                                    ? <><ToggleRight className="w-4 h-4 text-accent" /> Activée</>
+                                    : <><ToggleLeft className="w-4 h-4 text-secondary" /> Désactivée</>
+                                }
+                            </button>
+                        </div>
+                        <p className="text-sm text-secondary mb-6">
+                            Obligatoire pour les travaux de construction (art. L241-1 du Code des assurances). Affiché en bloc dédié sur vos devis et factures PDF.
+                        </p>
+                        {decennale.enabled && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-2">
+                                    <label className="text-sm font-semibold text-secondary">Assureur</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ex : AXA Pro, Allianz, SMABTP…"
+                                        value={decennale.assureur}
+                                        onChange={e => setDecennale(d => ({ ...d, assureur: e.target.value }))}
+                                        className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-semibold text-secondary">Numéro de police</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ex : 12 345 678 90"
+                                        value={decennale.police}
+                                        onChange={e => setDecennale(d => ({ ...d, police: e.target.value }))}
+                                        className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums"
+                                    />
+                                </div>
+                                <div className="space-y-2 md:col-span-2">
+                                    <label className="text-sm font-semibold text-secondary">Couverture géographique</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ex : France métropolitaine"
+                                        value={decennale.couverture}
+                                        onChange={e => setDecennale(d => ({ ...d, couverture: e.target.value }))}
+                                        className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-semibold text-secondary">Date de début</label>
+                                    <input
+                                        type="date"
+                                        value={decennale.date_debut}
+                                        onChange={e => setDecennale(d => ({ ...d, date_debut: e.target.value }))}
+                                        className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-semibold text-secondary">Date de fin / échéance</label>
+                                    <input
+                                        type="date"
+                                        value={decennale.date_fin}
+                                        onChange={e => setDecennale(d => ({ ...d, date_fin: e.target.value }))}
+                                        className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
+                                    />
+                                    {decennale.date_fin && (() => {
+                                        const daysLeft = Math.ceil((new Date(decennale.date_fin).getTime() - Date.now()) / 86400000)
+                                        if (daysLeft < 0) return <p className="text-xs text-red-500 font-semibold">Assurance expirée depuis {Math.abs(daysLeft)} jour{Math.abs(daysLeft) > 1 ? 's' : ''} — renouvelez-la d&apos;urgence.</p>
+                                        if (daysLeft <= 60) return <p className="text-xs text-orange-500 font-semibold">Expire dans {daysLeft} jour{daysLeft > 1 ? 's' : ''} — pensez au renouvellement.</p>
+                                        return <p className="text-xs text-green-600 font-semibold">Valide encore {daysLeft} jours.</p>
+                                    })()}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="h-px w-full bg-[var(--elevation-border)]"></div>
                     <div>
                         <h2 className="text-2xl font-bold text-primary mb-2">TVA</h2>
                         <p className="text-sm text-secondary mb-6">Détermine comment la TVA est affichée sur vos devis et factures.</p>
@@ -791,18 +1018,20 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
                     <div className="flex items-center justify-between">
                         <h2 className="text-2xl font-bold text-primary">Membres de l&#39;équipe</h2>
-                        <button onClick={() => setIsInviteModalOpen(true)} className="px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20">
-                            <Plus className="w-4 h-4" />Inviter par email
-                        </button>
+                        {canInvite && (
+                            <button onClick={() => setIsInviteModalOpen(true)} className="px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20">
+                                <Plus className="w-4 h-4" />Inviter par email
+                            </button>
+                        )}
                     </div>
 
                     <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="border-b border-[var(--elevation-border)]">
-                                    <th className="pb-4 text-sm font-bold text-secondary uppercase tracking-wider">Membre</th>
-                                    <th className="pb-4 text-sm font-bold text-secondary uppercase tracking-wider">Poste</th>
-                                    <th className="pb-4 text-sm font-bold text-secondary uppercase tracking-wider">Rôle</th>
+                                    <th className="pb-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Membre</th>
+                                    <th className="pb-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Poste</th>
+                                    <th className="pb-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Rôle</th>
                                     <th className="pb-4 w-10"></th>
                                 </tr>
                             </thead>
@@ -824,8 +1053,8 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                                         {initials}
                                                     </div>
                                                     <div>
-                                                        <p className="font-bold text-primary">{member.full_name ?? '/'}</p>
-                                                        <p className="text-xs text-secondary">{member.email}</p>
+                                                        <p className="font-bold text-primary">{member.full_name ?? member.email}</p>
+                                                        {member.full_name && <p className="text-xs text-secondary">{member.email}</p>}
                                                     </div>
                                                 </div>
                                             </td>
@@ -833,24 +1062,25 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                                 {member.job_title ?? <span className="text-secondary/40">/</span>}
                                             </td>
                                             <td className="py-4">
-                                                <select
-                                                    defaultValue={member.role_id}
-                                                    disabled={isPending || member.role_slug === 'owner'}
-                                                    onChange={(e) => handleRoleChange(member.membership_id, e.target.value)}
-                                                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-accent/10 text-accent border border-accent/20 outline-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                                >
-                                                    {/* Owner non-modifiable */}
-                                                    {member.role_slug === 'owner' && (
-                                                        <option value={member.role_id}>{member.role_name}</option>
-                                                    )}
-                                                    {/* Autres rôles */}
-                                                    {member.role_slug !== 'owner' && roles.map((r) => (
-                                                        <option key={r.id} value={r.id}>{r.name}</option>
-                                                    ))}
-                                                </select>
+                                                {(member.role_slug === 'owner' || !canEditRoles) ? (
+                                                    <span className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-accent/10 text-accent border border-accent/20">
+                                                        {member.role_name}
+                                                    </span>
+                                                ) : (
+                                                    <select
+                                                        defaultValue={member.role_id}
+                                                        disabled={isPending}
+                                                        onChange={(e) => handleRoleChange(member.membership_id, e.target.value)}
+                                                        className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-accent/10 text-accent border border-accent/20 outline-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        {roles.map((r) => (
+                                                            <option key={r.id} value={r.id}>{r.name}</option>
+                                                        ))}
+                                                    </select>
+                                                )}
                                             </td>
                                             <td className="py-4 text-right">
-                                                {member.role_slug !== 'owner' && (
+                                                {canRemoveMembers && member.role_slug !== 'owner' && (
                                                     <ActionMenu actions={[
                                                         {
                                                             label: "Retirer l'accès",
@@ -870,8 +1100,8 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
                     {/* Modal invitation email */}
                     {isInviteModalOpen && (
-                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                            <div className="rounded-3xl card transition-all duration-300 ease-out w-full max-w-md p-8 relative animate-in fade-in zoom-in duration-300">
+                        <div className="modal-overlay">
+                            <div className="modal-panel animate-in fade-in duration-300 sm:max-w-md">
                                 <button
                                     onClick={() => { setIsInviteModalOpen(false); setInviteStatus('idle'); setInviteError(null); setInviteEmail(''); }}
                                     className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"
@@ -960,6 +1190,93 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     )}
                 </div>
             );
+        }
+
+        if (activeTab === 'roles') {
+            const selectedRole = rolesWithPermissions.roles.find(r => r.id === selectedRoleId)
+            const isOwnerRole = selectedRole?.slug === 'owner'
+
+            // Grouper les permissions par catégorie
+            const grouped: Record<string, typeof rolesWithPermissions.allPermissions> = {}
+            for (const p of rolesWithPermissions.allPermissions) {
+                if (!grouped[p.category]) grouped[p.category] = []
+                grouped[p.category].push(p)
+            }
+
+            return (
+                <div className="space-y-6">
+                    <div className="rounded-3xl card p-8 space-y-6">
+                        <div>
+                            <h2 className="text-2xl font-bold text-primary mb-1">Rôles &amp; permissions</h2>
+                            <p className="text-sm text-secondary">Définissez ce que chaque rôle peut faire dans l&apos;application. Les modifications s&apos;appliquent à tous les membres ayant ce rôle.</p>
+                        </div>
+
+                        {/* Sélecteur de rôle */}
+                        <div className="flex flex-wrap gap-2">
+                            {rolesWithPermissions.roles.map(role => (
+                                <button
+                                    key={role.id}
+                                    onClick={() => setSelectedRoleId(role.id)}
+                                    className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all border ${selectedRoleId === role.id ? 'text-white border-transparent' : 'bg-base dark:bg-white/5 border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
+                                    style={selectedRoleId === role.id ? { backgroundColor: role.color ?? '#6366f1' } : {}}
+                                >
+                                    {role.name}
+                                </button>
+                            ))}
+                        </div>
+
+                        {selectedRole && (
+                            <>
+                                {isOwnerRole ? (
+                                    <div className="rounded-2xl bg-amber-500/10 border border-amber-500/20 px-6 py-4 text-sm text-amber-700 dark:text-amber-400">
+                                        Le Dirigeant a accès à toutes les fonctionnalités. Ses permissions ne peuvent pas être modifiées.
+                                    </div>
+                                ) : (
+                                    <div className="space-y-6">
+                                        {Object.entries(grouped).map(([category, perms]) => (
+                                            <div key={category}>
+                                                <h3 className="text-xs font-bold uppercase tracking-widest text-secondary mb-3">
+                                                    {categoryLabel(category)}
+                                                </h3>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                    {perms.map(perm => {
+                                                        const enabled = localPerms[selectedRoleId]?.[perm.key] ?? false
+                                                        return (
+                                                            <button
+                                                                key={perm.key}
+                                                                onClick={() => togglePerm(selectedRoleId, perm.key)}
+                                                                className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm text-left transition-all ${enabled ? 'bg-accent/10 border-accent/30 text-primary' : 'bg-base dark:bg-white/5 border-[var(--elevation-border)] text-secondary'}`}
+                                                            >
+                                                                <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all ${enabled ? 'bg-accent' : 'bg-surface dark:bg-white/10 border border-[var(--elevation-border)]'}`}>
+                                                                    {enabled && <Check className="w-3 h-3 text-white" />}
+                                                                </div>
+                                                                {permissionLabel(perm.key, perm.label)}
+                                                            </button>
+                                                        )
+                                                    })}
+                                                </div>
+                                            </div>
+                                        ))}
+
+                                        <div className="flex items-center gap-3 pt-2">
+                                            <button
+                                                onClick={handleSavePermissions}
+                                                disabled={permSaveStatus === 'saving'}
+                                                className="btn-primary flex items-center gap-2"
+                                            >
+                                                {permSaveStatus === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                                                {permSaveStatus === 'saving' ? 'Enregistrement…' : 'Enregistrer'}
+                                            </button>
+                                            {permSaveStatus === 'saved' && <span className="text-sm text-green-500 font-medium">Permissions mises à jour</span>}
+                                            {permSaveStatus === 'error' && <span className="text-sm text-red-500 font-medium">Erreur lors de la sauvegarde</span>}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                </div>
+            )
         }
 
         if (activeTab === 'emails') {
@@ -1053,6 +1370,21 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                     )}
                                 </div>
                             </div>
+                            <div className="space-y-2 pt-2">
+                                <p className="text-sm font-semibold text-primary">Validité des devis par défaut</p>
+                                <p className="text-xs text-secondary">Pré-rempli à la création de chaque nouveau devis. Modifiable devis par devis dans l&apos;éditeur.</p>
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={365}
+                                        value={autoReminder.defaultQuoteValidityDays}
+                                        onChange={e => setAutoReminder(a => ({ ...a, defaultQuoteValidityDays: Math.min(365, Math.max(1, Number(e.target.value) || 30)) }))}
+                                        className="w-24 px-4 py-2.5 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all text-center tabular-nums font-bold"
+                                    />
+                                    <span className="text-sm text-secondary">jours</span>
+                                </div>
+                            </div>
                             <p className="text-xs text-secondary bg-base dark:bg-white/5 rounded-xl px-4 py-3">
                                 Les emails de relance sont rédigés automatiquement. Les clients sans adresse email sont ignorés.
                             </p>
@@ -1067,6 +1399,40 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         </button>
                     </div>
                 </div>
+
+                {/* Rapport mensuel automatique aux intervenants */}
+                {canEditOrg && (
+                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-4">
+                        <div className="flex items-start justify-between gap-6">
+                            <div>
+                                <h2 className="text-2xl font-bold text-primary mb-1">Rapport mensuel d&apos;heures</h2>
+                                <p className="text-sm text-secondary">
+                                    Envoie automatiquement le 1er du mois, à chaque intervenant ayant un email,
+                                    son rapport PDF des heures pointées le mois précédent.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={autoMemberReports}
+                                onClick={() => handleSaveAutoMemberReports(!autoMemberReports)}
+                                className={`relative flex-shrink-0 w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${autoMemberReports ? 'bg-accent' : 'bg-[var(--elevation-border)]'}`}
+                            >
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${autoMemberReports ? 'translate-x-6' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+                        {autoMemberReportsSaveStatus === 'saved' && (
+                            <p className="text-xs text-green-500 font-medium">Préférence enregistrée.</p>
+                        )}
+                        {autoMemberReportsSaveStatus === 'error' && (
+                            <p className="text-xs text-red-500 font-medium">Erreur lors de l&apos;enregistrement.</p>
+                        )}
+                        <p className="text-xs text-secondary bg-base dark:bg-white/5 rounded-xl px-4 py-3">
+                            Les membres peuvent aussi recevoir leur rapport à la demande depuis leur espace personnel
+                            (lien d&apos;accès envoyé par email à leur création).
+                        </p>
+                    </div>
+                )}
 
                 {/* Configuration expéditeur */}
                 <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-6">
@@ -1119,6 +1485,123 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                              'Sauvegarder'}
                         </button>
                     </div>
+                </div>
+
+                {/* Signature email + CGV */}
+                <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-6">
+                    <div>
+                        <h2 className="text-2xl font-bold text-primary mb-1">Signature & CGV</h2>
+                        <p className="text-sm text-secondary">Ajoutée en bas de chaque email envoyé et imprimée au pied des documents.</p>
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-semibold text-secondary">Signature email</label>
+                        <textarea
+                            rows={4}
+                            placeholder={"Cordialement,\nDupont BTP\n+33 6 12 34 56 78"}
+                            value={emailSignature}
+                            onChange={e => setEmailSignature(e.target.value)}
+                            className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all resize-none font-mono text-sm"
+                        />
+                        <p className="text-xs text-secondary">Texte brut ajouté après le corps de l&apos;email.</p>
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-semibold text-secondary">Conditions Générales de Vente (CGV)</label>
+                        <textarea
+                            rows={6}
+                            placeholder="Article 1 — Objet&#10;Les présentes conditions générales de vente régissent..."
+                            value={cgvText}
+                            onChange={e => setCgvText(e.target.value)}
+                            className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all resize-none font-mono text-sm"
+                        />
+                        <p className="text-xs text-secondary">Imprimées au verso des devis et factures (texte brut, max 3 000 caractères).</p>
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-semibold text-secondary">Délai avant première relance (jours)</label>
+                        <input
+                            type="number" min={1} max={90}
+                            value={reminderFirstDelay}
+                            onChange={e => setReminderFirstDelay(Math.max(1, parseInt(e.target.value) || 1))}
+                            className="w-24 px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums"
+                        />
+                        <p className="text-xs text-secondary">Nombre de jours après l&apos;échéance avant d&apos;envoyer la première relance.</p>
+                    </div>
+                    <div className="flex justify-end">
+                        <button onClick={handleSaveSignatureAndCGV} disabled={isPending || signatureSaveStatus === 'saving'}
+                            className={`px-8 py-3 rounded-full font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 ${signatureSaveStatus === 'saved' ? 'bg-green-500 text-white shadow-green-500/20' : signatureSaveStatus === 'error' ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-accent text-black shadow-accent/20'}`}>
+                            <Save className="w-4 h-4" />
+                            {signatureSaveStatus === 'saving' ? 'Enregistrement...' : signatureSaveStatus === 'saved' ? 'Enregistré !' : signatureSaveStatus === 'error' ? 'Erreur' : 'Enregistrer'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Templates emails */}
+                <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-4">
+                    <div>
+                        <h2 className="text-2xl font-bold text-primary mb-1">Templates emails</h2>
+                        <p className="text-sm text-secondary">Personnalisez le sujet et le corps de chaque email automatique. Les variables entre <code className="bg-base px-1 rounded text-xs">{'{{'}doubles accolades{'}}'}</code> sont remplacées à l&apos;envoi.</p>
+                    </div>
+                    {emailTemplates.map(tpl => {
+                        const isExpanded = expandedTpl === tpl.slug
+                        const draft = tplDraft[tpl.slug]
+                        const saveStatus = tplSaveStatus[tpl.slug]
+                        const resetStatus = tplResetStatus[tpl.slug]
+                        return (
+                            <div key={tpl.slug} className="rounded-2xl border border-[var(--elevation-border)] overflow-hidden">
+                                <button
+                                    onClick={() => setExpandedTpl(isExpanded ? null : tpl.slug)}
+                                    className="w-full flex items-center justify-between px-6 py-4 hover:bg-base dark:hover:bg-white/5 transition-colors text-left"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <Mail className="w-4 h-4 text-accent flex-shrink-0" />
+                                        <div>
+                                            <p className="font-semibold text-primary text-sm">{tpl.name}</p>
+                                            {tpl.is_custom && <span className="text-xs text-accent font-medium">Personnalisé</span>}
+                                        </div>
+                                    </div>
+                                    <ChevronDown className={`w-4 h-4 text-secondary transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                </button>
+                                {isExpanded && (
+                                    <div className="px-6 pb-6 space-y-4 border-t border-[var(--elevation-border)]">
+                                        <div className="pt-4 space-y-2">
+                                            <label className="text-xs font-semibold text-secondary uppercase tracking-wide">Sujet</label>
+                                            <input
+                                                type="text"
+                                                value={draft.subject}
+                                                onChange={e => setTplDraft(d => ({ ...d, [tpl.slug]: { ...d[tpl.slug], subject: e.target.value } }))}
+                                                className="w-full px-4 py-2.5 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-xl text-primary outline-none text-sm transition-all"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-semibold text-secondary uppercase tracking-wide">Corps</label>
+                                            <textarea
+                                                rows={6}
+                                                value={draft.body_text}
+                                                onChange={e => setTplDraft(d => ({ ...d, [tpl.slug]: { ...d[tpl.slug], body_text: e.target.value } }))}
+                                                className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-xl text-primary outline-none text-sm resize-none font-mono transition-all"
+                                            />
+                                            <p className="text-xs text-secondary">Variables disponibles : {tpl.variables.join(' · ')}</p>
+                                        </div>
+                                        <div className="flex items-center justify-between gap-3">
+                                            {tpl.is_custom && (
+                                                <button onClick={() => handleResetEmailTemplate(tpl.slug)} disabled={isPending || resetStatus === 'pending'}
+                                                    className="flex items-center gap-1.5 text-xs text-secondary hover:text-red-500 transition-colors disabled:opacity-50">
+                                                    <RotateCcw className="w-3.5 h-3.5" />
+                                                    {resetStatus === 'done' ? 'Réinitialisé !' : 'Revenir au défaut'}
+                                                </button>
+                                            )}
+                                            <div className="ml-auto">
+                                                <button onClick={() => handleSaveEmailTemplate(tpl.slug)} disabled={isPending || saveStatus === 'saving'}
+                                                    className={`px-6 py-2.5 rounded-full font-bold text-sm flex items-center gap-2 transition-all shadow-sm disabled:opacity-60 ${saveStatus === 'saved' ? 'bg-green-500 text-white' : saveStatus === 'error' ? 'bg-red-500 text-white' : 'bg-accent text-black'}`}>
+                                                    <Save className="w-3.5 h-3.5" />
+                                                    {saveStatus === 'saving' ? 'Enregistrement...' : saveStatus === 'saved' ? 'Enregistré !' : saveStatus === 'error' ? 'Erreur' : 'Enregistrer'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    })}
                 </div>
 
                 </div>
@@ -1318,7 +1801,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     <div className="rounded-3xl card p-8 space-y-6">
                         <div>
                             <h3 className="text-xl font-bold text-primary mb-1 flex items-center gap-2"><Package className="w-5 h-5 text-accent" />Éléments visibles dans le formulaire public</h3>
-                            <p className="text-sm text-secondary">Sélectionnez les {catalogContext.labelSet.material.plural.toLowerCase()} et {catalogContext.labelSet.bundleTemplate.plural.toLowerCase()} à exposer à vos prospects. Les prix, marges et coûts internes ne sont jamais affichés.</p>
+                            <p className="text-sm text-secondary">Sélectionnez les {catalogContext.labelSet.material.plural.toLowerCase()}, {catalogContext.labelSet.service.plural.toLowerCase()} et {catalogContext.labelSet.bundleTemplate.plural.toLowerCase()} à exposer à vos prospects. Les prix, marges et coûts internes ne sont jamais affichés.</p>
                         </div>
 
                         {/* Produits / fournitures / matières */}
@@ -1355,7 +1838,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 </div>
                                 <div className="space-y-2">
                                     {catalogMaterials.map(m => {
-                                        const selected = publicFormSettings.catalogItemIds.some(x => x.id === m.id)
+                                        const selected = publicFormSettings.catalogItemIds.some(x => x.id === m.id && x.item_type === 'material')
                                         return (
                                             <label key={m.id} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer border transition-all ${selected ? 'border-accent/40 bg-accent/5' : 'border-[var(--elevation-border)] hover:bg-base'}`}>
                                                 <input
@@ -1374,10 +1857,64 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             </div>
                         )}
 
+                        {/* Opérations / services */}
+                        {catalogLaborRates.length > 0 && (
+                            <div className="space-y-3">
+                                {catalogMaterials.length > 0 && <div className="h-px bg-[var(--elevation-border)]" />}
+                                <div className="flex items-center justify-between">
+                                    <h4 className="text-sm font-bold text-primary flex items-center gap-2"><Wrench className="w-4 h-4 text-secondary" />{catalogContext.labelSet.service.plural}</h4>
+                                    <div className="flex gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setPublicFormSettings(prev => ({
+                                                ...prev,
+                                                catalogItemIds: [
+                                                    ...prev.catalogItemIds.filter(x => x.item_type !== 'labor'),
+                                                    ...catalogLaborRates.map(l => ({ id: l.id, item_type: 'labor' as const })),
+                                                ],
+                                            }))}
+                                            className="text-xs text-accent font-semibold hover:underline"
+                                        >
+                                            Tout cocher
+                                        </button>
+                                        <span className="text-xs text-secondary">·</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setPublicFormSettings(prev => ({
+                                                ...prev,
+                                                catalogItemIds: prev.catalogItemIds.filter(x => x.item_type !== 'labor'),
+                                            }))}
+                                            className="text-xs text-secondary hover:text-primary font-semibold hover:underline"
+                                        >
+                                            Tout décocher
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    {catalogLaborRates.map(l => {
+                                        const selected = publicFormSettings.catalogItemIds.some(x => x.id === l.id && x.item_type === 'labor')
+                                        return (
+                                            <label key={l.id} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer border transition-all ${selected ? 'border-accent/40 bg-accent/5' : 'border-[var(--elevation-border)] hover:bg-base'}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selected}
+                                                    onChange={() => togglePublicCatalogItem(l.id, 'labor')}
+                                                    className="w-4 h-4 accent-[var(--accent)]"
+                                                />
+                                                <span className="flex-1 text-sm font-medium text-primary">{l.designation}</span>
+                                                {l.category && <span className="text-xs text-secondary bg-base px-2 py-0.5 rounded-full">{l.category}</span>}
+                                                {l.unit && <span className="text-xs text-secondary">{l.unit}</span>}
+                                            </label>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Templates catalogue */}
                         {catalogPrestationTypes.length > 0 && (
                             <div className="space-y-3">
-                                {catalogMaterials.length > 0 && <div className="h-px bg-[var(--elevation-border)]" />}
+                                {(catalogMaterials.length > 0 || catalogLaborRates.length > 0) && <div className="h-px bg-[var(--elevation-border)]" />}
                                 <div className="flex items-center justify-between">
                                     <h4 className="text-sm font-bold text-primary flex items-center gap-2"><Layers className="w-4 h-4 text-secondary" />{catalogContext.labelSet.bundleTemplate.plural}</h4>
                                     <div className="flex gap-2">
@@ -1409,7 +1946,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 </div>
                                 <div className="space-y-2">
                                     {catalogPrestationTypes.map(p => {
-                                        const selected = publicFormSettings.catalogItemIds.some(x => x.id === p.id)
+                                        const selected = publicFormSettings.catalogItemIds.some(x => x.id === p.id && x.item_type === 'prestation')
                                         return (
                                             <label key={p.id} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer border transition-all ${selected ? 'border-accent/40 bg-accent/5' : 'border-[var(--elevation-border)] hover:bg-base'}`}>
                                                 <input
@@ -1427,8 +1964,8 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             </div>
                         )}
 
-                        {catalogMaterials.length === 0 && catalogPrestationTypes.length === 0 && (
-                            <p className="text-sm text-secondary text-center py-6">Aucun élément dans votre catalogue. Ajoutez des matériaux ou des prestations types dans l&apos;onglet Catalogue.</p>
+                        {catalogMaterials.length === 0 && catalogLaborRates.length === 0 && catalogPrestationTypes.length === 0 && (
+                            <p className="text-sm text-secondary text-center py-6">Aucun élément dans votre catalogue. Ajoutez des matériaux, des opérations ou des prestations types dans l&apos;onglet Catalogue.</p>
                         )}
 
                         {(catalogMaterials.length > 0 || catalogPrestationTypes.length > 0) && (
@@ -1493,17 +2030,11 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     </div>
 
                     <div className="rounded-3xl card p-8 space-y-6">
-                        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
-                            <div>
-                                <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">Fermeture de compte et suppression</h2>
-                                <p className="text-sm text-slate-700 dark:text-zinc-300 max-w-2xl">
-                                    La clôture définitive demande quelques vérifications. Vous pouvez dans un premier temps sauvegarder toutes vos informations, puis faire une demande auprès de notre support.
-                                </p>
-                            </div>
-                            <div className="rounded-2xl border border-[var(--elevation-border)] bg-slate-50 dark:bg-white/5 px-4 py-3">
-                                <p className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-zinc-400">Contact support</p>
-                                <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{privacyContactLabel}</p>
-                            </div>
+                        <div>
+                            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">Fermeture de compte et suppression</h2>
+                            <p className="text-sm text-slate-700 dark:text-zinc-300 max-w-2xl">
+                                La clôture est irréversible et se fait en self-service en 3 étapes. Vos documents comptables sont conservés 10 ans, toutes les autres données sont supprimées 30 jours après votre demande.
+                            </p>
                         </div>
 
                         <div className="rounded-2xl border border-[var(--elevation-border)] bg-slate-50 dark:bg-white/5 p-5 space-y-5">
@@ -1569,7 +2100,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 ) : (
                                     <div className="space-y-3">
                                         {organizationExports.map((item) => (
-                                            <div key={item.id} className="rounded-2xl border border-[var(--elevation-border)] bg-surface/60 p-4">
+                                            <div key={item.id} className="rounded-2xl border border-[var(--elevation-border)] bg-surface/60 dark:bg-white/[0.03] dark:backdrop-blur-sm p-4">
                                                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                                                     <div className="space-y-2">
                                                         <div className="flex items-center gap-2 flex-wrap">
@@ -1621,42 +2152,124 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         <div className="rounded-2xl border border-[var(--elevation-border)] bg-base/50 dark:bg-white/5 p-5">
                             <p className="text-sm font-semibold text-primary">Conservation légale des documents</p>
                             <p className="mt-2 text-sm leading-6 text-secondary">
-                                Pour des obligations comptables et fiscales, vos devis et factures créés doivent être conservés par nos soins (même après la fermeture du compte) conformément à la loi. Nous supprimerons toutes vos autres données personnelles et éléments non soumis à la législation.
+                                Vos devis et factures sont conservés 10 ans (obligations comptables et fiscales), même après la fermeture du compte. Toutes vos autres données personnelles sont purgées 30 jours après la demande.
                             </p>
                         </div>
 
-                        <div className="flex flex-col sm:flex-row gap-3">
-                            {deletionRequestHref ? (
-                                <a
-                                    href={deletionRequestHref}
-                                    className="px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20"
+                        {organization?.deletion_requested_at ? (
+                            <div className="rounded-2xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-5 space-y-3">
+                                <div className="flex items-center gap-2">
+                                    <Trash2 className="w-5 h-5 text-red-500" />
+                                    <p className="text-sm font-bold text-red-700 dark:text-red-400">Suppression programmée</p>
+                                </div>
+                                <p className="text-sm text-red-700 dark:text-red-300">
+                                    Votre compte sera définitivement supprimé le{' '}
+                                    <strong>{organization.deletion_scheduled_at ? new Date(organization.deletion_scheduled_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : '—'}</strong>.
+                                    Vous pouvez annuler cette demande avant cette date.
+                                </p>
+                                <button
+                                    onClick={async () => {
+                                        setCancelDeletionStatus('pending')
+                                        const result = await cancelAccountDeletion()
+                                        setCancelDeletionStatus(result.error ? 'idle' : 'done')
+                                        if (!result.error) router.refresh()
+                                    }}
+                                    disabled={cancelDeletionStatus === 'pending'}
+                                    className="px-5 py-2 rounded-full border border-red-400 text-red-700 dark:text-red-300 font-semibold text-sm hover:bg-red-100 dark:hover:bg-red-900/30 transition-all disabled:opacity-60"
                                 >
-                                    <Trash2 className="w-4 h-4" />
-                                    Demander la fermeture du compte
-                                </a>
-                            ) : (
-                                <Link
-                                    href={`${LEGAL_PATHS.legal}#contact`}
-                                    target="_blank"
-                                    className="px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20"
-                                >
-                                    <Mail className="w-4 h-4" />
-                                    Voir le contact a configurer
-                                </Link>
-                            )}
-                            <Link
-                                href={`${LEGAL_PATHS.privacy}#suppression`}
-                                target="_blank"
-                                className="px-6 py-3 rounded-full border border-[var(--elevation-border)] text-primary font-bold flex items-center justify-center gap-2 hover:border-accent hover:text-accent transition-all"
-                            >
-                                <ShieldCheck className="w-4 h-4" />
-                                Lire la politique détaillée
-                            </Link>
-                        </div>
+                                    {cancelDeletionStatus === 'pending' ? 'Annulation...' : 'Annuler la suppression'}
+                                </button>
+                            </div>
+                        ) : isOwner ? (
+                            <div className="rounded-2xl border border-[var(--elevation-border)] p-5 space-y-4">
+                                <p className="text-sm font-semibold text-primary">Fermeture en self-service — 3 étapes</p>
 
-                        <p className="text-xs text-secondary">
-                            L&apos;export complet est automatise pour l&apos;owner. La suppression de donnees reste quant a elle traitee separement, avec confirmation et verification des obligations legales.
-                        </p>
+                                <div className={`rounded-xl border p-4 space-y-2 transition-all ${deletionStep >= 1 ? 'border-green-400 bg-green-50 dark:bg-green-950/20' : 'border-[var(--elevation-border)]'}`}>
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${deletionStep >= 1 ? 'bg-green-500 text-white' : 'bg-surface border border-[var(--elevation-border)] text-secondary'}`}>1</div>
+                                        <p className="text-sm font-semibold text-primary">Sauvegarder vos données</p>
+                                    </div>
+                                    <p className="text-sm text-secondary pl-8">Téléchargez votre archive ZIP complète avant de continuer.</p>
+                                    {deletionStep === 0 && (
+                                        <div className="pl-8">
+                                            <button
+                                                onClick={() => { handleCreateOrganizationExport(); setDeletionStep(1) }}
+                                                className="px-4 py-2 rounded-full bg-accent text-black font-semibold text-sm flex items-center gap-2 hover:scale-105 transition-all shadow-md shadow-accent/20"
+                                            >
+                                                <Package className="w-4 h-4" />
+                                                Générer et télécharger l&apos;archive
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className={`rounded-xl border p-4 space-y-2 transition-all ${deletionStep >= 2 ? 'border-orange-400 bg-orange-50 dark:bg-orange-950/20' : deletionStep === 1 ? 'border-[var(--elevation-border)]' : 'border-[var(--elevation-border)] opacity-40'}`}>
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${deletionStep >= 2 ? 'bg-orange-500 text-white' : 'bg-surface border border-[var(--elevation-border)] text-secondary'}`}>2</div>
+                                        <p className="text-sm font-semibold text-primary">Confirmer par le nom de l&apos;organisation</p>
+                                    </div>
+                                    <p className="text-sm text-secondary pl-8">Saisissez exactement <strong>{organization?.name}</strong> pour confirmer.</p>
+                                    {deletionStep === 1 && (
+                                        <div className="pl-8 space-y-3">
+                                            <input
+                                                type="text"
+                                                value={deletionConfirmText}
+                                                onChange={e => setDeletionConfirmText(e.target.value)}
+                                                placeholder={organization?.name ?? ''}
+                                                className="w-full max-w-xs px-4 py-2 rounded-xl border border-[var(--elevation-border)] bg-base text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                                            />
+                                            <button
+                                                onClick={() => { if (deletionConfirmText === organization?.name) setDeletionStep(2) }}
+                                                disabled={deletionConfirmText !== organization?.name}
+                                                className="px-4 py-2 rounded-full bg-orange-500 text-white font-semibold text-sm hover:scale-105 transition-all shadow-md disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                            >
+                                                Confirmer
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className={`rounded-xl border p-4 space-y-2 transition-all ${deletionStep === 3 ? 'border-green-400' : deletionStep === 2 ? 'border-red-400 bg-red-50 dark:bg-red-950/20' : 'border-[var(--elevation-border)] opacity-40'}`}>
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${deletionStep === 3 ? 'bg-green-500 text-white' : deletionStep === 2 ? 'bg-red-500 text-white' : 'bg-surface border border-[var(--elevation-border)] text-secondary'}`}>3</div>
+                                        <p className="text-sm font-semibold text-primary">Lancer la suppression</p>
+                                    </div>
+                                    <p className="text-sm text-secondary pl-8">La suppression sera effective dans 30 jours. Annulable pendant ce délai.</p>
+                                    {deletionStep === 2 && (
+                                        <div className="pl-8 space-y-2">
+                                            <button
+                                                onClick={async () => {
+                                                    setDeletionStatus('pending')
+                                                    setDeletionError(null)
+                                                    const result = await requestAccountDeletion()
+                                                    if (result.error) { setDeletionStatus('error'); setDeletionError(result.error) }
+                                                    else { setDeletionStatus('done'); setDeletionStep(3); router.refresh() }
+                                                }}
+                                                disabled={deletionStatus === 'pending'}
+                                                className="px-5 py-2 rounded-full bg-red-600 text-white font-bold text-sm flex items-center gap-2 hover:scale-105 transition-all shadow-md disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                                {deletionStatus === 'pending' ? 'Traitement...' : 'Confirmer la suppression définitive'}
+                                            </button>
+                                            {deletionError && <p className="text-sm text-red-500">{deletionError}</p>}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="rounded-2xl border border-[var(--elevation-border)] bg-slate-50 dark:bg-white/5 p-5 text-sm text-secondary">
+                                La fermeture de compte est réservée au propriétaire (owner) de l&apos;organisation.
+                            </div>
+                        )}
+
+                        <Link
+                            href={`${LEGAL_PATHS.privacy}#suppression`}
+                            target="_blank"
+                            className="inline-flex items-center gap-2 text-sm text-secondary hover:text-accent transition-colors"
+                        >
+                            <ShieldCheck className="w-4 h-4" />
+                            Lire la politique de suppression détaillée
+                        </Link>
                     </div>
                 </div>
             )
@@ -1718,7 +2331,21 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
             return (
                 <div className="space-y-6">
-                    <div className="bg-surface dark:bg-white/5 rounded-2xl p-6 border border-[var(--elevation-border)] space-y-6">
+                    <div className="rounded-3xl card p-8 flex flex-col items-center justify-center gap-5 text-center min-h-[320px]">
+                        <div className="w-16 h-16 rounded-2xl bg-green-500/10 flex items-center justify-center">
+                            <MessageSquare className="w-8 h-8 text-green-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-2xl font-bold text-primary mb-2">Agent WhatsApp</h2>
+                            <p className="text-sm text-secondary max-w-sm">
+                                La connexion WhatsApp sera disponible prochainement. En attente de la vérification Meta et de la mise en place du numéro dédié.
+                            </p>
+                        </div>
+                        <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 text-sm font-semibold">
+                            Bientôt disponible
+                        </span>
+                    </div>
+                    <div className="bg-surface dark:bg-white/5 rounded-2xl p-6 border border-[var(--elevation-border)] space-y-6 hidden">
                         {/* En-tête */}
                         <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center">
@@ -2002,11 +2629,64 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             )
         }
 
+        if (activeTab === 'securite') {
+            return (
+                <div className="space-y-6">
+                    {/* Sessions actives */}
+                    <div className="rounded-3xl card p-8 space-y-6">
+                        <div>
+                            <h2 className="text-2xl font-bold text-primary mb-1">Sessions actives</h2>
+                            <p className="text-sm text-secondary">Vos connexions en cours. Révoquez une session pour forcer la déconnexion sur un appareil.</p>
+                        </div>
+                        {!sessionsLoaded ? (
+                            <button onClick={loadSecurityData} className="flex items-center gap-2 text-sm text-accent font-semibold hover:underline">
+                                <RefreshCw className="w-4 h-4" />Charger les sessions
+                            </button>
+                        ) : sessions.length === 0 ? (
+                            <button
+                                onClick={async () => {
+                                    const supabase = createClient()
+                                    await supabase.auth.signOut({ scope: 'others' })
+                                }}
+                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-red-500/30 text-red-500 text-sm font-semibold hover:bg-red-500/5 transition-colors"
+                            >
+                                <Trash2 className="w-4 h-4" />Déconnecter toutes les autres sessions
+                            </button>
+                        ) : (
+                            <div className="space-y-3">
+                                {sessions.map(session => (
+                                    <div key={session.id} className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-base dark:bg-white/5 border border-[var(--elevation-border)]">
+                                        <div>
+                                            <p className="font-semibold text-primary text-sm">{session.user_agent ?? 'Appareil inconnu'}</p>
+                                            <p className="text-xs text-secondary">{session.ip ? `IP ${session.ip} · ` : ''}{session.created_at ? new Date(session.created_at).toLocaleString('fr-FR') : ''}</p>
+                                        </div>
+                                        <button
+                                            onClick={async () => {
+                                                setRevokeStatus(s => ({ ...s, [session.id]: 'revoking' }))
+                                                const supabase = createClient()
+                                                await supabase.auth.signOut({ scope: 'others' })
+                                                setRevokeStatus(s => ({ ...s, [session.id]: 'done' }))
+                                                setSessions(ss => ss.filter(s => s.id !== session.id))
+                                            }}
+                                            disabled={revokeStatus[session.id] === 'revoking'}
+                                            className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-600 font-semibold transition-colors disabled:opacity-50"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />{revokeStatus[session.id] === 'done' ? 'Révoquée' : 'Révoquer'}
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )
+        }
+
         return null;
     };
 
     return (
-        <main className="flex-1 p-8 max-w-[1400px] mx-auto w-full space-y-8">
+        <main className="page-container space-y-6 md:space-y-8">
             <div className="flex items-center justify-between">
                 <div className="flex flex-col gap-2">
                     <h1 className="text-4xl font-bold text-primary">Paramètres</h1>
@@ -2018,11 +2698,15 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     <button onClick={() => setActiveTab('profil')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'profil' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><User className="w-5 h-5" />Mon Profil</button>
                     <button onClick={() => setActiveTab('entreprise')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'entreprise' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Building2 className="w-5 h-5" />Entreprise</button>
                     <button onClick={() => setActiveTab('equipe')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'equipe' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Users className="w-5 h-5" />Équipe</button>
+                    {canEditRoles && (
+                        <button onClick={() => setActiveTab('roles')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'roles' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><KeyRound className="w-5 h-5" />Rôles &amp; permissions</button>
+                    )}
                     <button onClick={() => setActiveTab('emails')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'emails' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Mail className="w-5 h-5" />Relances &amp; emails</button>
                     <button onClick={() => setActiveTab('confidentialite')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'confidentialite' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><ShieldCheck className="w-5 h-5" />Données &amp; confidentialité</button>
                     <button onClick={() => setActiveTab('integration')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'integration' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Globe className="w-5 h-5" />Intégration</button>
                     <button onClick={() => setActiveTab('formulaire')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'formulaire' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Inbox className="w-5 h-5" />Formulaire public</button>
                     <button onClick={() => setActiveTab('whatsapp')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'whatsapp' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><MessageSquare className="w-5 h-5 text-green-500" />Agent WhatsApp</button>
+                    <button onClick={() => setActiveTab('securite')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'securite' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Lock className="w-5 h-5" />Sécurité</button>
                 </div>
                 <div className="flex-1">{renderContent()}</div>
             </div>

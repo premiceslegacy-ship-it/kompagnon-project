@@ -4,12 +4,10 @@ import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Mic, MicOff, FileText, Bot, Loader2, Upload,
-  CheckCircle2, AlertCircle, RotateCcw, ChevronRight, X, ImageIcon,
+  CheckCircle2, AlertCircle, RotateCcw, ChevronRight, ChevronLeft, X, ImageIcon,
 } from 'lucide-react'
 import {
-  createQuote,
-  upsertQuoteSection,
-  upsertQuoteItem,
+  createQuoteFromAIResult,
 } from '@/lib/data/mutations/quotes'
 import type { AIQuoteResult } from '@/app/api/ai/analyze-quote/route'
 import { AI_NAME } from '@/lib/brand'
@@ -33,50 +31,60 @@ export default function AtelierIAPage() {
   const [file, setFile] = useState<File | null>(null)
   const [pdfDescription, setPdfDescription] = useState('')
   const [isRecording, setIsRecording] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
-  const [result, setResult] = useState<AIQuoteResult | null>(null)
+  const [results, setResults] = useState<AIQuoteResult[]>([])
+  const [currentIndex, setCurrentIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
-  const recognitionRef = useRef<any>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // ─── Web Speech ─────────────────────────────────────────────────────────────
+  // ─── MediaRecorder → Mistral transcription ───────────────────────────────
 
-  const startRecording = useCallback(() => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      setError('Saisie vocale non supportée. Utilisez Chrome ou Edge.')
-      return
-    }
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'fr-FR'
-    recognition.continuous = true
-    recognition.interimResults = true
-    recognition.onresult = (event: any) => {
-      const transcript = Array.from(event.results as any[])
-        .map((r: any) => r[0].transcript)
-        .join(' ')
-      setText(transcript)
-    }
-    recognition.onerror = (event: any) => {
-      if (event.error !== 'aborted') setError('Erreur micro : ' + event.error)
-      setIsRecording(false)
-    }
-    recognition.onend = () => setIsRecording(false)
-    recognitionRef.current = recognition
-    recognition.start()
-    setIsRecording(true)
+  const startRecording = useCallback(async () => {
     setError(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      chunksRef.current = []
+
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        setIsTranscribing(true)
+        try {
+          const fd = new FormData()
+          fd.append('audio', blob, 'recording.webm')
+          const res = await fetch('/api/ai/transcribe-audio', { method: 'POST', body: fd })
+          const data = await res.json()
+          if (!res.ok) setError(data.error ?? 'Erreur transcription')
+          else setText(data.text ?? '')
+        } catch {
+          setError('Impossible de transcrire l\'audio.')
+        } finally {
+          setIsTranscribing(false)
+        }
+      }
+
+      mediaRecorderRef.current = recorder
+      recorder.start()
+      setIsRecording(true)
+    } catch {
+      setError('Accès micro refusé ou non disponible.')
+    }
   }, [])
 
   const stopRecording = useCallback(() => {
-    recognitionRef.current?.stop()
+    mediaRecorderRef.current?.stop()
     setIsRecording(false)
   }, [])
 
-  useEffect(() => () => recognitionRef.current?.stop(), [])
+  useEffect(() => () => { mediaRecorderRef.current?.stop() }, [])
 
   // ─── Analyze ─────────────────────────────────────────────────────────────────
 
@@ -84,7 +92,8 @@ export default function AtelierIAPage() {
     if (isRecording) stopRecording()
     setIsAnalyzing(true)
     setError(null)
-    setResult(null)
+    setResults([])
+    setCurrentIndex(0)
 
     try {
       let res: Response
@@ -102,7 +111,7 @@ export default function AtelierIAPage() {
       }
       const data = await res.json()
       if (!res.ok) setError(data.error ?? 'Erreur inconnue')
-      else setResult(data as AIQuoteResult)
+      else setResults((data as { quotes: AIQuoteResult[] }).quotes ?? [])
     } catch {
       setError('Impossible de contacter l\'IA. Vérifiez votre connexion.')
     } finally {
@@ -113,42 +122,25 @@ export default function AtelierIAPage() {
   // ─── Créer dans l'éditeur ─────────────────────────────────────────────────
 
   async function handleCreateInEditor() {
-    if (!result) return
+    if (results.length === 0) return
     setIsCreating(true)
     setError(null)
 
     try {
-      const quoteRes = await createQuote({ clientId: null, title: result.title || 'Nouveau devis' })
-      if (quoteRes.error || !quoteRes.quoteId) {
-        setError(quoteRes.error ?? 'Impossible de créer le devis')
-        setIsCreating(false)
-        return
-      }
-      const qId = quoteRes.quoteId
-
-      for (let si = 0; si < result.sections.length; si++) {
-        const aiSec = result.sections[si]
-        const secRes = await upsertQuoteSection({ quote_id: qId, title: aiSec.title, position: si + 1 })
-        const sectionId = secRes.sectionId
-        if (!sectionId) continue
-
-        for (let ii = 0; ii < aiSec.items.length; ii++) {
-          const item = aiSec.items[ii]
-          await upsertQuoteItem({
-            quote_id: qId,
-            section_id: sectionId,
-            type: 'custom',
-            description: item.description,
-            quantity: item.quantity,
-            unit: item.unit,
-            unit_price: item.unit_price,
-            vat_rate: item.vat_rate,
-            position: ii + 1,
-          })
+      const createdIds: string[] = []
+      for (const quote of results) {
+        const quoteRes = await createQuoteFromAIResult(quote)
+        if (quoteRes.error || !quoteRes.quoteId) {
+          setError(quoteRes.error ?? 'Impossible de créer le devis')
+          setIsCreating(false)
+          return
         }
+        createdIds.push(quoteRes.quoteId)
       }
 
-      router.push(`/finances/quote-editor?id=${qId}`)
+      const targetId = createdIds[currentIndex] ?? createdIds[0]
+      const params = new URLSearchParams({ id: targetId, returnTo: '/atelier-ia' })
+      router.push(`/finances/quote-editor?${params}`)
     } catch {
       setError('Erreur lors de la création du devis')
       setIsCreating(false)
@@ -159,7 +151,8 @@ export default function AtelierIAPage() {
     setText('')
     setFile(null)
     setPdfDescription('')
-    setResult(null)
+    setResults([])
+    setCurrentIndex(0)
     setError(null)
   }
 
@@ -169,8 +162,9 @@ export default function AtelierIAPage() {
     handleReset()
   }
 
+  const currentQuote = results[currentIndex] ?? null
   const canAnalyze = mode === 'pdf' ? !!file : text.trim().length >= 5
-  const totalItems = result?.sections.reduce((s, sec) => s + sec.items.length, 0) ?? 0
+  const totalItems = currentQuote?.sections.reduce((s: number, sec: AIQuoteResult['sections'][0]) => s + sec.items.length, 0) ?? 0
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -179,7 +173,7 @@ export default function AtelierIAPage() {
 
       {/* Header */}
       <div className="flex items-center gap-4 mb-8">
-        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-violet-500/20">
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
           <Bot className="w-6 h-6 text-white" />
         </div>
         <div>
@@ -225,7 +219,7 @@ export default function AtelierIAPage() {
                   <div className="flex-1 flex flex-col items-center justify-center gap-4">
                     <button
                       onClick={isRecording ? stopRecording : startRecording}
-                      className={`w-24 h-24 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                      className={`w-24 h-24 rounded-full flex items-center justify-center transition-all ${
                         isRecording
                           ? 'bg-red-500 hover:bg-red-600 animate-pulse'
                           : 'bg-gradient-to-br from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700'
@@ -234,9 +228,15 @@ export default function AtelierIAPage() {
                       {isRecording ? <MicOff className="w-10 h-10 text-white" /> : <Mic className="w-10 h-10 text-white" />}
                     </button>
                     <p className="text-sm text-secondary">
-                      {isRecording ? 'Écoute en cours... (cliquez pour arrêter)' : 'Cliquez pour parler'}
+                      {isRecording ? 'Enregistrement en cours... (cliquez pour arrêter)' : isTranscribing ? 'Transcription Mistral...' : 'Cliquez pour parler'}
                     </p>
                   </div>
+                  {isTranscribing && (
+                    <div className="flex items-center gap-2 text-sm text-secondary">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Transcription en cours...
+                    </div>
+                  )}
                   {text && (
                     <div className="flex-1 p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-[var(--elevation-border)] overflow-y-auto">
                       <p className="text-xs text-secondary font-medium mb-2">Transcription</p>
@@ -253,7 +253,7 @@ export default function AtelierIAPage() {
                     value={text}
                     onChange={e => setText(e.target.value)}
                     placeholder="Ex: Rénovation complète d'une salle de bain de 8m2 : dépose de l'ancien carrelage, pose nouveau carrelage sol et mur (format 60×60), remplacement de la baignoire par une douche à l'italienne 90×90, changement du lavabo et robinetterie, peinture plafond..."
-                    className="flex-1 p-4 rounded-2xl bg-base border border-[var(--elevation-border)] text-primary text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
+                    className="flex-1 min-h-[16rem] max-h-full overflow-y-auto p-4 rounded-2xl bg-base border border-[var(--elevation-border)] text-primary text-sm resize-y focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
                   />
                 </div>
               )}
@@ -325,8 +325,8 @@ export default function AtelierIAPage() {
                           value={pdfDescription}
                           onChange={e => setPdfDescription(e.target.value)}
                           placeholder="Ex: Concentre-toi sur la partie plomberie. Ignore les pages administratives. TVA à 10% car rénovation d'un logement existant."
-                          rows={4}
-                          className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
+                          rows={5}
+                          className="w-full min-h-[8rem] max-h-[16rem] overflow-y-auto p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm resize-y focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
                         />
                       </div>
                     </div>
@@ -347,7 +347,7 @@ export default function AtelierIAPage() {
             <button
               onClick={handleAnalyze}
               disabled={!canAnalyze || isAnalyzing}
-              className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-lg shadow-violet-500/20"
+              className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               {isAnalyzing ? (
                 <><Loader2 className="w-5 h-5 animate-spin" />Analyse en cours...</>
@@ -362,7 +362,7 @@ export default function AtelierIAPage() {
         <div className="lg:col-span-7 flex flex-col">
           <div className="rounded-3xl card p-6 flex-1 flex flex-col overflow-hidden">
 
-            {!result && !isAnalyzing && (
+            {!currentQuote && !isAnalyzing && (
               <div className="flex-1 flex flex-col items-center justify-center gap-4 text-secondary">
                 <div className="w-20 h-20 rounded-3xl bg-violet-500/10 flex items-center justify-center">
                   <Bot className="w-10 h-10 text-violet-400 opacity-50" />
@@ -382,14 +382,14 @@ export default function AtelierIAPage() {
               </div>
             )}
 
-            {result && (
+            {currentQuote && (
               <div className="flex flex-col h-full">
                 {/* Result header */}
                 <div className="flex items-center justify-between mb-4 flex-shrink-0">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-5 h-5 text-green-500" />
                     <span className="font-bold text-primary">
-                      {result.sections.length} section{result.sections.length > 1 ? 's' : ''} · {totalItems} ligne{totalItems > 1 ? 's' : ''}
+                      {currentQuote.sections.length} section{currentQuote.sections.length > 1 ? 's' : ''} · {totalItems} ligne{totalItems > 1 ? 's' : ''}
                     </span>
                   </div>
                   <button
@@ -400,9 +400,33 @@ export default function AtelierIAPage() {
                   </button>
                 </div>
 
+                {/* Pagination si plusieurs devis */}
+                {results.length > 1 && (
+                  <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                    <button
+                      onClick={() => setCurrentIndex(i => Math.max(0, i - 1))}
+                      disabled={currentIndex === 0}
+                      className="w-8 h-8 flex items-center justify-center rounded-xl text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <div className="text-center">
+                      <p className="text-sm font-semibold text-primary">Devis {currentIndex + 1} / {results.length}</p>
+                      {currentQuote.title && <p className="text-xs text-secondary truncate max-w-[220px]">{currentQuote.title}</p>}
+                    </div>
+                    <button
+                      onClick={() => setCurrentIndex(i => Math.min(results.length - 1, i + 1))}
+                      disabled={currentIndex === results.length - 1}
+                      className="w-8 h-8 flex items-center justify-center rounded-xl text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
                 {/* Sections */}
                 <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-                  {result.sections.map((section, si) => (
+                  {currentQuote.sections.map((section, si) => (
                     <div key={si} className="rounded-2xl border border-[var(--elevation-border)] overflow-hidden">
                       <div className="px-4 py-2.5 bg-black/5 dark:bg-white/5">
                         <p className="text-xs font-bold text-primary uppercase tracking-wider">{section.title}</p>
@@ -428,20 +452,22 @@ export default function AtelierIAPage() {
                 </div>
 
                 {/* CTA */}
-                <div className="mt-4 flex-shrink-0">
+                <div className="mt-4 flex-shrink-0 border-t border-[var(--elevation-border)] pt-4">
                   <button
                     onClick={handleCreateInEditor}
                     disabled={isCreating}
-                    className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold hover:from-violet-600 hover:to-indigo-700 disabled:opacity-60 transition-all shadow-lg shadow-violet-500/20"
+                    className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold hover:from-violet-600 hover:to-indigo-700 disabled:opacity-60 transition-colors"
                   >
                     {isCreating ? (
                       <><Loader2 className="w-5 h-5 animate-spin" />Création en cours...</>
                     ) : (
-                      <><FileText className="w-5 h-5" />Ouvrir dans l'éditeur<ChevronRight className="w-5 h-5" /></>
+                      <><FileText className="w-5 h-5" />{results.length > 1 ? `Créer les ${results.length} devis et ouvrir` : 'Ouvrir dans l\'éditeur'}<ChevronRight className="w-5 h-5" /></>
                     )}
                   </button>
                   <p className="text-xs text-secondary text-center mt-2">
-                    Le devis sera créé et vous serez redirigé vers l'éditeur pour finaliser et assigner un client.
+                    {results.length > 1
+                      ? 'Tous les devis seront créés. Vous serez redirigé vers celui affiché ici.'
+                      : 'Le devis sera créé et vous serez redirigé vers l’éditeur pour finaliser.'}
                   </p>
                 </div>
               </div>

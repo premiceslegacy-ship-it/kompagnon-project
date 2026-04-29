@@ -10,7 +10,7 @@ import QuoteEditorClient from './QuoteEditorClient'
 export default async function QuoteEditorPage({
   searchParams,
 }: {
-  searchParams: { id?: string; client?: string }
+  searchParams: { id?: string; client?: string; returnTo?: string }
 }) {
   const [clients, materials, laborRates, prestationTypes, organization, modules] = await Promise.all([
     getClients(),
@@ -37,11 +37,13 @@ export default async function QuoteEditorPage({
       laborRates={laborRates}
       prestationTypes={prestationTypes}
       initialClientId={searchParams.client}
+      returnTo={searchParams.returnTo ?? null}
       catalogContext={catalogContext}
       modules={modules}
       vatConfig={{
         isVatSubject: organization?.is_vat_subject ?? true,
         defaultVatRate: organization?.default_vat_rate ?? 20,
+        defaultQuoteValidityDays: organization?.default_quote_validity_days ?? 30,
       }}
     />
   )

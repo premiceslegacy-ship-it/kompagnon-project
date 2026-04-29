@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getSupabaseRuntimeConfig } from '@/lib/supabase/config'
+
+export const dynamic = 'force-dynamic';
 import { generateEmbedding } from '@/lib/ai/embeddings'
+import { verifyCronSecret } from '@/lib/cron-auth'
 
 const BATCH_SIZE = 50
 
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get('x-cron-secret')
-  if (!secret || secret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req.headers.get('x-cron-secret'))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
