@@ -30,10 +30,27 @@ import {
     BUSINESS_ACTIVITIES_BY_PROFILE,
     resolveBusinessSelection,
     type BusinessActivityId,
+    type BusinessProfile,
     type ResolvedCatalogContext,
 } from '@/lib/catalog-context';
 import { LEGAL_VAT_RATES } from '@/lib/utils';
 import { LEGAL_CONTACT, LANDING_LEGAL_SNIPPETS, LEGAL_PATHS, buildDeletionRequestMailto, legalContactLabel } from '@/lib/legal';
+import {
+    formatBicInput,
+    formatIbanInput,
+    formatPostalCodeInput,
+    formatSirenInput,
+    formatSiretInput,
+    formatVatNumberInput,
+    normalizeBic,
+    normalizeCommercialCourt,
+    normalizeEmail,
+    normalizeFrenchIban,
+    normalizeFrenchVatNumber,
+    normalizePostalCode,
+    normalizeSiret,
+    type OrganizationFieldErrors,
+} from '@/lib/validations/organization';
 
 function CopyButton({ text }: { text: string }) {
     const [copied, setCopied] = useState(false)
@@ -92,6 +109,8 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     const [codeCopied, setCodeCopied] = useState(false);
     const [isPending, startTransition] = useTransition();
     const [orgSaveStatus, setOrgSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [orgFieldErrors, setOrgFieldErrors] = useState<OrganizationFieldErrors>({});
+    const [orgErrorMessage, setOrgErrorMessage] = useState<string | null>(null);
     const [emailSaveStatus, setEmailSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [emailSettings, setEmailSettings] = useState({
         from_name: organization?.email_from_name ?? '',
@@ -129,6 +148,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         sector: organization?.sector,
         businessProfile: organization?.business_profile,
     });
+    const [openActivityProfile, setOpenActivityProfile] = useState<BusinessProfile>(initialBusinessSelection.businessProfile);
 
     const [companyDetails, setCompanyDetails] = useState({
         name: organization?.name ?? '',
@@ -256,6 +276,65 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     const isOwner = currentRoleSlug === 'owner'
     const isAdmin = currentRoleSlug === 'admin' || isOwner
     const hasProcessingExport = organizationExports.some((item) => item.status === 'processing')
+
+    function setOrgFieldError(field: keyof OrganizationFieldErrors, error?: string) {
+        setOrgFieldErrors(prev => {
+            const next = { ...prev }
+            if (error) next[field] = error
+            else delete next[field]
+            return next
+        })
+    }
+
+    function focusFirstOrgError(errors: OrganizationFieldErrors) {
+        const firstField = Object.keys(errors)[0]
+        if (!firstField) return
+        requestAnimationFrame(() => {
+            const el = document.querySelector<HTMLElement>(`[data-org-field="${firstField}"]`)
+            el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            el?.focus()
+        })
+    }
+
+    function orgInputClass(field: keyof OrganizationFieldErrors) {
+        return `w-full px-4 py-3 bg-base dark:bg-white/5 border ${
+            orgFieldErrors[field] ? 'border-red-500/60 focus:border-red-500 focus:ring-1 focus:ring-red-500/40' : 'border-transparent focus:border-accent focus:ring-1 focus:ring-accent'
+        } rounded-xl text-primary outline-none transition-all`
+    }
+
+    function OrgFieldError({ field }: { field: keyof OrganizationFieldErrors }) {
+        if (!orgFieldErrors[field]) return null
+        return <p className="text-xs text-red-500 font-medium">{orgFieldErrors[field]}</p>
+    }
+
+    function validateOrganizationDraft(): OrganizationFieldErrors {
+        const errors: OrganizationFieldErrors = {}
+        if (!companyDetails.name.trim()) errors.name = "Le nom de l'entreprise est obligatoire."
+        const siret = normalizeSiret(companyDetails.siret)
+        const vat = normalizeFrenchVatNumber(companyDetails.tva)
+        const email = normalizeEmail(companyDetails.email)
+        const postal = normalizePostalCode(companyDetails.postal_code)
+        const iban = normalizeFrenchIban(paymentDetails.iban)
+        const bic = normalizeBic(paymentDetails.bic)
+
+        if (siret.error) errors.siret = siret.error
+        if (vatConfig.is_vat_subject && vat.error) errors.vat_number = vat.error
+        if (!companyDetails.email.trim()) errors.email = "L'email de contact est obligatoire."
+        else if (email.error) errors.email = email.error
+        if (postal.error) errors.postal_code = postal.error
+        if (iban.error) errors.iban = iban.error
+        if (bic.error) errors.bic = bic.error
+        if (!Number.isFinite(paymentDetails.payment_terms_days) || paymentDetails.payment_terms_days < 0 || paymentDetails.payment_terms_days > 90) {
+            errors.payment_terms_days = 'Le délai de paiement doit être compris entre 0 et 90 jours.'
+        }
+        if (!Number.isFinite(paymentDetails.late_penalty_rate) || paymentDetails.late_penalty_rate < 0 || paymentDetails.late_penalty_rate > 100) {
+            errors.late_penalty_rate = 'Le taux de pénalités doit être compris entre 0 et 100 %.'
+        }
+        if (vatConfig.is_vat_subject && !LEGAL_VAT_RATES.includes(vatConfig.default_vat_rate as typeof LEGAL_VAT_RATES[number])) {
+            errors.default_vat_rate = 'Choisissez un taux de TVA légal : 0, 5,5, 10 ou 20 %.'
+        }
+        return errors
+    }
 
     // ─── Rôles & Permissions ──────────────────────────────────────────────────
     const [selectedRoleId, setSelectedRoleId] = useState<string>(
@@ -500,18 +579,37 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     }
 
     function handleSaveOrganization() {
+        setOrgErrorMessage(null);
+        const clientErrors = validateOrganizationDraft();
+        if (Object.keys(clientErrors).length > 0) {
+            setOrgFieldErrors(clientErrors);
+            setOrgSaveStatus('error');
+            setOrgErrorMessage('Corrigez les champs indiqués avant de sauvegarder.');
+            focusFirstOrgError(clientErrors);
+            setTimeout(() => setOrgSaveStatus('idle'), 3000);
+            return;
+        }
+        setOrgFieldErrors({});
         setOrgSaveStatus('saving');
         startTransition(async () => {
             const selection = resolveBusinessSelection({ activityId: companyDetails.business_activity });
+            const normalizedSiret = normalizeSiret(companyDetails.siret);
+            const normalizedVat = normalizeFrenchVatNumber(companyDetails.tva);
+            const normalizedEmail = normalizeEmail(companyDetails.email);
+            const normalizedPostalCode = normalizePostalCode(companyDetails.postal_code);
+            const normalizedIban = normalizeFrenchIban(paymentDetails.iban);
+            const normalizedBic = normalizeBic(paymentDetails.bic);
+            const normalizedCourt = normalizeCommercialCourt(paymentDetails.court_competent);
             const result = await updateOrganization({
-                name: companyDetails.name,
-                siret: companyDetails.siret,
-                vat_number: companyDetails.tva,
-                email: companyDetails.email,
-                phone: companyDetails.phone,
+                name: companyDetails.name.trim(),
+                siret: normalizedSiret.value,
+                siren: normalizedSiret.siren,
+                vat_number: vatConfig.is_vat_subject ? normalizedVat.value : null,
+                email: normalizedEmail.value ?? companyDetails.email,
+                phone: companyDetails.phone.trim() || null,
                 address_line1: companyDetails.address_line1 || null,
-                postal_code: companyDetails.postal_code || null,
-                city: companyDetails.city || null,
+                postal_code: normalizedPostalCode.value,
+                city: companyDetails.city.trim() || null,
                 business_profile: selection.businessProfile,
                 business_activity_id: selection.activity.id,
                 sector: selection.sectorLabel,
@@ -531,20 +629,38 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 decennale_couverture: decennale.couverture || null,
                 decennale_date_debut: decennale.date_debut || null,
                 decennale_date_fin: decennale.date_fin || null,
-                iban: paymentDetails.iban || null,
-                bic: paymentDetails.bic || null,
-                bank_name: paymentDetails.bank_name || null,
-                payment_terms_days: paymentDetails.payment_terms_days || null,
-                late_penalty_rate: paymentDetails.late_penalty_rate || null,
-                court_competent: paymentDetails.court_competent || null,
+                iban: normalizedIban.value,
+                bic: normalizedBic.value,
+                bank_name: paymentDetails.bank_name.trim() || null,
+                payment_terms_days: paymentDetails.payment_terms_days ?? null,
+                late_penalty_rate: paymentDetails.late_penalty_rate ?? null,
+                court_competent: normalizedCourt,
                 recovery_indemnity_text: paymentDetails.recovery_indemnity_text || null,
                 is_vat_subject: vatConfig.is_vat_subject,
                 default_vat_rate: vatConfig.is_vat_subject ? vatConfig.default_vat_rate : 0,
             });
             if (result.error) {
+                const fieldErrors = result.fieldErrors ?? {};
+                setOrgFieldErrors(fieldErrors);
+                setOrgErrorMessage(result.error);
+                focusFirstOrgError(fieldErrors);
                 setOrgSaveStatus('error');
                 setTimeout(() => setOrgSaveStatus('idle'), 3000);
             } else {
+                setCompanyDetails(details => ({
+                    ...details,
+                    name: details.name.trim(),
+                    siret: normalizedSiret.value ?? '',
+                    tva: vatConfig.is_vat_subject ? normalizedVat.value ?? '' : '',
+                    email: normalizedEmail.value ?? details.email,
+                    postal_code: normalizedPostalCode.value ?? '',
+                }));
+                setPaymentDetails(details => ({
+                    ...details,
+                    iban: normalizedIban.value ?? '',
+                    bic: normalizedBic.value ?? '',
+                    court_competent: normalizedCourt ?? '',
+                }));
                 setOrgSaveStatus('saved');
                 setTimeout(() => setOrgSaveStatus('idle'), 2000);
             }
@@ -710,6 +826,11 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         </div>
                         {renderOrganizationSaveButton('w-full sm:w-auto justify-center shrink-0')}
                     </div>
+                    {orgErrorMessage && (
+                        <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-500">
+                            {orgErrorMessage}
+                        </div>
+                    )}
                     <div>
                         <div className="flex flex-col md:flex-row gap-8">
                             <div className="flex-shrink-0">
@@ -738,9 +859,21 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 </button>
                             </div>
                             <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Nom de l&#39;entreprise</label><input type="text" value={companyDetails.name} onChange={e => setCompanyDetails({ ...companyDetails, name: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                                <div className="space-y-2"><label className="text-sm font-semibold text-secondary">SIRET</label><input type="text" value={companyDetails.siret} onChange={e => setCompanyDetails({ ...companyDetails, siret: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
-                                <div className="space-y-2"><label className="text-sm font-semibold text-secondary">TVA Intracommunautaire</label><input type="text" value={companyDetails.tva} onChange={e => setCompanyDetails({ ...companyDetails, tva: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-semibold text-secondary">Nom de l&#39;entreprise</label>
+                                    <input data-org-field="name" type="text" value={companyDetails.name} onChange={e => { setCompanyDetails({ ...companyDetails, name: e.target.value }); setOrgFieldError('name') }} className={orgInputClass('name')} />
+                                    <OrgFieldError field="name" />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-semibold text-secondary">SIRET</label>
+                                    <input data-org-field="siret" type="text" inputMode="numeric" value={companyDetails.siret} onChange={e => { setCompanyDetails({ ...companyDetails, siret: formatSiretInput(e.target.value) }); setOrgFieldError('siret') }} className={`${orgInputClass('siret')} tabular-nums`} />
+                                    <OrgFieldError field="siret" />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-semibold text-secondary">TVA Intracommunautaire</label>
+                                    <input data-org-field="vat_number" type="text" value={companyDetails.tva} onChange={e => { setCompanyDetails({ ...companyDetails, tva: formatVatNumberInput(e.target.value) }); setOrgFieldError('vat_number') }} className={`${orgInputClass('vat_number')} tabular-nums`} disabled={!vatConfig.is_vat_subject} />
+                                    <OrgFieldError field="vat_number" />
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -751,31 +884,48 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             <p className="text-sm text-secondary mt-1">Choisissez l’activité de référence qui correspond le mieux à votre entreprise.</p>
                         </div>
 
-                        <div className="space-y-4">
-                            {Object.entries(BUSINESS_ACTIVITIES_BY_PROFILE).map(([profileKey, activities]) => (
-                                <div key={profileKey} className="space-y-2">
-                                    <p className="text-xs font-bold text-secondary uppercase tracking-wider">
-                                        {resolveBusinessSelection({ businessProfile: profileKey }).profileConfig.onboardingLabel}
-                                    </p>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                        {activities.map((activity) => (
-                                            <button
-                                                key={activity.id}
-                                                type="button"
-                                                onClick={() => setCompanyDetails({ ...companyDetails, business_activity: activity.id })}
-                                                className={`p-4 rounded-2xl border text-left transition-all ${
-                                                    companyDetails.business_activity === activity.id
-                                                        ? 'border-accent bg-accent/10 text-primary'
-                                                        : 'border-[var(--elevation-border)] bg-surface dark:bg-white/[0.03] text-secondary hover:text-primary hover:border-accent/40'
-                                                }`}
-                                            >
-                                                <span className="block text-sm font-semibold">{activity.label}</span>
-                                                <span className="mt-1 block text-xs leading-relaxed opacity-80">{activity.description}</span>
-                                            </button>
-                                        ))}
+                        <div className="space-y-3">
+                            {(Object.entries(BUSINESS_ACTIVITIES_BY_PROFILE) as Array<[BusinessProfile, typeof BUSINESS_ACTIVITIES_BY_PROFILE[BusinessProfile]]>).map(([profileKey, activities]) => {
+                                const profile = resolveBusinessSelection({ businessProfile: profileKey }).profileConfig
+                                const open = openActivityProfile === profileKey
+                                const selectedActivityInProfile = activities.find(activity => activity.id === companyDetails.business_activity)
+                                return (
+                                    <div key={profileKey} className="rounded-2xl border border-[var(--elevation-border)] bg-surface dark:bg-white/[0.03] overflow-hidden">
+                                        <button
+                                            type="button"
+                                            onClick={() => setOpenActivityProfile(profileKey)}
+                                            className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left"
+                                        >
+                                            <span>
+                                                <span className="block text-sm font-bold text-primary">{profile.onboardingLabel}</span>
+                                                {selectedActivityInProfile && (
+                                                    <span className="mt-0.5 block text-xs text-accent">{selectedActivityInProfile.label}</span>
+                                                )}
+                                            </span>
+                                            <ChevronDown className={`w-4 h-4 text-secondary transition-transform ${open ? 'rotate-180' : ''}`} />
+                                        </button>
+                                        {open && (
+                                            <div className="px-3 pb-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                {activities.map((activity) => (
+                                                    <button
+                                                        key={activity.id}
+                                                        type="button"
+                                                        onClick={() => setCompanyDetails({ ...companyDetails, business_activity: activity.id })}
+                                                        className={`p-4 rounded-2xl border text-left transition-all ${
+                                                            companyDetails.business_activity === activity.id
+                                                                ? 'border-accent bg-accent/10 text-primary'
+                                                                : 'border-[var(--elevation-border)] bg-base dark:bg-white/[0.03] text-secondary hover:text-primary hover:border-accent/40'
+                                                        }`}
+                                                    >
+                                                        <span className="block text-sm font-semibold">{activity.label}</span>
+                                                        <span className="mt-1 block text-xs leading-relaxed opacity-80">{activity.description}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
-                                </div>
-                            ))}
+                                )
+                            })}
                         </div>
 
                         <div className="rounded-xl border border-[var(--elevation-border)] bg-surface dark:bg-white/[0.03] p-4">
@@ -788,9 +938,17 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     <div><h2 className="text-2xl font-bold text-primary mb-6">Coordonnées</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Adresse (rue, n°)</label><input type="text" placeholder="Ex : 12 rue de la Paix" value={companyDetails.address_line1} onChange={e => setCompanyDetails({ ...companyDetails, address_line1: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Code postal</label><input type="text" placeholder="Ex : 69007" value={companyDetails.postal_code} onChange={e => setCompanyDetails({ ...companyDetails, postal_code: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-secondary">Code postal</label>
+                                <input data-org-field="postal_code" type="text" inputMode="numeric" placeholder="Ex : 69007" value={companyDetails.postal_code} onChange={e => { setCompanyDetails({ ...companyDetails, postal_code: formatPostalCodeInput(e.target.value) }); setOrgFieldError('postal_code') }} className={`${orgInputClass('postal_code')} tabular-nums`} />
+                                <OrgFieldError field="postal_code" />
+                            </div>
                             <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Ville</label><input type="text" placeholder="Ex : Lyon" value={companyDetails.city} onChange={e => setCompanyDetails({ ...companyDetails, city: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Email de contact</label><input type="email" value={companyDetails.email} onChange={e => setCompanyDetails({ ...companyDetails, email: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-secondary">Email de contact</label>
+                                <input data-org-field="email" type="email" value={companyDetails.email} onChange={e => { setCompanyDetails({ ...companyDetails, email: e.target.value }); setOrgFieldError('email') }} className={orgInputClass('email')} />
+                                <OrgFieldError field="email" />
+                            </div>
                             <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Téléphone</label><input type="tel" value={companyDetails.phone} onChange={e => setCompanyDetails({ ...companyDetails, phone: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
                         </div>
                     </div>
@@ -801,7 +959,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Forme juridique</label><input type="text" placeholder="Ex : SAS, SARL, EI…" value={legalDetails.forme_juridique} onChange={e => setLegalDetails({ ...legalDetails, forme_juridique: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                             <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Capital social</label><input type="text" placeholder="Ex : 10 000 €" value={legalDetails.capital_social} onChange={e => setLegalDetails({ ...legalDetails, capital_social: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">N° RCS</label><input type="text" placeholder="Ex : 123 456 789" value={legalDetails.rcs} onChange={e => setLegalDetails({ ...legalDetails, rcs: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
+                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">N° RCS</label><input type="text" placeholder="Ex : 123 456 789" value={legalDetails.rcs} onChange={e => setLegalDetails({ ...legalDetails, rcs: formatSirenInput(e.target.value) })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
                             <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Ville du tribunal de commerce</label><input type="text" placeholder="Ex : Paris" value={legalDetails.rcs_ville} onChange={e => setLegalDetails({ ...legalDetails, rcs_ville: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                             <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Assurance professionnelle</label><input type="text" placeholder="Ex : AXA Pro n° 123456" value={legalDetails.insurance_info} onChange={e => setLegalDetails({ ...legalDetails, insurance_info: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                             <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Certifications / Qualifications</label><input type="text" placeholder="Ex : RGE Qualibat 7711, Qualifélec…" value={legalDetails.certifications} onChange={e => setLegalDetails({ ...legalDetails, certifications: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
@@ -953,11 +1111,13 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-2 md:col-span-2">
                                 <label className="text-sm font-semibold text-secondary">IBAN</label>
-                                <input type="text" placeholder="FR76 3000 6000 0112 3456 7890 189" value={paymentDetails.iban} onChange={e => setPaymentDetails({ ...paymentDetails, iban: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all font-mono tracking-wider" />
+                                <input data-org-field="iban" type="text" placeholder="FR76 3000 6000 0112 3456 7890 189" value={paymentDetails.iban} onChange={e => { setPaymentDetails({ ...paymentDetails, iban: formatIbanInput(e.target.value) }); setOrgFieldError('iban') }} className={`${orgInputClass('iban')} font-mono tracking-wider`} />
+                                <OrgFieldError field="iban" />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">BIC / SWIFT</label>
-                                <input type="text" placeholder="Ex : BNPAFRPPXXX" value={paymentDetails.bic} onChange={e => setPaymentDetails({ ...paymentDetails, bic: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all font-mono tracking-wider uppercase" />
+                                <input data-org-field="bic" type="text" placeholder="Ex : BNPAFRPPXXX" value={paymentDetails.bic} onChange={e => { setPaymentDetails({ ...paymentDetails, bic: formatBicInput(e.target.value) }); setOrgFieldError('bic') }} className={`${orgInputClass('bic')} font-mono tracking-wider uppercase`} />
+                                <OrgFieldError field="bic" />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Nom de la banque</label>
@@ -965,16 +1125,19 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Délai de paiement (jours)</label>
-                                <input type="number" min={0} max={90} value={paymentDetails.payment_terms_days} onChange={e => setPaymentDetails({ ...paymentDetails, payment_terms_days: Number(e.target.value) })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" />
+                                <input data-org-field="payment_terms_days" type="number" min={0} max={90} value={paymentDetails.payment_terms_days} onChange={e => { setPaymentDetails({ ...paymentDetails, payment_terms_days: Number(e.target.value) }); setOrgFieldError('payment_terms_days') }} className={`${orgInputClass('payment_terms_days')} tabular-nums`} />
+                                <OrgFieldError field="payment_terms_days" />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Taux pénalités de retard (%)</label>
-                                <input type="number" min={0} step={0.01} value={paymentDetails.late_penalty_rate} onChange={e => setPaymentDetails({ ...paymentDetails, late_penalty_rate: Number(e.target.value) })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" />
+                                <input data-org-field="late_penalty_rate" type="number" min={0} step={0.01} value={paymentDetails.late_penalty_rate} onChange={e => { setPaymentDetails({ ...paymentDetails, late_penalty_rate: Number(e.target.value) }); setOrgFieldError('late_penalty_rate') }} className={`${orgInputClass('late_penalty_rate')} tabular-nums`} />
+                                <OrgFieldError field="late_penalty_rate" />
                                 <p className="text-xs text-secondary">Taux légal minimum = 3× le taux d&apos;intérêt légal. Souvent fixé à 10%.</p>
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Tribunal compétent</label>
-                                <input type="text" placeholder="Ex : Tribunal de commerce de Paris" value={paymentDetails.court_competent} onChange={e => setPaymentDetails({ ...paymentDetails, court_competent: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
+                                <input data-org-field="court_competent" type="text" placeholder="Ex : Paris" value={paymentDetails.court_competent} onChange={e => setPaymentDetails({ ...paymentDetails, court_competent: e.target.value })} className={orgInputClass('court_competent')} />
+                                <p className="text-xs text-secondary">Tapez juste la ville, Atelier enregistrera la mention complète.</p>
                             </div>
                             <div className="space-y-2 md:col-span-2">
                                 <label className="text-sm font-semibold text-secondary">Mention indemnité de recouvrement <span className="text-accent font-normal">(obligatoire)</span></label>
@@ -2186,7 +2349,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
                                 <div className={`rounded-xl border p-4 space-y-2 transition-all ${deletionStep >= 1 ? 'border-green-400 bg-green-50 dark:bg-green-950/20' : 'border-[var(--elevation-border)]'}`}>
                                     <div className="flex items-center gap-2">
-                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${deletionStep >= 1 ? 'bg-green-500 text-white' : 'bg-surface border border-[var(--elevation-border)] text-secondary'}`}>1</div>
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${deletionStep >= 1 ? 'bg-green-500 text-white' : 'bg-surface dark:bg-white/[0.03] border border-[var(--elevation-border)] text-secondary'}`}>1</div>
                                         <p className="text-sm font-semibold text-primary">Sauvegarder vos données</p>
                                     </div>
                                     <p className="text-sm text-secondary pl-8">Téléchargez votre archive ZIP complète avant de continuer.</p>
@@ -2205,7 +2368,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
                                 <div className={`rounded-xl border p-4 space-y-2 transition-all ${deletionStep >= 2 ? 'border-orange-400 bg-orange-50 dark:bg-orange-950/20' : deletionStep === 1 ? 'border-[var(--elevation-border)]' : 'border-[var(--elevation-border)] opacity-40'}`}>
                                     <div className="flex items-center gap-2">
-                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${deletionStep >= 2 ? 'bg-orange-500 text-white' : 'bg-surface border border-[var(--elevation-border)] text-secondary'}`}>2</div>
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${deletionStep >= 2 ? 'bg-orange-500 text-white' : 'bg-surface dark:bg-white/[0.03] border border-[var(--elevation-border)] text-secondary'}`}>2</div>
                                         <p className="text-sm font-semibold text-primary">Confirmer par le nom de l&apos;organisation</p>
                                     </div>
                                     <p className="text-sm text-secondary pl-8">Saisissez exactement <strong>{organization?.name}</strong> pour confirmer.</p>
@@ -2231,7 +2394,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
                                 <div className={`rounded-xl border p-4 space-y-2 transition-all ${deletionStep === 3 ? 'border-green-400' : deletionStep === 2 ? 'border-red-400 bg-red-50 dark:bg-red-950/20' : 'border-[var(--elevation-border)] opacity-40'}`}>
                                     <div className="flex items-center gap-2">
-                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${deletionStep === 3 ? 'bg-green-500 text-white' : deletionStep === 2 ? 'bg-red-500 text-white' : 'bg-surface border border-[var(--elevation-border)] text-secondary'}`}>3</div>
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${deletionStep === 3 ? 'bg-green-500 text-white' : deletionStep === 2 ? 'bg-red-500 text-white' : 'bg-surface dark:bg-white/[0.03] border border-[var(--elevation-border)] text-secondary'}`}>3</div>
                                         <p className="text-sm font-semibold text-primary">Lancer la suppression</p>
                                     </div>
                                     <p className="text-sm text-secondary pl-8">La suppression sera effective dans 30 jours. Annulable pendant ce délai.</p>
@@ -2480,7 +2643,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                                                 type="text"
                                                                 value={waVerifyToken}
                                                                 onChange={e => setWaVerifyToken(e.target.value)}
-                                                                className="flex-1 px-2 py-1.5 rounded-lg bg-surface border border-[var(--elevation-border)] text-primary text-xs focus:outline-none focus:border-accent font-mono"
+                                                                className="flex-1 px-2 py-1.5 rounded-lg bg-surface dark:bg-white/[0.03] border border-[var(--elevation-border)] text-primary text-xs focus:outline-none focus:border-accent font-mono"
                                                             />
                                                             <CopyButton text={waVerifyToken} />
                                                             <button

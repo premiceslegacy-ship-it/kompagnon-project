@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import {
   ArrowLeft, Plus, Repeat, Pause, Play, Trash2, ChevronRight,
   Clock, AlertCircle, Check, Loader2, X, Search, EyeOff, Truck,
+  Package,
 } from 'lucide-react'
 import type { Client } from '@/lib/data/queries/clients'
 import type { CatalogMaterial, CatalogLaborRate, PrestationType } from '@/lib/data/queries/catalog'
@@ -44,6 +45,10 @@ const FREQ_OPTIONS: { value: RecurringFrequency; label: string }[] = [
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type FormItem = { id: number; desc: string; qty: number; unit: string; pu: number; vat: number; is_internal: boolean }
+
+function isEquipmentLine(item: Pick<FormItem, 'is_internal' | 'unit'>) {
+  return item.is_internal && item.unit === 'usage'
+}
 
 type FromInvoice = {
   title: string
@@ -87,6 +92,13 @@ export default function RecurringClient({
   const [catalogSearch, setCatalogSearch] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  useEffect(() => {
+    setInvoices(initial)
+    setSchedules(initialSchedules)
+    setIsRefreshing(false)
+  }, [initial, initialSchedules])
 
   // ── Inline client creation ─────────────────────────────────────────────────
   const [newClientOpen, setNewClientOpen] = useState(false)
@@ -250,6 +262,29 @@ export default function RecurringClient({
     setShowTransport(false)
   }
 
+  // ── Équipement amorti ────────────────────────────────────────────────────────
+  const [showEquipment, setShowEquipment] = useState(false)
+  const [equipmentName, setEquipmentName] = useState('')
+  const [equipmentPurchase, setEquipmentPurchase] = useState(0)
+  const [equipmentUses, setEquipmentUses] = useState(100)
+  const equipmentCostPerUse = equipmentUses > 0 ? Math.round((equipmentPurchase / equipmentUses) * 100) / 100 : 0
+
+  function handleAddEquipment() {
+    if (equipmentPurchase <= 0 || equipmentUses <= 0) return
+    const equipmentLabel = equipmentName.trim() || 'Équipement amorti'
+    const newItem = {
+      id: Date.now(),
+      desc: `${equipmentLabel}\n\nAmortissement : ${equipmentPurchase} € / ${equipmentUses} usages`,
+      qty: 1,
+      unit: 'usage',
+      pu: equipmentCostPerUse,
+      vat: defaultVatRate,
+      is_internal: true,
+    }
+    setFormItems(prev => replaceOrAppend(prev, [newItem]))
+    setShowEquipment(false)
+  }
+
   // ── Create ──────────────────────────────────────────────────────────────────
 
   function handleCreateSubmit(e: React.SyntheticEvent) {
@@ -287,6 +322,7 @@ export default function RecurringClient({
       if (res.error) { setFormError(res.error); return }
       setShowForm(false)
       resetForm()
+      setIsRefreshing(true)
       router.refresh()
     })
   }
@@ -406,7 +442,13 @@ export default function RecurringClient({
       {/* ── Liste des modèles ── */}
       <div className={`${cardCls} p-8`}>
         <h2 className="text-lg font-bold text-primary mb-6">Modèles actifs</h2>
-        {invoices.length === 0 ? (
+        {isRefreshing ? (
+          <div className="flex flex-col gap-3 animate-pulse">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="h-16 rounded-2xl bg-gray-200 dark:bg-white/5" />
+            ))}
+          </div>
+        ) : invoices.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 gap-3 text-secondary">
             <Repeat className="w-10 h-10 opacity-20" />
             <p className="font-semibold">Aucun modèle récurrent</p>
@@ -420,7 +462,7 @@ export default function RecurringClient({
                 <div
                   key={inv.id}
                   className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${
-                    inv.is_active ? 'bg-surface border-[var(--elevation-border)]' : 'bg-base/30 border-[var(--elevation-border)] opacity-60'
+                    inv.is_active ? 'bg-surface dark:bg-white/[0.03] border-[var(--elevation-border)]' : 'bg-base/30 border-[var(--elevation-border)] opacity-60'
                   }`}
                 >
                   <div className="flex items-center gap-4 min-w-0">
@@ -508,6 +550,62 @@ export default function RecurringClient({
                 className="px-5 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold">Annuler</button>
               <button type="button" onClick={handleAddTransport}
                 className="px-5 py-2.5 rounded-full bg-amber-500 text-white font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-amber-500/20">
+                <Plus className="w-4 h-4" />Ajouter la ligne
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Équipement amorti ── */}
+      {showEquipment && (
+        <div className="modal-overlay z-[300]">
+          <div className="modal-panel space-y-5 sm:max-w-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                  <Package className="w-5 h-5 text-purple-500" />
+                </div>
+                <h3 className="text-lg font-bold text-primary">Équipement amorti</h3>
+              </div>
+              <button onClick={() => setShowEquipment(false)} className="text-secondary hover:text-primary transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-sm font-semibold text-secondary">Nom de l&apos;équipement</label>
+                <input type="text" value={equipmentName} onChange={e => setEquipmentName(e.target.value)} placeholder="ex: Aspirateur industriel"
+                  className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-secondary">Prix d&apos;achat (€)</label>
+                  <input type="number" min={0} step={0.01} value={equipmentPurchase || ''} onChange={e => setEquipmentPurchase(Number(e.target.value))}
+                    className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 tabular-nums" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-secondary">Usages sur la vie</label>
+                  <input type="number" min={1} step={1} value={equipmentUses} onChange={e => setEquipmentUses(Number(e.target.value))}
+                    className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 tabular-nums" />
+                </div>
+              </div>
+              {equipmentPurchase > 0 && (
+                <div className="p-4 rounded-xl bg-purple-50 dark:bg-purple-500/5 border border-purple-200 dark:border-purple-500/20 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-secondary">Coût par usage</span>
+                    <span className="font-bold text-purple-600 tabular-nums">{equipmentCostPerUse.toFixed(2)} €</span>
+                  </div>
+                  <p className="text-xs text-purple-600 flex items-center gap-1 pt-1 border-t border-purple-200 dark:border-purple-500/20 mt-2">
+                    <EyeOff className="w-3 h-3 shrink-0" />
+                    Ligne interne — coût de revient, non visible sur la facture client
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setShowEquipment(false)}
+                className="px-5 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold">Annuler</button>
+              <button type="button" onClick={handleAddEquipment} disabled={equipmentPurchase <= 0 || equipmentUses <= 0}
+                className="px-5 py-2.5 rounded-full bg-purple-500 text-white font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-purple-500/20 disabled:opacity-40 disabled:hover:scale-100">
                 <Plus className="w-4 h-4" />Ajouter la ligne
               </button>
             </div>
@@ -781,34 +879,43 @@ export default function RecurringClient({
               <div>
                 <p className="text-sm font-semibold text-secondary mb-3">Lignes de facturation</p>
                 <div className="space-y-2">
-                  {formItems.map(item => (
-                    <div
-                      key={item.id}
-                      className={`flex items-center gap-2 p-2 rounded-xl transition-colors ${item.is_internal ? 'bg-amber-50 dark:bg-amber-500/5' : ''}`}
-                    >
-                      <input type="text" value={item.desc} onChange={e => updateFormItem(item.id, 'desc', e.target.value)} placeholder="Description" className="flex-1 p-2.5 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50" />
-                      <input type="number" min={0} value={item.qty} onChange={e => updateFormItem(item.id, 'qty', e.target.value)} className="w-14 p-2.5 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums" />
-                      <input type="text" value={item.unit} onChange={e => updateFormItem(item.id, 'unit', e.target.value)} placeholder="u" className="w-12 p-2.5 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm text-center focus:outline-none focus:ring-2 focus:ring-accent/50" />
-                      <div className="relative">
-                        <input type="number" min={0} value={item.pu} onChange={e => updateFormItem(item.id, 'pu', e.target.value)} className="w-24 p-2.5 pr-5 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums" />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-secondary text-xs pointer-events-none">€</span>
-                      </div>
-                      <select value={item.vat} onChange={e => updateFormItem(item.id, 'vat', Number(e.target.value))} className="w-16 p-2.5 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm text-center focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none">
-                        {LEGAL_VAT_RATES.map(r => <option key={r} value={r}>{r}%</option>)}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => updateFormItem(item.id, 'is_internal', !item.is_internal)}
-                        title={item.is_internal ? 'Ligne interne — coût de revient, non visible sur la facture client (cliquer pour rendre visible)' : 'Rendre interne (coût non facturé au client, visible seulement dans votre marge)'}
-                        className={`p-1.5 rounded-lg transition-colors ${item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-secondary/30 hover:text-secondary'}`}
-                      >
-                        <EyeOff className="w-4 h-4" />
-                      </button>
-                      {formItems.length > 1 && (
-                        <button type="button" onClick={() => setFormItems(prev => prev.filter(i => i.id !== item.id))} className="p-1.5 text-secondary hover:text-red-500 transition-colors"><X className="w-4 h-4" /></button>
-                      )}
-                    </div>
-                  ))}
+	                  {formItems.map(item => {
+	                    const isEquipment = isEquipmentLine(item)
+	                    return (
+	                      <div
+	                        key={item.id}
+	                        className={`flex items-start gap-2 p-2 rounded-xl transition-colors ${isEquipment ? 'bg-purple-50 dark:bg-purple-500/5 border border-purple-200/60 dark:border-purple-500/20' : item.is_internal ? 'bg-amber-50 dark:bg-amber-500/5' : ''}`}
+	                      >
+	                        {(item.is_internal || isEquipment) && (
+	                          <span className={`mt-2 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider border rounded px-1.5 py-0.5 leading-none ${isEquipment ? 'text-purple-700 dark:text-purple-300 bg-purple-500/15 border-purple-400/40' : 'text-amber-700 bg-amber-500/15 border-amber-400/40'}`}>
+	                            {isEquipment && <Package className="w-2.5 h-2.5" />}
+	                            {isEquipment ? 'Équip.' : 'Coût'}
+	                          </span>
+	                        )}
+	                        <textarea value={item.desc} onChange={e => updateFormItem(item.id, 'desc', e.target.value)} placeholder="Description" rows={item.desc.includes('\n') ? 4 : 1} className="flex-1 min-h-11 p-2.5 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-accent/50 resize-y" />
+	                        <input type="number" min={0} value={item.qty} onChange={e => updateFormItem(item.id, 'qty', e.target.value)} className="w-14 p-2.5 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums" />
+	                        <input type="text" value={item.unit} onChange={e => updateFormItem(item.id, 'unit', e.target.value)} placeholder="u" className="w-12 p-2.5 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm text-center focus:outline-none focus:ring-2 focus:ring-accent/50" />
+	                        <div className="relative">
+	                          <input type="number" min={0} value={item.pu} onChange={e => updateFormItem(item.id, 'pu', e.target.value)} className={`w-24 p-2.5 pr-5 rounded-xl bg-base/50 border text-sm text-right focus:outline-none focus:ring-2 tabular-nums ${isEquipment ? 'border-purple-400/30 text-purple-700 dark:text-purple-300 focus:ring-purple-500/30' : 'border-[var(--elevation-border)] text-primary focus:ring-accent/50'}`} />
+	                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-secondary text-xs pointer-events-none">€</span>
+	                        </div>
+	                        <select value={item.vat} onChange={e => updateFormItem(item.id, 'vat', Number(e.target.value))} className="w-16 p-2.5 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary text-sm text-center focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none">
+	                          {LEGAL_VAT_RATES.map(r => <option key={r} value={r}>{r}%</option>)}
+	                        </select>
+	                        <button
+	                          type="button"
+	                          onClick={() => updateFormItem(item.id, 'is_internal', !item.is_internal)}
+	                          title={item.is_internal ? 'Ligne interne — coût de revient, non visible sur la facture client (cliquer pour rendre visible)' : 'Rendre interne (coût non facturé au client, visible seulement dans votre marge)'}
+	                          className={`p-1.5 rounded-lg transition-colors mt-2 ${isEquipment ? 'text-purple-600 bg-purple-500/10' : item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-secondary/30 hover:text-secondary'}`}
+	                        >
+	                          <EyeOff className="w-4 h-4" />
+	                        </button>
+	                        {formItems.length > 1 && (
+	                          <button type="button" onClick={() => setFormItems(prev => prev.filter(i => i.id !== item.id))} className="p-1.5 text-secondary hover:text-red-500 transition-colors mt-2"><X className="w-4 h-4" /></button>
+	                        )}
+	                      </div>
+	                    )
+	                  })}
                 </div>
                 <div className="mt-3 flex gap-2 flex-wrap">
                   <button type="button" onClick={() => setFormItems(prev => [...prev, { id: Date.now(), desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, is_internal: false }])} className="flex items-center gap-2 text-sm font-semibold text-secondary hover:text-primary transition-colors px-3 py-1.5 rounded-lg bg-base/50">
@@ -819,10 +926,13 @@ export default function RecurringClient({
                       <Search className="w-4 h-4" />Depuis le catalogue
                     </button>
                   )}
-                  <button type="button" onClick={() => setShowTransport(true)} className="flex items-center gap-2 text-sm font-semibold text-amber-600 hover:text-amber-500 transition-colors px-3 py-1.5 rounded-lg bg-amber-500/10">
-                    <Truck className="w-4 h-4" />Transport
-                  </button>
-                </div>
+	                  <button type="button" onClick={() => setShowTransport(true)} className="flex items-center gap-2 text-sm font-semibold text-amber-600 hover:text-amber-500 transition-colors px-3 py-1.5 rounded-lg bg-amber-500/10">
+	                    <Truck className="w-4 h-4" />Transport
+	                  </button>
+	                  <button type="button" onClick={() => { setEquipmentName(''); setEquipmentPurchase(0); setEquipmentUses(100); setShowEquipment(true) }} className="flex items-center gap-2 text-sm font-semibold text-purple-600 hover:text-purple-500 transition-colors px-3 py-1.5 rounded-lg bg-purple-500/10">
+	                    <Package className="w-4 h-4" />Équipement
+	                  </button>
+	                </div>
                 {formItems.some(i => i.is_internal) && (
                   <p className="mt-2 text-xs text-amber-500 flex items-center gap-1.5">
                     <EyeOff className="w-3 h-3 shrink-0" />

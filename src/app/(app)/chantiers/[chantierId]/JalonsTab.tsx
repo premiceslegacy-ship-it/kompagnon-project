@@ -508,7 +508,7 @@ export default function JalonsTab({ initialJalons, chantierId, budgetHt, taches 
           </div>
           <div className="space-y-2">
             {aiSuggestions.map((s, i) => (
-              <div key={i} className="p-3 rounded-xl border border-[var(--elevation-border)] bg-surface space-y-2">
+              <div key={i} className="p-3 rounded-xl border border-[var(--elevation-border)] bg-surface dark:bg-white/[0.03] space-y-2">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-semibold text-sm text-primary">{s.title}</p>
