@@ -468,7 +468,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                     const nextIndex = results.findIndex((_, i) => !importedIndexes.has(i))
                     if (nextIndex >= 0) setCurrentIndex(nextIndex)
                   }}
-                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-surface border border-[var(--elevation-border)] text-primary text-sm font-semibold hover:bg-base transition-all"
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-surface dark:bg-white/[0.03] border border-[var(--elevation-border)] text-primary text-sm font-semibold hover:bg-base transition-all"
                 >
                   <ChevronRight className="w-4 h-4" />Voir le prochain devis à importer
                 </button>

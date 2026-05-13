@@ -66,7 +66,7 @@ export default function AIReminderModal({ type, id, onSent, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-lg bg-surface rounded-3xl shadow-2xl border border-[var(--elevation-border)] flex flex-col max-h-[90vh]">
+      <div className="relative z-10 w-full max-w-lg bg-surface dark:bg-[#111] rounded-3xl shadow-2xl border border-[var(--elevation-border)] flex flex-col max-h-[90vh]">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-[var(--elevation-border)]">

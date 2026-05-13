@@ -235,6 +235,11 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 075_chantier_target_margin.sql             ← Marge cible par chantier : target_margin_pct DECIMAL(5,2) DEFAULT 30 sur chantiers
 076_equipment_amortissement.sql            ← Amortissement équipement catalogue / rentabilité
 077_rate_limits.sql                        ← Rate limiting DB atomique pour formulaires publics et routes IA
+078_invoice_payment_schedule.sql           ← Échéancier de paiement sur facture (versements en plusieurs fois + encaissement atomique)
+079_fix_invoice_payment_schedule_columns.sql ← Correctif colonnes amount_type + percentage manquantes sur invoice_payment_schedule
+080_contracts_mvp.sql                      ← Module contrats MVP : table contracts, RLS, permissions contracts.*
+081_contract_templates.sql                 ← Templates de contrats personnalisés par organisation (table contract_templates)
+082_contract_custom_sections.sql           ← Sections libres (custom_sections JSONB) sur contracts et contract_templates
 ```
 
 Note historique :
@@ -283,6 +288,11 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `075_chantier_target_margin.sql`
 - `076_equipment_amortissement.sql`
 - `077_rate_limits.sql`
+- `078_invoice_payment_schedule.sql`
+- `079_fix_invoice_payment_schedule_columns.sql`
+- `080_contracts_mvp.sql`
+- `081_contract_templates.sql`
+- `082_contract_custom_sections.sql`
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`
@@ -392,6 +402,25 @@ Impact déploiement :
   - Catalogue → onglet "Fournisseurs" visible et opérationnel (CRUD + import CSV)
   - Catalogue → bouton "Ajouter avec l'IA" visible si module `catalog_ai` activé (via Cockpit ou SQL)
   - Matières/produits → champ fournisseur peut être lié à un fournisseur de la table `suppliers`
+- `078` :
+  - création de `invoice_payment_schedule` (versements prévisionnels avec `label`, `due_date`, `amount`, `amount_type`, `percentage`, `paid_payment_id`)
+  - RLS via `invoices.view` / `invoices.edit` / `invoices.record_payment`
+  - fonction atomique `record_invoice_schedule_payment` : crée le `payment`, lie l'échéance, met à jour `total_paid` + `status` de la facture en une seule transaction
+- `079` : correctif idempotent des colonnes `amount_type` et `percentage` sur `invoice_payment_schedule` (table créée sans elles sur certains clients avant 078 complet)
+- `080` :
+  - création de `contracts` (sous-traitance / maintenance ; rôles donneur_ordre / sous_traitant ; statuts draft / sent / signed / archived)
+  - RLS via les nouvelles permissions `contracts.*` (view / create / edit / delete)
+  - permissions insérées automatiquement pour owner / admin / manager
+- `081` : création de `contract_templates` — templates de clauses personnalisés par organisation, liés à un type de contrat
+- `082` : ajout de `custom_sections JSONB DEFAULT '[]'` sur `contracts` et `contract_templates` — sections libres ordonnées pour le PDF
+
+Impact déploiement 078–082 :
+- `078` + `079` : appliquer avant d'utiliser l'échéancier de paiement dans l'éditeur de facture — sans ça les inserts sur `invoice_payment_schedule` échouent
+- `080` + `081` + `082` : appliquer avant d'utiliser le module Contrats — sans `contracts` la page `/contracts` plante au chargement ; sans `082` les sections libres ne sont pas sauvegardées
+- après migration `080`, vérifier dans l'app :
+  - Menu latéral → onglet "Contrats" visible
+  - Contrats → créer un brouillon → PDF généré OK
+  - Settings → Rôles → permissions `contracts.*` visibles
 
 ### 2. Buckets Storage
 
@@ -657,6 +686,33 @@ https://domaine-du-client.fr/demande/<org-slug>
 Slug : `SELECT slug FROM organizations` — généré à l'onboarding depuis le nom de l'entreprise.
 Activer dans **Settings → Formulaire public** + sélectionner les prestations catalogue.
 
+### 9. PWA / icône d'app client
+
+Chaque instance client expose un manifest dynamique :
+
+```
+https://domaine-du-client.fr/api/manifest
+```
+
+Comportement :
+- `src/app/layout.tsx` injecte automatiquement `<link rel="manifest" href="/api/manifest">`
+- `/api/manifest` lit `organizations.name` et `organizations.logo_url`
+- si un logo est uploadé dans **Settings → Organisation**, l'app utilise ce logo
+- si aucun logo n'est présent, l'app utilise le fallback Atelier
+- `/api/app-icon?size=180|192|512` génère des PNG carrés pour favicon, Apple touch icon et manifest PWA
+- `display: standalone` + `appleWebApp.capable` permettent l'ouverture sans barre navigateur quand l'app est ajoutée à l'écran d'accueil
+- cache navigateur/CDN : `Cache-Control: public, max-age=3600` sur le manifest et les icônes
+
+Impact support appareils :
+- iPhone/iPad : icône via `apple-touch-icon` (`/api/app-icon?size=180`)
+- Android/Chrome : icônes `192x192` et `512x512` via manifest
+- Desktop/browser : favicon dynamique via `/api/app-icon?size=192`
+
+À savoir :
+- après upload ou remplacement du logo, l'icône peut rester en cache jusqu'à 1h
+- pour un rendu propre, conseiller au client un logo lisible en carré, idéalement PNG/SVG avec fond transparent ou fond clair
+- le bucket `logos` doit rester public en lecture, car l'icône est générée côté serveur à partir de `logo_url`
+
 ---
 
 ## ─── CHECKLISTS ─────────────────────────────────────────────────────────────────
@@ -689,6 +745,10 @@ Activer dans **Settings → Formulaire public** + sélectionner les prestations 
 - [ ] **Rentabilité — matériau catalogue** : dropdown "Lier au catalogue" pré-remplit unité et prix d'achat
 - [ ] **Settings → Rapport mensuel** : toggle visible pour les owners/admins (`canEditOrg`), bascule sauvegardée
 - [ ] **Permissions FR** : Settings → Rôles & permissions → tous les libellés en français (plus de `catalog.delete` brut)
+- [ ] **PWA/icône** : uploader un logo dans Settings → ouvrir `/api/manifest` et `/api/app-icon?size=180` → vérifier nom entreprise + icône PNG, puis ajouter l'app à l'écran d'accueil sur iPhone/Android
+- [ ] **Échéancier facture** : éditeur facture → ajouter des échéances de paiement → encaisser une échéance → vérifier `total_paid` + statut `partial`/`paid` mis à jour
+- [ ] **Contrats** : Contrats → nouveau brouillon sous-traitance → remplir les clauses → générer PDF → envoyer → signer → vérifier statuts et PDF archivé
+- [ ] **Templates contrats** : Contrats → nouveau template → sauvegarder → créer un contrat depuis ce template → clauses pré-remplies
 
 ### Checklist onboarding WhatsApp client (mode mutualisé)
 
@@ -1023,4 +1083,4 @@ Créer un cron-job.org gratuit → ping `https://<ref>.supabase.co/rest/v1/` tou
 
 | Client | Project Ref | Domaine | Déployé le | Migrations | WhatsApp | Fact. élec. |
 |--------|-------------|---------|------------|------------|---------|------------|
-| Weber Tôlerie (**démo**) | `pyxnmohknxmbpbcuvudg` | localhost | 2024 | 001→074 | ❌ | ❌ |
+| Weber Tôlerie (**démo**) | `pyxnmohknxmbpbcuvudg` | localhost | 2024 | 001→082 | ❌ | ❌ |

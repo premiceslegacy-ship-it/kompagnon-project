@@ -546,6 +546,7 @@ export default function ChantiersClient({
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState<Status | 'tous'>('tous')
   const [showCreate, setShowCreate] = useState(false)
+  const [isNavigating, setIsNavigating] = useState(false)
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
@@ -734,12 +735,25 @@ export default function ChantiersClient({
         </div>
       )}
 
+      {isNavigating && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-base/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin" />
+            <p className="text-sm text-secondary">Ouverture du chantier...</p>
+          </div>
+        </div>
+      )}
+
       {showCreate && (
         <CreateModal
           clients={clients}
           linkableQuotes={linkableQuotes}
           onClose={() => setShowCreate(false)}
-          onCreated={id => { setShowCreate(false); router.push(`/chantiers/${id}`) }}
+          onCreated={id => {
+            setShowCreate(false)
+            setIsNavigating(true)
+            router.push(`/chantiers/${id}`)
+          }}
         />
       )}
     </div>

@@ -378,8 +378,8 @@ function WeeklyPlanningView({
           
           <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-2">
             <div className="flex bg-base/50 p-1 rounded-lg border border-[var(--elevation-border)]">
-               <button onClick={() => setViewMode('jour')} className={`px-3 py-1.5 text-xs rounded font-medium ${effectiveView === 'jour' ? 'bg-surface shadow-sm text-primary' : 'text-secondary hover:text-primary'}`}>Jour</button>
-               <button onClick={() => setViewMode('semaine')} className={`px-3 py-1.5 text-xs rounded font-medium ${effectiveView === 'semaine' ? 'bg-surface shadow-sm text-primary' : 'text-secondary hover:text-primary'}`}><span className="hidden sm:inline">Semaine</span><span className="sm:hidden">Sem.</span></button>
+               <button onClick={() => setViewMode('jour')} className={`px-3 py-1.5 text-xs rounded font-medium ${effectiveView === 'jour' ? 'bg-[var(--elevation-2)] shadow-sm text-primary' : 'text-secondary hover:text-primary'}`}>Jour</button>
+               <button onClick={() => setViewMode('semaine')} className={`px-3 py-1.5 text-xs rounded font-medium ${effectiveView === 'semaine' ? 'bg-[var(--elevation-2)] shadow-sm text-primary' : 'text-secondary hover:text-primary'}`}><span className="hidden sm:inline">Semaine</span><span className="sm:hidden">Sem.</span></button>
             </div>
             <button
               onClick={() => setShowAddForm(v => !v)}
@@ -683,7 +683,7 @@ function WeeklyPlanningView({
           const weekPlannings = plannings.filter(pl => {
             const d = pl.planned_date
             const start = getLocalDateStr(days[0])
-            const end = getLocalDateStr(days[6])
+            const end = getLocalDateStr(days[days.length - 1])
             return d >= start && d <= end
           })
           if (weekPlannings.length === 0) return null
@@ -852,7 +852,7 @@ function EquipesTab({
     if (!error && membreId) {
       setAllEquipes(prev => prev.map(e => e.id !== equipeId ? e : {
         ...e,
-        membres: [...e.membres, { id: membreId, equipe_id: equipeId, name: form.name.trim(), role_label: form.role.trim() || null, profile_id: profileId, taux_horaire: taux }],
+        membres: [...e.membres, { id: membreId, equipe_id: equipeId, prenom: null, name: form.name.trim(), email: null, role_label: form.role.trim() || null, profile_id: profileId, taux_horaire: taux }],
       }))
       setMemberForms(prev => ({ ...prev, [equipeId]: { name: '', role: '', taux: '', profileId: null } }))
     }
@@ -918,7 +918,7 @@ function EquipesTab({
           </div>
           <div className="space-y-2">
             {teamSuggestions.map(sugg => (
-              <div key={sugg._id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${sugg.created ? 'border-emerald-400/30 bg-emerald-500/5 opacity-70' : 'border-[var(--elevation-border)] bg-surface'}`}>
+              <div key={sugg._id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${sugg.created ? 'border-emerald-400/30 bg-emerald-500/5 opacity-70' : 'border-[var(--elevation-border)] bg-surface dark:bg-white/[0.03]'}`}>
                 <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: sugg.color }} />
                 <div className="flex-1 min-w-0">
                   <input
@@ -1373,6 +1373,13 @@ export default function ChantierDetailClient({
   const [contactSaving, setContactSaving] = useState(false)
   const [contactError, setContactError] = useState<string | null>(null)
 
+  // Dates — édition inline
+  const [editDates, setEditDates] = useState(false)
+  const [startDate, setStartDate] = useState(chantier.start_date ?? '')
+  const [estimatedEndDate, setEstimatedEndDate] = useState(chantier.estimated_end_date ?? '')
+  const [datesSaving, setDatesSaving] = useState(false)
+  const [datesError, setDatesError] = useState<string | null>(null)
+
   // Devis lié
   const [linkedQuoteId, setLinkedQuoteId] = useState<string | null>(chantier.quote_id)
   const [editQuoteLink, setEditQuoteLink] = useState(false)
@@ -1404,6 +1411,18 @@ export default function ChantierDetailClient({
     setContactSaving(false)
     if (error) { setContactError(error); return }
     setEditContact(false)
+  }
+
+  const handleSaveDates = async () => {
+    setDatesSaving(true)
+    setDatesError(null)
+    const { error } = await updateChantier(chantier.id, {
+      startDate: startDate || null,
+      estimatedEndDate: estimatedEndDate || null,
+    })
+    setDatesSaving(false)
+    if (error) { setDatesError(error); return }
+    setEditDates(false)
   }
 
   // PDF période
@@ -1446,6 +1465,8 @@ export default function ChantierDetailClient({
   const [suggestTasksLoading, setSuggestTasksLoading] = useState(false)
   const [suggestTasksError, setSuggestTasksError] = useState<string | null>(null)
   const [showTaskSuggestions, setShowTaskSuggestions] = useState(false)
+  const [validateAllLoading, setValidateAllLoading] = useState(false)
+  const [validatingSuggId, setValidatingSuggId] = useState<string | null>(null)
 
   // Task library
   const [showTaskLibrary, setShowTaskLibrary] = useState(false)
@@ -1537,7 +1558,6 @@ export default function ChantierDetailClient({
     if (!linkedQuoteId) return
     setSuggestTasksLoading(true)
     setSuggestTasksError(null)
-    setShowTaskSuggestions(false)
 
     const { visible } = await getQuoteItemsForSuggestions(linkedQuoteId)
     if (visible.length === 0) {
@@ -1558,6 +1578,7 @@ export default function ChantierDetailClient({
         setSuggestTasksLoading(false)
         return
       }
+      setShowTaskSuggestions(false)
       setTaskSuggestions((data as { title: string }[]).map((t, i) => ({
         _id: `sugg_${i}_${Date.now()}`,
         title: t.title,
@@ -1571,8 +1592,10 @@ export default function ChantierDetailClient({
   }
 
   const handleValidateSuggestion = async (id: string) => {
+    if (validatingSuggId || validateAllLoading) return
     const sugg = taskSuggestions.find(s => s._id === id)
     if (!sugg || !sugg.title.trim()) return
+    setValidatingSuggId(id)
     const { tacheId } = await createTache(chantier.id, { title: sugg.title.trim() })
     if (tacheId) {
       setTaches(prev => [...prev, {
@@ -1581,12 +1604,18 @@ export default function ChantierDetailClient({
         assigned_to: null, due_date: null, progress_note: null,
         completed_at: null, created_at: new Date().toISOString(), jalon_id: null,
       }])
-      setTaskSuggestions(prev => prev.filter(s => s._id !== id))
-      if (taskSuggestions.length === 1) setShowTaskSuggestions(false)
+      setTaskSuggestions(prev => {
+        const next = prev.filter(s => s._id !== id)
+        if (next.length === 0) setShowTaskSuggestions(false)
+        return next
+      })
     }
+    setValidatingSuggId(null)
   }
 
   const handleValidateAllSuggestions = async () => {
+    if (validateAllLoading) return
+    setValidateAllLoading(true)
     const remaining = taskSuggestions.filter(s => s.title.trim())
     const startPos = taches.length
     const newTaches: Tache[] = []
@@ -1604,6 +1633,7 @@ export default function ChantierDetailClient({
     setTaches(prev => [...prev, ...newTaches])
     setTaskSuggestions([])
     setShowTaskSuggestions(false)
+    setValidateAllLoading(false)
   }
 
   // ── Plannings ──
@@ -1987,12 +2017,44 @@ export default function ChantierDetailClient({
 
           <div className="flex flex-col gap-2 min-w-fit">
             {/* Dates */}
-            <div className="text-sm text-secondary flex items-center gap-2">
-              <Calendar className="w-4 h-4" />
-              <span>{fmtDate(chantier.start_date)}</span>
-              <ChevronRight className="w-3 h-3" />
-              <span>{fmtDate(chantier.estimated_end_date)}</span>
-            </div>
+            {!editDates ? (
+              <div className="flex items-center gap-2">
+                <div className="text-sm text-secondary flex items-center gap-2">
+                  <Calendar className="w-4 h-4" />
+                  <span>{fmtDate(startDate || null)}</span>
+                  <ChevronRight className="w-3 h-3" />
+                  <span>{fmtDate(estimatedEndDate || null)}</span>
+                </div>
+                <button
+                  onClick={() => setEditDates(true)}
+                  className="p-1 text-secondary hover:text-primary transition-colors flex-shrink-0"
+                  title="Modifier les dates"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2 p-3 rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)]">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-semibold text-secondary mb-0.5 block">Début</label>
+                    <input type="date" className="input input-sm w-full" value={startDate} onChange={e => setStartDate(e.target.value)} autoFocus />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-secondary mb-0.5 block">Fin estimée</label>
+                    <input type="date" className="input input-sm w-full" value={estimatedEndDate} onChange={e => setEstimatedEndDate(e.target.value)} />
+                  </div>
+                </div>
+                {datesError && <p className="text-xs text-red-500">{datesError}</p>}
+                <div className="flex gap-2">
+                  <button onClick={() => setEditDates(false)} className="btn-secondary text-xs py-1 px-2 flex-1">Annuler</button>
+                  <button onClick={handleSaveDates} disabled={datesSaving} className="btn-primary text-xs py-1 px-2 flex-1 flex items-center justify-center gap-1.5">
+                    <Check className="w-3.5 h-3.5" />
+                    {datesSaving ? 'Enregistrement...' : 'Enregistrer'}
+                  </button>
+                </div>
+              </div>
+            )}
             {/* Budget */}
             <div className="text-sm text-secondary flex items-center gap-2">
               <Euro className="w-4 h-4" />
@@ -2186,16 +2248,20 @@ export default function ChantierDetailClient({
           </form>
 
           {/* Actions rapides: IA + Bibliothèque */}
-          {!showTaskSuggestions && (
+          {suggestTasksLoading ? (
+            <div className="flex items-center gap-2 text-sm text-violet-500 dark:text-violet-400 px-1">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Génération en cours...
+            </div>
+          ) : !showTaskSuggestions && (
             <div className="flex flex-wrap items-center gap-3">
               {linkedQuoteId && (
                 <button
                   onClick={handleSuggestTasks}
-                  disabled={suggestTasksLoading}
-                  className="flex items-center gap-2 text-sm font-semibold text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 px-4 py-2 rounded-xl border border-violet-400/30 bg-violet-500/5 hover:bg-violet-500/10 transition-all disabled:opacity-60"
+                  className="flex items-center gap-2 text-sm font-semibold text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 px-4 py-2 rounded-xl border border-violet-400/30 bg-violet-500/5 hover:bg-violet-500/10 transition-all"
                 >
-                  {suggestTasksLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  {suggestTasksLoading ? 'Génération en cours...' : 'Importer depuis le devis'}
+                  <Sparkles className="w-4 h-4" />
+                  Importer depuis le devis
                 </button>
               )}
               {taskLibraryTitles.length > 0 && (
@@ -2247,7 +2313,7 @@ export default function ChantierDetailClient({
           )}
 
           {showTaskSuggestions && taskSuggestions.length > 0 && (
-            <div className="card p-4 space-y-3 border-violet-400/30 bg-violet-500/3">
+            <div className="card p-4 space-y-3 border-violet-400/30 dark:border-violet-500/30 bg-violet-500/5 dark:bg-violet-500/10">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-bold text-primary flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-violet-500" />
@@ -2259,7 +2325,7 @@ export default function ChantierDetailClient({
               </div>
               <div className="space-y-2">
                 {taskSuggestions.map(sugg => (
-                  <div key={sugg._id} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--elevation-border)] bg-surface hover:border-violet-400/30 transition-colors">
+                  <div key={sugg._id} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)] dark:bg-[var(--elevation-2)] hover:border-violet-400/30 transition-colors">
                     {sugg.editing ? (
                       <input
                         autoFocus
@@ -2272,33 +2338,39 @@ export default function ChantierDetailClient({
                     ) : (
                       <span className="flex-1 text-sm text-primary">{sugg.title}</span>
                     )}
-                    <button
-                      onClick={() => setTaskSuggestions(prev => prev.map(s => s._id === sugg._id ? { ...s, editing: !s.editing } : s))}
-                      className="p-1.5 text-secondary hover:text-primary rounded-lg hover:bg-base transition-colors"
-                      title="Modifier"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleValidateSuggestion(sugg._id)}
-                      className="p-1.5 text-emerald-500 hover:bg-emerald-500/10 rounded-lg transition-colors"
-                      title="Valider"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setTaskSuggestions(prev => prev.filter(s => s._id !== sugg._id))}
-                      className="p-1.5 text-secondary hover:text-red-500 rounded-lg hover:bg-red-500/10 transition-colors"
-                      title="Supprimer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1 rounded-lg border border-[var(--elevation-border)] bg-[var(--elevation-1)] dark:bg-[var(--elevation-2)] p-0.5">
+                      <button
+                        onClick={() => setTaskSuggestions(prev => prev.map(s => s._id === sugg._id ? { ...s, editing: !s.editing } : s))}
+                        className="p-1.5 text-secondary hover:text-primary rounded-md hover:bg-[var(--elevation-2)] dark:hover:bg-[var(--elevation-3)] transition-colors"
+                        title="Modifier"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <div className="w-px h-4 bg-[var(--elevation-border)]" />
+                      <button
+                        onClick={() => handleValidateSuggestion(sugg._id)}
+                        disabled={validatingSuggId === sugg._id || validateAllLoading}
+                        className="p-1.5 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/15 rounded-md transition-colors disabled:opacity-50"
+                        title="Valider"
+                      >
+                        {validatingSuggId === sugg._id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      </button>
+                      <div className="w-px h-4 bg-[var(--elevation-border)]" />
+                      <button
+                        onClick={() => setTaskSuggestions(prev => prev.filter(s => s._id !== sugg._id))}
+                        className="p-1.5 text-secondary hover:text-red-500 dark:hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+                        title="Supprimer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
-              <div className="flex gap-2">
-                <button onClick={handleValidateAllSuggestions} className="btn-primary flex-1 flex items-center justify-center gap-2 text-sm">
-                  <CheckCircle2 className="w-4 h-4" /> Valider toutes
+              <div className="flex gap-2 pt-1 border-t border-violet-400/20 dark:border-violet-500/20">
+                <button onClick={handleValidateAllSuggestions} disabled={validateAllLoading} className="btn-primary flex-1 flex items-center justify-center gap-2 text-sm disabled:opacity-60">
+                  {validateAllLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  {validateAllLoading ? 'Création en cours...' : 'Valider toutes'}
                 </button>
                 <button onClick={() => { setTaskSuggestions([]); setShowTaskSuggestions(false) }} className="btn-secondary flex-1 text-sm">
                   Tout ignorer
