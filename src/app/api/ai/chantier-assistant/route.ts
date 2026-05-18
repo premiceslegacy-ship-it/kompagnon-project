@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { getChantierById, getChantierTaches, getChantierPointages, getChantierNotes, getChantierEquipes, getChantierPlannings, type ChantierPlanning, type Equipe } from '@/lib/data/queries/chantiers'
+import { getChantierById, getChantierTaches, getChantierPointages, getChantierNotes, getChantierEquipes, getChantierPlannings, getEquipes, type ChantierPlanning, type Equipe } from '@/lib/data/queries/chantiers'
 import { getChantierProfitability } from '@/lib/data/queries/chantier-profitability'
 import { createPointage, createChantierNote, updateTache } from '@/lib/data/mutations/chantiers'
 import { createChantierExpense } from '@/lib/data/mutations/chantier-expenses'
 import { createPlanningSlot, deletePlanningSlot } from '@/lib/data/mutations/planning'
-import { getChantierIndividualMembers } from '@/lib/data/queries/members'
+import { createIndividualMember } from '@/lib/data/mutations/members'
+import { getChantierIndividualMembers, getOrgIndividualMembers, type IndividualMember } from '@/lib/data/queries/members'
+import { getTeamMembers, type TeamMember } from '@/lib/data/queries/team'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { getBusinessContext, formatBusinessContextForPrompt } from '@/lib/ai/business-context'
+import { hasPermission } from '@/lib/data/queries/membership'
 import { todayParis } from '@/lib/utils'
 
 const MODEL = 'anthropic/claude-haiku-4-5'
@@ -20,7 +24,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'list_members',
-      description: 'Lister les membres et équipes assignés à ce chantier. À appeler avant add_pointage si l\'utilisateur mentionne un nom de personne.',
+      description: 'Lister les membres et équipes connus de l\'organisation et ceux assignés à ce chantier. À appeler avant add_pointage si l\'utilisateur mentionne un nom de personne ou d\'équipe.',
       parameters: {
         type: 'object',
         properties: {},
@@ -32,14 +36,14 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'add_pointage',
-      description: 'Enregistrer des heures de travail (pointage) sur ce chantier. Si l\'utilisateur mentionne un nom de personne, utilise member_name pour pointer pour ce membre spécifique. Sans member_name, pointe pour l\'utilisateur connecté.',
+      description: 'Enregistrer des heures de travail (pointage) sur ce chantier. Si l\'utilisateur mentionne une personne ou une équipe, utilise member_name. Pour une équipe, les heures sont pointées pour chaque membre de l\'équipe, avec le taux horaire propre à chacun. Sans member_name, pointe pour l\'utilisateur connecté.',
       parameters: {
         type: 'object',
         properties: {
           hours: { type: 'number', description: 'Nombre d\'heures travaillées (ex: 3.5)' },
           date: { type: 'string', description: 'Date du pointage au format YYYY-MM-DD. Si absent, utilise aujourd\'hui.' },
           description: { type: 'string', description: 'Description optionnelle du travail effectué.' },
-          member_name: { type: 'string', description: 'Prénom ou nom du membre pour lequel pointer les heures. Laisser vide pour pointer pour soi-même.' },
+          member_name: { type: 'string', description: 'Prénom, nom, initiale du nom de famille, nom complet, ou nom d\'équipe. Laisser vide pour pointer pour soi-même.' },
         },
         required: ['hours'],
       },
@@ -114,7 +118,7 @@ const TOOLS = [
           end_time: { type: 'string', description: 'Heure de fin au format HH:MM (ex: "17:00"). Optionnel.' },
           team_size: { type: 'number', description: 'Nombre de personnes. Par défaut 1.' },
           notes: { type: 'string', description: 'Notes additionnelles sur le créneau. Optionnel.' },
-          member_name: { type: 'string', description: 'Prénom ou nom du membre individuel à assigner. Si non trouvé, le label sera utilisé seul. Optionnel.' },
+          member_name: { type: 'string', description: 'Prénom, nom, initiale du nom de famille, nom complet, ou nom d\'équipe à assigner. Si ambigu ou non trouvé, le label sera utilisé seul. Optionnel.' },
         },
         required: ['planned_date', 'label'],
       },
@@ -124,7 +128,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'delete_planning_slot',
-      description: 'Supprimer un créneau de planning existant de ce chantier. À utiliser seulement si l’utilisateur demande explicitement de supprimer/retirer/annuler un créneau.',
+      description: 'Supprimer un créneau de planning existant de ce chantier. À utiliser seulement si l\'utilisateur demande explicitement de supprimer/retirer/annuler un créneau.',
       parameters: {
         type: 'object',
         properties: {
@@ -134,38 +138,291 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'add_member',
+      description: 'Créer un nouveau membre dans l\'organisation après confirmation de l\'utilisateur. À utiliser uniquement si l\'utilisateur confirme qu\'il s\'agit d\'un nouveau membre (pas dans la liste). Ne pas appeler sans accord explicite.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prenom: { type: 'string', description: 'Prénom du membre.' },
+          name: { type: 'string', description: 'Nom de famille du membre.' },
+          email: { type: 'string', description: 'Adresse email du membre (optionnelle).' },
+          taux_horaire: { type: 'number', description: 'Taux horaire en €/h (optionnel).' },
+          role_label: { type: 'string', description: 'Intitulé du rôle ou métier (optionnel, ex: Maçon, Chef de chantier).' },
+        },
+        required: ['name'],
+      },
+    },
+  },
 ]
 
 // ─── Tool execution ────────────────────────────────────────────────────────────
 
-type IndividualMember = { id: string; name: string; prenom: string | null; role_label: string | null }
+type KnownPerson = {
+  id: string
+  kind: 'member' | 'user'
+  displayName: string
+  firstName: string | null
+  lastName: string | null
+  roleLabel: string | null
+  source: string
+  profileId?: string | null
+  tauxHoraire?: number | null
+}
 
-function findMemberByName(
-  query: string,
-  individualMembers: IndividualMember[],
-  equipes: Equipe[],
-): { memberId?: string; equipeId?: string; displayName: string } | null {
-  const q = query.toLowerCase().trim()
-  // Cherche dans les membres individuels du chantier
-  for (const m of individualMembers) {
-    const fullName = `${m.prenom ?? ''} ${m.name}`.toLowerCase().trim()
-    if (fullName.includes(q) || q.includes(m.name.toLowerCase()) || (m.prenom && q.includes(m.prenom.toLowerCase()))) {
-      return { memberId: m.id, displayName: `${m.prenom ?? ''} ${m.name}`.trim() }
+type AssigneeResolution =
+  | { status: 'found'; memberId?: string; userId?: string; equipeId?: string; displayName: string; equipe?: Equipe }
+  | { status: 'ambiguous'; message: string }
+  | { status: 'not_found'; message: string }
+
+function normalizeName(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
+function initials(name: string): string {
+  return normalizeName(name)
+    .split(' ')
+    .filter(Boolean)
+    .map(part => part[0])
+    .join('')
+}
+
+function splitDisplayName(displayName: string, explicitFirstName?: string | null, explicitLastName?: string | null) {
+  const parts = displayName.trim().split(/\s+/).filter(Boolean)
+  return {
+    firstName: explicitFirstName?.trim() || parts[0] || null,
+    lastName: explicitLastName?.trim() || (parts.length > 1 ? parts[parts.length - 1] : null),
+  }
+}
+
+function fullMemberName(member: { prenom?: string | null; name: string }) {
+  return [member.prenom, member.name].filter(Boolean).join(' ').trim() || member.name
+}
+
+function personLabel(person: KnownPerson) {
+  const suffixes = [person.roleLabel, person.source].filter(Boolean)
+  return `${person.displayName}${suffixes.length > 0 ? ` (${suffixes.join(', ')})` : ''}`
+}
+
+function uniqById<T extends { id: string; kind?: string }>(items: T[]) {
+  const seen = new Set<string>()
+  return items.filter(item => {
+    const key = `${item.kind ?? 'item'}:${item.id}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function buildKnownPeople(input: {
+  chantierIndividualMembers: IndividualMember[]
+  orgIndividualMembers: IndividualMember[]
+  chantierEquipes: Equipe[]
+  allEquipes: Equipe[]
+  teamMembers: TeamMember[]
+}): KnownPerson[] {
+  const people: KnownPerson[] = []
+
+  for (const member of input.chantierIndividualMembers) {
+    const displayName = fullMemberName(member)
+    people.push({
+      id: member.id,
+      kind: 'member',
+      displayName,
+      ...splitDisplayName(displayName, member.prenom, member.name),
+      roleLabel: member.role_label,
+      source: 'membre du chantier',
+      profileId: member.profile_id,
+      tauxHoraire: member.taux_horaire,
+    })
+  }
+
+  for (const equipe of input.chantierEquipes) {
+    for (const member of equipe.membres) {
+      const displayName = fullMemberName(member)
+      people.push({
+        id: member.id,
+        kind: 'member',
+        displayName,
+        ...splitDisplayName(displayName, member.prenom, member.name),
+        roleLabel: member.role_label,
+        source: `équipe du chantier ${equipe.name}`,
+        profileId: member.profile_id,
+        tauxHoraire: member.taux_horaire,
+      })
     }
   }
-  // Cherche dans les membres des équipes (EquipeMembre n'a pas prenom, match sur name)
-  for (const eq of equipes) {
-    for (const m of eq.membres) {
-      if (m.name.toLowerCase().includes(q) || q.includes(m.name.toLowerCase())) {
-        return { memberId: m.id, displayName: m.name }
+
+  for (const member of input.orgIndividualMembers) {
+    const displayName = fullMemberName(member)
+    people.push({
+      id: member.id,
+      kind: 'member',
+      displayName,
+      ...splitDisplayName(displayName, member.prenom, member.name),
+      roleLabel: member.role_label,
+      source: 'membre organisation',
+      profileId: member.profile_id,
+      tauxHoraire: member.taux_horaire,
+    })
+  }
+
+  for (const equipe of input.allEquipes) {
+    for (const member of equipe.membres) {
+      const displayName = fullMemberName(member)
+      people.push({
+        id: member.id,
+        kind: 'member',
+        displayName,
+        ...splitDisplayName(displayName, member.prenom, member.name),
+        roleLabel: member.role_label,
+        source: `équipe organisation ${equipe.name}`,
+        profileId: member.profile_id,
+        tauxHoraire: member.taux_horaire,
+      })
+    }
+  }
+
+  const profileIdsAlreadyKnown = new Set(people.map(person => person.profileId).filter(Boolean))
+  for (const member of input.teamMembers) {
+    if (profileIdsAlreadyKnown.has(member.user_id)) continue
+    const displayName = member.full_name?.trim() || member.email
+    const { firstName, lastName } = splitDisplayName(displayName)
+    people.push({
+      id: member.user_id,
+      kind: 'user',
+      displayName,
+      firstName,
+      lastName,
+      roleLabel: member.job_title ?? member.role_name ?? null,
+      source: 'membre app organisation',
+      tauxHoraire: member.labor_cost_per_hour ?? null,
+    })
+  }
+
+  return uniqById(people)
+}
+
+function scorePersonMatch(query: string, person: KnownPerson): number {
+  const q = normalizeName(query)
+  if (!q) return 0
+
+  const full = normalizeName(person.displayName)
+  const first = person.firstName ? normalizeName(person.firstName) : ''
+  const last = person.lastName ? normalizeName(person.lastName) : ''
+  const fullInitials = initials(person.displayName)
+  const queryParts = q.split(' ').filter(Boolean)
+
+  if (q === full) return 100
+  if (full.startsWith(`${q} `)) return 95
+  if (queryParts.length >= 2 && first && last) {
+    const [qFirst, qLast] = queryParts
+    if (first === qFirst && (last === qLast || last.startsWith(qLast))) return 92
+  }
+  if (q === fullInitials) return 88
+  if (first && q === first) return 80
+  if (first && last && q === `${first} ${last[0]}`) return 78
+  if (last && q === last) return 60
+  if (full.includes(q)) return 50
+  if (q.includes(full)) return 45
+  return 0
+}
+
+function scoreEquipeMatch(query: string, equipe: Equipe): number {
+  const q = normalizeName(query)
+  const name = normalizeName(equipe.name)
+  if (!q) return 0
+  if (q === name) return 100
+  if (name.startsWith(q)) return 92
+  if (name.includes(q)) return 70
+  return 0
+}
+
+function resolveAssigneeByName(query: string, people: KnownPerson[], equipes: Equipe[]): AssigneeResolution {
+  const personMatches = people
+    .map(person => ({ person, score: scorePersonMatch(query, person) }))
+    .filter(match => match.score > 0)
+    .sort((a, b) => b.score - a.score)
+
+  const equipeMatches = uniqById(equipes)
+    .map(equipe => ({ equipe, score: scoreEquipeMatch(query, equipe) }))
+    .filter(match => match.score > 0)
+    .sort((a, b) => b.score - a.score)
+
+  const q = normalizeName(query)
+  const queryParts = q.split(' ').filter(Boolean)
+  if (queryParts.length === 1) {
+    const sameFirstName = personMatches.filter(({ person }) => {
+      const first = person.firstName ? normalizeName(person.firstName) : ''
+      return first === q
+    })
+    if (sameFirstName.length > 1) {
+      return {
+        status: 'ambiguous',
+        message: `Plusieurs personnes s'appellent "${query}" : ${sameFirstName.map(match => personLabel(match.person)).join(', ')}. Demande le nom complet ou le prénom + initiale du nom de famille.`,
       }
     }
-    // Cherche aussi par nom d'équipe
-    if (eq.name.toLowerCase().includes(q)) {
-      return { equipeId: eq.id, displayName: eq.name }
+  }
+
+  const bestScore = Math.max(personMatches[0]?.score ?? 0, equipeMatches[0]?.score ?? 0)
+  if (bestScore === 0) {
+    return { status: 'not_found', message: `Aucun membre ou équipe trouvé pour "${query}". Utilise list_members pour voir les noms disponibles.` }
+  }
+
+  const tiedPeople = personMatches.filter(match => match.score === bestScore)
+  const tiedEquipes = equipeMatches.filter(match => match.score === bestScore)
+  if (tiedPeople.length + tiedEquipes.length > 1) {
+    const options = [
+      ...tiedPeople.map(match => personLabel(match.person)),
+      ...tiedEquipes.map(match => `${match.equipe.name} (équipe, ${match.equipe.membres.length} pers.)`),
+    ].slice(0, 6)
+    return {
+      status: 'ambiguous',
+      message: `Plusieurs correspondances pour "${query}" : ${options.join(', ')}. Demande le nom complet ou le prénom + initiale du nom de famille.`,
     }
   }
-  return null
+
+  if (tiedEquipes[0]) {
+    const equipe = tiedEquipes[0].equipe
+    return { status: 'found', equipeId: equipe.id, displayName: equipe.name, equipe }
+  }
+
+  const person = tiedPeople[0].person
+  return {
+    status: 'found',
+    ...(person.kind === 'member' ? { memberId: person.id } : { userId: person.id }),
+    displayName: person.displayName,
+  }
+}
+
+async function insertPointageRows(rows: Array<{
+  chantier_id: string
+  user_id?: string | null
+  member_id?: string | null
+  date: string
+  hours: number
+  description: string | null
+}>) {
+  if (rows.some(row => row.hours <= 0 || row.hours > 24)) {
+    return { error: 'Le nombre d\'heures doit être compris entre 0.5 et 24.' }
+  }
+  const supabase = await createClient()
+  const { error } = await supabase.from('chantier_pointages').insert(rows)
+  if (!error) {
+    for (const chantierId of new Set(rows.map(row => row.chantier_id))) {
+      revalidatePath(`/chantiers/${chantierId}`)
+    }
+    revalidatePath('/chantiers/heures')
+  }
+  return { error: error?.message ?? null }
 }
 
 async function executeTool(
@@ -173,27 +430,31 @@ async function executeTool(
   args: Record<string, unknown>,
   chantierId: string,
   taches: Awaited<ReturnType<typeof getChantierTaches>>,
-  individualMembers: IndividualMember[],
-  equipes: Awaited<ReturnType<typeof getChantierEquipes>>,
+  people: KnownPerson[],
+  chantierEquipes: Awaited<ReturnType<typeof getChantierEquipes>>,
+  allEquipes: Awaited<ReturnType<typeof getEquipes>>,
   plannings: ChantierPlanning[],
   today: string,
+  permissions: { canCreateExpenses: boolean; canManagePlanning: boolean },
 ): Promise<string> {
   if (name === 'list_members') {
     const lines: string[] = []
-    if (individualMembers.length > 0) {
-      lines.push('Membres individuels :')
-      for (const m of individualMembers) {
-        lines.push(`  - ${m.prenom ?? ''} ${m.name}${m.role_label ? ` (${m.role_label})` : ''}`.trim())
-      }
+    if (people.length > 0) {
+      lines.push('Personnes connues :')
+      for (const person of people) lines.push(`  - ${personLabel(person)}`)
     }
+    const equipes = uniqById([...chantierEquipes, ...allEquipes])
     if (equipes.length > 0) {
       lines.push('Équipes :')
       for (const eq of equipes) {
-        const membresStr = eq.membres.map(m => m.name).join(', ')
+        const membresStr = eq.membres.map(m => {
+          const rate = m.taux_horaire != null ? `, ${m.taux_horaire}€/h` : ''
+          return `${fullMemberName(m)}${m.role_label ? ` (${m.role_label}${rate})` : rate ? ` (${rate.slice(2)})` : ''}`
+        }).join(', ')
         lines.push(`  - ${eq.name}${membresStr ? ` : ${membresStr}` : ''}`)
       }
     }
-    if (lines.length === 0) return 'Aucun membre ni équipe assigné à ce chantier.'
+    if (lines.length === 0) return 'Aucun membre ni équipe connu dans cette organisation.'
     return lines.join('\n')
   }
 
@@ -204,20 +465,35 @@ async function executeTool(
     const memberNameQuery = args.member_name as string | undefined
 
     if (memberNameQuery) {
-      const found = findMemberByName(memberNameQuery, individualMembers, equipes)
-      if (!found || !found.memberId) {
-        return `Membre "${memberNameQuery}" non trouvé sur ce chantier. Utilise list_members pour voir les membres disponibles.`
+      const found = resolveAssigneeByName(memberNameQuery, people, [...chantierEquipes, ...allEquipes])
+      if (found.status !== 'found') return found.message
+
+      if (found.equipe) {
+        if (found.equipe.membres.length === 0) {
+          return `L'équipe "${found.displayName}" n'a aucun membre, impossible de pointer des heures d'équipe.`
+        }
+        const result = await insertPointageRows(found.equipe.membres.map(member => ({
+          chantier_id: chantierId,
+          member_id: member.id,
+          date,
+          hours,
+          description: description ?? `Pointage équipe ${found.displayName}`,
+        })))
+        if (result.error) return `Erreur : ${result.error}`
+        const totalHours = hours * found.equipe.membres.length
+        const memberNames = found.equipe.membres.map(fullMemberName).join(', ')
+        return `Pointage d'équipe enregistré pour ${found.displayName} le ${date} : ${hours}h par membre (${totalHours}h au total), membres : ${memberNames}.`
       }
-      // Pointage direct en DB pour ce member_id (sans user_id)
-      const supabase = await createClient()
-      const { error } = await supabase.from('chantier_pointages').insert({
+
+      const result = await insertPointageRows([{
         chantier_id: chantierId,
-        member_id: found.memberId,
+        user_id: found.userId ?? null,
+        member_id: found.memberId ?? null,
         date,
         hours,
         description,
-      })
-      if (error) return `Erreur : ${error.message}`
+      }])
+      if (result.error) return `Erreur : ${result.error}`
       return `Pointage de ${hours}h enregistré pour ${found.displayName} le ${date}.`
     }
 
@@ -227,6 +503,9 @@ async function executeTool(
   }
 
   if (name === 'add_expense') {
+    if (!permissions.canCreateExpenses) {
+      return 'Action non autorisée : vous n\'avez pas la permission d\'ajouter des dépenses sur ce chantier.'
+    }
     const result = await createChantierExpense({
       chantierId,
       category: args.category as 'materiel' | 'sous_traitance' | 'location' | 'transport' | 'autre',
@@ -255,6 +534,9 @@ async function executeTool(
   }
 
   if (name === 'add_planning_slot') {
+    if (!permissions.canManagePlanning) {
+      return 'Action non autorisée : vous n\'avez pas la permission de créer des créneaux de planning.'
+    }
     const plannedDate = args.planned_date as string
     const label = args.label as string
     const memberNameQuery = args.member_name as string | undefined
@@ -263,8 +545,12 @@ async function executeTool(
     let equipeId: string | null = null
 
     if (memberNameQuery) {
-      const found = findMemberByName(memberNameQuery, individualMembers, equipes)
-      if (found) {
+      const found = resolveAssigneeByName(memberNameQuery, people, [...chantierEquipes, ...allEquipes])
+      if (found.status === 'ambiguous') return found.message
+      if (found.status === 'not_found') {
+        return `Je ne connais pas "${memberNameQuery}" dans vos membres ou équipes. S'agit-il d'un nouveau membre ? Si oui, dites-le moi et donnez-moi son prénom, son nom et éventuellement son taux horaire, je l'ajouterai avant de créer le créneau.`
+      }
+      if (found.status === 'found') {
         memberId = found.memberId ?? null
         equipeId = found.equipeId ?? null
       }
@@ -287,6 +573,9 @@ async function executeTool(
   }
 
   if (name === 'delete_planning_slot') {
+    if (!permissions.canManagePlanning) {
+      return 'Action non autorisée : vous n\'avez pas la permission de supprimer des créneaux de planning.'
+    }
     const planningSlotId = args.planning_slot_id as string | undefined
     const planning = plannings.find(p => p.id === planningSlotId)
     if (!planningSlotId || !planning) {
@@ -297,6 +586,26 @@ async function executeTool(
     if (result.error) return `Erreur : ${result.error}`
     const time = planning.start_time ? ` à ${planning.start_time}${planning.end_time ? `-${planning.end_time}` : ''}` : ''
     return `Créneau "${planning.label}" supprimé le ${planning.planned_date}${time}.`
+  }
+
+  if (name === 'add_member') {
+    if (!permissions.canManagePlanning) {
+      return 'Action non autorisée : vous n\'avez pas la permission d\'ajouter des membres.'
+    }
+    const memberName = (args.name as string | undefined)?.trim()
+    if (!memberName) return 'Le nom du membre est requis.'
+
+    const result = await createIndividualMember({
+      prenom: (args.prenom as string | undefined)?.trim() || null,
+      name: memberName,
+      email: (args.email as string | undefined)?.trim() || null,
+      tauxHoraire: args.taux_horaire != null ? Number(args.taux_horaire) : null,
+      roleLabel: (args.role_label as string | undefined)?.trim() || null,
+    })
+    if (result.error) return `Erreur lors de l'ajout du membre : ${result.error}`
+
+    const displayName = [(args.prenom as string | undefined)?.trim(), memberName].filter(Boolean).join(' ')
+    return `Membre "${displayName}" ajouté à l'organisation (ID : ${result.id}). Vous pouvez maintenant l'assigner à un créneau en utilisant son nom.`
   }
 
   return `Outil "${name}" non reconnu.`
@@ -316,6 +625,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Clé API IA non configurée' }, { status: 500 })
   }
 
+  const [canViewExpenses, canCreateExpenses, canManagePlanning] = await Promise.all([
+    hasPermission('chantiers.expenses.view'),
+    hasPermission('chantiers.expenses.create'),
+    hasPermission('chantiers.planning'),
+  ])
+
   const body = await req.json()
   const chantierId: string = body.chantierId
   const messages: Array<{ role: string; content: string }> = body.messages ?? []
@@ -324,7 +639,7 @@ export async function POST(req: NextRequest) {
   if (messages.length === 0) return NextResponse.json({ error: 'Messages vides' }, { status: 400 })
 
   // Charger le contexte complet du chantier
-  const [chantier, taches, pointages, notes, profitability, individualMembers, equipes, plannings, businessCtx] = await Promise.all([
+  const [chantier, taches, pointages, notes, profitability, individualMembers, chantierEquipes, plannings, businessCtx, orgIndividualMembers, allEquipes, teamMembers] = await Promise.all([
     getChantierById(chantierId),
     getChantierTaches(chantierId),
     getChantierPointages(chantierId),
@@ -334,6 +649,9 @@ export async function POST(req: NextRequest) {
     getChantierEquipes(chantierId),
     getChantierPlannings(chantierId),
     getBusinessContext(orgId),
+    getOrgIndividualMembers(),
+    getEquipes(),
+    getTeamMembers(),
   ])
 
   if (!chantier) return NextResponse.json({ error: 'Chantier introuvable' }, { status: 404 })
@@ -344,12 +662,34 @@ export async function POST(req: NextRequest) {
   const lastNote = notes[0]?.content ?? 'aucune'
   const recentPointages = pointages.slice(0, 5).map(p => `${p.date}: ${p.hours}h${p.description ? ` (${p.description})` : ''}`)
 
-  const membresIndivStr = individualMembers.length > 0
-    ? individualMembers.map(m => `${m.prenom ?? ''} ${m.name}`.trim()).join(', ')
+  const people = buildKnownPeople({
+    chantierIndividualMembers: individualMembers,
+    orgIndividualMembers,
+    chantierEquipes,
+    allEquipes,
+    teamMembers,
+  })
+  const duplicateFirstNames = Array.from(
+    people.reduce((acc, person) => {
+      const first = person.firstName ? normalizeName(person.firstName) : ''
+      if (!first) return acc
+      acc.set(first, [...(acc.get(first) ?? []), person])
+      return acc
+    }, new Map<string, KnownPerson[]>()),
+  )
+    .filter(([, matches]) => matches.length > 1)
+    .map(([first, matches]) => `${first}: ${matches.map(personLabel).join(', ')}`)
+
+  const membresIndivStr = people.length > 0
+    ? people.map(person => personLabel(person)).join(' | ')
     : 'aucun'
-  const equipesStr = equipes.length > 0
-    ? equipes.map(eq => {
-        const membresEq = (eq.membres ?? []).map(m => m.name).join(', ')
+  const equipesForContext = uniqById([...chantierEquipes, ...allEquipes])
+  const equipesStr = equipesForContext.length > 0
+    ? equipesForContext.map(eq => {
+        const membresEq = (eq.membres ?? []).map(m => {
+          const rate = m.taux_horaire != null ? `, ${m.taux_horaire}€/h` : ''
+          return `${fullMemberName(m)}${m.role_label ? ` (${m.role_label}${rate})` : rate ? ` (${rate.slice(2)})` : ''}`
+        }).join(', ')
         return `${eq.name}${membresEq ? ` (${membresEq})` : ''}`
       }).join(' | ')
     : 'aucune'
@@ -357,40 +697,48 @@ export async function POST(req: NextRequest) {
     ? plannings.map(p => `ID ${p.id} : ${p.planned_date} ${p.start_time ?? 'sans heure'}${p.end_time ? `-${p.end_time}` : ''}, ${p.label}, ${p.team_size} pers.${p.notes ? `, notes: ${p.notes}` : ''}`).join(' | ')
     : 'aucun'
 
-  const systemPrompt = `Tu es l'assistant IA de ce chantier dans l'application ATELIER by Orsayn.
+  const systemPrompt = `Tu t'appelles Marco. Tu es chef de chantier virtuel chez ATELIER by Orsayn. Tu suis ce chantier de pres, tu connais les gens de l'equipe, l'avancement, les chiffres. Tu parles comme un vrai chef de chantier : direct, chaleureux, concret. Pas de langue de bois, pas de blabla, on va droit au but. Tu tutoies naturellement.
 
 ${formatBusinessContextForPrompt(businessCtx)}
 
 Chantier : ${chantier.title}
 Statut : ${chantier.status}
-Budget HT : ${chantier.budget_ht ? chantier.budget_ht + '€' : 'non défini'}
-Avancement tâches : ${tachesDone}/${taches.length} (${avancementPct}%)
-Heures pointées : ${profitability?.hoursLogged ?? 0}h
-Coût total : ${profitability ? Math.round(profitability.costTotal) + '€' : 'N/A'}
-Coût main-d'œuvre : ${profitability ? Math.round(profitability.costLabor) + '€' : 'N/A'}
-Coût matériel : ${profitability ? Math.round(profitability.costMaterial) + '€' : 'N/A'}
-CA facturé : ${profitability ? Math.round(profitability.revenueHt) + '€' : 'N/A'}
-Marge : ${profitability ? Math.round(profitability.marginEur) + '€ (' + Math.round(profitability.marginPct * 100) + '%)' : 'N/A'}
-Dernière note : ${lastNote}
-Pointages récents : ${recentPointages.length > 0 ? recentPointages.join(' | ') : 'aucun'}
-Tâches : ${taches.map(t => `"${t.title}" [${t.status}]`).join(', ') || 'aucune'}
-Membres individuels du chantier : ${membresIndivStr}
-Équipes du chantier : ${equipesStr}
-Créneaux planning existants : ${planningsStr}
+Budget HT : ${chantier.budget_ht ? chantier.budget_ht + '€' : 'non defini'}
+Avancement taches : ${tachesDone}/${taches.length} (${avancementPct}%)
+Heures pointees : ${profitability?.hoursLogged ?? 0}h
+${canViewExpenses ? `Cout total : ${profitability ? Math.round(profitability.costTotal) + '€' : 'N/A'}
+Cout main-d'oeuvre : ${profitability ? Math.round(profitability.costLabor) + '€' : 'N/A'}
+Cout materiel : ${profitability ? Math.round(profitability.costMaterial) + '€' : 'N/A'}
+CA facture : ${profitability ? Math.round(profitability.revenueHt) + '€' : 'N/A'}
+Marge : ${profitability ? Math.round(profitability.marginEur) + '€ (' + Math.round(profitability.marginPct * 100) + '%)' : 'N/A'}` : 'Donnees financieres : acces non autorise'}
+Derniere note : ${lastNote}
+Pointages recents : ${recentPointages.length > 0 ? recentPointages.join(' | ') : 'aucun'}
+Taches : ${taches.map(t => `"${t.title}" [${t.status}]`).join(', ') || 'aucune'}
+Personnes connues (chantier + organisation + fantomes + comptes app) : ${membresIndivStr}
+Equipes connues (chantier + organisation) : ${equipesStr}
+Homonymes/prenoms ambigus : ${duplicateFirstNames.length > 0 ? duplicateFirstNames.join(' | ') : 'aucun'}
+Creneaux planning existants : ${planningsStr}
 Date du jour : ${today}
 
 Instructions :
-- Réponds toujours en français, ton professionnel mais direct
-- Si la marge est < 10%, alerte l'utilisateur
-- Si le coût dépasse 90% du budget, alerte l'utilisateur
-- Tu peux ajouter des pointages (pour toi ou pour un membre nommé), des dépenses, des notes, mettre à jour des tâches, et créer des créneaux de planning via les outils disponibles
-- Tu peux aussi supprimer un créneau existant via delete_planning_slot si l'utilisateur le demande explicitement
-- Pour pointer les heures d'un membre spécifique, utilise add_pointage avec member_name
-- Pour créer un planning, utilise add_planning_slot avec la date, le label, et optionnellement les horaires
-- Si tu ne connais pas les membres du chantier, appelle d'abord list_members
-- Pas de formules creuses, chiffre tout ce qui peut l'être
-- Aucun emoji, aucun symbole décoratif
-- Aucun tiret cadratin (—) : utilise des virgules ou des points à la place`
+- Reponds toujours en francais, ton direct et humain, comme un chef de chantier experimente qui connait son equipe
+- Utilise les prenoms des membres quand tu en parles : "Voila, j'ai pointe 4h pour Thomas ce matin" plutot que "Pointage enregistre"
+- Si la marge est < 10%, previens clairement, sans dramatiser
+- Si le cout depasse 90% du budget, sonne l'alarme avec des mots clairs
+- Tu peux ajouter des pointages (pour l'utilisateur, pour un membre nomme ou pour une equipe), des notes, mettre a jour des taches via les outils disponibles
+${canCreateExpenses ? '- Tu peux ajouter des depenses via add_expense' : '- Tu ne peux pas ajouter de depenses : c\'est reserve aux membres habilites. Dis-le simplement.'}
+${canManagePlanning ? '- Tu peux creer et supprimer des creneaux de planning via add_planning_slot et delete_planning_slot' : '- Tu ne peux pas toucher au planning : c\'est reserve aux membres habilites. Dis-le simplement.'}
+${canViewExpenses ? '' : '- Tu n\'as pas acces aux donnees financieres (couts, marges, rentabilite) : reserve aux membres habilites. Dis-le simplement si demande.'}
+- Pour pointer les heures d'une personne ou d'une equipe, utilise add_pointage avec member_name
+- Quand member_name designe une equipe, les heures sont pointees pour chaque membre avec son propre taux horaire
+- Pour creer un planning (si autorise), utilise add_planning_slot avec la date, le label, les horaires, et member_name si une personne ou equipe est nommee
+- Si un prenom est ambigu, demande le nom complet avant d'agir
+- Si tu ne connais pas les membres ou equipes, appelle d'abord list_members
+- Si add_planning_slot retourne que le membre est inconnu, demande si c'est un nouveau membre. Si oui, collecte prenom, nom, taux horaire (facultatif) et email (facultatif), puis appelle add_member avant de recreer le creneau
+- N'appelle jamais add_member sans confirmation explicite que c'est bien un nouveau membre
+- Chiffre tout ce qui peut l'etre, sois factuel
+- Aucun emoji, aucun symbole decoratif
+- Aucun tiret cadratin : utilise des virgules ou des points a la place`
 
   const apiMessages = [
     { role: 'system', content: systemPrompt },
@@ -426,7 +774,7 @@ Instructions :
       for (const tc of assistantMsg.tool_calls) {
         let args: Record<string, unknown> = {}
         try { args = JSON.parse(tc.function.arguments) } catch { /* ignore */ }
-        const result = await executeTool(tc.function.name, args, chantierId, taches, individualMembers as IndividualMember[], equipes, plannings, today)
+        const result = await executeTool(tc.function.name, args, chantierId, taches, people, chantierEquipes, allEquipes, plannings, today, { canCreateExpenses, canManagePlanning })
         toolResults.push({ role: 'tool', tool_call_id: tc.id, content: result })
       }
 

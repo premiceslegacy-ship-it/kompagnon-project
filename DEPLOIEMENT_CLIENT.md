@@ -72,14 +72,33 @@ Project ref Supabase : [ex: pyxnmohknxmbpbcuvudg]
 SUPABASE_URL : https://[ref].supabase.co
 ANON_KEY : eyJ...
 SERVICE_ROLE_KEY : eyJ...
-RESEND_API_KEY : re_...
-Domaine : [ex: weber-tolerie.fr]
+RESEND_API_KEY : re_...        ← laisser vide si pas de domaine (emails via Atelier)
+Domaine : [ex: weber-tolerie.fr ou "aucun" → URL workers.dev]
 Nom affiché email : [ex: Weber Tôlerie]
-Adresse email expéditeur : [ex: contact@weber-tolerie.fr]
+Adresse email expéditeur : [ex: contact@weber-tolerie.fr ou "noreply@atelier.orsayn.fr"]
 CRON_SECRET : [laisser vide = Claude génère]
+Clé OpenRouter : Atelier (défaut) / Client (fournir sk-or-xxx)
+  → Atelier : clé partagée depuis .env.local, Atelier porte le coût IA
+  → Client : le client crée son compte openrouter.ai et fournit sa clé — il paye directement
 WhatsApp activé : oui / non
-  → Mode mutualisé (recommandé) : rien à fournir — routing automatique par numéro
-  → Mode propre WABA : Phone Number ID + Access Token Meta (permanent)
+  → Mode mutualisé Twilio (recommandé) : rien à fournir côté client — routing via webhook central Orsayn
+  → Mode propre WABA : Phone Number ID + Access Token Meta/Graph-compatible, permanent
+Offre souscrite : [setup_only | starter | pro | expert | expert_b2b]
+  → Détermine modules + quota_config dans organization_modules au déploiement (étape C8)
+  → setup_only : tous les modules IA à false — l'app tourne sans IA
+  → starter : 39€/mois — IA web principale, WhatsApp à 0
+  → pro : 89€/mois — + whatsapp_agent (120 msg/mois, 10 min vocal)
+  → expert : 149€/mois — IA illimitée + 500 msg WhatsApp, 40 min vocal, 30 msgs proactifs, OCR WA
+  → expert_b2b : tout Expert + B2Brouter activé
+Overflow mode : block (défaut) | upgrade_prompt | charge
+  → block : fonctionnalité coupée en fin de quota jusqu'au 1er du mois
+  → upgrade_prompt : la fonc continue, email upgrade envoyé, bascule block si non-upgrade 48h
+  → charge : usage supplémentaire facturé (+0,50€/tranche 50 msg WA)
+Essai IA offert : oui (30 jours Expert) / non
+  → Si oui : active tous les modules Expert + note trial_ends_at = today + 30j dans operator_client_subscriptions
+B2Brouter : export-only (défaut) / activé
+  → export-only : Atelier génère PDF + XML Factur-X, dépôt manuel — aucun surcoût
+  → activé : transmission automatique via B2Brouter — facturation annuelle séparée (250€-900€/an selon volume)
 ```
 
 ---
@@ -97,25 +116,53 @@ Ces étapes nécessitent une interface web ou une action humaine irremplaçable.
 | T3 | Lancer `./scripts/deploy-client.sh atelier-nomclient` depuis le terminal | Terminal | 2 min | Crée le Worker automatiquement au premier déploiement — le script patche wrangler.jsonc et restaure ensuite |
 | T4 | Injecter les variables d'env dans Cloudflare Workers (voir tableau §4) | dash.cloudflare.com → Workers & Pages → le projet → Settings → Variables and Secrets | 5 min | ⚡ Devient automatique si `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` fournis dans le protocole |
 | T5 | Ajouter le domaine custom + pointer DNS | Cloudflare Workers → Domains & Routes | 3 min | Dépend de la propagation DNS |
-| T6 | *(Si WhatsApp)* Créer l'app Meta, générer le token permanent | [developers.facebook.com](https://developers.facebook.com) | 20 min | Formulaire Meta, pas d'API publique |
+| T6 | *(Si WhatsApp propre uniquement)* Créer l'app Meta, générer le token permanent | [developers.facebook.com](https://developers.facebook.com) | 20 min | Formulaire Meta, pas d'API publique |
 | T7 | Onboarding owner : créer le compte, remplir les infos entreprise | App en production | 10 min | Action du client final |
 
 **À faire une seule fois sur ta machine (déjà fait) :**
 ```bash
-supabase login                        # débloque C1, C5, C6
-wrangler login                        # débloque T3, C7
-npm install -g wrangler               # déjà fait
-npm install -g @opennextjs/cloudflare # déjà fait
+supabase login   # débloque C1, C5, C6
+wrangler login   # débloque T3, C7
+# @opennextjs/cloudflare est une dépendance locale du projet (npm install) — pas d'install globale nécessaire
 ```
 
-**Clés WABA mutualisées — à faire une seule fois avant le premier client WhatsApp :**
-Une fois Meta approuvé, ajouter dans `.env.local` :
+**Gate technique avant T3 (obligatoire avant déploiement client) :**
+```bash
+npm run typecheck
+npm test
+npm run preflight:client -- atelier-nomclient
+npm run preflight:client -- atelier-nomclient --strict-env
+npm run build
+npm run preflight:client -- atelier-nomclient --with-open-next-build
+```
+
+`--strict-env` transforme les secrets manquants en erreur. En production, `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` doivent être uniques par instance client. `RATE_LIMIT_SECRET` doit être distinct de `SUPABASE_SERVICE_ROLE_KEY` pour éviter de réutiliser une clé très sensible comme sel de hash.
+
+**WhatsApp mutualisé Twilio — à faire une seule fois avant le premier client WhatsApp :**
+Le numéro Twilio WhatsApp Atelier doit pointer vers un **webhook central Orsayn**. Les instances clientes ne sont pas appelées directement par Twilio.
+
+```
+Twilio WhatsApp Atelier
+  → webhook central Orsayn
+  → routing par numéro autorisé
+  → instance/Supabase du client concerné
+  → réponse via Twilio
+```
+
+Les credentials Twilio mutualisés vivent côté cockpit/routeur Orsayn, pas dans chaque Worker client. Les apps clientes ont seulement besoin du numéro public à afficher :
+
+```
+NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33...
+```
+
+**Clés WABA Meta mutualisées — ancien mode / Graph-compatible :**
+Si un fournisseur expose un `Phone Number ID` + `Access Token` compatibles Meta Cloud API, ajouter dans `.env.local` :
 ```
 SHARED_WABA_PHONE_NUMBER_ID=<Phone Number ID du numéro bot Atelier>
 SHARED_WABA_ACCESS_TOKEN=<Token permanent Meta>
 NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33...
 ```
-→ `deploy-edge-functions.sh` les lit automatiquement pour tous les clients présents et futurs. Pas besoin d'y toucher à nouveau.
+→ `deploy-edge-functions.sh` les lit automatiquement pour tous les clients présents et futurs. Ce n'est pas le mode cible pour Twilio classique.
 
 **Pour rendre T4 automatique (optionnel) :**
 1. dash.cloudflare.com → My Profile → API Tokens → Create Token → Custom Token
@@ -141,13 +188,35 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 | C3 | Configurer Auth Supabase (Site URL + Redirect URLs + OTP) | Supabase MCP | MCP connecté ✅ |
 | C4 | Générer un `CRON_SECRET` + un `MEMBER_SESSION_SECRET` uniques si non fournis | Terminal (`openssl rand -hex 32`) | — |
 | C5 | Déployer la Edge Function `whatsapp-webhook` | `supabase functions deploy` | `supabase login` ✅ |
-| C6 | Déployer la Edge Function + injecter les secrets (`OPENROUTER`, `MISTRAL`, `RESEND`, `APP_URL`, `SHARED_WABA_*`) | `./scripts/deploy-edge-functions.sh <ref> --resend-key ... --resend-from ... --app-url ...` | `supabase login` ✅ |
+| C6 | Déployer la Edge Function + injecter les secrets (`OPENROUTER`, `MISTRAL`, `RESEND`, `APP_URL`; `SHARED_WABA_*` seulement en mode Meta/Graph-compatible) | `./scripts/deploy-edge-functions.sh <ref> --resend-key ... --resend-from ... --app-url ...` | `supabase login` ✅ |
 | C7 | Déployer le Cloudflare Worker relances + injecter `APP_URL` + `CRON_SECRET` | `wrangler deploy` | `wrangler login` ✅ |
-| C8 | Peupler `company_memory` avec le contexte de l'entretien client | Supabase MCP | MCP connecté ✅ |
-| C9 | Vérifier migrations, permissions, buckets | Supabase MCP | MCP connecté ✅ |
-| C10 | Afficher récapitulatif final + URL webhook Meta | — | — |
+| C8 | Peupler `company_memory` avec le contexte de l'entretien client + configurer `organization_modules` selon l'offre souscrite | Supabase MCP | MCP connecté ✅ |
+| C9 | Vérifier migrations, permissions, buckets, modules IA | Supabase MCP | MCP connecté ✅ |
+| C10 | Afficher récapitulatif final + URL app client + modules actifs ; WhatsApp mutualisé passe par le webhook central Orsayn | — | — |
 
 **Note C4 (variables Cloudflare Workers) :** si `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` sont fournis dans le protocole, j'injecte toutes les variables via l'API Cloudflare (`curl`) — secrets ET variables texte — et T4 disparaît de ta liste.
+
+**Note C8 — Configuration modules IA selon l'offre souscrite :**
+
+Après avoir peuplé `company_memory`, je configure `organization_modules.modules`, `organization_modules.quota_config` et `organization_modules.overflow_mode` via Supabase MCP selon le champ "Offre souscrite" du protocole :
+
+| Offre | Modules / quotas |
+|-------|----------------|
+| `setup_only` | Tous modules à `false`, tous quotas à `0` |
+| `starter` | IA web principale, WhatsApp à `0`, quotas starter |
+| `pro` | Starter + `whatsapp_agent`, quotas Pro |
+| `expert` | Tous modules, quotas Expert |
+| `expert_b2b` | Tout Expert + B2Brouter activé côté cockpit |
+
+Si "Essai IA offert : oui" :
+1. Activer tous les modules Expert côté instance cliente (config-sync)
+2. Écrire dans `operator_client_subscriptions` : `trial_tier = 'expert'`, `trial_ends_at = now() + 30 days`, `trial_converted = false`
+3. Insérer un event dans `operator_commercial_events` : `event_type = 'trial_start'`, `sent_by = 'operator_manual'`
+4. Envoyer l'email `trial-start` via Resend cockpit au contact client
+
+À l'expiration (géré automatiquement par le cron `trial-expiry-check`) : modules IA désactivés via config-sync + `trial_ends_at = null` remis à null + email `trial-expired` envoyé.
+
+Le cockpit Orsayn reste la source de vérité pour modifier tier, modules et quotas après déploiement. Le bouton "Appliquer tier" pousse la configuration vers `https://<app-client>/api/operator/config-sync` avec signature HMAC.
 
 ---
 
@@ -240,6 +309,22 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 080_contracts_mvp.sql                      ← Module contrats MVP : table contracts, RLS, permissions contracts.*
 081_contract_templates.sql                 ← Templates de contrats personnalisés par organisation (table contract_templates)
 082_contract_custom_sections.sql           ← Sections libres (custom_sections JSONB) sur contracts et contract_templates
+083_organization_quota_config.sql          ← Quotas commerciaux locaux : quota_config/overflow_mode + colonnes quota sur usage_logs
+084_contracts_signature_duration.sql       ← Durée optionnelle des contrats + informations de durée
+085_contract_client_signature.sql          ← Signature manuscrite du client via lien public sécurisé
+086_contract_client_signatory_role.sql     ← Fonction du signataire côté client (ex : Gérant, Directeur technique)
+087_contract_quote_link.sql                ← Lien optionnel entre un devis et un contrat
+088_invalidate_broken_snapshots.sql        ← Invalide les snapshots PDF contrats dont organization_id est nul
+089_auto_reminders_72h_after_invoice_sent.sql ← Première relance 72h après envoi facture (pas après échéance)
+090_planning_tournee.sql                   ← Planification par tournée : regroupement, durée sur site, trajet, ordre
+091_quote_invoice_items_dim_quantity.sql   ← Nombre d'unités dimensionnelles (multiplicateur : nb × surface/longueur/volume)
+092_manage_pointages_permission.sql        ← Nouvelle permission chantiers.manage_pointages (ajuster/supprimer pointages équipe)
+093_planning_and_profitability_permissions.sql ← Permissions dédiées chantiers.planning + chantiers.profitability.view
+094_restrict_collaborateur_permissions.sql ← Retire chantiers.edit et invoices.create des rôles collaborateur/employee
+095_member_goals.sql                       ← Objectifs individuels par membre (heures, tâches, chantiers, custom) + RLS
+096_member_goals_membership.sql            ← Étend member_goals pour accepter membership_id (membres org sans fiche intervenant)
+097_situations_de_travaux.sql              ← Module situations de travaux : colonnes invoices + table invoice_situations + RPC generateSituation
+098_tournee_departure_address.sql          ← Point de départ tournée : organizations.departure_* + table tournee_routes
 ```
 
 Note historique :
@@ -293,6 +378,22 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `080_contracts_mvp.sql`
 - `081_contract_templates.sql`
 - `082_contract_custom_sections.sql`
+- `083_organization_quota_config.sql`
+- `084_contracts_signature_duration.sql`
+- `085_contract_client_signature.sql`
+- `086_contract_client_signatory_role.sql`
+- `087_contract_quote_link.sql`
+- `088_invalidate_broken_snapshots.sql`
+- `089_auto_reminders_72h_after_invoice_sent.sql`
+- `090_planning_tournee.sql`
+- `091_quote_invoice_items_dim_quantity.sql`
+- `092_manage_pointages_permission.sql`
+- `093_planning_and_profitability_permissions.sql`
+- `094_restrict_collaborateur_permissions.sql`
+- `095_member_goals.sql`
+- `096_member_goals_membership.sql`
+- `097_situations_de_travaux.sql`
+- `098_tournee_departure_address.sql`
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`
@@ -308,7 +409,7 @@ Effets de ces migrations :
   - création du bucket privé `organization-exports`
   - traçabilité des exports owner-only de réversibilité
 - `055` :
-  - création de `organization_modules` (config modules IA par org : `quote_ai`, `planning_ai`, `document_ai`, `whatsapp_agent`)
+  - création de `organization_modules` (config modules IA par org ; les clés canoniques actuelles sont pilotées par `src/lib/quota-catalog.ts`)
   - création de `usage_logs` (journal de chaque appel IA : provider, feature, tokens, coût, statut sync opérateur)
   - toutes les features IA passent désormais par `callAI.ts` qui vérifie le module avant d'appeler le provider
 - `056` : ajout de `balance_due_date` sur `invoices` (échéance solde restant après acompte)
@@ -377,6 +478,31 @@ Effets de ces migrations :
   - `chantier_expenses` enrichi : `quantity`, `unit`, `unit_price_ht`, `material_id` (FK → `materials`), `subcategory`, champs carburant (`transport_km`, `transport_consumption`, `transport_fuel_price`) et location (`rental_item_label`, `rental_start_date`, `rental_end_date`)
   - `amount_ht` reste source de vérité — recalculé côté UI quand `quantity × unit_price_ht` ou via le calculateur carburant `km × conso/100 × prix/L`
 
+- `092` : nouvelle permission `chantiers.manage_pointages` — attribuée owner/admin/manager ; permet d'ajuster ou supprimer les pointages de n'importe quel membre (pas seulement les siens)
+- `093` :
+  - `chantiers.planning` — gérer le planning et les tournées (owner/admin/manager)
+  - `chantiers.profitability.view` — voir la rentabilité des chantiers (owner/admin/manager)
+  - ces permissions remplacent l'usage générique de `chantiers.edit` pour ces deux fonctions
+- `094` :
+  - retire `chantiers.edit` et `invoices.create` des rôles `collaborateur` et `employee`
+  - met à jour `initialize_organization_for_user` pour les nouvelles orgs créées après cette migration
+- `095` :
+  - nouvelle table `member_goals` (objectifs par membre/période : heures terrain, tâches complétées, chantiers traités, custom)
+  - RLS via l'organization_id du membre
+- `096` :
+  - `member_goals.member_id` rendu nullable
+  - ajout `membership_id` (FK → `memberships`) — autorise les objectifs pour les membres org sans fiche intervenant
+  - contrainte `member_xor_membership` : exactement l'un des deux doit être non null
+- `097` (situations de travaux) :
+  - colonnes sur `invoices` : `situation_number`, `cumulative_pct`, `period_from`, `period_to`, `retention_pct`, `retention_amount`, `market_reference`
+  - nouvelle table `invoice_situations` (lien situation → devis de référence, cumul, retenue, numéro)
+  - RPC `generate_situation_invoice` — crée la situation et calcule les montants en transaction atomique
+  - **obligatoire avant d'utiliser** : l'onglet Situations de travaux dans l'éditeur de facture et via WhatsApp (Phase 8)
+- `098` :
+  - colonnes sur `organizations` : `departure_address`, `departure_postal_code`, `departure_city` — point de départ par défaut des tournées, distinct de l'adresse de domiciliation
+  - nouvelle table `tournee_routes` — métadonnées par tournée (date, point de départ spécifique, timestamps)
+  - **obligatoire avant d'utiliser** : le champ "Adresse de départ" dans Settings et la saisie d'un point de départ par tournée dans le module Planning → Tournées
+
 Impact déploiement :
 - `059` : appliquer sur tous les clients existants avec WhatsApp avant de redéployer l'Edge Function — sans ça, le webhook ne peut pas lire `authorized_contacts` ni `use_shared_waba`
 - `067` + `068` : appliquer avant d'utiliser l'onglet Rentabilité, l'assistant IA chantier, les photos rapport et les nouveaux outils WhatsApp — sans ça les inserts sur `chantier_expenses` et `chantier_photos` échoueront
@@ -391,6 +517,7 @@ Impact déploiement :
 - obligatoire avant tout appel IA en production (`callAI.ts` lit `organization_modules` — sans la table, toutes les features IA échouent)
 - `057` vide les embeddings existants : déclencher le cron `/api/cron/embeddings` après migration pour re-générer
 - ajouter les 3 variables opérateur dans Cloudflare Workers pour activer la sync vers le cockpit (voir §3)
+- `083` : obligatoire avant le nouveau cockpit quotas ; après push, appliquer un tier depuis `/orsayn` pour peupler `organization_modules.quota_config`
 - après migration, vérifier rapidement dans l'app :
   - Settings → activité métier bien sélectionnée
   - Catalogue → création/édition produit/service OK
@@ -398,6 +525,7 @@ Impact déploiement :
   - Formulaire public → affichage correct des produits/services configurés
   - Settings → Données & confidentialité → génération d'un export complet OK
   - Settings → Modules → modules IA visibles et activables
+  - Cockpit Orsayn → quotas visibles pour le client, config sync `synced`, un appel IA remonte dans `operator_client_quotas`
 - après migration `074`, vérifier dans l'app :
   - Catalogue → onglet "Fournisseurs" visible et opérationnel (CRUD + import CSV)
   - Catalogue → bouton "Ajouter avec l'IA" visible si module `catalog_ai` activé (via Cockpit ou SQL)
@@ -470,15 +598,18 @@ MEMBER_SESSION_SECRET=...              ← unique par client, signe le cookie de
 RATE_LIMIT_SECRET=...                   ← optionnel, unique par client ; fallback CRON_SECRET si absent
 AI_RATE_LIMIT_PER_HOUR=120              ← optionnel, limite appels IA par org/feature
 PUBLIC_FORM_RATE_LIMIT_PER_HOUR=5       ← optionnel, limite formulaire public par email+IP
-SHARED_WABA_PHONE_NUMBER_ID=...        ← Phone Number ID du numéro bot Atelier mutualisé (partagé)
-SHARED_WABA_ACCESS_TOKEN=...           ← Token permanent du numéro bot Atelier mutualisé (partagé)
 NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33700000000  ← Numéro affiché dans Settings → WhatsApp (format +33...)
-OPERATOR_INGEST_URL=https://cockpit.orsayn.fr/api/operator/ingest  ← URL du cockpit Orsayn
+# Mode Twilio mutualisé : TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN et TWILIO_WHATSAPP_FROM restent côté cockpit/routeur Orsayn, pas dans le Worker client.
+# Mode Meta/Graph-compatible uniquement :
+# SHARED_WABA_PHONE_NUMBER_ID=...      ← Phone Number ID du numéro bot Atelier
+# SHARED_WABA_ACCESS_TOKEN=...         ← Token permanent du numéro bot Atelier
+OPERATOR_INGEST_URL=https://orsayn-cockpit.mbebourasam.workers.dev/api/operator/ingest  ← URL du cockpit Orsayn
 OPERATOR_INGEST_SECRET=...             ← secret HMAC partagé (identique sur toutes les instances + cockpit)
+OPERATOR_CONFIG_SYNC_SECRET=...        ← optionnel ; si absent, /api/operator/config-sync utilise OPERATOR_INGEST_SECRET
 # OPERATOR_SOURCE_INSTANCE=nom-client ← optionnel : si absent, utilise le host de NEXT_PUBLIC_APP_URL (ex: atelier-weber.workers.dev). Renommable dans le cockpit après.
 ```
 
-> **Note :** les 3 variables `OPERATOR_*` sont optionnelles. Sans elles, les appels IA fonctionnent normalement mais les coûts ne remontent pas au cockpit (`operator_sync_status = 'skipped'` dans `usage_logs`).
+> **Note :** les variables `OPERATOR_*` sont optionnelles. Sans `OPERATOR_INGEST_URL/SECRET`, les appels IA fonctionnent normalement mais les coûts ne remontent pas au cockpit (`operator_sync_status = 'skipped'` dans `usage_logs`). Sans secret de config sync, le cockpit garde la configuration client en `skipped` et il faut peupler `organization_modules` manuellement.
 
 **Note :** les variables `NEXT_PUBLIC_LEGAL_*` et `NEXT_PUBLIC_*EMAIL` servent aux pages publiques `privacy`, `terms`, `legal`
 et devront être reprises telles quelles sur la future landing pour garder un wording cohérent.
@@ -493,9 +624,8 @@ Fichiers clés dans le repo :
 
 #### Prérequis outils (une fois sur ta machine)
 ```bash
-npm install -g wrangler
-npm install -g @opennextjs/cloudflare
 wrangler login   # authentifie vers ton compte Cloudflare
+# @opennextjs/cloudflare est une dépendance locale du projet — npm install suffit
 ```
 
 #### Déployer un client
@@ -538,10 +668,10 @@ Les variables texte (`SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, mentions légales, e
 
 | Type | Variables |
 |------|-----------|
-| **Secret** | `OPERATOR_INGEST_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET`, `SHARED_WABA_ACCESS_TOKEN` |
-| **Text** | `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_USD_TO_EUR_RATE`, `SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `AI_RATE_LIMIT_PER_HOUR`, `PUBLIC_FORM_RATE_LIMIT_PER_HOUR`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE`, `SHARED_WABA_PHONE_NUMBER_ID` et toutes les `NEXT_PUBLIC_LEGAL_*` |
+| **Secret** | `OPERATOR_INGEST_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET`; `SHARED_WABA_ACCESS_TOKEN` seulement en mode Meta/Graph-compatible |
+| **Text** | `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_USD_TO_EUR_RATE`, `SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `AI_RATE_LIMIT_PER_HOUR`, `PUBLIC_FORM_RATE_LIMIT_PER_HOUR`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE`, `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER`; `SHARED_WABA_PHONE_NUMBER_ID` seulement en mode Meta/Graph-compatible; et toutes les `NEXT_PUBLIC_LEGAL_*` |
 
-**Mapping Edge Functions Supabase :** l'app Worker utilise `RESEND_FROM_ADDRESS` et `NEXT_PUBLIC_APP_URL`; la fonction Supabase `whatsapp-webhook` reçoit les mêmes valeurs sous `RESEND_FROM_EMAIL` et `APP_URL` via `scripts/deploy-edge-functions.sh`.
+**Mapping Edge Functions Supabase :** l'app Worker utilise `RESEND_FROM_ADDRESS` et `NEXT_PUBLIC_APP_URL`; la fonction Supabase `whatsapp-webhook` reçoit les mêmes valeurs sous `RESEND_FROM_EMAIL` et `APP_URL` via `scripts/deploy-edge-functions.sh`. En mode Twilio mutualisé, le webhook entrant public reste centralisé côté Orsayn.
 
 > **Important :** déconnecter le repo GitHub du projet Cloudflare Pages après le premier déploiement manuel — sinon chaque push GitHub déclenche un build automatique qui échoue (next-on-pages n'est plus utilisé).
 
@@ -643,14 +773,30 @@ Script automatisé (lancé par Claude via terminal) :
 ```
 
 **Séparation clés partagées / clés par client :**
-- **Depuis `.env.local`** (clés Atelier identiques partout) : `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `SHARED_WABA_PHONE_NUMBER_ID`, `SHARED_WABA_ACCESS_TOKEN`
+- **Depuis `.env.local`** (clés Atelier identiques partout) : `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`
+- **Depuis `.env.local` si mode Meta/Graph-compatible** : `SHARED_WABA_PHONE_NUMBER_ID`, `SHARED_WABA_ACCESS_TOKEN`
 - **En argument** (clés propres au client) : `--resend-key`, `--resend-from`, `--app-url`
 
 Cela évite de modifier `.env.local` entre chaque déploiement client.
 
 `APP_URL` est requis pour les liens PDF dans les emails envoyés depuis WhatsApp (`send_quote`, `send_invoice`).
 
-URL webhook (mode propre WABA uniquement) :
+**Architecture WhatsApp mutualisée Twilio :**
+
+Le mode cible est un webhook central côté Orsayn. Twilio ne doit pas être configuré avec une URL Supabase par client.
+
+```
+Twilio WhatsApp Atelier
+  → https://<cockpit-orsayn>/api/whatsapp/twilio
+  → routeur central Orsayn
+  → résolution du client via le numéro WhatsApp autorisé
+  → traitement sur l'instance client concernée
+  → réponse sortante via Twilio
+```
+
+Dans ce mode, `whatsapp-webhook` côté Supabase client reste utile comme brique de traitement si le routeur central l'appelle, mais il n'est pas l'URL webhook configurée dans Twilio.
+
+URL webhook client (mode propre WABA Meta/Graph-compatible uniquement) :
 ```
 https://<PROJECT_REF>.supabase.co/functions/v1/whatsapp-webhook
 ```
@@ -749,13 +895,26 @@ Impact support appareils :
 - [ ] **Échéancier facture** : éditeur facture → ajouter des échéances de paiement → encaisser une échéance → vérifier `total_paid` + statut `partial`/`paid` mis à jour
 - [ ] **Contrats** : Contrats → nouveau brouillon sous-traitance → remplir les clauses → générer PDF → envoyer → signer → vérifier statuts et PDF archivé
 - [ ] **Templates contrats** : Contrats → nouveau template → sauvegarder → créer un contrat depuis ce template → clauses pré-remplies
+- [ ] **Permissions granulaires** : Settings → Rôles → vérifier que `chantiers.planning`, `chantiers.profitability.view`, `chantiers.manage_pointages` apparaissent correctement ; vérifier que les rôles `collaborateur` et `employee` ne voient pas "Modifier chantier" ni "Créer facture"
+- [ ] **Objectifs membres** : Chantier → Équipe → fiche membre → onglet Objectifs → créer un objectif mensuel → vérifier sauvegarde
+- [ ] **Situations de travaux** : Finances → sélectionner un devis signé → onglet Situations → créer situation 1 à 30% → vérifier `situation_number`, `cumulative_pct`, `retention_amount` en DB
+- [ ] **Adresse de départ tournée** : Settings → Organisation → renseigner l'adresse de départ → Planning → Tournées → vérifier que le point de départ est pré-rempli
 
 ### Checklist onboarding WhatsApp client (mode mutualisé)
 
-> Le client n'a **aucun compte Meta à créer**. Tout passe par le numéro bot Atelier.
+> Le client n'a **aucun compte Meta à créer**. Tout passe par le numéro bot Atelier sur Twilio et par le webhook central Orsayn.
+
+Architecture retenue :
+```
+Twilio WhatsApp Atelier
+  → webhook central Orsayn
+  → routing par numéro autorisé
+  → instance client concernée
+```
 
 **Toi (une fois le Worker déployé) :**
 - [ ] Activer le module WhatsApp dans Cockpit Orsayn ou directement en DB : `UPDATE organization_modules SET whatsapp_agent = true WHERE organization_id = '<id>'`
+- [ ] Ajouter/valider la route WhatsApp du client dans le cockpit Orsayn : numéro autorisé → `source_instance` / `organization_id`
 
 **Le client (dans son app → Settings → Agent WhatsApp) :**
 - [ ] Cocher "Utiliser le numéro Atelier mutualisé"
@@ -763,6 +922,99 @@ Impact support appareils :
 - [ ] Envoyer "bonjour" depuis un numéro autorisé → l'agent répond avec le contexte de son entreprise
 
 > Le numéro bot affiché dans Settings est `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER` injecté au déploiement.
+
+---
+
+### Activation WhatsApp mutualisé Twilio une fois la vérification Atelier terminée
+
+> Cette section s'applique quand le numéro WhatsApp Atelier est validé chez Twilio. En attente au 2026-05-13.
+
+**Décision d'architecture : webhook central Orsayn obligatoire**
+
+Pour le mode mutualisé Twilio, ne pas configurer Twilio vers les Edge Functions Supabase des clients. Twilio appelle une seule URL, côté cockpit Orsayn.
+
+```
+Twilio
+  → https://<cockpit-orsayn>/api/whatsapp/twilio
+  → table de routes opérateur
+  → client Supabase/Worker concerné
+```
+
+Le routeur central doit gérer :
+- parsing du webhook Twilio entrant (`From`, `To`, `Body`, médias)
+- résolution du client via le numéro autorisé
+- appel du traitement IA/métier de l'instance client
+- envoi de la réponse via Twilio
+- journalisation usage IA dans le cockpit Orsayn
+
+**Étape 1 — Récupérer les credentials Twilio du numéro bot**
+
+| Fournisseur | Ce qu'il faut récupérer |
+|-------------|------------------------|
+| **Twilio mutualisé** | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, WhatsApp Sender number (`whatsapp:+33...`) |
+| **Meta direct / WABA propre client** | `Phone Number ID` + token permanent Graph API |
+
+**Étape 2 — Renseigner les variables centralisées du cockpit Orsayn**
+
+```bash
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_WHATSAPP_FROM=whatsapp:+33700000000
+NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33700000000
+```
+
+Ces variables sont partagées entre tous les clients, mais les secrets Twilio doivent rester côté cockpit/routeur Orsayn. Les Workers clients n'ont besoin que de `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER` pour afficher le numéro dans Settings.
+
+**Étape 3 — Déployer ou mettre à jour le routeur central Orsayn**
+
+Le routeur central reçoit les messages Twilio et route vers le bon client. Prévoir une table opérateur dédiée, par exemple :
+
+```sql
+operator_whatsapp_routes (
+  id,
+  source_instance,
+  organization_id,
+  authorized_number,
+  label,
+  is_active,
+  created_at,
+  updated_at
+)
+```
+
+**Étape 4 — Configurer le webhook Twilio entrant**
+
+Dans Twilio, configurer le WhatsApp Sender pour appeler uniquement :
+
+```
+https://<cockpit-orsayn>/api/whatsapp/twilio
+```
+
+**Étape 5 — Redéployer l'app client si le numéro affiché change**
+
+Injecter/mettre à jour `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER` dans les variables Cloudflare Workers clients, puis redéployer si nécessaire.
+
+```bash
+./scripts/deploy-all-clients.sh
+```
+
+**Étape 6 — Activer les clients**
+
+Pour chaque client prêt à utiliser WhatsApp :
+```sql
+UPDATE organization_modules SET whatsapp_agent = true WHERE organization_id = '<id>';
+```
+Puis créer/mettre à jour la route centrale Orsayn pour chaque numéro autorisé. Le client peut aussi gérer ses numéros dans Settings → Agent WhatsApp, mais la source de vérité opérationnelle du routage Twilio mutualisé doit être disponible dans le cockpit central.
+
+**Cas séparé — WABA propre client**
+
+Si un client utilise son propre Meta/WABA Graph-compatible, il peut conserver le webhook Supabase client :
+
+```
+https://<PROJECT_REF>.supabase.co/functions/v1/whatsapp-webhook
+```
+
+Ce mode n'utilise pas le numéro Twilio mutualisé Atelier.
 
 ---
 
@@ -776,6 +1028,8 @@ Impact support appareils :
 - Nouveau projet Supabase (ex: `orsayn-operator`) dans la même région
 - Appliquer `supabase/operator-migrations/001_operator_usage.sql`
 - Puis appliquer `supabase/operator-migrations/002_operator_client_settings.sql`
+- Puis appliquer `supabase/operator-migrations/003_operator_subscriptions_quotas.sql`
+- Puis appliquer `supabase/operator-migrations/004_operator_commercial_events.sql`
 - Récupérer l'URL et la service role key
 
 **T-O2 — Déployer le cockpit sur Cloudflare Workers**
@@ -790,32 +1044,205 @@ OPERATOR_ALLOWED_EMAILS=mbebourasam@gmail.com
 OPERATOR_SUPABASE_URL=https://<operateur-ref>.supabase.co
 OPERATOR_SUPABASE_SERVICE_ROLE_KEY=eyJ...    ← service role du Supabase opérateur
 OPERATOR_USD_TO_EUR_RATE=0.92                ← taux fixe V1 pour marge et synthèse globale
+RESEND_API_KEY=re_...                        ← clé Resend Orsayn pour les emails commerciaux (relances, upgrades, essais)
+RESEND_FROM_ADDRESS=no-reply@orsayn.fr       ← expéditeur des emails cockpit
 
 # Variables Supabase standard (pour l'auth de la page /orsayn)
 SUPABASE_URL=https://<operateur-ref>.supabase.co
 SUPABASE_ANON_KEY=eyJ...
-NEXT_PUBLIC_APP_URL=https://cockpit.orsayn.fr
+NEXT_PUBLIC_APP_URL=https://orsayn-cockpit.mbebourasam.workers.dev
 ```
 
 > **Important :** ne pas mettre `OPERATOR_MODE=true` sur les instances clientes — ça activerait l'endpoint d'ingestion et la page cockpit chez le client.
 
-**T-O3 — Domaine custom**
-- Ajouter `cockpit.orsayn.fr` dans Cloudflare Workers → Domains & Routes
-- C'est l'URL à renseigner dans `OPERATOR_INGEST_URL` sur toutes les instances clientes
+**T-O3 — URL cockpit**
+- URL native Cloudflare Workers : `https://orsayn-cockpit.mbebourasam.workers.dev` (pas de domaine custom à configurer)
+- C'est cette URL qui doit être renseignée dans `OPERATOR_INGEST_URL` sur toutes les instances clientes
 
 ### Accès au cockpit
 
-URL : `https://cockpit.orsayn.fr/orsayn`
+URL : `https://orsayn-cockpit.mbebourasam.workers.dev/orsayn`
 Connexion avec le compte Supabase opérateur dont l'email est dans `OPERATOR_ALLOWED_EMAILS`.
 
 ### Checklist cockpit
 
-- [ ] `001_operator_usage.sql` + `002_operator_client_settings.sql` appliqués sur le Supabase opérateur
-- [ ] 4 tables créées : `operator_clients`, `operator_usage_events`, `operator_whatsapp_cost_snapshots`, `operator_client_settings`
-- [ ] Variables d'env cockpit injectées dans Cloudflare Workers
+- [ ] `001_operator_usage.sql` + `002_operator_client_settings.sql` + `003_operator_subscriptions_quotas.sql` + `004_operator_commercial_events.sql` appliqués sur le Supabase opérateur
+- [ ] Tables opérateur créées : `operator_clients`, `operator_usage_events`, `operator_whatsapp_cost_snapshots`, `operator_client_settings`, `operator_client_subscriptions`, `operator_client_quotas`, `operator_quota_usage_events`, `operator_commercial_events`
+- [ ] Variables d'env cockpit injectées dans Cloudflare Workers (y compris `RESEND_API_KEY` + `RESEND_FROM_ADDRESS` pour les emails commerciaux)
 - [ ] Page `/orsayn` accessible (renvoie 404 sinon → `OPERATOR_MODE` non reconnu)
 - [ ] Envoyer un appel IA de test depuis une instance cliente → vérifier que l'event apparaît dans le cockpit
 - [ ] Renseigner un `monthly_fee_ht` dans le cockpit → vérifier le calcul de marge
+- [ ] Activer un essai 30j Expert sur un client test → vérifier `trial_tier` + `trial_ends_at` dans `operator_client_subscriptions`
+- [ ] Cron trial-expiry configuré sur cron-job.org (voir §Crons cockpit ci-dessous) → laisser expirer l'essai test → vérifier désactivation modules + email `trial-expired`
+
+### Crons cockpit — essais et relances commerciales
+
+Ces crons tournent sur le **cockpit Orsayn** (pas sur les instances clientes). À configurer sur cron-job.org en pointant sur `https://orsayn-cockpit.mbebourasam.workers.dev`.
+
+| Route | Fréquence | Rôle |
+|-------|-----------|------|
+| `POST /api/cron/trial-expiry-check` | Tous les jours à 02:00 UTC | Vérifie les essais expirés → désactive modules côté instance + envoie `trial-expired` |
+| `POST /api/cron/trial-reminder` | Tous les jours à 08:00 UTC | Envoie `trial-expiry-7d` à J-7 et `trial-expiry-2d` à J-2 |
+| `POST /api/cron/trial-lapsed-followup` | Tous les jours à 09:00 UTC | Envoie `trial-expired-14d` aux essais expirés sans conversion depuis 14 jours |
+| `POST /api/cron/quota-alerts` | Tous les jours à 10:00 UTC | Envoie `upgrade-prompt-quota` et `upgrade-prompt-wa` aux clients proches ou dépassant leur quota |
+
+**Authentification :** header `x-operator-secret: <OPERATOR_INGEST_SECRET>` sur chaque cron.
+
+**Idempotence :** chaque cron vérifie `operator_commercial_events` avant d'envoyer — si l'event du même type pour le même client existe déjà dans la fenêtre de cooldown attendue, l'email ne repart pas.
+
+```bash
+# Tester manuellement (remplacer le secret)
+curl -X POST https://orsayn-cockpit.mbebourasam.workers.dev/api/cron/trial-expiry-check \
+  -H "x-operator-secret: <OPERATOR_INGEST_SECRET>"
+
+curl -X POST https://orsayn-cockpit.mbebourasam.workers.dev/api/cron/quota-alerts \
+  -H "x-operator-secret: <OPERATOR_INGEST_SECRET>"
+```
+
+---
+
+## ─── MODULES & UPGRADES PAR CLIENT ─────────────────────────────────────────────
+
+> Règle d'or : **même code pour tous les clients, configuration différente par client**.
+
+Un client peut avoir B2Brouter, un autre non. Un client peut utiliser ta clé OpenRouter, un autre sa propre clé. Un client peut avoir seulement Devis IA, un autre Planning IA + Documents IA + WhatsApp. On ne crée pas de branche, pas de fork, pas de version spéciale.
+
+### Les 3 niveaux de configuration
+
+| Niveau | Sert à quoi | Exemples | Où ça vit |
+|--------|-------------|----------|-----------|
+| **Flags produit** | Afficher/autoriser une fonctionnalité | `quote_ai`, `planning_ai`, `document_import_ai`, `catalog_ai`, `whatsapp_agent`, futur `facturation_b2brouter` | Table `organization_modules`, pilotée depuis Cockpit Orsayn |
+| **Secrets infra** | Donner accès à un provider externe | `OPENROUTER_API_KEY`, `B2BROUTER_API_KEY`, `RESEND_API_KEY` | Variables/secrets du Worker client ou Edge Function |
+| **Paramètres métier** | Adapter l'usage client | tarifs, SIREN, IBAN, modules, numéros WhatsApp autorisés | Base Supabase client + cockpit |
+
+Un flag sans secret ne suffit pas : la fonctionnalité apparaît peut-être, mais l'appel provider échoue. Un secret sans flag ne suffit pas non plus : le provider est configuré, mais la fonctionnalité reste désactivée côté produit.
+
+### V1 core livrée par défaut
+
+Chaque nouveau client est livré en V1 core :
+- app web complète
+- devis/factures/PDF
+- chantiers/catalogue/planning
+- emails
+- IA selon le pack vendu
+- facturation électronique en mode `export_only`
+- B2Brouter désactivé par défaut
+- WhatsApp désactivé tant que le module n'est pas activé
+
+Le mode `export_only` est inclus comme socle conformité : PDF + XML/Factur-X téléchargeable, dépôt manuel par l'artisan sur sa PA.
+
+### Upgrades activables après livraison
+
+#### Upgrade B2Brouter
+
+B2Brouter est un upgrade client par client.
+
+```text
+Client A → export_only
+Client B → export_only
+Client C → b2brouter intégré
+```
+
+Activation :
+1. Valider le flux sandbox / compte B2Brouter du client
+2. Ajouter les secrets du client dans son Worker :
+   - `B2BROUTER_API_KEY`
+   - `B2BROUTER_ACCOUNT_ID`
+   - `B2BROUTER_WEBHOOK_SECRET`
+3. Activer le flag produit, futur `facturation_b2brouter`
+4. Tester une facture sandbox ou pilote
+5. Passer prod quand le client est prêt
+
+Le client qui ne prend pas l'upgrade reste en `export_only`. Rien ne change pour lui.
+
+#### Upgrade IA par module
+
+Les modules IA sont indépendants :
+
+```text
+Client A → Devis IA uniquement
+Client B → Devis IA + Planning IA
+Client C → Documents IA + Catalogue IA + Assistant chantier
+```
+
+Flags existants :
+- `quote_ai`
+- `planning_ai`
+- `document_import_ai`
+- `relances_ai`
+- `weekly_summary`
+- `chantier_assistant`
+- `suggest_tasks`
+- `catalog_ai`
+- `chantier_report_ai`
+- `labor_estimate_ai`
+- `receipt_ocr`
+- `voice_input`
+- `whatsapp_agent`
+- `whatsapp_ocr`
+- `whatsapp_proactive`
+
+Activation :
+1. Cockpit Orsayn → appliquer le tier ou cocher/décocher les modules du client
+2. Vérifier que `OPENROUTER_API_KEY` est bien configurée sur son Worker
+3. Vérifier que `organization_modules.quota_config` est peuplé et que `/orsayn` affiche les quotas du mois courant
+3. Tester un appel IA de chaque module vendu
+4. Vérifier la remontée dans `usage_logs` puis cockpit Orsayn
+
+#### Clés IA Atelier ou client
+
+Deux clients peuvent avoir deux modes différents :
+
+```text
+Client A → clés IA Atelier, coût porté par Orsayn
+Client B → clés IA du client, coût porté par le client
+```
+
+Pour OpenRouter, le code lit toujours `OPENROUTER_API_KEY`. La différence vient seulement de la valeur injectée dans le Worker et les Edge Functions du client.
+
+Pour Mistral/Voxtral, même principe avec `MISTRAL_API_KEY`, surtout pour la transcription vocale. Par défaut, on utilise la clé Mistral Orsayn car le coût vocal est faible. Un client autonome ou à gros usage vocal peut fournir sa propre clé Mistral.
+
+Mode Atelier :
+- `OPENROUTER_API_KEY` = clé Orsayn
+- `MISTRAL_API_KEY` = clé Orsayn
+- Orsayn porte le coût IA
+- usage visible dans OpenRouter Orsayn + cockpit Orsayn
+
+Mode client :
+- `OPENROUTER_API_KEY` = clé fournie par le client
+- `MISTRAL_API_KEY` = clé fournie par le client si le client veut aussi porter le coût vocal
+- le client paye OpenRouter, et éventuellement Mistral, directement
+- Orsayn voit quand même l'usage passé par Atelier via `usage_logs` et le cockpit
+- Orsayn ne voit pas les usages faits par le client hors Atelier
+
+#### Upgrade WhatsApp
+
+WhatsApp mutualisé Twilio est aussi activable client par client :
+1. Activer `whatsapp_agent`
+2. Ajouter les numéros autorisés dans le cockpit/routeur central
+3. Afficher le numéro bot Atelier via `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER`
+4. Tester "bonjour" depuis un numéro autorisé
+
+Un client sans WhatsApp garde l'app web inchangée.
+
+### Matrice d'exemples
+
+| Client | IA | OpenRouter | Fact. élec. | WhatsApp |
+|--------|----|------------|-------------|----------|
+| Artisan Starter | Devis IA | Clé Atelier | `export_only` | Non |
+| Client autonome IA | Devis + Documents | Clé client | `export_only` | Non |
+| Client conformité | Devis IA | Clé Atelier | B2Brouter | Non |
+| Client premium terrain | Tous modules IA | Clé Atelier ou client | B2Brouter | Oui |
+
+### Procédure en cas de demande client spécifique
+
+Ne jamais modifier le code pour répondre à une demande individuelle tant que la demande peut être couverte par :
+1. un flag `organization_modules`
+2. une variable/secrète par Worker
+3. un paramètre métier en base
+4. une ligne de configuration cockpit
+
+Créer du code spécifique client uniquement si la fonctionnalité a vocation à devenir un module réutilisable.
 
 ---
 
@@ -823,13 +1250,22 @@ Connexion avec le compte Supabase opérateur dont l'email est dans `OPERATOR_ALL
 
 > Obligatoire : réception sept. 2026 / émission sept. 2027 (TPE/PME/artisans).
 
-**Stratégie Atelier :** SC connectée à B2Brouter (PA agréée). 1 clé API par client.
+**Stratégie Atelier :** `export_only` pour tous les clients par défaut, puis B2Brouter comme upgrade intégré pour les clients qui le veulent. En mode B2Brouter, prévoir une clé/API ou un compte B2Brouter propre au client.
 
-### Checklist par client (avant sept. 2026)
+### Checklist par client en `export_only` (socle par défaut)
 
-- [ ] Ouvrir compte sandbox B2Brouter (gratuit jusqu'au 31/08/2026)
 - [ ] Renseigner IBAN/BIC dans Settings → Paiement & RIB
 - [ ] Renseigner SIREN sur chaque fiche client
+- [ ] Vérifier téléchargement PDF + XML/Factur-X
+- [ ] Afficher statut "À déposer manuellement" si nécessaire
+
+### Checklist upgrade B2Brouter
+
+- [ ] Ouvrir compte sandbox B2Brouter
+- [ ] Récupérer `B2BROUTER_API_KEY` + `B2BROUTER_ACCOUNT_ID`
+- [ ] Injecter les secrets dans le Worker client
+- [ ] Activer `facturation_b2brouter` quand le module est implémenté
+- [ ] Tester émission sandbox avant passage prod
 
 ### Checklist de dev (non bloquant avant 2026)
 
@@ -858,27 +1294,52 @@ Connexion avec le compte Supabase opérateur dont l'email est dans `OPERATOR_ALL
 
 #### Clé partagée ou clé par client ?
 
-**Court terme (< 10 clients) → clé Atelier partagée + logging en DB**
+Deux modes disponibles, choisissables client par client au moment du déploiement.
 
-1 seule clé OpenRouter et 1 seule clé Mistral, injectées dans toutes les Edge Functions et Workers. Tu portes le coût IA et tu le répercutes dans ton abonnement.
+**Mode A — Clé Atelier partagée (défaut)**
 
-Avantage : zéro gestion. Inconvénient : si la clé est compromise, tous les clients sont touchés.
+1 clé OpenRouter Atelier et 1 clé Mistral Atelier injectées dans les Edge Functions et Workers depuis `.env.local`. Tu portes le coût IA et tu le répercutes dans l'abonnement mensuel.
 
-**Suivi de consommation par client :** chaque appel IA logge dans `activity_log` avec `organization_id`. Tu peux donc requêter :
-```sql
-SELECT organization_id, count(*) as appels, sum(metadata->>'tokens') as tokens
-FROM activity_log
-WHERE action LIKE 'ai_%' AND created_at > now() - interval '30 days'
-GROUP BY organization_id;
+Avantage : zéro gestion côté client. Inconvénient : si la clé est compromise, tous les clients sont touchés.
+
+Déploiement Edge Function :
+```bash
+./scripts/deploy-edge-functions.sh <PROJECT_REF> \
+  --resend-key re_xxx --resend-from contact@client.fr --app-url https://client.fr
+# OPENROUTER_API_KEY et MISTRAL_API_KEY lues automatiquement depuis .env.local
 ```
 
-**Long terme (> 10 clients) → clé par client**
+Déploiement Worker Cloudflare : injecter `OPENROUTER_API_KEY` et `MISTRAL_API_KEY` (clés Atelier) dans les variables du Worker.
 
-Chaque client crée son propre compte OpenRouter, tu injectes SA clé dans SON déploiement Cloudflare Workers et SON Edge Function. Il paye directement OpenRouter — tu n'es plus revendeur IA. Plus simple à facturer, risque isolé par client.
+**Mode B — Clé propre au client**
 
-La migration est simple : changer `OPENROUTER_API_KEY` dans les variables Cloudflare Workers + redéployer l'Edge Function.
+Le client crée son compte sur [openrouter.ai](https://openrouter.ai), génère une clé API, et te la fournit dans le protocole de session. Il paye directement OpenRouter — tu n'es plus revendeur IA pour ce client. Risque isolé, facturation simplifiée.
 
-**Aujourd'hui :** clé Atelier partagée. Variable `OPENROUTER_API_KEY` marquée "Oui (partagée)" dans le tableau ci-dessous.
+Pour Mistral, deux choix :
+- par défaut : garder `MISTRAL_API_KEY` Orsayn, même si OpenRouter est côté client
+- autonomie complète : injecter aussi une `MISTRAL_API_KEY` fournie par le client, notamment si gros usage vocal
+
+Déploiement Edge Function :
+```bash
+./scripts/deploy-edge-functions.sh <PROJECT_REF> \
+  --openrouter-key sk-or-clientxxx \
+  --resend-key re_xxx --resend-from contact@client.fr --app-url https://client.fr
+# La clé Atelier dans .env.local est ignorée pour ce client
+```
+
+Déploiement Worker Cloudflare : injecter la clé client à la place de la clé Atelier dans `OPENROUTER_API_KEY` du Worker. Pour Mistral, injecter `MISTRAL_API_KEY` Orsayn ou client selon le mode choisi.
+
+**Cas sans domaine custom :** le client utilise l'URL `atelier-nomclient.workers.dev`. T2 (Resend + domaine) disparaît. Les emails sortants (devis, factures, invitations) partent depuis `noreply@atelier.orsayn.fr` (Resend Atelier mutualisé) — à configurer en injectant les variables Resend Atelier dans le Worker du client.
+
+**Suivi de consommation par client (mode A) :** chaque appel IA logge dans `usage_logs` avec `organization_id`. Tu peux requêter via le cockpit Orsayn ou directement :
+```sql
+SELECT organization_id, feature, sum(tokens_input + tokens_output) as tokens, sum(cost_usd) as cout_usd
+FROM usage_logs
+WHERE created_at > now() - interval '30 days'
+GROUP BY organization_id, feature;
+```
+
+**Aujourd'hui :** clés Atelier partagées par défaut. `OPENROUTER_API_KEY` peut être remplacée par une clé client via `--openrouter-key`. `MISTRAL_API_KEY` reste Atelier par défaut, sauf client autonome vocal.
 
 #### Inventaire complet des appels IA
 
@@ -933,57 +1394,69 @@ Même coût que Tier 1 — zéro surcoût B2Brouter. Marge identique. Utile si t
 
 #### Tier 3 — B2Brouter intégré (`facturation_b2brouter: true`)
 
-B2Brouter te coûte €29/mois/client (M1) + €150 d'activation one-shot. C'est là que le prix vente doit monter.
+B2Brouter est facturé annuellement en prestation séparée du MRR — il ne rentre pas dans les marges mensuelles. Coût Atelier type M0 : 15€/mois (180€/an) + activation 150€ an 1. Refacturé client : 250€/an + activation 200€.
 
-| Profil | Coût infra+IA+B2Brouter | Prix vente | Marge |
-|--------|------------------------|------------|-------|
-| Démarrage | ~€36 | €79 min ⚠️ | **54%** |
-| Standard | ~€43 | €99 | **57%** |
-| Actif + agents | ~€50 | €149 | **66%** |
-| Gros client | ~€124 | €199 | **38%** |
-
-> ⚠️ Démarrage avec B2Brouter : repositionner à **€79/mois min** dès activation.
-> Dès passage TVA : coûts passent en HT → marges s'améliorent d'environ +10% sans toucher les prix.
+La marge sur le MRR reste identique aux tiers précédents. B2Brouter est une ligne séparée dans le devis setup/annuel, pas dans le MRR.
 
 **Résumé de la logique tarifaire :**
-- Export only → inclure dans l'abonnement de base, argument commercial gratuit
-- B2Brouter → facturer le surcoût (~€30-40/mois de plus selon profil) + €190 d'activation one-shot
+- Export only → inclus dans tous les setups, argument commercial gratuit, coût Atelier 0€
+- B2Brouter → prestation annuelle séparée (~250€-900€/an selon volume) + activation 200€ an 1 — ne pas intégrer dans le MRR mensuel
 
-### B2Brouter — grille tarifaire (HT)
+### B2Brouter — grille tarifaire officielle (HT)
 
-| Tranche | Trans./mois | Activation | Prix/mois HT | Trans. suppl. |
-|---------|-------------|------------|--------------|--------------|
-| M1 | 100 | €150 | €29 | €0,435 |
-| M2 | 300 | €150 | €59 | €0,295 |
-| M3 | 600 | €150 | €89 | €0,222 |
-| M4 | 1 500 | €150 | €169 | €0,169 |
-| M5 | 4 000 | €150 | €269 | €0,101 |
+Source : tarifs B2Brouter mai 2026. Facturation mensuelle, engagement annuel, payé d'avance. Frais d'activation 150€ HT one-shot la première année.
 
-Facturation annuelle et à l'avance. Transactions non consommées perdues à l'échéance.
+| Tranche | Transactions incluses/mois | Prix/mois HT | Trans. suppl. HT | Coût annuel HT (hors activation) | Coût an 1 (avec activation) |
+|---------|---------------------------|--------------|-----------------|----------------------------------|----------------------------|
+| M0 | 1-50 | 15€ | 0,435€ | 180€ | 330€ |
+| M1 | 51-100 | 29€ | 0,435€ | 348€ | 498€ |
+| M2 | 101-300 | 59€ | 0,295€ | 708€ | 858€ |
+| M3 | 301-600 | 89€ | 0,222€ | 1 068€ | 1 218€ |
+| M4 | 601-1 500 | 169€ | 0,169€ | 2 028€ | 2 178€ |
+| M5 | 1 501-4 000 | 520€ | 0,130€ | 6 240€ | 6 390€ |
+| M6 | 4 001-10 000 | 1 100€ | 0,110€ | 13 200€ | Sur devis |
+| M7+ | > 10 000 | Sur devis | — | — | Sur devis |
 
-### Revente B2Brouter — stratégie
+> Une transaction = tout eDocument émis, reçu, ou importé et téléchargé. Transactions non consommées perdues à l'échéance. Changement de tier possible une fois par période contractuelle (réduction : tier inférieur suivant uniquement).
 
-**Principe :** B2Brouter se paie à l'année et à l'avance. Le coût annuel complet (activation + abonnement) est inclus dans le setup one-shot facturé au client à l'onboarding. Ensuite, le client ne paie que les coûts IA mensuels (avec marge). La deuxième année, Atelier a la trésorerie pour avancer l'abonnement — le client peut alors renouveler annuellement ou passer en mensuel selon sa préférence.
+### Profils client Atelier et tranche recommandée
 
-| Poste | Coût Atelier (franchise TVA) | Refacturé client | Marge |
-|-------|------------------------------|-----------------|-------|
-| Activation one-shot | €180 TTC | €190 | €10 |
-| Abonnement M1 an 1 (payé d'avance) | €348 TTC | €480 | €132 |
-| Abonnement M2 an 1 (payé d'avance) | €708 TTC | €960 | €252 |
+La majorité des artisans BTP (1-5 personnes) émet 10-50 factures/mois et reçoit quelques bons de commande. Le profil type est M0 ou M1.
 
-**An 1 :** activation + abonnement annuel inclus dans le setup → client paie tout au départ, Atelier préfinance puis encaisse.
-**An 2+ :** Atelier a la trésorerie pour avancer. Client incité à renouveler annuellement, mensuel possible si préférence.
-**IA mensuelle :** facturée séparément chaque mois avec marge (voir tableau coûts IA).
+| Profil client | Volume estimé | Tranche | Coût annuel Atelier |
+|---------------|---------------|---------|---------------------|
+| Artisan seul, faible volume | < 30 tx/mois | M0 | 180€/an |
+| Artisan actif ou petite équipe | 30-80 tx/mois | M0-M1 | 180-348€/an |
+| PME BTP, plusieurs chantiers simultanés | 80-250 tx/mois | M1-M2 | 348-708€/an |
+| Structure avec achats fournisseurs intenses | 250-500 tx/mois | M2-M3 | 708-1 068€/an |
+| Fort volume (promoteur, négoce) | > 500 tx/mois | M3+ | Sur devis |
 
-### Frais one-shot à l'onboarding
+### Revente B2Brouter — stratégie de facturation client
 
-| Poste | Montant |
-|-------|---------|
-| Setup & déploiement | €300–500 |
-| Activation B2Brouter (si fact. élec.) | €190 |
-| Abonnement B2Brouter an 1 (M1, annuel d'avance) | €480 |
-| **Total avec fact. élec.** | **~€970–1 170** |
-| **Total sans fact. élec.** | **€300–500** |
+**Principe :** le coût B2Brouter est annuel et payé d'avance. Il est refacturé au client en prestation annuelle séparée du MRR. Ne pas intégrer B2Brouter dans le MRR mensuel — ça rendrait la grille MRR illisible et crée une confusion entre coût fixe et coût d'usage.
+
+**Marge appliquée :** environ 20-40% sur le coût Atelier selon le profil. L'activation 150€ est refacturée 200€ HT (frais de mise en service).
+
+| Poste | Coût Atelier HT | Refacturé client HT | Marge brute |
+|-------|----------------|---------------------|-------------|
+| Activation one-shot (an 1 uniquement) | 150€ | 200€ | 50€ |
+| Abonnement M0 an 1 | 180€ | 250€/an | 70€ |
+| Abonnement M1 an 1 | 348€ | 450€/an | 102€ |
+| Abonnement M2 an 1 | 708€ | 900€/an | 192€ |
+| Abonnement M3 an 1 | 1 068€ | 1 350€/an | 282€ |
+
+**An 1 :** activation 200€ + abonnement annuel = facturé au client en une ligne dans le devis setup ou en devis séparé.
+**An 2+ :** renouvellement annuel uniquement, Atelier préfinance et refacture.
+
+### Frais one-shot à l'onboarding (référence)
+
+| Poste | Montant HT |
+|-------|-----------|
+| Setup & déploiement | 800€-2 800€ (selon offre) |
+| Activation B2Brouter (si fact. élec.) | 200€ |
+| Abonnement B2Brouter an 1 selon profil | 250€-1 350€/an |
+| **Total avec fact. élec. (profil M0)** | **~1 250€ minimum** |
+| **Total sans fact. élec.** | **800€-2 800€** |
 
 ---
 
@@ -1010,16 +1483,19 @@ Facturation annuelle et à l'avance. Transactions non consommées perdues à l'�
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | Email support public | Non |
 | `NEXT_PUBLIC_PRIVACY_EMAIL` | Email confidentialité public | Non |
 | `NEXT_PUBLIC_LEGAL_EMAIL` | Email juridique public | Non |
-| `OPENROUTER_API_KEY` | openrouter.ai/keys | **Oui** (clé Atelier) |
-| `MISTRAL_API_KEY` | console.mistral.ai | **Oui** (clé Atelier) |
+| `OPENROUTER_API_KEY` | Clé Atelier depuis `.env.local` (défaut) **ou** clé propre au client via `--openrouter-key` | **Selon client** (voir §IA) |
+| `MISTRAL_API_KEY` | Clé Atelier Mistral par défaut **ou** clé propre au client si autonomie vocale/IA complète | **Selon client** (Atelier par défaut) |
 | `CRON_SECRET` | `openssl rand -hex 32` | Non (unique par client) |
 | `MEMBER_SESSION_SECRET` | `openssl rand -hex 32` — signe le cookie de session de l'espace membre `/mon-espace` (HMAC SHA-256) | Non (unique par client) |
 | `RATE_LIMIT_SECRET` | `openssl rand -hex 32` — salt de hash rate limit, optionnel si `CRON_SECRET` est présent | Non (unique par client) |
 | `AI_RATE_LIMIT_PER_HOUR` | Défaut conseillé `120` | Non |
 | `PUBLIC_FORM_RATE_LIMIT_PER_HOUR` | Défaut conseillé `5` | Non |
-| `SHARED_WABA_PHONE_NUMBER_ID` | Phone Number ID du numéro bot Atelier | **Oui** (partagé, injecté en Edge Function) |
-| `SHARED_WABA_ACCESS_TOKEN` | Token permanent du numéro bot Atelier | **Oui** (partagé, injecté en Edge Function) |
-| `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER` | Numéro bot affiché dans Settings → WhatsApp (format +33...) | **Oui** (même valeur partout) |
+| `SHARED_WABA_PHONE_NUMBER_ID` | Ancien mode Meta/Graph-compatible : Phone Number ID du numéro bot Atelier | **Seulement si fournisseur Graph-compatible** |
+| `SHARED_WABA_ACCESS_TOKEN` | Ancien mode Meta/Graph-compatible : token permanent du numéro bot Atelier | **Seulement si fournisseur Graph-compatible** |
+| `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER` | Numéro bot affiché dans Settings → WhatsApp (format +33...) | **Oui** (même valeur partout, non secret) |
+| `TWILIO_ACCOUNT_SID` | Compte Twilio du numéro WhatsApp mutualisé Atelier | **Oui, mais cockpit/routeur Orsayn uniquement** |
+| `TWILIO_AUTH_TOKEN` | Auth Token Twilio | **Oui, mais cockpit/routeur Orsayn uniquement** |
+| `TWILIO_WHATSAPP_FROM` | Sender WhatsApp Twilio (`whatsapp:+33...`) | **Oui, mais cockpit/routeur Orsayn uniquement** |
 | `OPERATOR_INGEST_URL` | URL du cockpit Orsayn | **Oui** (même URL partout) |
 | `OPERATOR_INGEST_SECRET` | `openssl rand -hex 32` (généré une fois) | **Oui** (même secret partout) |
 | `OPERATOR_SOURCE_INSTANCE` | Nom court du client (ex: `weber-demo`) — **optionnel**, fallback sur le host de `NEXT_PUBLIC_APP_URL` | Non (unique par client) |

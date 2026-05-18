@@ -5,18 +5,24 @@ import QuotePDF from '@/components/pdf/QuotePDF'
 import InvoicePDF from '@/components/pdf/InvoicePDF'
 import ChantierPDF from '@/components/pdf/ChantierPDF'
 import MemberHoursReportPDF from '@/components/pdf/MemberHoursReportPDF'
+import ContractPDF, { type ContractPdfSnapshot } from '@/components/pdf/ContractPDF'
 import { sanitizeFileName } from '@/lib/organization-exports/csv'
 import { generateFacturXml } from '@/lib/pdf/facturx-xml'
 import { embedFacturXml } from '@/lib/pdf/facturx-embed'
 import { getMemberPointages } from '@/lib/data/queries/members'
+import { assertSafeExternalFetchUrl } from '@/lib/security'
 
 async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null
+  if (url.startsWith('data:')) return url
+  const safeUrl = assertSafeExternalFetchUrl(url)
+  if (!safeUrl) return null
   try {
-    const res = await fetch(url)
+    const res = await fetch(safeUrl)
     if (!res.ok) return null
     const buf = await res.arrayBuffer()
     const contentType = res.headers.get('content-type') ?? 'image/png'
+    if (contentType.includes('svg')) return null
     return `data:${contentType};base64,${Buffer.from(buf).toString('base64')}`
   } catch {
     return null
@@ -58,7 +64,7 @@ export async function renderQuotePdfBufferById(quoteId: string, orgId: string): 
 
   const [{ data: sections }, { data: items }, { data: client }, organization] = await Promise.all([
     admin.from('quote_sections').select('id, quote_id, title, position').eq('quote_id', quoteId).order('position', { ascending: true }),
-    admin.from('quote_items').select('id, quote_id, section_id, type, material_id, labor_rate_id, description, quantity, unit, unit_price, vat_rate, total_ht, position, length_m, width_m, height_m, is_internal, dimension_values, variant_label, catalog_variant_id').eq('quote_id', quoteId).order('position', { ascending: true }),
+    admin.from('quote_items').select('id, quote_id, section_id, type, material_id, labor_rate_id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal, dimension_values, variant_label, catalog_variant_id').eq('quote_id', quoteId).order('position', { ascending: true }),
     quoteClient?.id
       ? admin.from('clients').select('*').eq('id', quoteClient.id).single()
       : Promise.resolve({ data: null as Record<string, unknown> | null }),
@@ -98,25 +104,32 @@ export async function renderInvoicePdfBufferById(invoiceId: string, orgId: strin
     admin
       .from('invoices')
       .select(`
-        id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, currency,
+        id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
         issue_date, due_date, sent_at, paid_at, created_at,
-        notes_client, payment_conditions, aid_label, aid_amount, quote_id, client_id,
+        notes_client, payment_conditions, aid_label, aid_amount, quote_id, chantier_id, client_id,
+        situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference,
+        quote:quotes(number),
         client:clients(id, company_name, contact_name, first_name, last_name, email, phone,
           address_line1, postal_code, city, siret, siren, vat_number, type),
-        items:invoice_items(id, description, quantity, unit, unit_price, vat_rate, position, length_m, width_m, height_m, is_internal, material_id, dimension_values, variant_label, catalog_variant_id)
+        items:invoice_items(id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, position, length_m, width_m, height_m, dim_quantity, is_internal, material_id, dimension_values, variant_label, catalog_variant_id),
+        payment_schedule:invoice_payment_schedule(id, invoice_id, label, due_date, amount, amount_type, percentage, position, paid_payment_id)
       `)
       .eq('id', invoiceId)
       .eq('organization_id', orgId)
       .order('position', { referencedTable: 'invoice_items', ascending: true })
+      .order('position', { referencedTable: 'invoice_payment_schedule', ascending: true })
       .single(),
     getOrganizationForPdf(orgId),
   ])
 
   if (!invoice.data || !organization) return null
   const invoiceClient = Array.isArray(invoice.data.client) ? invoice.data.client[0] : invoice.data.client
+  const quoteData = invoice.data.quote as { number: string | null } | { number: string | null }[] | null
+  const quoteNumber = Array.isArray(quoteData) ? (quoteData[0]?.number ?? null) : (quoteData?.number ?? null)
   const invoiceRecord = {
     ...invoice.data,
     client: invoiceClient ?? null,
+    quote_number: quoteNumber,
   }
 
   const pdfBuffer = await renderToBuffer(
@@ -230,5 +243,40 @@ export async function renderMemberHoursReportPdfBuffer(
 
   const memberSlug = [member.prenom, member.name].filter(Boolean).join('-').toLowerCase().replace(/[^a-z0-9-]/gi, '-')
   const fileName = `rapport-heures-${memberSlug}-${dateFrom}-${dateTo}.pdf`
+  return { buffer, fileName }
+}
+
+export async function renderContractPdfBufferById(contractId: string, orgId: string): Promise<{ buffer: Buffer; fileName: string } | null> {
+  const admin = createAdminClient()
+
+  const { data: contract } = await admin
+    .from('contracts')
+    .select('id, organization_id, title, pdf_reference, pdf_snapshot')
+    .eq('id', contractId)
+    .eq('organization_id', orgId)
+    .single()
+
+  if (!contract?.pdf_snapshot) return null
+
+  const snapshot = contract.pdf_snapshot as ContractPdfSnapshot
+  const logoUrl = snapshot.organization?.logo_url ?? null
+  const logoDataUrl = logoUrl?.startsWith('data:') ? logoUrl : await fetchLogoAsDataUrl(logoUrl)
+  const snapshotForPdf: ContractPdfSnapshot = logoDataUrl && snapshot.organization
+    ? {
+        ...snapshot,
+        organization: {
+          ...snapshot.organization,
+          logo_url: logoDataUrl,
+        },
+      }
+    : snapshot
+
+  const buffer = await renderToBuffer(
+    React.createElement(ContractPDF, {
+      snapshot: snapshotForPdf,
+    }) as any,
+  )
+
+  const fileName = `${sanitizeFileName(contract.pdf_reference ?? contract.title ?? contractId, 'contrat')}.pdf`
   return { buffer, fileName }
 }

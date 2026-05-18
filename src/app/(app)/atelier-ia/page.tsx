@@ -184,7 +184,7 @@ export default function AtelierIAPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-[calc(100vh-220px)]">
 
-        {/* ── Left panel — Input ───────────────────────────────────────────── */}
+        {/* ── Left panel - Input ───────────────────────────────────────────── */}
         <div className="lg:col-span-5 flex flex-col gap-4">
           <div className="rounded-3xl card p-6 flex flex-col flex-1 gap-4">
 
@@ -215,7 +215,7 @@ export default function AtelierIAPage() {
 
               {mode === 'voice' && (
                 <div className="flex-1 flex flex-col gap-4">
-                  <p className="text-xs text-secondary">Décrivez les travaux à voix haute. L'IA structurera votre devis.</p>
+                  <p className="text-xs text-secondary">Décrivez les travaux à voix haute. Sarah structure le devis pour vous.</p>
                   <div className="flex-1 flex flex-col items-center justify-center gap-4">
                     <button
                       onClick={isRecording ? stopRecording : startRecording}
@@ -260,7 +260,7 @@ export default function AtelierIAPage() {
 
               {mode === 'pdf' && (
                 <div className="flex-1 flex flex-col gap-2">
-                  <p className="text-xs text-secondary">Importez un cahier des charges PDF ou une photo de plan (PNG, JPEG). L'IA extraira automatiquement les postes.</p>
+                  <p className="text-xs text-secondary">Importez un cahier des charges PDF ou une photo de plan (PNG, JPEG). Sarah extrait les postes pour vous.</p>
                   {!file ? (
                     <div
                       className="flex-1 border-2 border-dashed border-[var(--elevation-border)] rounded-2xl flex flex-col items-center justify-center gap-4 text-secondary hover:border-violet-400/50 hover:bg-violet-500/5 transition-all cursor-pointer"
@@ -288,7 +288,7 @@ export default function AtelierIAPage() {
                       </div>
                       <div className="text-center">
                         <p className="font-semibold text-primary text-sm">Glissez votre document ici</p>
-                        <p className="text-xs text-secondary mt-1">PDF, PNG ou JPEG — max 10 Mo</p>
+                        <p className="text-xs text-secondary mt-1">PDF, PNG ou JPEG - max 10 Mo</p>
                       </div>
                     </div>
                   ) : (
@@ -319,7 +319,7 @@ export default function AtelierIAPage() {
 
                       <div>
                         <label className="text-xs text-secondary font-medium mb-1.5 block">
-                          Précisions pour l'IA <span className="text-secondary/50 font-normal">(optionnel)</span>
+                          Précisions pour Sarah <span className="text-secondary/50 font-normal">(optionnel)</span>
                         </label>
                         <textarea
                           value={pdfDescription}
@@ -350,15 +350,15 @@ export default function AtelierIAPage() {
               className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               {isAnalyzing ? (
-                <><Loader2 className="w-5 h-5 animate-spin" />Analyse en cours...</>
+                <><Loader2 className="w-5 h-5 animate-spin" />Sarah analyse...</>
               ) : (
-                <><Bot className="w-5 h-5" />Analyser avec l'IA</>
+                <>Confier à Sarah</>
               )}
             </button>
           </div>
         </div>
 
-        {/* ── Right panel — Result ─────────────────────────────────────────── */}
+        {/* ── Right panel - Result ─────────────────────────────────────────── */}
         <div className="lg:col-span-7 flex flex-col">
           <div className="rounded-3xl card p-6 flex-1 flex flex-col overflow-hidden">
 
@@ -369,7 +369,7 @@ export default function AtelierIAPage() {
                 </div>
                 <div className="text-center">
                   <p className="font-semibold text-primary">Prêt à générer</p>
-                  <p className="text-sm text-secondary mt-1">Décrivez votre projet à gauche, l'IA structurera le devis ici.</p>
+                  <p className="text-sm text-secondary mt-1">Décrivez votre projet à gauche. Sarah structure le devis ici.</p>
                 </div>
               </div>
             )}
@@ -377,8 +377,8 @@ export default function AtelierIAPage() {
             {isAnalyzing && (
               <div className="flex-1 flex flex-col items-center justify-center gap-4">
                 <div className="w-16 h-16 rounded-full border-4 border-violet-500 border-t-transparent animate-spin" />
-                <p className="font-bold text-primary animate-pulse">Analyse en cours...</p>
-                <p className="text-xs text-secondary">L'IA structure votre devis</p>
+                <p className="font-bold text-primary animate-pulse">Sarah analyse...</p>
+                <p className="text-xs text-secondary">Le devis se construit</p>
               </div>
             )}
 

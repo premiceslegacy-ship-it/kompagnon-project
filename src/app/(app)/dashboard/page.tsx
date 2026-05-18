@@ -1,7 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { getCurrentUserProfile } from '@/lib/data/queries/user';
-import { getDashboardStats } from '@/lib/data/queries/dashboard';
+import { getDashboardSetupReadiness, getDashboardStats } from '@/lib/data/queries/dashboard';
 import type { DashboardStats } from '@/lib/data/queries/dashboard';
 import {
   FileText, UserPlus,
@@ -10,9 +10,15 @@ import {
 } from 'lucide-react';
 import { getChantierStats } from '@/lib/data/queries/chantiers';
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules';
+import { getCurrentMembershipContext, getUserPermissions } from '@/lib/data/queries/membership';
+import { getCollaborateurDashboard, getTodayPlanningDigest } from '@/lib/data/queries/dashboard-collaborateur';
+import { getMemberGoalsWithProgress } from '@/lib/data/queries/member-goals';
 import UrgentTasksClient from './UrgentTasksClient';
 import MonthNav from './MonthNav';
 import MaSemaineWidget from './MaSemaineWidget';
+import CollaborateurDashboard from './CollaborateurDashboard';
+import PlanningDigestWidget from './PlanningDigestWidget';
+import SetupChecklist from './SetupChecklist';
 
 
 const cardCls = "rounded-3xl p-6 card transition-all duration-300 ease-out";
@@ -41,10 +47,10 @@ const KPIRow = ({
   prevStats: DashboardStats
   chantiersEnCours: number
 }) => (
-  <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
     <div className={`${cardCls} flex flex-col justify-between`}>
       <div className="flex justify-between items-start">
-        <p className="text-sm font-semibold text-secondary tracking-wider uppercase">CA du mois HT</p>
+        <p className="text-sm font-semibold text-secondary tracking-wider uppercase">CA prévisionnel TTC</p>
         <Wallet className="w-4 h-4 text-accent" />
       </div>
       <p className="text-3xl font-bold text-primary tabular-nums mt-4">
@@ -129,6 +135,9 @@ function prevMonthYM(ym: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
+/** Rôles qui voient un dashboard personnalisé (pas le dashboard CA). */
+const COLLAB_ROLES = new Set(['employee', 'collaborateur', 'viewer'])
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -139,16 +148,55 @@ export default async function DashboardPage({
     : getCurrentMonthYM()
   const previousMonth = prevMonthYM(selectedMonth)
 
-  const [profile, stats, prevStats, chantierStats, modules] = await Promise.all([
+  const [profile, membership, perms] = await Promise.all([
     getCurrentUserProfile(),
+    getCurrentMembershipContext(),
+    getUserPermissions(),
+  ])
+
+  const firstName = profile?.full_name?.split(' ')[0] ?? null
+  const greeting = profile?.onboarding_done ? 'Bon retour,' : 'Bienvenue,'
+  const roleSlug = membership?.roleSlug ?? null
+  const isCollabView = roleSlug !== null && COLLAB_ROLES.has(roleSlug)
+  const canViewCA = perms.has('*') || perms.has('dashboard.view_ca')
+
+  // ─── Dashboard collaborateur ────────────────────────────────────────────────
+  if (isCollabView && profile?.id) {
+    const now = new Date()
+    const collabData = await getCollaborateurDashboard(profile.id)
+    // Cherche les objectifs par fiche intervenant si liée, sinon par membership
+    const realGoals = (collabData.memberId || membership?.membershipId)
+      ? await getMemberGoalsWithProgress({
+          memberId: collabData.memberId ?? undefined,
+          membershipId: membership?.membershipId ?? undefined,
+          year: now.getFullYear(),
+          month: now.getMonth() + 1,
+        })
+      : []
+
+    return (
+      <main className="page-container space-y-6 md:space-y-8">
+        <div>
+          <h1 className="text-2xl sm:text-3xl md:text-4xl tracking-tight text-primary">
+            <span className="font-normal">{greeting} </span>
+            <span className="font-bold">{firstName ?? 'dans ATELIER'}</span>
+          </h1>
+          <p className="text-secondary text-base md:text-lg mt-0.5">Voici votre tableau de bord personnel.</p>
+        </div>
+        <CollaborateurDashboard data={collabData} goals={realGoals} firstName={firstName} />
+      </main>
+    )
+  }
+
+  // ─── Dashboard owner / admin / manager / commercial ────────────────────────
+  const [stats, prevStats, chantierStats, modules, todaySlots, setupReadiness] = await Promise.all([
     getDashboardStats(selectedMonth),
     getDashboardStats(previousMonth),
     getChantierStats(),
     getOrganizationModules(),
-  ]);
-
-  const firstName = profile?.full_name?.split(' ')[0] ?? null;
-  const greeting = profile?.onboarding_done ? 'Bon retour,' : 'Bienvenue,';
+    getTodayPlanningDigest(),
+    getDashboardSetupReadiness(),
+  ])
 
   return (
     <main className="page-container space-y-6 md:space-y-8">
@@ -163,19 +211,22 @@ export default async function DashboardPage({
         <MonthNav currentMonth={selectedMonth} />
       </div>
 
-      <KPIRow stats={stats} prevStats={prevStats} chantiersEnCours={chantierStats.enCours} />
+      <SetupChecklist readiness={setupReadiness} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8">
-        <div className="lg:col-span-8 space-y-6 md:space-y-8">
+      {canViewCA && (
+        <KPIRow stats={stats} prevStats={prevStats} chantiersEnCours={chantierStats.enCours} />
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-5 lg:grid-cols-12 gap-6 md:gap-8">
+        <div className="md:col-span-3 lg:col-span-8 space-y-6 md:space-y-8">
           <UrgentTasksClient initialItems={stats.urgentItems} facturesEnRetard={stats.facturesEnRetard} quoteAiEnabled={modules.quote_ai} />
         </div>
-        <div className="lg:col-span-4 flex flex-col">
+        <div className="md:col-span-2 lg:col-span-4 flex flex-col gap-6 md:gap-8">
           <QuickActions />
-          <div className="mt-6 md:mt-8">
-            {modules.planning_ai ? <MaSemaineWidget /> : null}
-          </div>
+          <PlanningDigestWidget slots={todaySlots} />
+          {modules.planning_ai ? <MaSemaineWidget /> : null}
         </div>
       </div>
     </main>
-  );
+  )
 }

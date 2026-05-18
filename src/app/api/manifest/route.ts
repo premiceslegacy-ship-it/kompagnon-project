@@ -1,33 +1,15 @@
 import { NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { APP_NAME, absoluteBrandAssetUrl } from '@/lib/brand'
+import { absoluteAppIconUrl, getPwaBrand } from '@/lib/pwa'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '') ?? ''
-  const fallbackIcon = absoluteBrandAssetUrl('/brand/atelier/monogramme-noir.svg') ?? `${appUrl}/brand/atelier/monogramme-noir.svg`
-
-  let iconUrl = fallbackIcon
-  let appName = APP_NAME
-
-  try {
-    const supabase = createAdminClient()
-    const { data } = await supabase
-      .from('organizations')
-      .select('name, logo_url')
-      .limit(1)
-      .single()
-
-    if (data?.name) appName = data.name
-    if (data?.logo_url) iconUrl = data.logo_url
-  } catch {
-    // DB inaccessible — fallback Atelier
-  }
+export async function GET(request: Request) {
+  const origin = new URL(request.url).origin
+  const brand = await getPwaBrand()
 
   const manifest = {
-    name: appName,
-    short_name: appName,
+    name: brand.name,
+    short_name: brand.name,
     description: 'Gérez vos chantiers, vos finances et vos clients.',
     start_url: '/',
     display: 'standalone',
@@ -35,9 +17,15 @@ export async function GET() {
     theme_color: '#0a0a0a',
     icons: [
       {
-        src: iconUrl,
-        sizes: 'any',
-        type: iconUrl.endsWith('.svg') ? 'image/svg+xml' : 'image/png',
+        src: absoluteAppIconUrl(192, origin),
+        sizes: '192x192',
+        type: 'image/png',
+        purpose: 'any',
+      },
+      {
+        src: absoluteAppIconUrl(512, origin),
+        sizes: '512x512',
+        type: 'image/png',
         purpose: 'any maskable',
       },
     ],

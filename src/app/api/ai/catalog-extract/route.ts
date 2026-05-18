@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { resolveCatalogContext, getCatalogAIPromptContext } from '@/lib/catalog-context'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 const TEXT_MODEL = 'google/gemini-2.5-flash'
 const VISION_MODEL = 'google/gemini-2.5-flash'
@@ -82,6 +83,47 @@ export type CatalogExtractResult = {
   items: CatalogDraftItem[]
 }
 
+type ExistingCatalogSnapshot = {
+  materials: Array<{ name: string; unit: string | null; purchase_price: number | null; sale_price: number | null; category: string | null }>
+  laborRates: Array<{ designation: string; unit: string | null; cost_rate: number | null; rate: number | null; category: string | null }>
+  prestationTypes: Array<{ name: string; unit: string; base_price_ht: number; category: string | null }>
+}
+
+function buildExistingCatalogHint(snapshot: ExistingCatalogSnapshot, ctx: ReturnType<typeof getCatalogAIPromptContext>): string {
+  const parts: string[] = []
+
+  if (snapshot.materials.length > 0) {
+    const lines = snapshot.materials.map(m => {
+      const price = m.sale_price != null ? `vente ${m.sale_price} €/${m.unit ?? 'u'}` : m.purchase_price != null ? `achat ${m.purchase_price} €/${m.unit ?? 'u'}` : null
+      return `  - ${m.name}${m.category ? ` (${m.category})` : ''}${price ? ` — ${price}` : ''}`
+    })
+    parts.push(`${ctx.materialLabel}s déjà dans le catalogue :\n${lines.join('\n')}`)
+  }
+
+  if (snapshot.laborRates.length > 0) {
+    const lines = snapshot.laborRates.map(lr => {
+      const cost = lr.cost_rate != null ? `coût ${lr.cost_rate} €/${lr.unit ?? 'h'}` : null
+      const rate = lr.rate != null ? `facturable ${lr.rate} €/${lr.unit ?? 'h'}` : null
+      const pricing = [cost, rate].filter(Boolean).join(', ')
+      return `  - ${lr.designation}${lr.category ? ` (${lr.category})` : ''}${pricing ? ` — ${pricing}` : ''}`
+    })
+    parts.push(`${ctx.laborRateLabel}s déjà dans le catalogue :\n${lines.join('\n')}`)
+  }
+
+  if (snapshot.prestationTypes.length > 0) {
+    const lines = snapshot.prestationTypes.map(pt => {
+      const price = pt.base_price_ht > 0 ? ` — prix de base ${pt.base_price_ht} €/${pt.unit}` : ''
+      return `  - ${pt.name}${pt.category ? ` (${pt.category})` : ''}${price}`
+    })
+    parts.push(`${ctx.bundleTemplateLabel}s déjà dans le catalogue :\n${lines.join('\n')}`)
+  }
+
+  if (parts.length === 0) return ''
+
+  return `Catalogue actuel de cette entreprise (utilise ces prix comme référence principale pour tes estimations) :
+${parts.join('\n\n')}`
+}
+
 function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
   if (fenced) return fenced[1].trim()
@@ -90,14 +132,88 @@ function extractJson(text: string): string {
   return text.trim()
 }
 
-function buildSystemPrompt(ctx: ReturnType<typeof getCatalogAIPromptContext>): string {
-  return `Tu es un assistant de saisie de catalogue pour une entreprise du secteur "${ctx.activityLabel}" (profil: ${ctx.businessProfile}).
+function buildMarketPriceHints(ctx: ReturnType<typeof getCatalogAIPromptContext>): string {
+  // Sources : Travaux.com, France-clean.fr, Galognese, Neatikai, Vitrissimo (2025-2026)
+  //           CAPEB grille jan. 2024, FFB, Obat.fr, Helloartisan, Batiprix 2025
+  //           Tolery.io, 247TailorSteel, Jactio, Fert Metal, soudeurs.com (2024-2025)
+  switch (ctx.businessProfile) {
+    case 'cleaning':
+      return `Références de prix marché France métropolitaine HT (sources : Travaux.com, France-clean.fr, Galognese, Neatikai, Vitrissimo — 2025-2026) :
+Tarifs de vente :
+- Entretien courant bureaux : 1,50–3,00 €/m²/passage (hebdo) ou 2,00–5,00 €/m² (mensuel/ponctuel)
+- Nettoyage approfondi haute exigence : 4,00–12,00 €/m²
+- Vitrerie extérieure : 3,00–8,00 €/m² de vitre ; intérieure : 2,00–4,00 €/m²
+- Désinfection (biocide, monobrosse) : 3,00–4,00 €/m²
+- Remise en état après travaux / fin de bail : 2,00–3,50 €/m²
+- Taux horaire affiché équipe (MO + produits + marge) : 20–35 €/h (province), 35–60 €/h (spécialisé ou IDF)
+Coûts internes :
+- Coût chargé opérateur convention collective propreté (branche ASP) : 18–28 €/h
+- Consommables : coefficient de revente x1,5 à x2,5 sur prix d'achat (marge brute 30–50 %)`
+
+    case 'btp':
+      return `Références de prix marché France métropolitaine HT (sources : CAPEB grille 2024, Obat.fr, Helloartisan, Batiprix 2025, Habitatpresto — 2025-2026) :
+Taux horaires de vente (fournitures exclues) :
+- Électricien : 40–65 €/h (province), 60–100 €/h (IDF)
+- Plombier : 40–70 €/h (province), 70–140 €/h (IDF)
+- Maçon / carreleur : 35–55 €/h (province), 50–80 €/h (IDF)
+- Peintre bâtiment : 20–45 €/h (province), 35–65 €/h (IDF)
+- Menuisier poseur : 35–60 €/h (province), 55–90 €/h (IDF)
+- Dépannage urgence : majoration ×1,3 à ×1,5 sur le taux horaire normal
+Coûts internes (coût chargé compagnon, convention CAPEB/FFB 2025) :
+- Ouvrier débutant : 28–32 €/h ; qualifié : 30–36 €/h ; confirmé : 34–42 €/h
+Prix de vente prestations courantes (MO + fourniture) :
+- Peinture intérieure : 25–50 €/m² ; plafond : 25–45 €/m²
+- Peinture façade + ravalement : 50–150 €/m² ; avec ITE : 110–270 €/m²
+- Carrelage sol posé + fourni : 50–100 €/m² ; pose seule : 20–45 €/m²
+- Tableau électrique fourni + posé : 500–1 100 € ; prise/point : 60–120 €/point
+- Rénovation salle de bain complète : 1 300–2 000 €/m² surface SdB
+Prix d'achat artisan (marge de revente habituelle 20–40 %) :
+- Carrelage standard 60×60 : 8–25 €/m² ; haut de gamme : 25–80 €/m²
+- Peinture pro acrylique intérieure : 3–8 €/L
+- Tableau électrique équipé (disjoncteurs + diffs) : 200–600 €`
+
+    case 'industry':
+      return `Références de prix marché France métropolitaine HT (sources : Tolery.io, 247TailorSteel, Jactio, Fert Metal, soudeurs.com, usinages.com — 2024-2025) :
+Prix matière (achat négoce PME, +15–30 % sur cours grande série) :
+- Acier S235/S355 laminé à chaud : 0,60–1,00 €/kg (620–700 €/tonne)
+- Acier galvanisé : 0,80–1,30 €/kg
+- Acier inoxydable 304 : 2,50–4,00 €/kg ; inox 316L : 3,50–6,00 €/kg
+- Aluminium 1050/5052 : 3,00–7,00 €/kg
+Tarifs horaires de vente (MO + machine + frais fixes) :
+- Atelier général (tôlerie, chaudronnerie) : 45–90 €/h
+- Machine laser fibre (amortissement inclus) : 60–120 €/h
+- Poste à souder MIG/MAG : 40–80 €/h ; TIG (inox, alu) : 60–100 €/h
+Coûts internes (convention collective métallurgie UIMM 2025) :
+- Coût chargé opérateur débutant : 18–28 €/h ; confirmé (5–10 ans) : 28–45 €/h
+Prix opérations courantes :
+- Découpe laser acier 1–3 mm (série) : 1,50–4,00 €/ml ; acier 5–12 mm : 4,00–12,00 €/ml
+- Découpe laser inox 1–3 mm : 3,00–8,00 €/ml
+- Pliage : 0,80–3,00 €/pli selon épaisseur et série
+- Soudure MIG/MAG (cordon) : 8–25 €/ml ; TIG (inox/alu) : 20–60 €/ml
+- Thermolaquage (sous-traitance) : 15–40 €/m²
+Note : majoration 10–25 % pour pièces unitaires/prototypes vs série.`
+
+    default:
+      return ''
+  }
+}
+
+function buildSystemPrompt(ctx: ReturnType<typeof getCatalogAIPromptContext>, snapshot?: ExistingCatalogSnapshot): string {
+  const activityLine = ctx.activityDescription
+    ? `Secteur : "${ctx.activityLabel}" — ${ctx.activityDescription}`
+    : `Secteur : "${ctx.activityLabel}"`
+
+  const catalogHint = snapshot ? buildExistingCatalogHint(snapshot, ctx) : ''
+  const marketHints = buildMarketPriceHints(ctx)
+
+  return `Tu t'appelles Lea. Tu es assistante catalogue chez ATELIER by Orsayn, experte du secteur "${ctx.activityLabel}" (profil: ${ctx.businessProfile}). Tu connais les nomenclatures, les prix du marche et les bonnes pratiques de catalogage pour ce metier. Tu es precise, rigoureuse, et tu classes les choses au bon endroit du premier coup.
+${activityLine}
 
 Vocabulaire métier de cette entreprise :
-- Produit/matière = "${ctx.materialLabel}"
-- Service/prestation vendue = "${ctx.serviceLabel}"
-- Ressource interne (main d'œuvre, machine) = "${ctx.laborRateLabel}"
-- Modèle de devis = "${ctx.bundleTemplateLabel}"
+- ${ctx.materialLabel} : fourniture, produit ou matière achetée et revendue
+- ${ctx.serviceLabel} : prestation ou opération vendue au client
+- ${ctx.laborRateLabel} : ressource interne (main-d'œuvre, machine, équipement, sous-traitant)
+- ${ctx.bundleTemplateLabel} : modèle réutilisable avec plusieurs lignes détaillées
 
 Unités disponibles par type :
 - ${ctx.materialLabel} : ${ctx.unitsByKind.material.join(', ')}
@@ -108,35 +224,36 @@ Catégories habituelles :
 - ${ctx.materialLabel} : ${ctx.defaultCategories.material.join(', ')}
 - ${ctx.serviceLabel} : ${ctx.defaultCategories.service.join(', ')}
 - ${ctx.laborRateLabel} : ${ctx.defaultCategories.laborRate.join(', ')}
-- Modèles de devis : ${ctx.defaultCategories.bundleTemplate.join(', ')}
+- ${ctx.bundleTemplateLabel} : ${ctx.defaultCategories.bundleTemplate.join(', ')}
 
 Taux de TVA légaux : ${ctx.vatRates.join(', ')}%
 Modes de tarification dimensionnelle : ${ctx.dimensionModes.join(', ')} (none=forfait/unité, linear=ml, area=m², volume=m³)
 
-Ta tâche : extraire tous les éléments de catalogue mentionnés dans le texte et les classifier en :
-- "material" : fourniture/produit/matière achetée et revendue
-- "service" : prestation vendue au client
-- "labor_rate" : ressource interne (humain, machine, équipement, sous-traitant)
-- "prestation_type" : modèle de devis réutilisable avec lignes détaillées
+${catalogHint ? catalogHint + '\n\n' : ''}${marketHints ? marketHints + '\n\n' : ''}Ta tâche : extraire tous les éléments de catalogue mentionnés dans le texte et les classifier en :
+- "material" : ${ctx.materialLabel.toLowerCase()} (achetée et revendue)
+- "service" : ${ctx.serviceLabel.toLowerCase()} (vendue au client)
+- "labor_rate" : ${ctx.laborRateLabel.toLowerCase()} (humain, machine, équipement, sous-traitant)
+- "prestation_type" : ${ctx.bundleTemplateLabel.toLowerCase()} réutilisable avec lignes détaillées
 - "supplier" : fournisseur
 
 Règles de classification :
 - Un taux horaire humain → labor_rate type "human"
 - Une machine ou équipement interne → labor_rate type "machine" ou "equipment"
 - Un sous-traitant → labor_rate type "subcontractor"
-- Un article/matière avec prix d'achat → material
-- Une opération vendue au client → service
-- Un modèle de devis avec plusieurs lignes → prestation_type
+- Un article/${ctx.materialLabel.toLowerCase()} avec prix d'achat → material
+- Une ${ctx.serviceLabel.toLowerCase()} vendue au client → service
+- Un ${ctx.bundleTemplateLabel.toLowerCase()} avec plusieurs lignes → prestation_type
 - Une entreprise fournisseur → supplier
 
 RÈGLE CRITIQUE pour labor_rate — deux champs distincts, ne pas les confondre :
 - "cost_rate" = ce que la ressource COÛTE à l'entreprise (salaire chargé, amortissement machine…). Si l'utilisateur dit "ça me coûte X€" ou "coût interne X€" → cost_rate = X.
 - "rate" = ce que l'entreprise FACTURE au client pour cette ressource (toujours > cost_rate car inclut la marge). Si seul le coût est mentionné et pas le prix de vente, laisse "rate" à null ou estime-le en appliquant ~30% de marge minimum.
-- Exemple : "mon maçon me coûte 28€/h" → cost_rate=28, rate=null (inconnu). "je facture la main-d'œuvre 45€/h, coût interne 28€/h" → cost_rate=28, rate=45.
+- Exemple : "mon maçon me coûte 28€/h" → cost_rate=28, rate=null. "je facture 45€/h, coût interne 28€/h" → cost_rate=28, rate=45.
 - Ne jamais mettre la même valeur dans cost_rate ET rate sauf si explicitement indiqué.
 - Ne jamais mettre le coût dans rate uniquement.
 
-Pour chaque champ, indique confidence: "high" si tu es sûr, "low" si tu as dû inférer ou estimer.
+Pour les prix non mentionnés explicitement, utilise les fourchettes marché ci-dessus comme référence et indique confidence "low".
+Pour chaque champ, indique confidence: "high" si tu es sûr de la valeur fournie, "low" si tu as dû inférer ou estimer.
 Propose dimension_pricing_mode "area" pour les produits/matières au m², "linear" pour ceux au ml, "volume" pour m³, "none" sinon.
 
 Retourne UNIQUEMENT un JSON valide avec ce format exact (tous les champs optionnels peuvent être null) :
@@ -179,30 +296,40 @@ Règles sur les dimensions (base_length_m, base_width_m, base_height_m) :
 - Si dimension_pricing_mode est "none", laisse ces champs à null.`
 }
 
-function buildUserPrompt(text: string): string {
-  return `Extrais tous les éléments de catalogue présents dans ce texte :\n\n${text}`
+function buildUserPrompt(text: string, ctx: ReturnType<typeof getCatalogAIPromptContext>): string {
+  return `Extrais tous les éléments de catalogue présents dans ce texte. Utilise le vocabulaire métier "${ctx.activityLabel}" : ${ctx.materialLabel.toLowerCase()}s, ${ctx.serviceLabel.toLowerCase()}s, ${ctx.laborRateLabel.toLowerCase()}s, ${ctx.bundleTemplateLabel.toLowerCase()}s.\n\n${text}`
 }
 
-function buildPresetsSystemPrompt(ctx: ReturnType<typeof getCatalogAIPromptContext>): string {
-  return `Tu es un expert en chiffrage et organisation commerciale pour les entreprises du secteur "${ctx.activityLabel}" (profil: ${ctx.businessProfile}).
+function buildPresetsSystemPrompt(ctx: ReturnType<typeof getCatalogAIPromptContext>, snapshot?: ExistingCatalogSnapshot): string {
+  const activityLine = ctx.activityDescription
+    ? `Secteur : "${ctx.activityLabel}" — ${ctx.activityDescription}`
+    : `Secteur : "${ctx.activityLabel}"`
+
+  const catalogHint = snapshot ? buildExistingCatalogHint(snapshot, ctx) : ''
+  const marketHints = buildMarketPriceHints(ctx)
+  const allUnits = [...ctx.unitsByKind.service, ...ctx.unitsByKind.material].filter((v, i, a) => a.indexOf(v) === i)
+
+  return `Tu t'appelles Lea. Tu es assistante catalogue chez ATELIER by Orsayn, experte en chiffrage et organisation commerciale pour les entreprises du secteur "${ctx.activityLabel}" (profil: ${ctx.businessProfile}).
+${activityLine}
 
 Vocabulaire métier :
-- Modèle de devis = "${ctx.bundleTemplateLabel}"
-- Fourniture/matière = "${ctx.materialLabel}"
-- Prestation vendue = "${ctx.serviceLabel}"
-- Ressource interne = "${ctx.laborRateLabel}"
+- ${ctx.bundleTemplateLabel} : modèle de devis réutilisable avec lignes détaillées
+- ${ctx.materialLabel} : fourniture, produit ou matière achetée et revendue
+- ${ctx.serviceLabel} : prestation ou opération vendue au client
+- ${ctx.laborRateLabel} : ressource interne (main-d'œuvre, machine, équipement)
 
-Catégories habituelles pour les modèles de devis : ${ctx.defaultCategories.bundleTemplate.join(', ')}
-Unités disponibles : ${[...ctx.unitsByKind.service, ...ctx.unitsByKind.material].filter((v, i, a) => a.indexOf(v) === i).join(', ')}
+Catégories habituelles pour les ${ctx.bundleTemplateLabel.toLowerCase()}s : ${ctx.defaultCategories.bundleTemplate.join(', ')}
+Unités disponibles : ${allUnits.join(', ')}
 Taux de TVA légaux : ${ctx.vatRates.join(', ')}%
 
-Ta tâche : générer entre 5 et 8 modèles de devis types (prestation_type) réalistes, adaptés au métier et à la description fournie par l'utilisateur.
+${catalogHint ? catalogHint + '\n\n' : ''}${marketHints ? marketHints + '\n\n' : ''}Ta tâche : générer entre 5 et 8 ${ctx.bundleTemplateLabel.toLowerCase()}s réalistes, représentatifs du métier "${ctx.activityLabel}" et cohérents avec la description fournie par l'utilisateur.
 
-Chaque modèle doit :
-- Avoir un nom clair et professionnel
+Chaque ${ctx.bundleTemplateLabel.toLowerCase()} doit :
+- Avoir un nom professionnel et précis, fidèle au vocabulaire du secteur
 - Inclure 2 à 6 lignes détaillées typiques (item_type: "material", "service", "labor", "transport" ou "free")
-- Avoir des prix cohérents avec le marché (base_price_ht et base_cost_ht estimés si possible, sinon 0)
+- Avoir des prix cohérents avec les fourchettes marché ci-dessus (base_price_ht et base_cost_ht estimés)
 - Utiliser les bonnes unités et catégories du secteur
+- Respecter le taux de TVA applicable (10% pour travaux rénovation, 20% sinon)
 
 Retourne UNIQUEMENT un JSON valide avec ce format :
 {
@@ -226,7 +353,7 @@ Retourne UNIQUEMENT un JSON valide avec ce format :
 }
 
 function buildPresetsUserPrompt(ctx: ReturnType<typeof getCatalogAIPromptContext>, description: string): string {
-  const base = `Génère des modèles de devis types pour une entreprise de ${ctx.activityLabel}.`
+  const base = `Génère des ${ctx.bundleTemplateLabel.toLowerCase()}s types pour une entreprise de ${ctx.activityLabel}.`
   if (description.trim()) {
     return `${base}\n\nPrécision apportée par l'utilisateur : ${description.trim()}`
   }
@@ -283,6 +410,10 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Non authentifié.' }, { status: 401 })
 
+    if (!await hasPermission('catalog.edit')) {
+      return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
+    }
+
     const orgId = await getCurrentOrganizationId()
     if (!orgId) return NextResponse.json({ error: 'Organisation introuvable.' }, { status: 400 })
 
@@ -294,7 +425,58 @@ export async function POST(req: NextRequest) {
 
     const catalogCtx = resolveCatalogContext(org ?? undefined)
     const promptCtx = getCatalogAIPromptContext(catalogCtx)
-    const systemPrompt = buildSystemPrompt(promptCtx)
+
+    const [materialsRes, laborRatesRes, prestationTypesRes] = await Promise.all([
+      supabase
+        .from('materials')
+        .select('name, unit, purchase_price, sale_price, category, item_kind')
+        .eq('organization_id', orgId)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(15),
+      supabase
+        .from('labor_rates')
+        .select('designation, unit, cost_rate, rate, category')
+        .eq('organization_id', orgId)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(10),
+      supabase
+        .from('prestation_types')
+        .select('name, unit, sale_price_ht, category')
+        .eq('organization_id', orgId)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(10),
+    ])
+
+    const existingSnapshot: ExistingCatalogSnapshot | undefined =
+      (materialsRes.data?.length || laborRatesRes.data?.length || prestationTypesRes.data?.length)
+        ? {
+            materials: (materialsRes.data ?? []).map((m: any) => ({
+              name: m.name,
+              unit: m.unit,
+              purchase_price: m.purchase_price,
+              sale_price: m.sale_price,
+              category: m.category,
+            })),
+            laborRates: (laborRatesRes.data ?? []).map((lr: any) => ({
+              designation: lr.designation,
+              unit: lr.unit,
+              cost_rate: lr.cost_rate,
+              rate: lr.rate,
+              category: lr.category,
+            })),
+            prestationTypes: (prestationTypesRes.data ?? []).map((pt: any) => ({
+              name: pt.name,
+              unit: pt.unit,
+              base_price_ht: pt.sale_price_ht ?? 0,
+              category: pt.category,
+            })),
+          }
+        : undefined
+
+    const systemPrompt = buildSystemPrompt(promptCtx, existingSnapshot)
 
     const contentType = req.headers.get('content-type') ?? ''
     let userText = ''
@@ -341,7 +523,7 @@ export async function POST(req: NextRequest) {
     }
 
     const activeSystemPrompt = isPresetsMode
-      ? buildPresetsSystemPrompt(promptCtx)
+      ? buildPresetsSystemPrompt(promptCtx, existingSnapshot)
       : systemPrompt
 
     const messages: OpenRouterMessage[] = [
@@ -359,7 +541,7 @@ export async function POST(req: NextRequest) {
         content: [
           {
             type: 'text',
-            text: "Extrais tous les éléments de catalogue présents dans ce document (PDF ou image) :",
+            text: `Extrais tous les éléments de catalogue présents dans ce document. Utilise le vocabulaire métier "${promptCtx.activityLabel}" : ${promptCtx.materialLabel.toLowerCase()}s, ${promptCtx.serviceLabel.toLowerCase()}s, ${promptCtx.laborRateLabel.toLowerCase()}s, ${promptCtx.bundleTemplateLabel.toLowerCase()}s.`,
           },
           {
             type: 'image_url',
@@ -370,7 +552,7 @@ export async function POST(req: NextRequest) {
     } else {
       messages.push({
         role: 'user',
-        content: buildUserPrompt(userText),
+        content: buildUserPrompt(userText, promptCtx),
       })
     }
 

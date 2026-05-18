@@ -32,6 +32,7 @@ const invoiceItemSchema = z.object({
   length_m: z.number().nullable().optional(),
   width_m: z.number().nullable().optional(),
   height_m: z.number().nullable().optional(),
+  dim_quantity: z.number().min(0.001).optional(),
   material_id: z.string().uuid().nullable().optional(),
 })
 

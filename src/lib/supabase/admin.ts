@@ -7,7 +7,7 @@ declare global {
 }
 
 /**
- * Client Supabase avec le service role key — contourne le RLS.
+ * Client Supabase avec le service role key - contourne le RLS.
  * À utiliser UNIQUEMENT dans les Server Actions / Route Handlers côté serveur.
  * Ne jamais exposer côté client.
  *

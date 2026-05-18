@@ -300,7 +300,7 @@ export async function importInvoices(
     const clientLabel = first.client_nom.trim()
     const itemsSummary = itemRows.map(i => `${i.description} (${i.quantity} ${i.unit} × ${i.unit_price}€ HT)`).join(', ')
     const statusLabel = status === 'paid' ? 'payée' : status === 'sent' ? 'envoyée' : 'brouillon'
-    const memContent = `Facture ${invoiceNumber} émise le ${issueDate} pour ${clientLabel} — ${itemsSummary} — Total HT : ${totalHt.toFixed(2)}€ — Statut : ${statusLabel}${isRecurring ? ' — récurrente' : ''}`
+    const memContent = `Facture ${invoiceNumber} émise le ${issueDate} pour ${clientLabel} - ${itemsSummary} - Total HT : ${totalHt.toFixed(2)}€ - Statut : ${statusLabel}${isRecurring ? ' - récurrente' : ''}`
 
     await supabase.from('company_memory').insert({
       organization_id: orgId,
@@ -478,7 +478,7 @@ export async function importQuotes(
     const itemsSummary = lineRows.map(r => `${r.designation?.trim()} (${r.quantite ?? '1'} × ${r.prix_unitaire_ht}€ HT)`).join(', ')
     const totalHt = lineRows.reduce((s, r) => s + (parseFloat(r.quantite ?? '1') || 1) * (parseFloat(r.prix_unitaire_ht) || 0), 0)
     const statusLabel = status === 'accepted' ? 'accepté' : status === 'refused' ? 'refusé' : status === 'sent' ? 'envoyé' : 'brouillon'
-    const memContent = `Devis ${quoteNumber} émis le ${issueDate} pour ${clientLabel}${first.titre_projet ? ` — Projet : ${first.titre_projet.trim()}` : ''} — ${itemsSummary} — Total HT : ${totalHt.toFixed(2)}€ — Statut : ${statusLabel}`
+    const memContent = `Devis ${quoteNumber} émis le ${issueDate} pour ${clientLabel}${first.titre_projet ? ` - Projet : ${first.titre_projet.trim()}` : ''} - ${itemsSummary} - Total HT : ${totalHt.toFixed(2)}€ - Statut : ${statusLabel}`
 
     await supabase.from('company_memory').insert({
       organization_id: orgId,

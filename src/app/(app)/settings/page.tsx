@@ -12,13 +12,33 @@ import { getEmailTemplates } from '@/lib/data/queries/emailTemplates'
 import { getPublicRuntimeConfig } from '@/lib/supabase/config'
 import SettingsClient from './SettingsClient'
 
+const SETTINGS_TABS = new Set([
+  'profil',
+  'entreprise',
+  'equipe',
+  'roles',
+  'emails',
+  'integration',
+  'formulaire',
+  'confidentialite',
+  'whatsapp',
+  'securite',
+])
+
 function getAppUrl(): string {
   const host = headers().get('host') ?? 'localhost:3000'
   const proto = host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https'
   return `${proto}://${host}`
 }
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams?: { tab?: string }
+}) {
+  const requestedTab = searchParams?.tab ?? 'profil'
+  const initialTab = SETTINGS_TABS.has(requestedTab) ? requestedTab : 'profil'
+
   const [profile, members, roles, joinCode, organization, catalogMaterials, catalogLaborRates, catalogPrestationTypes, whatsappConfig, membership, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg] = await Promise.all([
     getCurrentUserProfile(),
     getTeamMembers(),
@@ -67,6 +87,7 @@ export default async function SettingsPage() {
       canRemoveMembers={canRemoveMembers}
       canEditRoles={canEditRoles}
       canEditOrg={canEditOrg}
+      initialTab={initialTab}
     />
   )
 }

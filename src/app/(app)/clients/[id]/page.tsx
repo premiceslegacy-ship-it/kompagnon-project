@@ -52,7 +52,7 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
 
             {/* Header Hero */}
             <div className={`${cardClasses} p-8 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6`}>
-                <div className="flex flex-col gap-4">
+                <div className="flex min-w-0 flex-col gap-4">
                     <div className="flex items-center gap-4">
                         <div className="w-12 h-12 rounded-2xl bg-accent/10 flex items-center justify-center shrink-0">
                             {client.type === 'company'
@@ -63,13 +63,17 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
                         <h1 className="text-3xl font-bold text-primary leading-none">{displayName}</h1>
                         {client.status && (
                             <span className={`px-3 py-1 text-xs font-bold rounded-full uppercase tracking-wider ${
-                                client.status === 'active' ? 'bg-accent-green/10 text-accent-green' :
-                                client.status === 'prospect' ? 'bg-accent/10 text-accent' :
+                                client.status === 'active'    ? 'bg-accent-green/10 text-accent-green' :
+                                client.status === 'prospect'  ? 'bg-accent/10 text-accent' :
+                                client.status === 'lead_hot'  ? 'bg-orange-500/10 text-orange-500' :
+                                client.status === 'lead_cold' ? 'bg-blue-400/10 text-blue-400' :
                                 'bg-secondary/10 text-secondary'
                             }`}>{
-                                client.status === 'active' ? 'Actif' :
-                                client.status === 'prospect' ? 'Prospect' :
-                                client.status === 'inactive' ? 'Inactif' : client.status
+                                client.status === 'active'    ? 'Actif' :
+                                client.status === 'prospect'  ? 'Prospect' :
+                                client.status === 'lead_hot'  ? 'Lead Chaud' :
+                                client.status === 'lead_cold' ? 'Lead Froid' :
+                                client.status === 'inactive'  ? 'Inactif' : client.status
                             }</span>
                         )}
                     </div>
@@ -101,11 +105,11 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
                         />
                     </div>
                 </div>
-                <div className="flex items-center gap-3 w-full lg:w-auto">
+                <div className="flex w-full flex-wrap items-center gap-3 lg:w-auto lg:justify-end">
                     <ClientActions client={client} />
                     <Link
                         href={`/finances/quote-editor?client=${client.id}&returnTo=${encodeURIComponent(`/clients/${client.id}`)}`}
-                        className="flex-1 lg:flex-none px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20"
+                        className="flex min-w-[11rem] flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-full bg-accent px-6 py-3 font-bold text-black shadow-lg shadow-accent/20 transition-all hover:scale-105 lg:flex-none"
                     >
                         <Bot className="w-4 h-4" /> Nouveau devis
                     </Link>

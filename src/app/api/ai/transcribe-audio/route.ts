@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIQuotaExceededError } from '@/lib/quota'
 
 const MISTRAL_MODEL = 'voxtral-mini-latest'
 
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
     const result = await callAI<{ text: string }>({
       organizationId: orgId,
       provider: 'mistral',
-      feature: 'whatsapp_transcription',
+      feature: 'voice_transcription',
       model: MISTRAL_MODEL,
       inputKind: 'audio',
       request: { body: mistralForm, timeoutMs: 30000 },
@@ -43,6 +44,9 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     if (err instanceof AIRateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 })
+    }
+    if (err instanceof AIQuotaExceededError) {
+      return NextResponse.json({ error: 'Quota mensuel de saisie vocale atteint.' }, { status: 402 })
     }
     const msg = err instanceof Error ? err.message : 'Erreur transcription'
     return NextResponse.json({ error: msg }, { status: 500 })

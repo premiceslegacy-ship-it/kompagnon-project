@@ -31,7 +31,7 @@ for env_file in .env.local .env.production.local; do
   fi
 done
 
-node_modules/.bin/opennextjs-cloudflare build --dangerouslyUseUnsupportedNextVersion
+node_modules/.bin/opennextjs-cloudflare build
 node scripts/patch-worker.mjs
 node ./node_modules/wrangler/bin/wrangler.js deploy --keep-vars "$@"
 

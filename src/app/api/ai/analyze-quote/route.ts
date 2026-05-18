@@ -6,6 +6,7 @@ import { getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { fetchRAGContext } from '@/lib/ai/rag'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 export type AIQuoteItem = {
   description: string
@@ -15,6 +16,11 @@ export type AIQuoteItem = {
   vat_rate: number
   is_estimated: boolean  // true = prix estimé par l'IA (absent du catalogue)
   is_internal?: boolean  // true = coût interne masqué du devis client
+  dim_quantity?: number  // multiplicateur dimensionnel (ex: 3 pièces de 4×5m)
+  length_m?: number | null
+  width_m?: number | null
+  height_m?: number | null
+  dimension_pricing_mode?: 'none' | 'linear' | 'area' | 'volume' | null
 }
 
 export type AIQuoteSection = {
@@ -84,6 +90,77 @@ function quoteTotals(quote: AIQuoteResult): { visibleHt: number; internalHt: num
   )
 }
 
+function appendIncludedDetails(description: string, details: string[]): string {
+  const cleanDetails = details
+    .map(detail => detail.trim())
+    .filter(Boolean)
+
+  if (cleanDetails.length === 0) return description
+
+  const prefix = description.trim()
+  const includedBlock = `\n\nComprend :\n${cleanDetails.map(detail => `- ${detail}`).join('\n')}`
+  const nextDescription = `${prefix}${includedBlock}`
+
+  // L'UI et la validation gardent les descriptions de lignes à 500 caractères.
+  return nextDescription.length <= 500
+    ? nextDescription
+    : `${nextDescription.slice(0, 497).trimEnd()}...`
+}
+
+function compactIncludedZeroPriceItems(quote: AIQuoteResult): AIQuoteResult {
+  return {
+    ...quote,
+    sections: quote.sections.map(section => {
+      const items: AIQuoteItem[] = []
+      let pendingIncludedDetails: string[] = []
+      let lastVisibleBillableIndex: number | null = null
+
+      for (const item of section.items) {
+        const amount = Math.max(0, Number(item.quantity) || 0) * Math.max(0, Number(item.unit_price) || 0)
+        const isVisibleZeroLine = item.is_internal !== true && amount === 0 && item.description?.trim()
+
+        if (isVisibleZeroLine) {
+          if (lastVisibleBillableIndex !== null) {
+            const billableItem = items[lastVisibleBillableIndex]
+            items[lastVisibleBillableIndex] = {
+              ...billableItem,
+              description: appendIncludedDetails(billableItem.description, [item.description]),
+            }
+          } else {
+            pendingIncludedDetails.push(item.description)
+          }
+          continue
+        }
+
+        const isVisibleBillableLine = item.is_internal !== true && amount > 0
+        const nextItem = isVisibleBillableLine && pendingIncludedDetails.length > 0
+          ? {
+              ...item,
+              description: appendIncludedDetails(item.description, pendingIncludedDetails),
+            }
+          : item
+
+        items.push(nextItem)
+        pendingIncludedDetails = []
+
+        if (isVisibleBillableLine) {
+          lastVisibleBillableIndex = items.length - 1
+        }
+      }
+
+      if (pendingIncludedDetails.length > 0 && lastVisibleBillableIndex !== null) {
+        const billableItem = items[lastVisibleBillableIndex]
+        items[lastVisibleBillableIndex] = {
+          ...billableItem,
+          description: appendIncludedDetails(billableItem.description, pendingIncludedDetails),
+        }
+      }
+
+      return { ...section, items }
+    }).filter(section => section.items.length > 0),
+  }
+}
+
 function enforceNonDeficitMargin(quote: AIQuoteResult): AIQuoteResult {
   const { visibleHt, internalHt } = quoteTotals(quote)
   if (internalHt <= 0 || visibleHt <= 0) return quote
@@ -123,7 +200,7 @@ function normalizeAIQuote(quote: AIQuoteResult): AIQuoteResult {
     })),
   }
 
-  return enforceNonDeficitMargin(normalized)
+  return enforceNonDeficitMargin(compactIncludedZeroPriceItems(normalized))
 }
 
 // Charge le catalogue, les postes récents et les infos de l'org pour enrichir le contexte IA
@@ -187,7 +264,7 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
     business_activity_id: org?.business_activity_id,
   })
   const sector = catalogContextConfig.sectorFallback
-  const activityHint = sector ? ` — métier : ${sector}` : ''
+  const activityHint = sector ? ` - métier : ${sector}` : ''
   const lines: string[] = []
 
   if (materials && materials.length > 0) {
@@ -241,7 +318,9 @@ function buildSystemPrompt(catalogContext: string, sector: string, ragContext: s
   const hasCatalog = catalogContext.trim().length > 0
   const activityContext = activityDescription ? `\nSpécificité métier : ${activityDescription}` : ''
 
-  return `Tu es un assistant IA expert en devis pour une entreprise française du métier : **${sector}**.${activityContext} À partir d'une description de travaux, tu dois extraire et structurer les postes de travaux en sections et lignes de devis, ET estimer la main-d'œuvre nécessaire.
+  return `Tu t'appelles Sarah. Tu es chiffreuse et experte devis chez ATELIER by Orsayn. Tu travailles pour une entreprise française du métier : **${sector}**.${activityContext} À partir d'une description de travaux, tu extrais et structures les postes en sections et lignes de devis, et tu estimes la main-d'oeuvre nécessaire.
+
+Tu parles comme un pro du terrain : direct, précis, sans jargon inutile. Tu connais ton métier sur le bout des doigts.
 ${hasCatalog ? `
 ${catalogContext}
 
@@ -262,6 +341,13 @@ ${catalogContext}
 Si la description contient plusieurs projets ou chantiers **clairement distincts et séparés** (ex: "chantier A : ... / chantier B : ...", ou plusieurs adresses, ou plusieurs clients), génère un devis séparé pour chacun.
 Si c'est un seul projet (même s'il a plusieurs corps de métier), génère un seul devis.
 
+## Présentation commerciale des forfaits et contrats récurrents
+- Si le client demande un forfait mensuel, un abonnement, un contrat d'entretien, une prestation récurrente ou un lot global, crée une ligne facturable principale avec le prix du forfait.
+- Les tâches incluses dans ce forfait ne doivent PAS devenir des lignes séparées à 0 €. Ajoute-les dans la description de la ligne principale sous forme courte, par exemple : "Comprend : nettoyage des sols, dépoussiérage des rampes, entretien du local poubelles, contrôle visuel".
+- Crée une ligne séparée uniquement pour une prestation réellement vendue séparément ou optionnelle avec son propre prix (ex: vitrerie mensuelle, remise en état initiale, désinfection ponctuelle).
+- N'utilise jamais de ligne visible à 0 € pour détailler le contenu d'une offre. Une ligne visible doit correspondre à ce que le client achète et doit avoir un prix HT.
+- Exemple attendu : 1 ligne "Forfait mensuel entretien parties communes" avec quantité 1, unité "mois" ou "forfait", prix HT, et la liste des tâches incluses dans la description. Puis éventuellement 1 ligne "Vitrerie mensuelle des halls" et 1 ligne optionnelle "Remise en état initiale".
+
 Retourne UNIQUEMENT un objet JSON valide avec cette structure exacte :
 {
   "quotes": [
@@ -274,12 +360,16 @@ Retourne UNIQUEMENT un objet JSON valide avec cette structure exacte :
           "items": [
             {
               "description": "Description précise du poste de travaux",
-              "quantity": 1,
-              "unit": "u",
-              "unit_price": 0,
+              "quantity": 20,
+              "unit": "m²",
+              "unit_price": 100,
               "vat_rate": 20,
               "is_estimated": false,
-              "is_internal": false
+              "is_internal": false,
+              "dimension_pricing_mode": "area",
+              "length_m": 4,
+              "width_m": 5,
+              "dim_quantity": 1
             }
           ]
         }
@@ -289,7 +379,7 @@ Retourne UNIQUEMENT un objet JSON valide avec cette structure exacte :
 }
 Le tableau "quotes" contient toujours au moins 1 élément.
 
-## Main-d'œuvre — règle importante :
+## Main-d'œuvre - règle importante :
 Dans un cahier des charges, le client décrit rarement la main-d'œuvre à déployer, c'est l'entreprise qui en décide. Si la MO n'est PAS mentionnée dans le document, tu dois estimer et inclure les postes de main-d'œuvre nécessaires pour réaliser les travaux :
 - Cherche d'abord dans les "Ressources internes" ci-dessus. Si tu trouves une désignation correspondante → utilise ce cout de reference, mets \`is_estimated: false\`.
 - Si aucune correspondance dans le catalogue MO → estime un taux horaire ou forfaitaire réaliste pour le secteur **${sector}** et le type de poste. Mets \`is_estimated: true\`. Arrondis à la dizaine supérieure.
@@ -305,8 +395,13 @@ ${ragContext ? `\n## Mémoire de l'entreprise (devis et tarifs de référence is
 - Le champ \`title\` doit synthétiser le projet en un titre court et professionnel. Si un titre ou nom de chantier est explicitement mentionné dans le document, utilise-le. Sinon, forge un titre clair (ex: "Bardage acier façade entrepôt B", "Rénovation cuisine appartement 3e étage").
 - Regroupe les postes par corps de métier ou par zone (ex: Cuisine, Salle de bain)
 - TVA : 10% pour rénovation logement existant, 20% par défaut (neuf, travaux neufs)
-- Unités courantes : u (unité), m2 (mètre carré), ml (mètre linéaire), h (heure), forfait
+- Unités courantes : u (unité), m² (mètre carré), ml (mètre linéaire), m³ (mètre cube), h (heure), forfait
 - Si des quantités sont mentionnées dans la description, extrais-les ; sinon mets 1
+- **Tarification dimensionnelle** : si un poste a des dimensions explicites (ex: "3 pièces de 4×5m", "cloison de 2,5m × 12m", "2 longueurs de 8ml"), utilise les champs \`dimension_pricing_mode\`, \`length_m\`, \`width_m\`, \`height_m\` et \`dim_quantity\` (multiplicateur d'unités). La \`quantity\` finale = dim_quantity × (L × l ou L ou L × l × H). Si le poste n'a pas de dimensions explicites, laisse \`dimension_pricing_mode\` à null ou "none".
+  - mode "linear" : longueur seule en mètres → unité = ml
+  - mode "area" : longueur × largeur en mètres → unité = m²
+  - mode "volume" : longueur × largeur × hauteur en mètres → unité = m³
+  - dim_quantity = nombre d'unités identiques (ex: 3 pièces identiques → dim_quantity = 3)
 - Sois précis dans les descriptions pour que l'artisan comprenne le travail attendu
 - Ne génère pas de sections vides
 - Minimum 1 section avec au moins 1 ligne`
@@ -317,6 +412,10 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+  }
+
+  if (!await hasPermission('quotes.create')) {
+    return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
   }
 
   if (!process.env.OPENROUTER_API_KEY) {
@@ -418,7 +517,7 @@ export async function POST(req: NextRequest) {
     try {
       parsed = JSON.parse(extractJson(raw))
     } catch {
-      console.error('[ai/analyze-quote] JSON parse error, raw:', raw.slice(0, 300))
+      console.error('[ai/analyze-quote] JSON parse error', { responseLength: raw.length })
       return NextResponse.json({ error: 'Réponse IA invalide, veuillez réessayer' }, { status: 500 })
     }
 

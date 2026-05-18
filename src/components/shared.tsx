@@ -16,19 +16,30 @@ export const ActionMenu = ({
     const [isOpen, setIsOpen] = useState(false);
     const [mounted, setMounted] = useState(false);
     const buttonRef = useRef<HTMLButtonElement>(null);
-    const [coords, setCoords] = useState({ top: 0, left: 0, isUp: false });
+    const [coords, setCoords] = useState({ top: 0, left: 0, isUp: false, maxHeight: 320 });
+
     const toggleMenu = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (!isOpen && buttonRef.current) {
             const rect = buttonRef.current.getBoundingClientRect();
-            const spaceBelow = window.innerHeight - rect.bottom;
-            const menuHeight = 160; // Approximate menu height (48px * items + padding)
-            const shouldOpenUp = spaceBelow < menuHeight;
-            
+            const MARGIN = 8;
+            const spaceBelow = window.innerHeight - rect.bottom - MARGIN;
+            const spaceAbove = rect.top - MARGIN;
+            const itemHeight = 36;
+            const padding = 16;
+            const naturalHeight = actions.length * itemHeight + padding;
+            const shouldOpenUp = spaceBelow < naturalHeight && spaceAbove > spaceBelow;
+            const maxHeight = shouldOpenUp
+                ? Math.min(naturalHeight, spaceAbove)
+                : Math.min(naturalHeight, spaceBelow);
+
             setCoords({
-                top: shouldOpenUp ? (rect.top + window.scrollY - menuHeight) : (rect.bottom + window.scrollY),
+                top: shouldOpenUp
+                    ? rect.top + window.scrollY - Math.min(naturalHeight, spaceAbove)
+                    : rect.bottom + window.scrollY,
                 left: rect.right + window.scrollX - 192,
-                isUp: shouldOpenUp
+                isUp: shouldOpenUp,
+                maxHeight,
             });
         }
         setIsOpen(!isOpen);
@@ -39,11 +50,9 @@ export const ActionMenu = ({
         const handleClickOutside = () => setIsOpen(false);
         if (isOpen) {
             document.addEventListener('click', handleClickOutside);
-            window.addEventListener('scroll', handleClickOutside, true);
         }
         return () => {
             document.removeEventListener('click', handleClickOutside);
-            window.removeEventListener('scroll', handleClickOutside, true);
         };
     }, [isOpen]);
 
@@ -58,8 +67,8 @@ export const ActionMenu = ({
             </button>
             {mounted && isOpen && typeof document !== 'undefined' && createPortal(
                 <div
-                    className={`absolute w-48 menu-panel py-2 z-[9999] animate-in fade-in duration-200 ${coords.isUp ? 'slide-in-from-bottom-2' : 'slide-in-from-top-2'}`}
-                    style={{ top: coords.top, left: coords.left }}
+                    className={`absolute w-48 menu-panel py-2 z-[9999] animate-in fade-in duration-200 overflow-y-auto ${coords.isUp ? 'slide-in-from-bottom-2' : 'slide-in-from-top-2'}`}
+                    style={{ top: coords.top, left: coords.left, maxHeight: coords.maxHeight }}
                     onClick={(e) => e.stopPropagation()}
                 >
                     {actions.map((action, idx) => (

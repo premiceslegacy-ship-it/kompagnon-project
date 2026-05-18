@@ -142,7 +142,7 @@ function RequestCard({ request }: { request: QuoteRequest }) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 flex-wrap">
               <p className={`font-bold text-primary ${status === 'new' ? 'text-lg' : ''}`}>{request.name}</p>
-              <span className={`px-3 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${badge.cls}`}>
+              <span className={`px-3 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${badge.cls}`}>
                 {badge.label}
               </span>
               {request.type === 'catalog' && (

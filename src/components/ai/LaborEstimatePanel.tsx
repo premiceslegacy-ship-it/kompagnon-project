@@ -6,6 +6,9 @@ import type { LaborEstimateItem } from '@/app/api/ai/estimate-labor/route'
 import { createLaborRateQuick } from '@/lib/data/mutations/catalog'
 import { X, Sparkles, Loader2, Plus, Save, Car, CheckCircle2, Search, Trash2 } from 'lucide-react'
 import { getInternalResourceUnitCost } from '@/lib/catalog-ui'
+import { AI_ASSISTANTS } from '@/lib/brand'
+
+const VALENTIN = AI_ASSISTANTS.valentin
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n)
@@ -223,12 +226,12 @@ export default function LaborEstimatePanel({ laborRates, quoteTitle, onInsert, o
         {/* Header */}
         <div className="border-b border-[var(--elevation-border)] px-6 py-5 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
-              <Sparkles className="w-4 h-4 text-white" />
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center flex-shrink-0 text-white text-sm font-bold">
+              V
             </div>
             <div>
-              <h2 className="text-base font-bold text-primary">Estimer la main d&apos;œuvre</h2>
-              <p className="text-xs text-secondary">IA + ressources internes</p>
+              <h2 className="text-base font-bold text-primary">{VALENTIN.name} <span className="font-normal text-secondary text-sm">, {VALENTIN.role}</span></h2>
+              <p className="text-xs text-secondary">Estimation main-d&apos;oeuvre</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 text-secondary hover:text-primary rounded-full hover:bg-base transition-colors">
@@ -246,7 +249,7 @@ export default function LaborEstimatePanel({ laborRates, quoteTitle, onInsert, o
               value={description}
               onChange={e => { setDescription(e.target.value); setEstimates(null) }}
               rows={3}
-              placeholder="Décrivez les travaux pour que l'IA estime les heures..."
+              placeholder="Décrivez les travaux pour que Valentin estime les heures..."
               className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 resize-none"
             />
           </div>
@@ -256,7 +259,7 @@ export default function LaborEstimatePanel({ laborRates, quoteTitle, onInsert, o
             <h3 className="text-sm font-semibold text-secondary mb-3">Ressources internes</h3>
             {laborRates.length === 0 ? (
               <p className="text-sm text-secondary py-4 text-center bg-base/50 rounded-xl">
-                Aucune ressource interne dans le catalogue —{' '}
+                Aucune ressource interne dans le catalogue :{' '}
                 <button onClick={() => setShowCustomForm(true)} className="text-accent hover:underline">ajouter un profil libre</button>
               </p>
             ) : (
@@ -395,8 +398,8 @@ export default function LaborEstimatePanel({ laborRates, quoteTitle, onInsert, o
             disabled={aiLoading || profiles.length === 0 || !description.trim()}
             className="w-full py-3 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-semibold flex items-center justify-center gap-2 hover:from-violet-600 hover:to-indigo-700 transition-all shadow-lg shadow-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            {aiLoading ? 'Estimation en cours...' : "Estimer avec l'IA"}
+            {aiLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+            {aiLoading ? 'Valentin calcule...' : 'Demander à Valentin'}
           </button>
 
           {aiError && <p className="text-sm text-red-400 text-center">{aiError}</p>}
@@ -406,7 +409,7 @@ export default function LaborEstimatePanel({ laborRates, quoteTitle, onInsert, o
             <div className="rounded-2xl border border-[var(--elevation-border)] overflow-hidden">
               <div className="px-4 py-3 bg-base/50 border-b border-[var(--elevation-border)] flex items-center gap-2">
                 <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-                <span className="text-sm font-semibold text-primary">Résultats IA — ajustez si besoin</span>
+                <span className="text-sm font-semibold text-primary">Estimation de Valentin, ajustez si besoin</span>
               </div>
               <div className="divide-y divide-[var(--elevation-border)]">
                 {estimates.map((est, i) => (

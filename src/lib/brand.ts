@@ -1,6 +1,13 @@
 export const APP_NAME = 'ATELIER'
 export const APP_SIGNATURE = 'ATELIER by Orsayn'
-export const AI_NAME = 'ATELIER IA'
+export const AI_NAME = 'Sarah'
+
+export const AI_ASSISTANTS = {
+  sarah: { name: 'Sarah', role: 'Chiffreuse' },
+  marco: { name: 'Marco', role: 'Chef de chantier' },
+  valentin: { name: 'Valentin', role: 'Estimateur MO' },
+  lea: { name: 'Léa', role: 'Assistante catalogue' },
+} as const
 
 export type BrandBackground = 'light' | 'dark'
 

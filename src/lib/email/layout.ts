@@ -99,16 +99,16 @@ export function renderAlertBanner(text: string, theme: 'success' | 'info' = 'suc
 }
 
 /**
- * Shell principal — génère le HTML complet d'un email.
+ * Shell principal - génère le HTML complet d'un email.
  *
  * @param title       Sujet / titre (balise <title>)
- * @param headerName  Texte du header (nom d'org) — affiché seulement si pas de logo
+ * @param headerName  Texte du header (nom d'org) - affiché seulement si pas de logo
  * @param bodyHtml    Contenu HTML du corps (entre header et footer)
  * @param footerName  Texte du footer (nom d'org)
  * @param headerColor Couleur de fond du header (défaut #050505)
  * @param extraHeaderHtml HTML supplémentaire dans le header (ex : icône checkmark)
- * @param headerLogoUrl URL du logo — si présent, remplace le texte headerName
- * @param alertHtml   Bandeau d'alerte HTML (renderAlertBanner) — placé entre header et body
+ * @param headerLogoUrl URL du logo - si présent, remplace le texte headerName
+ * @param alertHtml   Bandeau d'alerte HTML (renderAlertBanner) - placé entre header et body
  * @param fallbackLinkHtml HTML du lien alternatif (placé entre body et footer)
  */
 export function renderEmailShell({

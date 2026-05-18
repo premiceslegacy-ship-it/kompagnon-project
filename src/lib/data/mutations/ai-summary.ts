@@ -36,19 +36,28 @@ export async function generateAIReminderDraft(
 
   if (!process.env.OPENROUTER_API_KEY) return { subject: null, body: null, rank: 1, clientEmail: null, clientName: '', error: 'Clé API IA manquante.' }
 
-  // Fetch l'item + org
-  const [orgRes, reminderCountRes] = await Promise.all([
-    supabase.from('organizations').select('name').eq('id', orgId).single(),
+  // Fetch l'item + org + profil utilisateur connecté
+  const { data: { user } } = await supabase.auth.getUser()
+  const [orgRes, reminderCountRes, profileRes] = await Promise.all([
+    supabase.from('organizations').select('name, signatory_name, signatory_role').eq('id', orgId).single(),
     supabase.from('reminders').select('id', { count: 'exact', head: true })
       .eq('organization_id', orgId)
       .eq(type === 'invoice' ? 'invoice_id' : 'quote_id', id),
+    user ? supabase.from('profiles').select('full_name').eq('id', user.id).single() : Promise.resolve({ data: null }),
   ])
   const orgName = orgRes.data?.name ?? 'L\'entreprise'
+  const orgSignatoryName = (orgRes.data as any)?.signatory_name ?? null
+  const orgSignatoryRole = (orgRes.data as any)?.signatory_role ?? null
+  const userFullName = (profileRes as any).data?.full_name ?? null
+  // Priorité : signataire fixe de l'org, sinon nom de la personne connectée
+  const signatoryName = orgSignatoryName ?? userFullName
+  const signatoryRole = orgSignatoryName ? orgSignatoryRole : null
   const rank = (reminderCountRes.count ?? 0) + 1
 
   let clientEmail: string | null = null
   let clientName = 'Client'
   let contextStr = ''
+  let invoiceDaysOffset: number | null = null
 
   if (type === 'invoice') {
     const { data: inv } = await supabase
@@ -63,11 +72,18 @@ export async function generateAIReminderDraft(
     clientEmail = client?.email ?? null
     const fmtAmount = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: inv.currency ?? 'EUR' }).format(inv.total_ttc ?? 0)
     const fmtDue = inv.due_date ? new Date(inv.due_date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : 'inconnue'
-    const daysLate = inv.due_date
+    invoiceDaysOffset = inv.due_date
       ? Math.floor((Date.now() - new Date(inv.due_date).getTime()) / 86400000)
       : null
+    const dueSituation = invoiceDaysOffset === null
+      ? ''
+      : invoiceDaysOffset > 0
+        ? ` (${invoiceDaysOffset} jour${invoiceDaysOffset > 1 ? 's' : ''} de retard)`
+        : invoiceDaysOffset === 0
+          ? ' (échéance aujourd\'hui)'
+          : ` (échéance dans ${Math.abs(invoiceDaysOffset)} jour${Math.abs(invoiceDaysOffset) > 1 ? 's' : ''})`
 
-    contextStr = `Facture ${inv.number}, ${fmtAmount} TTC, échéance ${fmtDue}${daysLate !== null ? ` (${daysLate}j de retard)` : ''}`
+    contextStr = `Facture ${inv.number}, ${fmtAmount} TTC, échéance ${fmtDue}${dueSituation}`
   } else {
     const { data: quote } = await supabase
       .from('quotes')
@@ -86,13 +102,60 @@ export async function generateAIReminderDraft(
     contextStr = `Devis ${quote.number}, "${quote.title}", ${fmtAmount} TTC, envoyé le ${sentDate}${signUrl ? `, lien signature : ${signUrl}` : ''}`
   }
 
-  const toneGuide = rank === 1
-    ? 'Ton cordial et professionnel. Simple rappel, pas de reproche. Laisse une porte ouverte (peut-être perdu dans les spams).'
-    : rank === 2
-    ? 'Ton direct mais courtois. Mentionne que c\'est la 2ème relance. Tu peux évoquer les délais légaux de paiement (30j en France pour B2B) sans être menaçant.'
-    : 'Ton ferme et professionnel. Dernière relance avant voie amiable/recouvrement. Mentionne la mise en demeure comme prochaine étape possible.'
+  let toneGuide: string
+  let typeLabel: string
+  let dateInstruction: string
 
-  const typeLabel = type === 'invoice' ? 'facture impayée' : 'devis sans réponse'
+  if (type === 'invoice') {
+    const d = invoiceDaysOffset
+
+    if (d !== null && d < 0) {
+      // Avant échéance
+      const daysLeft = Math.abs(d)
+      typeLabel = 'facture envoyée dont l\'échéance n\'est pas encore passée'
+      if (daysLeft <= 7) {
+        toneGuide = 'Ton courtois mais direct. L\'échéance est dans moins d\'une semaine. Mentionne la date précisément et encourage le règlement avant cette date, de façon positive ("pour clore ce dossier avant le [date]").'
+        dateInstruction = 'Tu PEUX et DOIS mentionner la date d\'échéance précise, formulée comme une aide pour le client, pas comme une menace.'
+      } else {
+        toneGuide = 'Ton cordial et bienveillant. Rappel anticipé, pas de pression. Mentionne simplement que l\'échéance approche et que tu restes disponible.'
+        dateInstruction = 'Mentionne la date d\'échéance de façon neutre, sans insistance.'
+      }
+    } else if (d === 0) {
+      typeLabel = 'facture dont l\'échéance est aujourd\'hui'
+      toneGuide = 'Ton courtois et direct. L\'échéance est aujourd\'hui. Rappelle-le clairement sans agressivité.'
+      dateInstruction = 'Mentionne que l\'échéance est aujourd\'hui, formulé factuellement.'
+    } else {
+      // Après échéance — d > 0
+      typeLabel = 'facture impayée dont l\'échéance est dépassée'
+      if (rank === 1) {
+        toneGuide = 'Ton cordial. Simple rappel de retard, pas de reproche. Laisse une porte ouverte (peut-être perdu dans les spams).'
+        dateInstruction = 'Mentionne le retard factuellement, sans dramatiser.'
+      } else if (rank === 2) {
+        toneGuide = 'Ton direct mais courtois. Deuxième relance. Mentionne les délais légaux de paiement (30j en France pour B2B) sans menacer. Encourage à régulariser rapidement.'
+        dateInstruction = 'Mentionne la date d\'échéance dépassée et le nombre de jours de retard, fermement mais sans agressivité.'
+      } else {
+        toneGuide = 'Ton ferme et professionnel. Dernière relance avant voie amiable ou recouvrement. Mentionne clairement la mise en demeure comme prochaine étape si aucun règlement sous 48h.'
+        dateInstruction = 'Cite la date d\'échéance dépassée et le nombre de jours de retard. Fixe un délai de règlement de 48h de façon ferme mais professionnelle.'
+      }
+    }
+  } else {
+    typeLabel = 'devis sans réponse'
+    dateInstruction = 'Ne mentionne pas de date limite.'
+    toneGuide = rank === 1
+      ? 'Ton cordial et professionnel. Simple rappel, pas de reproche. Laisse une porte ouverte (peut-être perdu dans les spams).'
+      : rank === 2
+      ? 'Ton direct mais courtois. Mentionne que c\'est la 2ème relance.'
+      : 'Ton ferme et professionnel. Dernière relance avant clôture du devis.'
+  }
+
+  const signatureBlock = signatoryName
+    ? `${signatoryName}${signatoryRole ? `, ${signatoryRole}` : ''}\n${orgName}`
+    : orgName
+
+  const paymentNote = type === 'invoice'
+    ? '\n- Mentionne brièvement la pièce jointe ("vous trouverez la facture en pièce jointe"). Ne détaille pas son contenu.'
+    : ''
+
   const prompt = `Tu rédiges un email de relance professionnelle pour un artisan du BTP (${orgName}).
 Contexte : ${contextStr}
 Type : ${typeLabel}
@@ -107,7 +170,10 @@ Règles de rédaction obligatoires :
 - Corps : 3 à 5 phrases maximum, va à l'essentiel
 - Commence par "Bonjour ${clientName}," puis directement le sujet
 - Pas de formule creuse ("j'espère que vous allez bien", "suite à notre précédent email")
-- Signe avec le nom de l'entreprise : ${orgName}
+- Oriente vers le règlement de façon positive : payer maintenant leur simplifie la vie autant qu'à toi
+- Gestion de la date d'échéance : ${dateInstruction}${paymentNote}
+- Signe EXACTEMENT ainsi, sur deux lignes séparées par \\n :
+${signatureBlock}
 
 Format de réponse STRICT :
 Objet: [le sujet]
@@ -194,7 +260,7 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
       .from('invoices')
       .select('number, due_date, total_ttc, invoice_type, client:clients(company_name)')
       .eq('organization_id', orgId)
-      .eq('status', 'sent')
+      .in('status', ['sent', 'partial'])
       .lt('due_date', todayStr),
 
     supabase
@@ -208,7 +274,7 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
       .select('number, total_ttc, due_date, notes_client, client:clients(company_name)')
       .eq('organization_id', orgId)
       .eq('invoice_type', 'acompte')
-      .eq('status', 'sent')
+      .in('status', ['sent', 'partial'])
       .lt('due_date', todayStr),
   ])
 

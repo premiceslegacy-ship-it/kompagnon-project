@@ -12,6 +12,7 @@ import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import QuotePDF from '@/components/pdf/QuotePDF'
 import type { Client } from '@/lib/data/queries/clients'
 import { getClientGreetingName } from '@/lib/client'
+import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
 
 type Result = { error: string | null }
 
@@ -113,9 +114,18 @@ export async function sendInvoiceReminder(
     html = wrapHtml(org.name, bodyText)
   }
 
+  // Générer le PDF de la facture en pièce jointe
+  let attachments: Array<{ filename: string; content: Buffer }> | undefined
+  try {
+    const pdf = await renderInvoicePdfBufferById(invoiceId, orgId)
+    if (pdf) attachments = [{ filename: pdf.fileName, content: pdf.buffer }]
+  } catch (pdfErr) {
+    console.error('[sendInvoiceReminder] PDF generation error:', pdfErr)
+  }
+
   // Envoyer l'email si le client a une adresse
   if (clientEmail) {
-    await sendEmail({ organizationId: orgId, to: clientEmail, subject, html })
+    await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
       .catch(err => console.error('[sendInvoiceReminder] email error:', err))
   }
 
@@ -134,6 +144,7 @@ export async function sendInvoiceReminder(
   })
 
   revalidatePath('/reminders')
+  revalidatePath('/dashboard')
   return { error: null }
 }
 
@@ -258,6 +269,7 @@ export async function sendQuoteFollowup(
   })
 
   revalidatePath('/reminders')
+  revalidatePath('/dashboard')
   return { error: null }
 }
 

@@ -1916,6 +1916,7 @@ export function resolveCatalogContext(input?: OrganizationCatalogConfigInput | n
 export type CatalogAIPromptContext = {
   businessProfile: BusinessProfile
   activityLabel: string
+  activityDescription: string | null
   materialLabel: string
   serviceLabel: string
   laborRateLabel: string
@@ -1927,9 +1928,11 @@ export type CatalogAIPromptContext = {
 }
 
 export function getCatalogAIPromptContext(profileConfig: BusinessProfileConfig): CatalogAIPromptContext {
+  const activity = getBusinessActivityById(profileConfig.activityId)
   return {
     businessProfile: profileConfig.businessProfile,
-    activityLabel: profileConfig.sectorFallback,
+    activityLabel: activity?.label ?? profileConfig.sectorFallback,
+    activityDescription: activity?.description ?? null,
     materialLabel: profileConfig.labelSet.material.singular,
     serviceLabel: profileConfig.labelSet.service.singular,
     laborRateLabel: profileConfig.labelSet.laborRate.singular,

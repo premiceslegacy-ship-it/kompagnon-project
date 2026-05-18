@@ -32,7 +32,7 @@ export async function completeInviteSetup(formData: FormData) {
     redirect('/invite/setup?error=update_failed')
   }
 
-  // Définir le mot de passe (obligatoire — sans ça l'utilisateur ne peut pas se reconnecter)
+  // Définir le mot de passe (obligatoire - sans ça l'utilisateur ne peut pas se reconnecter)
   const { error: pwError } = await supabase.auth.updateUser({ password })
   if (pwError) {
     console.error('[completeInviteSetup] password error:', pwError.message)

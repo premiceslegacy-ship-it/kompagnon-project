@@ -513,7 +513,11 @@ export async function createLaborRateQuick(params: {
   designation: string
   rate: number
   unit: string
+  cost_rate?: number | null
+  type?: 'human' | 'machine' | 'equipment' | 'subcontractor' | 'other'
   category?: string | null
+  purchase_price?: number | null
+  lifetime_uses?: number | null
 }): Promise<{ error: string | null; laborRate: { id: string; designation: string; rate: number; unit: string } | null }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -521,6 +525,9 @@ export async function createLaborRateQuick(params: {
 
   const organizationId = await getCurrentOrganizationId()
   if (!organizationId) return { error: 'Organisation introuvable.', laborRate: null }
+
+  const resolvedType = params.type ?? 'human'
+  const resolvedCostRate = params.cost_rate != null ? params.cost_rate : params.rate
 
   const { data, error } = await supabase
     .from('labor_rates')
@@ -530,11 +537,15 @@ export async function createLaborRateQuick(params: {
       reference: autoRef('MO'),
       unit: params.unit || 'h',
       category: params.category ?? null,
-      type: 'human',
-      cost_rate: params.rate,
-      margin_rate: 0,
+      type: resolvedType,
+      cost_rate: resolvedCostRate,
+      margin_rate: resolvedCostRate > 0 && params.rate > resolvedCostRate
+        ? Math.round((params.rate - resolvedCostRate) / params.rate * 100)
+        : 0,
       rate: params.rate,
       vat_rate: coerceLegalVatRate(20),
+      purchase_price: params.purchase_price ?? null,
+      lifetime_uses: params.lifetime_uses ?? null,
     })
     .select('id, designation, rate, unit')
     .single()
@@ -860,4 +871,62 @@ export async function importPrestationTypes(
 
   revalidatePath('/catalog')
   return { error: imported === 0 ? 'Aucun modèle importé.' : null, imported, skipped, skipped_reasons: skippedReasons }
+}
+
+export async function createMaterialQuick(params: {
+  name: string
+  item_kind: 'article' | 'service'
+  unit: string | null
+  sale_price: number | null
+  purchase_price?: number | null
+  vat_rate?: number
+  dimension_pricing_mode?: 'none' | 'linear' | 'area' | 'volume'
+  base_length_m?: number | null
+  base_width_m?: number | null
+  base_height_m?: number | null
+  category?: string | null
+}): Promise<{ error: string | null; material: { id: string; name: string } | null }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Non authentifié.', material: null }
+
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) return { error: 'Organisation introuvable.', material: null }
+
+  const mode = params.dimension_pricing_mode ?? 'none'
+  const saleP = params.sale_price ?? null
+  const buyP = params.purchase_price ?? null
+  const marginRate = saleP && buyP && saleP > 0
+    ? Math.round((saleP - buyP) / saleP * 100)
+    : 0
+
+  const { data, error } = await supabase
+    .from('materials')
+    .insert({
+      organization_id: organizationId,
+      name: params.name.trim(),
+      reference: autoRef('ART'),
+      item_kind: params.item_kind,
+      unit: params.unit ?? null,
+      sale_price: saleP,
+      purchase_price: buyP,
+      margin_rate: marginRate,
+      vat_rate: coerceLegalVatRate(params.vat_rate ?? 20),
+      dimension_pricing_mode: mode,
+      dimension_pricing_enabled: mode !== 'none',
+      base_length_m: params.base_length_m ?? null,
+      base_width_m: params.base_width_m ?? null,
+      base_height_m: params.base_height_m ?? null,
+      category: params.category ?? null,
+    })
+    .select('id, name')
+    .single()
+
+  if (error || !data) {
+    console.error('[createMaterialQuick]', error)
+    return { error: "Erreur lors de l'enregistrement dans le catalogue.", material: null }
+  }
+
+  revalidatePath('/catalog')
+  return { error: null, material: data as { id: string; name: string } }
 }

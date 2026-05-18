@@ -54,7 +54,7 @@ export async function GET(
     return true
   })
 
-  // Photos marquées include_in_report — URLs signées 1h
+  // Photos marquées include_in_report - URLs signées 1h
   const { data: photoRows } = await supabase
     .from('chantier_photos')
     .select('id, storage_path, title, caption')
@@ -71,7 +71,7 @@ export async function GET(
     const urlMap = new Map<string, string>()
     signedUrls?.forEach(item => { if (item.signedUrl && item.path) urlMap.set(item.path, item.signedUrl) })
 
-    // react-pdf ne peut pas fetcher des URLs signées Supabase directement — on convertit en base64
+    // react-pdf ne peut pas fetcher des URLs signées Supabase directement - on convertit en base64
     const withBase64 = await Promise.all(
       photoRows.map(async p => {
         const signedUrl = urlMap.get(p.storage_path)

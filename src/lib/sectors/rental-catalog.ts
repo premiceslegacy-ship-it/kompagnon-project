@@ -58,7 +58,7 @@ export function getRentalCatalog(sector?: string | null): RentalItem[] {
   return RENTAL_CATALOG_BY_SECTOR[sector] ?? []
 }
 
-/** Retrouve un item depuis son slug (peu importe le secteur — utile pour ré-afficher une dépense saisie). */
+/** Retrouve un item depuis son slug (peu importe le secteur - utile pour ré-afficher une dépense saisie). */
 export function findRentalItem(slug: string | null | undefined): RentalItem | null {
   if (!slug) return null
   for (const items of Object.values(RENTAL_CATALOG_BY_SECTOR)) {

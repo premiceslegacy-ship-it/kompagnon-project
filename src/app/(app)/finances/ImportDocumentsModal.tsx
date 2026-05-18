@@ -303,7 +303,7 @@ export default function ImportDocumentsModal({ isOpen, onClose, defaultType = 'i
               <p className="font-bold text-primary text-xs mb-1">Format attendu</p>
               <p><strong>Dates</strong> : JJ/MM/AAAA ou AAAA-MM-JJ</p>
               <p><strong>Statut {docType === 'invoices' ? 'facture' : 'devis'}</strong> : {docType === 'invoices' ? 'payee, envoyee, brouillon' : 'accepte, refuse, envoye, brouillon'}</p>
-              {docType === 'invoices' && <p><strong>Récurrente</strong> : oui / non — <strong>Fréquence</strong> : mensuelle, trimestrielle, hebdomadaire, annuelle</p>}
+              {docType === 'invoices' && <p><strong>Récurrente</strong> : oui / non - <strong>Fréquence</strong> : mensuelle, trimestrielle, hebdomadaire, annuelle</p>}
               <p><strong>client_type</strong> : professionnel / particulier</p>
               <p><strong>Multi-lignes</strong> : même numéro de {docType === 'invoices' ? 'facture' : 'devis'} sur plusieurs lignes = un seul document avec plusieurs lignes</p>
             </div>

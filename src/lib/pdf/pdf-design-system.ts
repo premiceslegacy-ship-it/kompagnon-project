@@ -1,4 +1,4 @@
-// Atelier by Orsayn — PDF Design System v1.0
+// Atelier by Orsayn - PDF Design System v1.0
 // @react-pdf/renderer peut retomber sur Helvetica avec certains séparateurs unicode
 // ou retours ligne bruts. En PDF/A, Helvetica non embarquée rend le fichier invalide.
 export function pdfText(value: string | number | null | undefined): string {
@@ -6,6 +6,66 @@ export function pdfText(value: string | number | null | undefined): string {
   return String(value)
     .replace(/[\u202f\u00a0]/g, ' ')
     .replace(/\s*\r?\n\s*/g, ' ')
+}
+
+export function splitItemDescription(value: string | null | undefined): { title: string; details: string[] } {
+  const raw = String(value ?? '').replace(/\r\n/g, '\n').trim()
+  if (!raw) return { title: '', details: [] }
+
+  const parts = raw.split(/(?:\n\s*)?Comprend\s*:\s*/i)
+  if (parts.length < 2) return { title: pdfText(raw), details: [] }
+
+  const title = pdfText(parts[0].trim())
+  const details = parts.slice(1).join('\n')
+    .split('\n')
+    .map(line => pdfText(line.replace(/^\s*[-•]\s*/, '').trim()))
+    .filter(Boolean)
+
+  return { title, details }
+}
+
+type DimItem = {
+  length_m?: number | null
+  width_m?: number | null
+  height_m?: number | null
+  dim_quantity?: number | null
+  dimension_pricing_mode?: string | null
+}
+
+export function formatDimDetail(item: DimItem): string | null {
+  const L = item.length_m
+  const W = item.width_m
+  const H = item.height_m
+  const N = (item.dim_quantity ?? 1) > 1 ? item.dim_quantity! : null
+
+  // Infer mode from available dimensions if not provided
+  let mode = item.dimension_pricing_mode
+  if (!mode || mode === 'none') {
+    if (H) mode = 'volume'
+    else if (L && W) mode = 'area'
+    else if (L) mode = 'linear'
+    else return null
+  }
+
+  if (!L) return null
+
+  const fmtM = (v: number) => {
+    const s = v % 1 === 0 ? String(v) : v.toFixed(3).replace(/\.?0+$/, '')
+    return `${s} m`
+  }
+
+  let dimStr: string
+  if (mode === 'linear') {
+    dimStr = fmtM(L)
+  } else if (mode === 'area' && W) {
+    dimStr = `${fmtM(L)} x ${fmtM(W)}`
+  } else if (mode === 'volume' && W && H) {
+    dimStr = `${fmtM(L)} x ${fmtM(W)} x ${fmtM(H)}`
+  } else {
+    return null
+  }
+
+  return N ? `(${N} x ${dimStr})` : `(${dimStr})`
 }
 
 // Toujours passer par fmtCurrency pour normaliser les séparateurs de milliers.
@@ -247,6 +307,13 @@ export function makePageStyles() {
       fontFamily: DS.font.body,
       fontSize: DS.size.sm,
       color: DS.color.body,
+    },
+    itemDetailText: {
+      fontFamily: DS.font.body,
+      fontSize: DS.size.xs,
+      color: DS.color.muted,
+      lineHeight: 1.35,
+      marginTop: 3,
     },
     itemTextRight: {
       fontFamily: DS.font.body,

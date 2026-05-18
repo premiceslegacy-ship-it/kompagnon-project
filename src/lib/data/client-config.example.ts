@@ -1,5 +1,5 @@
 // ============================================================
-// client-config.example.ts — Template de configuration client
+// client-config.example.ts - Template de configuration client
 // ============================================================
 //
 // USAGE : Copier ce fichier → remplir pour chaque nouveau client
@@ -41,15 +41,15 @@ export type ClientConfig = {
   address_line2?: string
   city: string
   postal_code: string
-  country: string               // ISO 2 lettres — ex: "FR"
+  country: string               // ISO 2 lettres - ex: "FR"
 
   // ── Secteur ──────────────────────────────────────────────────
   sector: SectorId              // Doit correspondre à un secteur dans sector-templates/
   certifications: string[]      // Ex: ["RGE", "Qualibat 7131", "Qualibat 2111"]
-  insurance_info: string        // Ex: "AXA Pro — Police RC décennale n° 12345678"
+  insurance_info: string        // Ex: "AXA Pro - Police RC décennale n° 12345678"
 
   // ── Branding ─────────────────────────────────────────────────
-  primary_color: string         // Hex — Ex: "#2563eb"
+  primary_color: string         // Hex - Ex: "#2563eb"
   logo_url?: string             // URL publique ou chemin /public/logo.svg
   email_from_name: string       // Ex: "Dupont BTP"
   email_from_address: string    // Ex: "contact@dupont-btp.fr" (vérifiée sur Resend)
@@ -61,7 +61,7 @@ export type ClientConfig = {
   last_quote_number: number     // Dernier numéro utilisé (pour continuité)
   last_invoice_number: number   // Dernier numéro utilisé (pour continuité)
   payment_terms_days: number    // 30 | 45 | 60
-  late_penalty_rate: number     // % pénalités retard — ex: 12 (= 3 × taux BCE)
+  late_penalty_rate: number     // % pénalités retard - ex: 12 (= 3 × taux BCE)
   currency: string              // "EUR"
 
   // ── Owner (premier utilisateur) ─────────────────────────────
@@ -82,8 +82,8 @@ export type ClientConfig = {
   // ── Relances automatiques ────────────────────────────────────
   reminders?: {
     enabled: boolean
-    invoice_reminder_days: number[]   // Ex: [2, 7] — J+2, J+7 après échéance
-    quote_reminder_days: number[]     // Ex: [3, 10] — J+3, J+10 après envoi
+    invoice_reminder_days: number[]   // Ex: [3, 7] - J+3, J+7 après envoi
+    quote_reminder_days: number[]     // Ex: [2, 7, 10] - J+2, J+7, J+10 après envoi
   }
 
   // ── Facturation électronique (optionnel, activer en 2026) ────
@@ -96,7 +96,7 @@ export type ClientConfig = {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// EXEMPLE REMPLI — À remplacer par les données réelles du client
+// EXEMPLE REMPLI - À remplacer par les données réelles du client
 // ────────────────────────────────────────────────────────────────────────────
 
 export const CLIENT_CONFIG: ClientConfig = {
@@ -127,7 +127,7 @@ export const CLIENT_CONFIG: ClientConfig = {
   // Secteur
   sector: 'renovation',
   certifications: ['RGE', 'Qualibat 7131'],
-  insurance_info: 'AXA Pro — RC Décennale n° 12345678 / RC Pro n° 87654321',
+  insurance_info: 'AXA Pro - RC Décennale n° 12345678 / RC Pro n° 87654321',
 
   // Branding
   primary_color: '#2563eb',
@@ -162,7 +162,7 @@ export const CLIENT_CONFIG: ClientConfig = {
   // Relances auto
   reminders: {
     enabled: true,
-    invoice_reminder_days: [2, 7],
-    quote_reminder_days: [3, 10],
+    invoice_reminder_days: [3, 7],
+    quote_reminder_days: [2, 7, 10],
   },
 }

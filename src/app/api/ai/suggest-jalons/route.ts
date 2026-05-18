@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { getBusinessContext } from '@/lib/ai/business-context'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 const TEXT_MODEL = 'google/gemini-2.5-flash-lite'
 
@@ -25,6 +26,10 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+
+  if (!await hasPermission('chantiers.edit')) {
+    return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
+  }
 
   if (!process.env.OPENROUTER_API_KEY) {
     return NextResponse.json({ error: 'Clé API IA non configurée' }, { status: 500 })
@@ -67,7 +72,7 @@ export async function POST(req: NextRequest) {
       .single()
     if (quote) {
       const items = (quote.items ?? []).slice(0, 20).map((i: any) => `- ${i.description}`).join('\n')
-      quoteContext = `\nDevis lié : "${quote.title}" — ${quote.total_ht}€ HT\nPrestations :\n${items}`
+      quoteContext = `\nDevis lié : "${quote.title}" - ${quote.total_ht}€ HT\nPrestations :\n${items}`
     }
   }
 
@@ -134,7 +139,7 @@ Format attendu :
     try {
       result = JSON.parse(extractJson(raw))
     } catch {
-      console.error('[ai/suggest-jalons] JSON parse error, raw:', raw.slice(0, 300))
+      console.error('[ai/suggest-jalons] JSON parse error', { responseLength: raw.length })
       return NextResponse.json({ error: 'Réponse IA invalide, veuillez réessayer' }, { status: 500 })
     }
 

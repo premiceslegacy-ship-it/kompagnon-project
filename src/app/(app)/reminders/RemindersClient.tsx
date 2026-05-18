@@ -72,7 +72,7 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
       if (res.error) {
         setError(invoice.id, res.error)
       } else {
-        // Retirer immédiatement — réapparaîtra après le cooldown de 3 jours
+        // Retirer immédiatement - réapparaîtra après le cooldown de 2 jours
         setInvoices(prev => prev.filter(inv => inv.id !== invoice.id))
       }
       setLoadingId(null)
@@ -107,7 +107,7 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
       if (res.error) {
         setError(quote.id, res.error)
       } else {
-        // Retirer immédiatement — réapparaîtra après le cooldown de 3 jours
+        // Retirer immédiatement - réapparaîtra après le cooldown de 2 jours
         setQuotes(prev => prev.filter(q => q.id !== quote.id))
       }
       setLoadingId(null)
@@ -188,7 +188,7 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
       {/* Listes */}
       <div className="rounded-3xl card transition-all duration-300 ease-out overflow-hidden flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-[var(--elevation-border)]">
 
-        {/* Urgences — Factures */}
+        {/* Urgences - Factures */}
         <div className="flex-1 p-8 space-y-6">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-xl font-bold text-primary flex items-center gap-2">
@@ -208,8 +208,8 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
           <div className="space-y-4">
             {invoices.length > 0 ? invoices.map(invoice => (
               <div key={invoice.id} className="p-4 rounded-2xl bg-base/50 border border-[var(--elevation-border)] flex flex-col gap-3 hover:border-red-500/30 transition-colors">
-                <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-3">
-                  <div className="flex flex-col gap-1">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                  <div className="flex flex-col gap-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-primary">{invoice.clientName}</span>
                       {invoice.number && (
@@ -227,15 +227,18 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
                       {invoice.total_ttc != null && (
                         <span className="font-semibold text-primary tabular-nums">{formatCurrency(invoice.total_ttc)}</span>
                       )}
-                      <span className="text-red-500 font-medium">Dépassé de {invoice.daysOverdue} jour{invoice.daysOverdue > 1 ? 's' : ''}</span>
+                      <span className="text-red-500 font-medium">
+                        {invoice.reason === 'overdue' ? 'Dépassé' : 'Envoyée'} depuis {invoice.daysOverdue} jour{invoice.daysOverdue > 1 ? 's' : ''}
+                      </span>
                     </div>
+                    {invoice.title && <p className="text-xs text-secondary">Objet : {invoice.title}</p>}
                     {!invoice.clientEmail && (
                       <p className="text-xs text-amber-500 flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3" />Aucun email — relance par email impossible
+                        <AlertTriangle className="w-3 h-3" />Aucun email - relance par email impossible
                       </p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 w-full xl:w-auto">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={() => handleMarkInvoicePaid(invoice.id)}
                       disabled={!!loadingId || isPending}
@@ -247,7 +250,7 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
                     <button
                       onClick={() => handleSendInvoiceReminder(invoice)}
                       disabled={!!loadingId || isPending}
-                      className="flex-1 xl:flex-none px-4 py-2 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all disabled:opacity-50 disabled:hover:scale-100"
+                      className="px-4 py-2 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all disabled:opacity-50 disabled:hover:scale-100 whitespace-nowrap"
                     >
                       {loadingId === invoice.id
                         ? <><Loader2 className="w-4 h-4 animate-spin" />Envoi...</>
@@ -272,7 +275,7 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
           </div>
         </div>
 
-        {/* En attente — Devis */}
+        {/* En attente - Devis */}
         <div className="flex-1 p-8 space-y-6">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-xl font-bold text-primary flex items-center gap-2">
@@ -292,8 +295,8 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
           <div className="space-y-4">
             {quotes.length > 0 ? quotes.map(quote => (
               <div key={quote.id} className="p-4 rounded-2xl bg-base/50 border border-[var(--elevation-border)] flex flex-col gap-3 hover:border-accent/30 transition-colors">
-                <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-3">
-                  <div className="flex flex-col gap-1">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                  <div className="flex flex-col gap-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-primary">{quote.clientName}</span>
                       {quote.number && (
@@ -313,14 +316,14 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
                       )}
                       <span className="text-accent font-medium">En attente depuis {quote.daysPending} jour{quote.daysPending > 1 ? 's' : ''}</span>
                     </div>
-                    {quote.title && <p className="text-xs text-secondary">{quote.title}</p>}
+                    {quote.title && <p className="text-xs text-secondary">Objet : {quote.title}</p>}
                     {!quote.clientEmail && (
                       <p className="text-xs text-amber-500 flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3" />Aucun email — relance par email impossible
+                        <AlertTriangle className="w-3 h-3" />Aucun email - relance par email impossible
                       </p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 w-full xl:w-auto">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={() => handleMarkQuoteAccepted(quote.id)}
                       disabled={!!loadingId || isPending}
@@ -340,7 +343,7 @@ export default function RemindersClient({ initialData }: { initialData: Reminder
                     <button
                       onClick={() => handleSendQuoteFollowup(quote)}
                       disabled={!!loadingId || isPending}
-                      className="flex-1 xl:flex-none px-4 py-2 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-bold flex items-center justify-center gap-2 hover:bg-accent/10 hover:border-accent hover:text-accent transition-all disabled:opacity-50"
+                      className="px-4 py-2 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-bold flex items-center justify-center gap-2 hover:bg-accent/10 hover:border-accent hover:text-accent transition-all disabled:opacity-50 whitespace-nowrap"
                     >
                       {loadingId === quote.id
                         ? <><Loader2 className="w-4 h-4 animate-spin" />Envoi...</>

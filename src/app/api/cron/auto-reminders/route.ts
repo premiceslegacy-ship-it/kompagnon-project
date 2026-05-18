@@ -12,7 +12,7 @@ import { verifyCronSecret } from '@/lib/cron-auth'
 // ─── Sécurité ─────────────────────────────────────────────────────────────────
 // Appelé par Cloudflare Worker (ou cron-job.org) avec le header X-Cron-Secret
 
-const COOLDOWN_DAYS = 3
+const COOLDOWN_DAYS = 2
 const MAX_RANK = 3 // Au-delà : plus de relance automatique, passage manuel
 
 // ─── Types internes ───────────────────────────────────────────────────────────
@@ -32,6 +32,7 @@ type ReminderItem = {
   id: string
   type: 'invoice' | 'quote'
   invoiceType?: string | null  // 'acompte' | 'situation' | 'solde' | null
+  invoiceReminderReason?: 'sent_unpaid' | 'overdue'
   number: string | null
   clientName: string
   clientEmail: string | null
@@ -79,11 +80,11 @@ export async function POST(req: NextRequest) {
 
   for (const org of orgs as Org[]) {
     if (!org.email_from_address) continue
-    const baseInvoiceDays = org.invoice_reminder_days ?? [2, 7]
+    const baseInvoiceDays = org.invoice_reminder_days ?? [3, 7]
     const invoiceDays = org.reminder_first_delay_days != null
-      ? [org.reminder_first_delay_days, ...baseInvoiceDays.slice(1)]
+      ? [Math.max(3, org.reminder_first_delay_days), ...baseInvoiceDays.slice(1)]
       : baseInvoiceDays
-    const quoteDays = org.quote_reminder_days ?? [3, 7, 10]
+    const quoteDays = org.quote_reminder_days ?? [2, 7, 10]
 
     try {
       const items = await collectItems(supabase, org.id, todayStr, invoiceDays, quoteDays, cooldownCutoff)
@@ -153,7 +154,9 @@ async function collectItems(
   quoteReminderDays: number[],
   cooldownCutoff: string,
 ): Promise<ReminderItem[]> {
+  const maxInvoiceDelay = Math.max(...invoiceReminderDays)
   const maxQuoteDelay = Math.max(...quoteReminderDays)
+  const maxInvoiceSentBefore = new Date(Date.now() - maxInvoiceDelay * 86400000).toISOString()
   const maxQuoteSentBefore = new Date(Date.now() - maxQuoteDelay * 86400000).toISOString()
 
   const [
@@ -163,11 +166,10 @@ async function collectItems(
   ] = await Promise.all([
     supabase
       .from('invoices')
-      .select('id, number, total_ttc, currency, due_date, invoice_type, client_id, client:clients(company_name, contact_name, first_name, last_name, email)')
+      .select('id, number, total_ttc, currency, due_date, sent_at, invoice_type, client_id, client:clients(company_name, contact_name, first_name, last_name, email)')
       .eq('organization_id', orgId)
-      .eq('status', 'sent')
-      .not('due_date', 'is', null)
-      .lt('due_date', todayStr),
+      .in('status', ['sent', 'partial'])
+      .or(`sent_at.lt.${maxInvoiceSentBefore},due_date.lt.${todayStr}`),
 
     supabase
       .from('quotes')
@@ -203,22 +205,26 @@ async function collectItems(
     const rank = info ? info.maxRank + 1 : 1
     const threshold = invoiceReminderDays[rank - 1]
     if (threshold === undefined) continue // plus de palier configuré
-    const daysLate = Math.floor((today.getTime() - new Date(inv.due_date!).getTime()) / 86400000)
-    if (daysLate < threshold) continue // pas encore atteint le seuil
+    const referenceDate = inv.sent_at?.split('T')[0] ?? inv.due_date
+    if (!referenceDate) continue
+    const daysSinceReference = Math.floor((today.getTime() - new Date(referenceDate).getTime()) / 86400000)
+    if (daysSinceReference < threshold) continue // pas encore atteint le seuil
+    const isOverdue = Boolean(inv.due_date && inv.due_date < todayStr)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = inv.client as any
     items.push({
       id: inv.id,
       type: 'invoice',
       invoiceType: inv.invoice_type ?? null,
+      invoiceReminderReason: isOverdue ? 'overdue' : 'sent_unpaid',
       number: inv.number,
       clientName: getClientGreetingName(client),
       clientEmail: client?.email ?? null,
       clientId: inv.client_id,
       amount: inv.total_ttc,
       currency: inv.currency ?? 'EUR',
-      dueOrSentDate: inv.due_date!,
-      daysLate,
+      dueOrSentDate: referenceDate,
+      daysLate: daysSinceReference,
       rank,
     })
   }
@@ -275,7 +281,9 @@ async function generateEmail(
     : item.invoiceType === 'solde' ? 'Facture de solde (dernière après acomptes)'
     : 'Facture'
   const contextStr = item.type === 'invoice'
-    ? `${invoiceTypeLabel} ${item.number ?? ''}${fmtAmount ? `, ${fmtAmount} TTC` : ''}, échéance ${fmtDate} (${item.daysLate}j de retard)`
+    ? item.invoiceReminderReason === 'overdue'
+      ? `${invoiceTypeLabel} ${item.number ?? ''}${fmtAmount ? `, ${fmtAmount} TTC` : ''}, échéance dépassée depuis ${item.daysLate}j`
+      : `${invoiceTypeLabel} ${item.number ?? ''}${fmtAmount ? `, ${fmtAmount} TTC` : ''}, envoyée le ${fmtDate} (${item.daysLate}j sans règlement enregistré)`
     : `Devis ${item.number ?? ''}${item.amount ? `, ${fmtAmount} TTC` : ''}, envoyé le ${fmtDate} (${item.daysLate}j sans réponse)`
 
   const prompt = `Tu rédiges une relance automatique pour ${orgName} (artisan BTP).
@@ -283,7 +291,7 @@ Contexte : ${contextStr}
 Client : ${item.clientName}
 Relance n°${item.rank}, ${toneGuide}
 
-Règles obligatoires : aucun emoji, aucun tiret cadratin (—), français soigné, ton professionnel.
+Règles obligatoires : aucun emoji, aucun tiret cadratin (—), français soigné, ton professionnel. Pour une facture envoyée mais pas encore échue, faire un rappel préventif de règlement sans parler de retard.
 
 Format STRICT :
 Objet: [sujet]

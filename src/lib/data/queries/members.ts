@@ -32,11 +32,17 @@ export type MemberPlanning = {
   chantier_id: string
   chantier_title: string
   chantier_city: string | null
+  chantier_address_line1: string | null
+  chantier_postal_code: string | null
   planned_date: string
   start_time: string | null
   end_time: string | null
   label: string
   notes: string | null
+  route_id: string | null
+  route_order: number | null
+  duration_min: number | null
+  travel_from_prev_min: number | null
 }
 
 /** Membres "fantômes" de l'organisation : sans équipe parente (equipe_id IS NULL). */
@@ -141,9 +147,11 @@ export async function getMemberPlannings(
     .from('chantier_plannings')
     .select(`
       id, chantier_id, planned_date, start_time, end_time, label, notes,
-      chantiers!inner ( title, city )
+      route_id, route_order, duration_min, travel_from_prev_min,
+      chantiers!inner ( title, city, address_line1, postal_code )
     `)
     .order('planned_date', { ascending: true })
+    .order('route_order', { ascending: true, nullsFirst: false })
 
   if (equipeId) {
     q = q.or(`member_id.eq.${memberId},equipe_id.eq.${equipeId}`)
@@ -166,15 +174,21 @@ export async function getMemberPlannings(
     chantier_id:    r.chantier_id,
     chantier_title: r.chantiers?.title ?? '',
     chantier_city:  r.chantiers?.city ?? null,
+    chantier_address_line1: r.chantiers?.address_line1 ?? null,
+    chantier_postal_code: r.chantiers?.postal_code ?? null,
     planned_date:   r.planned_date,
     start_time:     r.start_time,
     end_time:       r.end_time,
     label:          r.label,
     notes:          r.notes,
+    route_id:       r.route_id ?? null,
+    route_order:    r.route_order ?? null,
+    duration_min:   r.duration_min ?? null,
+    travel_from_prev_min: r.travel_from_prev_min ?? null,
   })) as MemberPlanning[]
 }
 
-/** Lookup admin (sans RLS) — utilisé par /mon-espace côté serveur. */
+/** Lookup admin (sans RLS) - utilisé par /mon-espace côté serveur. */
 export async function getMemberByIdAdmin(memberId: string): Promise<IndividualMember | null> {
   const admin = createAdminClient()
   const { data, error } = await admin

@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "main": ".open-next/worker.js",
   "name": "orsayn-cockpit", // à remplacer par le nom du client au déploiement (ex: atelier-weber, atelier-dupont)
+  "keep_vars": true,
   "compatibility_date": "2026-04-24",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {

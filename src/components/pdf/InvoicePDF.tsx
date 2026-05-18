@@ -3,9 +3,11 @@ import { Document, Page, View, Text, Image } from '@react-pdf/renderer'
 import type { Organization } from '@/lib/data/queries/organization'
 import type { InvoiceWithItems } from '@/lib/data/queries/invoices'
 import { APP_NAME } from '@/lib/brand'
-import { registerFonts, makePageStyles, DS, pdfText } from '@/lib/pdf/pdf-design-system'
+import { registerFonts, makePageStyles, DS, pdfText, splitItemDescription, formatDimDetail } from '@/lib/pdf/pdf-design-system'
 
 registerFonts()
+
+const INVOICE_SECTION_UNIT = '__section__'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -20,6 +22,22 @@ function clientDisplayName(client: NonNullable<InvoiceWithItems['client']>): str
     || [client.first_name, client.last_name].filter(Boolean).join(' ')
     || client.email
     || '-'
+}
+
+function ItemDescription({ value, dimDetail, S }: { value: string | null | undefined; dimDetail?: string | null; S: ReturnType<typeof makePageStyles> }) {
+  const parts = splitItemDescription(value)
+
+  return (
+    <View style={S.colDesc}>
+      <Text style={S.itemText}>{parts.title}</Text>
+      {parts.details.length > 0 && (
+        <Text style={S.itemDetailText}>Comprend : {parts.details.join(' · ')}</Text>
+      )}
+      {dimDetail && (
+        <Text style={S.itemDetailText}>{dimDetail}</Text>
+      )}
+    </View>
+  )
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -38,18 +56,21 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
   const isClientPro = invoice.client?.type === 'company'
 
   const invoiceType = invoice.invoice_type ?? 'standard'
+  const isSituation = invoiceType === 'situation' || invoiceType === 'solde'
   const invoiceTypeLabel =
-    invoiceType === 'acompte' ? "FACTURE D'ACOMPTE" :
-    invoiceType === 'solde'   ? 'FACTURE DE SOLDE'  :
+    invoiceType === 'acompte'   ? "FACTURE D'ACOMPTE" :
+    invoiceType === 'solde'     ? 'FACTURE DE SOLDE'  :
+    invoiceType === 'situation' ? `SITUATION DE TRAVAUX N°${invoice.situation_number ?? ''}` :
     'FACTURE'
 
   const items = (invoice.items ?? []).filter(i => !i.is_internal)
+  const billableItems = items.filter(i => i.unit !== INVOICE_SECTION_UNIT)
   const currency = invoice.currency ?? 'EUR'
 
-  const totalHt = items.reduce((s, i) => s + i.quantity * i.unit_price, 0)
+  const totalHt = billableItems.reduce((s, i) => s + i.quantity * i.unit_price, 0)
   const vatMap: Record<number, number> = {}
   if (isVatSubject) {
-    for (const item of items) {
+    for (const item of billableItems) {
       const v = item.quantity * item.unit_price * (item.vat_rate / 100)
       vatMap[item.vat_rate] = (vatMap[item.vat_rate] ?? 0) + v
     }
@@ -100,7 +121,7 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
 
   return (
     <Document
-      title={`Facture ${invoice.number ?? ''} — ${organization.name}`}
+      title={`Facture ${invoice.number ?? ''} - ${organization.name}`}
       author={organization.name}
       subject={`Facture ${invoice.number ?? invoice.title ?? invoice.id}`}
       creator={APP_NAME}
@@ -110,7 +131,7 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
       <Page size="A4" style={S.page}>
 
         {/* ── Header ── */}
-        <View style={S.header}>
+        <View style={isSituation ? [S.header, { marginBottom: DS.space.md, paddingBottom: DS.space.md }] : S.header}>
           <View>
             {organization.logo_url ? (
               <Image style={S.logo} src={organization.logo_url} />
@@ -139,10 +160,17 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
         </View>
 
         {/* ── Title block ── */}
-        <View style={S.titleBlock}>
-          <Text style={S.titleLabel}>
-            {invoiceTypeLabel}{invoice.number ? ` N° ${invoice.number}` : ''}
-          </Text>
+        <View style={isSituation ? [S.titleBlock, { marginBottom: DS.space.md, paddingBottom: DS.space.sm }] : S.titleBlock}>
+          {isSituation && invoice.number ? (
+            <>
+              <Text style={[S.titleLabel, { fontSize: DS.size.xl }]}>{invoiceTypeLabel}</Text>
+              <Text style={[S.titleLabel, { fontSize: DS.size.xl, marginTop: 2 }]}>N° {invoice.number}</Text>
+            </>
+          ) : (
+            <Text style={S.titleLabel}>
+              {invoiceTypeLabel}{invoice.number ? ` N° ${invoice.number}` : ''}
+            </Text>
+          )}
           <View style={{ flexDirection: 'row', gap: DS.space.xl, marginTop: 6 }}>
             {invoice.issue_date && (
               <Text style={S.titleMeta}>Date : {fmtDate(invoice.issue_date)}</Text>
@@ -155,7 +183,7 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
         </View>
 
         {/* ── Address blocks ── */}
-        <View style={S.addressRow}>
+        <View style={isSituation ? [S.addressRow, { marginBottom: DS.space.md }] : S.addressRow}>
           <View style={S.addressBlock}>
             <Text style={S.addressLabel}>Émetteur</Text>
             <Text style={S.addressName}>{pdfText(organization.name)}</Text>
@@ -198,21 +226,50 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
         {organization.decennale_enabled && organization.decennale_assureur && (
           <View style={{ marginBottom: DS.space.lg, paddingVertical: DS.space.md, paddingHorizontal: DS.space.md, borderWidth: 0.5, borderColor: DS.color.divider, backgroundColor: DS.color.surface }} wrap={false}>
             <Text style={{ fontFamily: DS.font.heading, fontWeight: 700, fontSize: DS.size.xxs, color: DS.color.secondary, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: DS.space.sm }}>
-              Garantie décennale — Art. L241-1 Code des assurances
+              Garantie décennale - Art. L241-1 Code des assurances
             </Text>
             <Text style={{ fontFamily: DS.font.body, fontSize: DS.size.sm, color: DS.color.body, lineHeight: 1.5 }}>
               {pdfText(`Assureur : ${organization.decennale_assureur}`)}
               {organization.decennale_police ? pdfText(`  ·  Police n° ${organization.decennale_police}`) : ''}
               {organization.decennale_couverture ? pdfText(`  ·  Couverture : ${organization.decennale_couverture}`) : ''}
               {(organization.decennale_date_debut || organization.decennale_date_fin)
-                ? pdfText(`  ·  Validité : ${organization.decennale_date_debut ? new Date(organization.decennale_date_debut).toLocaleDateString('fr-FR') : '?'} – ${organization.decennale_date_fin ? new Date(organization.decennale_date_fin).toLocaleDateString('fr-FR') : '?'}`)
+                ? pdfText(`  ·  Validité : ${organization.decennale_date_debut ? new Date(organization.decennale_date_debut).toLocaleDateString('fr-FR') : '?'} - ${organization.decennale_date_fin ? new Date(organization.decennale_date_fin).toLocaleDateString('fr-FR') : '?'}`)
                 : ''}
             </Text>
           </View>
         )}
 
+        {/* ── Bloc situation de travaux ── */}
+        {isSituation && (
+          <View style={{ marginBottom: DS.space.md, padding: DS.space.sm, borderWidth: 0.5, borderColor: DS.color.divider, backgroundColor: DS.color.surface }} wrap={false}>
+            <Text style={{ fontFamily: DS.font.heading, fontWeight: 700, fontSize: DS.size.xxs, color: DS.color.secondary, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: DS.space.sm }}>
+              {invoiceTypeLabel}
+            </Text>
+            {invoice.quote_id && (
+              <Text style={{ fontFamily: DS.font.body, fontSize: DS.size.sm, color: DS.color.body, marginBottom: DS.space.xs }}>
+                {pdfText(`Avancement cumulé : ${invoice.cumulative_pct ?? 0}%${invoice.quote_number ? ` · sur devis N° ${invoice.quote_number}` : ''}`)}
+              </Text>
+            )}
+            {invoice.period_from && invoice.period_to && (
+              <Text style={{ fontFamily: DS.font.body, fontSize: DS.size.sm, color: DS.color.body, marginBottom: DS.space.xs }}>
+                {pdfText(`Période d'exécution : du ${new Date(invoice.period_from).toLocaleDateString('fr-FR')} au ${new Date(invoice.period_to).toLocaleDateString('fr-FR')}`)}
+              </Text>
+            )}
+            {invoice.market_reference && (
+              <Text style={{ fontFamily: DS.font.body, fontSize: DS.size.sm, color: DS.color.body, marginBottom: DS.space.xs }}>
+                {pdfText(`Référence marché : ${invoice.market_reference}`)}
+              </Text>
+            )}
+            {(invoice.retention_pct ?? 0) > 0 && (
+              <Text style={{ fontFamily: DS.font.body, fontSize: DS.size.sm, color: DS.color.body }}>
+                {pdfText(`Retenue de garantie : ${invoice.retention_pct}% (${fmt(invoice.retention_amount ?? 0, currency)})`)}
+              </Text>
+            )}
+          </View>
+        )}
+
         {/* ── Notes client ── */}
-        {invoice.notes_client && (
+        {invoice.notes_client && !isSituation && (
           <View style={S.introBox}>
             <Text style={S.introText}>{pdfText(invoice.notes_client)}</Text>
           </View>
@@ -228,22 +285,51 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
           <Text style={[S.tableHeaderText, S.colTotal]}>Total HT</Text>
         </View>
 
-        {items.map(item => (
-          <View key={item.id} style={S.itemRow} wrap={false}>
-            <Text style={[S.itemText, S.colDesc]}>{pdfText(item.description)}</Text>
-            <Text style={[S.itemTextRight, S.colQty]}>{item.quantity}</Text>
-            <Text style={[S.itemText, S.colUnit, { textAlign: 'center' }]}>{pdfText(item.unit)}</Text>
-            <Text style={[S.itemTextRight, S.colPu]}>{fmt(item.unit_price, currency)}</Text>
-            {isVatSubject && <Text style={[S.itemTextRight, S.colVat]}>{item.vat_rate}%</Text>}
-            <Text style={[S.itemTextRight, S.colTotal]}>{fmt(item.quantity * item.unit_price, currency)}</Text>
-          </View>
+        {items.slice(0, -1).map(item => (
+          item.unit === INVOICE_SECTION_UNIT ? (
+            <View key={item.id} style={{ paddingVertical: DS.space.sm, paddingHorizontal: DS.space.md, backgroundColor: DS.color.surface, borderBottomWidth: 0.5, borderBottomColor: DS.color.divider }} wrap={false}>
+              <Text style={{ fontFamily: DS.font.heading, fontWeight: 700, fontSize: DS.size.sm, color: DS.color.black, textTransform: 'uppercase' }}>
+                {pdfText(item.description)}
+              </Text>
+            </View>
+          ) : (
+            <View key={item.id} style={S.itemRow} wrap={false}>
+              <ItemDescription value={item.description} dimDetail={formatDimDetail(item)} S={S} />
+              <Text style={[S.itemTextRight, S.colQty]}>{item.quantity}</Text>
+              <Text style={[S.itemText, S.colUnit, { textAlign: 'center' }]}>{pdfText(item.unit)}</Text>
+              <Text style={[S.itemTextRight, S.colPu]}>{fmt(item.unit_price, currency)}</Text>
+              {isVatSubject && <Text style={[S.itemTextRight, S.colVat]}>{item.vat_rate}%</Text>}
+              <Text style={[S.itemTextRight, S.colTotal]}>{fmt(item.quantity * item.unit_price, currency)}</Text>
+            </View>
+          )
         ))}
 
-        {/* ── Totaux + Paiement ── */}
+        {/* ── Dernière ligne + Totaux + Paiement groupés ensemble ── */}
         <View wrap={false}>
+          {items.length > 0 && (() => {
+            const last = items[items.length - 1]
+            return last.unit === INVOICE_SECTION_UNIT ? (
+              <View style={{ paddingVertical: DS.space.sm, paddingHorizontal: DS.space.md, backgroundColor: DS.color.surface, borderBottomWidth: 0.5, borderBottomColor: DS.color.divider }}>
+                <Text style={{ fontFamily: DS.font.heading, fontWeight: 700, fontSize: DS.size.sm, color: DS.color.black, textTransform: 'uppercase' }}>
+                  {pdfText(last.description)}
+                </Text>
+              </View>
+            ) : (
+              <View style={S.itemRow}>
+                <ItemDescription value={last.description} dimDetail={formatDimDetail(last)} S={S} />
+                <Text style={[S.itemTextRight, S.colQty]}>{last.quantity}</Text>
+                <Text style={[S.itemText, S.colUnit, { textAlign: 'center' }]}>{pdfText(last.unit)}</Text>
+                <Text style={[S.itemTextRight, S.colPu]}>{fmt(last.unit_price, currency)}</Text>
+                {isVatSubject && <Text style={[S.itemTextRight, S.colVat]}>{last.vat_rate}%</Text>}
+                <Text style={[S.itemTextRight, S.colTotal]}>{fmt(last.quantity * last.unit_price, currency)}</Text>
+              </View>
+            )
+          })()}
+
+        {/* ── Totaux + Paiement ── */}
           <View style={{ borderTopWidth: 1, borderTopColor: DS.color.black, marginBottom: DS.space.md }} />
 
-          <View style={S.totalsContainer}>
+          <View style={isSituation ? [S.totalsContainer, { marginTop: DS.space.md }] : S.totalsContainer}>
             <View style={S.totalsBox}>
               <View style={S.totalsRow}>
                 <Text style={S.totalsLabel}>Total HT</Text>
@@ -278,6 +364,18 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
                   <View style={[S.totalTtcRow, { backgroundColor: DS.color.accent, marginTop: DS.space.xs }]}>
                     <Text style={S.totalTtcLabel}>RESTE À CHARGE</Text>
                     <Text style={S.totalTtcValue}>{fmt(Math.max(0, totalTtc - invoice.aid_amount), currency)}</Text>
+                  </View>
+                </>
+              )}
+              {isSituation && (invoice.retention_pct ?? 0) > 0 && (
+                <>
+                  <View style={[S.totalsRow, { marginTop: DS.space.sm }]}>
+                    <Text style={S.totalsLabel}>{pdfText(`Retenue de garantie ${invoice.retention_pct}%`)}</Text>
+                    <Text style={[S.totalsValue, { color: '#ea580c' }]}>{`−${fmt(invoice.retention_amount ?? 0, currency)}`}</Text>
+                  </View>
+                  <View style={[S.totalTtcRow, { backgroundColor: DS.color.accent, marginTop: DS.space.xs }]}>
+                    <Text style={S.totalTtcLabel}>NET À PAYER HT</Text>
+                    <Text style={S.totalTtcValue}>{fmt(Math.max(0, totalHt - (invoice.retention_amount ?? 0)), currency)}</Text>
                   </View>
                 </>
               )}

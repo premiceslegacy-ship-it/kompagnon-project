@@ -16,7 +16,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   Search, Upload, Download, Users, Euro, Filter,
   FileText, Eye, Edit2, X, Loader2, CheckCircle2, AlertCircle, Building2, Trash2,
-  Target, ArrowRight, UserCheck,
+  Target, ArrowRight, UserCheck, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -692,6 +692,9 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
   const importDropdownRef = useRef<HTMLDivElement>(null)
   const [editingClient, setEditingClient] = useState<Client | null>(null)
   const [isPending, startTransition] = useTransition()
+  const [page, setPage] = useState(1)
+
+  const PAGE_SIZE = 20
 
   const statusOptions = [
     { value: 'All',       label: 'Tous' },
@@ -708,7 +711,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
     { value: 'revenue_desc', label: 'Trier par CA' },
   ]
 
-  const filteredClients = initialClients
+  const allFiltered = initialClients
     .filter(client => {
       const name = clientDisplayName(client).toLowerCase()
       const matchesSearch =
@@ -722,6 +725,10 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
       if (sortBy === 'name') return clientDisplayName(a).localeCompare(clientDisplayName(b))
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     })
+
+  const totalPages = Math.max(1, Math.ceil(allFiltered.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const filteredClients = allFiltered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   const totalClients   = initialClients.filter(c => c.status === 'active').length
   const totalPipeline  = initialClients.filter(c => LEAD_STATUSES.includes(c.status ?? '')).length
@@ -755,6 +762,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
     startTransition(async () => {
       const { error } = await deleteClient(clientId)
       if (error) alert(error)
+      else router.refresh()
     })
   }
 
@@ -763,6 +771,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
     startTransition(async () => {
       const { error } = await convertToClient(clientId)
       if (error) alert(error)
+      else router.refresh()
     })
   }
 
@@ -845,13 +854,13 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
               type="text"
               placeholder="Rechercher..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => { setSearchTerm(e.target.value); setPage(1) }}
               className="w-full pl-12 pr-4 py-2.5 rounded-full bg-base border border-[var(--elevation-border)] focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all text-primary text-sm"
             />
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3 w-full xl:w-auto xl:ml-auto">
-            <FilterSelect value={statusFilter} onChange={setStatusFilter} options={statusOptions} />
-            <FilterSelect value={sortBy} onChange={setSortBy} options={sortOptions} />
+            <FilterSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1) }} options={statusOptions} />
+            <FilterSelect value={sortBy} onChange={(v) => { setSortBy(v); setPage(1) }} options={sortOptions} />
           </div>
         </div>
       </div>
@@ -889,18 +898,27 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
       </div>
 
       {/* Table */}
-      <div className="rounded-3xl card overflow-visible">
-        <div className="overflow-x-auto md:overflow-visible">
-          <table className="w-full text-left border-collapse">
+      <div className="rounded-3xl card overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--elevation-border)]">
+          <span className="text-xs text-secondary">
+            {allFiltered.length} contact{allFiltered.length !== 1 ? 's' : ''}
+            {(searchTerm || statusFilter !== 'All') ? ' trouvé' + (allFiltered.length !== 1 ? 's' : '') : ''}
+          </span>
+          {totalPages > 1 && (
+            <span className="text-xs text-secondary">Page {currentPage} / {totalPages}</span>
+          )}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse min-w-[480px]">
             <thead>
               <tr className="border-b border-[var(--elevation-border)] bg-base/30">
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Contact</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Email / Tél.</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Source</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">CA Total</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Paiement</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
+                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Contact</th>
+                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Email / Tél.</th>
+                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
+                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden lg:table-cell">Source</th>
+                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">CA Total</th>
+                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden lg:table-cell">Paiement</th>
+                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className={`divide-y divide-[var(--elevation-border)] ${isPending ? 'opacity-60 pointer-events-none' : ''}`}>
@@ -910,7 +928,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
                 const isLead = LEAD_STATUSES.includes(client.status ?? '')
                 return (
                   <tr key={client.id} className="hover:bg-accent/5 transition-colors group">
-                    <td className="px-6 py-4">
+                    <td className="px-4 md:px-6 py-4">
                       <Link href={`/clients/${client.id}`}>
                         <p className="font-bold text-primary hover:text-accent transition-colors">{name}</p>
                         {client.company_name && client.contact_name && (
@@ -921,27 +939,27 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
                         {client.siret && <p className="text-xs text-secondary tabular-nums">SIRET : {client.siret}</p>}
                       </Link>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 md:px-6 py-4 hidden md:table-cell">
                       {client.email && <p className="text-sm text-primary">{client.email}</p>}
                       {client.phone && <p className="text-xs text-secondary tabular-nums">{client.phone}</p>}
                     </td>
-                    <td className="px-6 py-4">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${badge.cls}`}>
+                    <td className="px-4 md:px-6 py-4">
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${badge.cls}`}>
                         {badge.label}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
                       <p className="text-xs text-secondary">{sourceLabel(client.source)}</p>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-4 md:px-6 py-4 text-right">
                       <p className="text-sm font-bold text-primary tabular-nums">
                         {isLead ? '/' : formatCurrency(client.total_revenue ?? 0)}
                       </p>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
                       <p className="text-sm text-secondary">{client.payment_terms_days ?? 30} j</p>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-4 md:px-6 py-4 text-right">
                       <ActionMenu actions={[
                         { label: 'Voir la fiche', icon: <Eye className="w-4 h-4" />, onClick: () => router.push(`/clients/${client.id}`) },
                         { label: 'Créer un devis', icon: <FileText className="w-4 h-4" />, onClick: () => handleCreateQuote(client) },
@@ -962,6 +980,54 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
             </tbody>
           </table>
         </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-[var(--elevation-border)]">
+            <span className="text-xs text-secondary">
+              {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, allFiltered.length)} sur {allFiltered.length}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4 text-secondary" />
+              </button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+                .reduce<(number | '...')[]>((acc, p, idx, arr) => {
+                  if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push('...')
+                  acc.push(p)
+                  return acc
+                }, [])
+                .map((p, i) =>
+                  p === '...' ? (
+                    <span key={`ellipsis-${i}`} className="px-1 text-xs text-secondary">...</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p as number)}
+                      className={`min-w-[28px] h-7 rounded-lg text-xs font-bold transition-colors ${
+                        currentPage === p ? 'bg-accent text-black' : 'hover:bg-accent/10 text-secondary'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  )
+                )
+              }
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronRight className="w-4 h-4 text-secondary" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   )

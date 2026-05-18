@@ -6,13 +6,30 @@ import { useSearchParams } from 'next/navigation'
 import {
   Building2, Users, ArrowRight, Loader2,
   CheckCircle2, AlertCircle, Plus, Trash2, Copy, Check, KeyRound, Upload, ImageIcon,
+  ChevronDown, MapPin, Landmark, CreditCard,
 } from 'lucide-react'
 import { completeOnboarding, skipInvites, joinViaCode } from './actions'
 import type { OrgRole } from '@/lib/data/queries/roles'
 import { createClient } from '@/lib/supabase/client'
-import { BUSINESS_ACTIVITIES_BY_PROFILE, resolveBusinessSelection, type BusinessActivityId } from '@/lib/catalog-context'
+import { BUSINESS_ACTIVITIES_BY_PROFILE, resolveBusinessSelection, type BusinessActivityId, type BusinessProfile } from '@/lib/catalog-context'
 import { LegalFooter } from '@/components/legal/LegalFooter'
 import { APP_NAME } from '@/lib/brand'
+import {
+  formatBicInput,
+  formatIbanInput,
+  formatPostalCodeInput,
+  formatSirenInput,
+  formatSiretInput,
+  formatVatNumberInput,
+  normalizeBic,
+  normalizeEmail,
+  normalizeFrenchIban,
+  normalizeFrenchVatNumber,
+  normalizePostalCode,
+  normalizeSiret,
+  type OrganizationFieldErrors,
+} from '@/lib/validations/organization'
+import { LEGAL_VAT_RATES } from '@/lib/utils'
 
 const inputCls =
   'w-full px-4 py-3 bg-white/[0.06] border border-white/[0.08] focus:border-accent/50 focus:ring-1 focus:ring-accent/20 rounded-xl text-white text-sm outline-none transition-all placeholder:text-white/20'
@@ -29,15 +46,16 @@ const ERROR_MESSAGES: Record<string, string> = {
   missing_fields:    'Veuillez remplir tous les champs obligatoires.',
   org_not_found:     'Votre espace de travail est introuvable. Veuillez vous reconnecter.',
   org_update_failed: 'La mise à jour de votre espace a échoué. Veuillez réessayer.',
+  invalid_org_details: 'Certaines informations entreprise doivent être corrigées avant de continuer.',
   invalid_code:      'Code entreprise introuvable. Vérifiez le code et réessayez.',
   join_failed:       "Une erreur est survenue lors de la connexion à l'entreprise. Veuillez réessayer.",
 }
 
 type InviteRow = { email: string; roleId: string }
 
-// Étapes owner : 0=welcome, 1=company, 2=team
+// Étapes owner : 0=welcome, 1=company, 2=contact, 3=legal, 4=payment, 5=team
 // Étape joiner : 0=welcome, 'join'=code
-type Step = 0 | 1 | 2 | 'join'
+type Step = 0 | 1 | 2 | 3 | 4 | 5 | 'join'
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus()
@@ -62,15 +80,35 @@ function SubmitButton({ label }: { label: string }) {
   )
 }
 
-type Props = { firstName: string | null; roles: OrgRole[]; joinCode: string | null }
+type Props = { firstName: string | null; initialEmail: string | null; roles: OrgRole[]; joinCode: string | null }
 
-export default function OnboardingClient({ firstName, roles, joinCode }: Props) {
+export default function OnboardingClient({ firstName, initialEmail, roles, joinCode }: Props) {
   const [step, setStep] = useState<Step>(0)
 
   // Owner state
   const [companyName, setCompanyName] = useState('')
   const [selectedActivity, setSelectedActivity] = useState<BusinessActivityId | ''>('')
+  const [openActivityProfile, setOpenActivityProfile] = useState<BusinessProfile>('btp')
   const [siret, setSiret] = useState('')
+  const [vatNumber, setVatNumber] = useState('')
+  const [email, setEmail] = useState(initialEmail ?? '')
+  const [phone, setPhone] = useState('')
+  const [addressLine1, setAddressLine1] = useState('')
+  const [postalCode, setPostalCode] = useState('')
+  const [city, setCity] = useState('')
+  const [formeJuridique, setFormeJuridique] = useState('')
+  const [capitalSocial, setCapitalSocial] = useState('')
+  const [rcs, setRcs] = useState('')
+  const [rcsVille, setRcsVille] = useState('')
+  const [isVatSubject, setIsVatSubject] = useState(true)
+  const [defaultVatRate, setDefaultVatRate] = useState(20)
+  const [iban, setIban] = useState('')
+  const [bic, setBic] = useState('')
+  const [bankName, setBankName] = useState('')
+  const [paymentTermsDays, setPaymentTermsDays] = useState(30)
+  const [latePenaltyRate, setLatePenaltyRate] = useState(3)
+  const [courtCompetent, setCourtCompetent] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<OrganizationFieldErrors>({})
   const defaultRoleId = roles[0]?.id ?? ''
   const [invites, setInvites] = useState<InviteRow[]>([{ email: '', roleId: defaultRoleId }])
 
@@ -137,6 +175,122 @@ export default function OnboardingClient({ firstName, roles, joinCode }: Props) 
     (inv) => inv.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inv.email.trim())
   )
 
+  function setFieldError(field: keyof OrganizationFieldErrors, error?: string) {
+    setFieldErrors((prev) => {
+      const next = { ...prev }
+      if (error) next[field] = error
+      else delete next[field]
+      return next
+    })
+  }
+
+  function validateCompanyStep() {
+    const nextErrors: OrganizationFieldErrors = {}
+    if (!companyName.trim()) nextErrors.name = "Le nom de l'entreprise est obligatoire."
+    if (!selectedActivity) nextErrors.name = nextErrors.name ?? 'Choisissez une activité de référence.'
+    setFieldErrors(nextErrors)
+    return Object.keys(nextErrors).length === 0
+  }
+
+  function validateContactStep() {
+    const nextErrors: OrganizationFieldErrors = {}
+    const normalizedEmail = normalizeEmail(email)
+    const normalizedPostalCode = normalizePostalCode(postalCode)
+    if (!email.trim()) nextErrors.email = "L'email de contact est obligatoire."
+    else if (normalizedEmail.error) nextErrors.email = normalizedEmail.error
+    if (normalizedPostalCode.error) nextErrors.postal_code = normalizedPostalCode.error
+    setFieldErrors(nextErrors)
+    return Object.keys(nextErrors).length === 0
+  }
+
+  function validateLegalStep() {
+    const nextErrors: OrganizationFieldErrors = {}
+    const normalizedSiret = normalizeSiret(siret)
+    const normalizedVat = normalizeFrenchVatNumber(vatNumber)
+    if (normalizedSiret.error) nextErrors.siret = normalizedSiret.error
+    if (isVatSubject && normalizedVat.error) nextErrors.vat_number = normalizedVat.error
+    if (!LEGAL_VAT_RATES.includes(defaultVatRate as typeof LEGAL_VAT_RATES[number])) {
+      nextErrors.default_vat_rate = 'Choisissez un taux de TVA légal.'
+    }
+    setFieldErrors(nextErrors)
+    return Object.keys(nextErrors).length === 0
+  }
+
+  function validatePaymentStep() {
+    const nextErrors: OrganizationFieldErrors = {}
+    const normalizedIban = normalizeFrenchIban(iban)
+    const normalizedBic = normalizeBic(bic)
+    if (normalizedIban.error) nextErrors.iban = normalizedIban.error
+    if (normalizedBic.error) nextErrors.bic = normalizedBic.error
+    if (!Number.isFinite(paymentTermsDays) || paymentTermsDays < 0 || paymentTermsDays > 90) {
+      nextErrors.payment_terms_days = 'Le délai doit être compris entre 0 et 90 jours.'
+    }
+    if (!Number.isFinite(latePenaltyRate) || latePenaltyRate < 0 || latePenaltyRate > 100) {
+      nextErrors.late_penalty_rate = 'Le taux doit être compris entre 0 et 100 %.'
+    }
+    setFieldErrors(nextErrors)
+    return Object.keys(nextErrors).length === 0
+  }
+
+  function FieldError({ field }: { field: keyof OrganizationFieldErrors }) {
+    if (!fieldErrors[field]) return null
+    return <p className="text-xs text-danger/90">{fieldErrors[field]}</p>
+  }
+
+  function ActivityAccordion() {
+    return (
+      <div className="space-y-2">
+        {(Object.entries(BUSINESS_ACTIVITIES_BY_PROFILE) as Array<[BusinessProfile, typeof BUSINESS_ACTIVITIES_BY_PROFILE[BusinessProfile]]>).map(([profileKey, activities]) => {
+          const profile = resolveBusinessSelection({ businessProfile: profileKey }).profileConfig
+          const open = openActivityProfile === profileKey
+          const selectedInProfile = activities.some((activity) => activity.id === selectedActivity)
+          return (
+            <div key={profileKey} className="rounded-xl border border-white/[0.08] bg-white/[0.035] overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setOpenActivityProfile(profileKey)}
+                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-white/75">{profile.onboardingLabel}</span>
+                  {selectedInProfile && (
+                    <span className="mt-0.5 block text-xs text-accent">
+                      {activities.find((activity) => activity.id === selectedActivity)?.label}
+                    </span>
+                  )}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-white/35 transition-transform ${open ? 'rotate-180' : ''}`} />
+              </button>
+              {open && (
+                <div className="px-3 pb-3 space-y-2">
+                  {activities.map((activity) => (
+                    <button
+                      key={activity.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedActivity(activity.id)
+                        setOpenActivityProfile(profileKey)
+                        setFieldError('name')
+                      }}
+                      className={`w-full px-4 py-3 rounded-xl text-left transition-all border ${
+                        selectedActivity === activity.id
+                          ? 'bg-accent/15 border-accent/40 text-accent'
+                          : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:bg-white/[0.07] hover:text-white/70'
+                      }`}
+                    >
+                      <span className="block text-sm font-semibold">{activity.label}</span>
+                      <span className="mt-1 block text-xs leading-relaxed opacity-80">{activity.description}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   return (
     <div className="fixed inset-0 flex flex-col items-center justify-start sm:justify-center bg-[#050505] text-white overflow-y-auto font-body p-4 sm:p-6 pt-8 sm:pt-6">
       {/* Glows */}
@@ -163,7 +317,7 @@ export default function OnboardingClient({ firstName, roles, joinCode }: Props) 
 
       {/* Step dots */}
       <div className="relative z-10 flex items-center gap-2 mb-8">
-        {(step === 'join' ? [0, 1] : [0, 1, 2]).map((_, i) => {
+        {(step === 'join' ? [0, 1] : [0, 1, 2, 3, 4, 5]).map((_, i) => {
           const currentIdx = step === 'join' ? 1 : (step as number)
           return (
             <div
@@ -274,66 +428,32 @@ export default function OnboardingClient({ firstName, roles, joinCode }: Props) 
                     autoComplete="organization"
                     placeholder="Dupont Rénovation"
                     value={companyName}
-                    onChange={(e) => setCompanyName(e.target.value)}
+                    onChange={(e) => {
+                      setCompanyName(e.target.value)
+                      setFieldError('name')
+                    }}
                     className={inputCls}
                   />
+                  <FieldError field="name" />
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
                     Activité de référence <span className="text-accent">*</span>
                   </label>
-                  <div className="space-y-3">
-                    {Object.entries(BUSINESS_ACTIVITIES_BY_PROFILE).map(([profileKey, activities]) => (
-                      <div key={profileKey} className="space-y-2">
-                        <p className="text-[11px] font-semibold tracking-widest uppercase text-white/25">
-                          {resolveBusinessSelection({ businessProfile: profileKey }).profileConfig.onboardingLabel}
-                        </p>
-                        <div className="grid grid-cols-1 gap-2">
-                          {activities.map((activity) => (
-                            <button
-                              key={activity.id}
-                              type="button"
-                              onClick={() => setSelectedActivity(activity.id)}
-                              className={`px-4 py-3 rounded-xl text-left transition-all border ${
-                                selectedActivity === activity.id
-                                  ? 'bg-accent/15 border-accent/40 text-accent'
-                                  : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:bg-white/[0.07] hover:text-white/70'
-                              }`}
-                            >
-                              <span className="block text-sm font-semibold">{activity.label}</span>
-                              <span className="mt-1 block text-xs leading-relaxed opacity-80">{activity.description}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <ActivityAccordion />
                   <p className="text-xs text-white/35">
                     Choisissez l’activité qui correspond le mieux à votre entreprise. Vous pourrez ensuite chiffrer plusieurs types de prestations.
                   </p>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
-                    SIRET
-                    <span className="ml-2 normal-case tracking-normal text-white/25 font-normal">(optionnel)</span>
-                  </label>
-                  <input
-                    type="text"
-                    autoComplete="off"
-                    placeholder="123 456 789 00012"
-                    value={siret}
-                    onChange={(e) => setSiret(e.target.value)}
-                    className={inputCls}
-                  />
                 </div>
 
                 <div className="pt-1">
                   <button
                     type="button"
                     disabled={!companyName.trim() || !selectedActivity}
-                    onClick={() => setStep(2)}
+                    onClick={() => {
+                      if (validateCompanyStep()) setStep(2)
+                    }}
                     className="w-full py-3.5 rounded-pill bg-accent text-black font-bold text-sm hover:opacity-90 active:scale-[0.99] transition-all shadow-glow-accent disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     Continuer
@@ -351,8 +471,235 @@ export default function OnboardingClient({ firstName, roles, joinCode }: Props) 
             </div>
           )}
 
-          {/* ── STEP 2 : Invitations (owner) ── */}
+          {/* ── STEP 2 : Coordonnées (owner) ── */}
           {step === 2 && (
+            <div>
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+                  <MapPin className="w-5 h-5 text-accent" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold font-display">Coordonnées</h2>
+                  <p className="text-xs text-white/40">Ces infos seront reprises sur vos devis et factures.</p>
+                </div>
+              </div>
+
+              <div className="space-y-5">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
+                    Email de contact <span className="text-accent">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    placeholder="contact@entreprise.fr"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value)
+                      setFieldError('email')
+                    }}
+                    className={inputCls}
+                  />
+                  <FieldError field="email" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Téléphone</label>
+                  <input type="tel" autoComplete="tel" placeholder="06 12 34 56 78" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Adresse</label>
+                  <input type="text" autoComplete="street-address" placeholder="12 rue de la Paix" value={addressLine1} onChange={(e) => setAddressLine1(e.target.value)} className={inputCls} />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Code postal</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="postal-code"
+                      placeholder="69007"
+                      value={postalCode}
+                      onChange={(e) => {
+                        setPostalCode(formatPostalCodeInput(e.target.value))
+                        setFieldError('postal_code')
+                      }}
+                      className={`${inputCls} tabular-nums`}
+                    />
+                    <FieldError field="postal_code" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Ville</label>
+                    <input type="text" autoComplete="address-level2" placeholder="Lyon" value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} />
+                  </div>
+                </div>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (validateContactStep()) setStep(3)
+                    }}
+                    className="w-full py-3.5 rounded-pill bg-accent text-black font-bold text-sm hover:opacity-90 active:scale-[0.99] transition-all shadow-glow-accent flex items-center justify-center gap-2"
+                  >
+                    Continuer
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              <button onClick={() => setStep(1)} className="mt-4 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors">Retour</button>
+            </div>
+          )}
+
+          {/* ── STEP 3 : Légal & TVA (owner) ── */}
+          {step === 3 && (
+            <div>
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+                  <Landmark className="w-5 h-5 text-accent" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold font-display">Légal &amp; TVA</h2>
+                  <p className="text-xs text-white/40">Renseignez maintenant ce que vous avez sous la main.</p>
+                </div>
+              </div>
+              <div className="space-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">SIRET</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="123 456 789 00012"
+                      value={siret}
+                      onChange={(e) => {
+                        setSiret(formatSiretInput(e.target.value))
+                        setFieldError('siret')
+                      }}
+                      className={`${inputCls} tabular-nums`}
+                    />
+                    <FieldError field="siret" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">TVA intracom.</label>
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      placeholder="FR12 123 456 789"
+                      value={vatNumber}
+                      onChange={(e) => {
+                        setVatNumber(formatVatNumberInput(e.target.value))
+                        setFieldError('vat_number')
+                      }}
+                      className={`${inputCls} tabular-nums`}
+                      disabled={!isVatSubject}
+                    />
+                    <FieldError field="vat_number" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Forme juridique</label>
+                    <input type="text" placeholder="SAS, SARL, EI..." value={formeJuridique} onChange={(e) => setFormeJuridique(e.target.value)} className={inputCls} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Capital social</label>
+                    <input type="text" placeholder="10 000 €" value={capitalSocial} onChange={(e) => setCapitalSocial(e.target.value)} className={inputCls} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">N° RCS</label>
+                    <input type="text" placeholder="123 456 789" value={rcs} onChange={(e) => setRcs(formatSirenInput(e.target.value))} className={`${inputCls} tabular-nums`} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Ville RCS</label>
+                    <input type="text" placeholder="Paris" value={rcsVille} onChange={(e) => setRcsVille(e.target.value)} className={inputCls} />
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Régime TVA</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button type="button" onClick={() => setIsVatSubject(true)} className={`p-3 rounded-xl border text-left ${isVatSubject ? 'bg-accent/15 border-accent/40 text-accent' : 'bg-white/[0.04] border-white/[0.08] text-white/50'}`}>Assujetti à la TVA</button>
+                    <button type="button" onClick={() => setIsVatSubject(false)} className={`p-3 rounded-xl border text-left ${!isVatSubject ? 'bg-accent/15 border-accent/40 text-accent' : 'bg-white/[0.04] border-white/[0.08] text-white/50'}`}>Franchise en base</button>
+                  </div>
+                  {isVatSubject && (
+                    <select value={defaultVatRate} onChange={(e) => setDefaultVatRate(Number(e.target.value))} className={inputCls}>
+                      <option className="bg-[#111]" value={20}>20 % : taux normal</option>
+                      <option className="bg-[#111]" value={10}>10 % : rénovation</option>
+                      <option className="bg-[#111]" value={5.5}>5,5 % : énergétique</option>
+                    </select>
+                  )}
+                </div>
+                <button type="button" onClick={() => { if (validateLegalStep()) setStep(4) }} className="w-full py-3.5 rounded-pill bg-accent text-black font-bold text-sm hover:opacity-90 active:scale-[0.99] transition-all shadow-glow-accent flex items-center justify-center gap-2">Continuer<ArrowRight className="w-4 h-4" /></button>
+              </div>
+              <button onClick={() => setStep(2)} className="mt-4 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors">Retour</button>
+            </div>
+          )}
+
+          {/* ── STEP 4 : Paiement (owner) ── */}
+          {step === 4 && (
+            <div>
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+                  <CreditCard className="w-5 h-5 text-accent" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold font-display">Paiement &amp; RIB</h2>
+                  <p className="text-xs text-white/40">Formatage automatique, correction immédiate.</p>
+                </div>
+              </div>
+              <div className="space-y-5">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">IBAN</label>
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    placeholder="FR76 3000 6000 0112 3456 7890 189"
+                    value={iban}
+                    onChange={(e) => {
+                      setIban(formatIbanInput(e.target.value))
+                      setFieldError('iban')
+                    }}
+                    className={`${inputCls} font-mono tracking-wider`}
+                  />
+                  <FieldError field="iban" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">BIC / SWIFT</label>
+                    <input type="text" placeholder="BNPAFRPPXXX" value={bic} onChange={(e) => { setBic(formatBicInput(e.target.value)); setFieldError('bic') }} className={`${inputCls} font-mono tracking-wider`} />
+                    <FieldError field="bic" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Banque</label>
+                    <input type="text" placeholder="BNP Paribas" value={bankName} onChange={(e) => setBankName(e.target.value)} className={inputCls} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Délai paiement</label>
+                    <input type="number" min={0} max={90} value={paymentTermsDays} onChange={(e) => { setPaymentTermsDays(Number(e.target.value)); setFieldError('payment_terms_days') }} className={`${inputCls} tabular-nums`} />
+                    <FieldError field="payment_terms_days" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Pénalités (%)</label>
+                    <input type="number" min={0} max={100} step={0.01} value={latePenaltyRate} onChange={(e) => { setLatePenaltyRate(Number(e.target.value)); setFieldError('late_penalty_rate') }} className={`${inputCls} tabular-nums`} />
+                    <FieldError field="late_penalty_rate" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Tribunal compétent</label>
+                  <input type="text" placeholder="Paris" value={courtCompetent} onChange={(e) => setCourtCompetent(e.target.value)} className={inputCls} />
+                  <p className="text-xs text-white/35">Tapez juste la ville, Atelier complètera la mention.</p>
+                </div>
+                <button type="button" onClick={() => { if (validatePaymentStep()) setStep(5) }} className="w-full py-3.5 rounded-pill bg-accent text-black font-bold text-sm hover:opacity-90 active:scale-[0.99] transition-all shadow-glow-accent flex items-center justify-center gap-2">Continuer<ArrowRight className="w-4 h-4" /></button>
+              </div>
+              <button onClick={() => setStep(3)} className="mt-4 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors">Retour</button>
+            </div>
+          )}
+
+          {/* ── STEP 5 : Invitations (owner) ── */}
+          {step === 5 && (
             <div>
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
@@ -399,6 +746,24 @@ export default function OnboardingClient({ firstName, roles, joinCode }: Props) 
                   value={resolvedSelection?.sectorLabel ?? ''}
                 />
                 <input type="hidden" name="siret" value={siret} />
+                <input type="hidden" name="vat_number" value={vatNumber} />
+                <input type="hidden" name="email" value={email} />
+                <input type="hidden" name="phone" value={phone} />
+                <input type="hidden" name="address_line1" value={addressLine1} />
+                <input type="hidden" name="postal_code" value={postalCode} />
+                <input type="hidden" name="city" value={city} />
+                <input type="hidden" name="forme_juridique" value={formeJuridique} />
+                <input type="hidden" name="capital_social" value={capitalSocial} />
+                <input type="hidden" name="rcs" value={rcs} />
+                <input type="hidden" name="rcs_ville" value={rcsVille} />
+                <input type="hidden" name="is_vat_subject" value={isVatSubject ? 'true' : 'false'} />
+                <input type="hidden" name="default_vat_rate" value={defaultVatRate} />
+                <input type="hidden" name="iban" value={iban} />
+                <input type="hidden" name="bic" value={bic} />
+                <input type="hidden" name="bank_name" value={bankName} />
+                <input type="hidden" name="payment_terms_days" value={paymentTermsDays} />
+                <input type="hidden" name="late_penalty_rate" value={latePenaltyRate} />
+                <input type="hidden" name="court_competent" value={courtCompetent} />
                 <input type="hidden" name="logo_url" value={logoUrl} />
 
                 {roles.length > 0 && (
@@ -467,7 +832,7 @@ export default function OnboardingClient({ firstName, roles, joinCode }: Props) 
               </form>
 
               <button
-                onClick={() => setStep(1)}
+                onClick={() => setStep(4)}
                 className="mt-2 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors"
               >
                 Retour

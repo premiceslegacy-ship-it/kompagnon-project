@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { Quote } from '@/lib/data/queries/quotes'
@@ -10,12 +10,15 @@ import { archiveQuote, markQuoteAccepted, duplicateQuote } from '@/lib/data/muta
 import { archiveInvoice, markInvoicePaid, generateDepositInvoice, recordScheduledPayment } from '@/lib/data/mutations/invoices'
 import { createChantierFromQuote } from '@/lib/data/mutations/chantiers'
 import ImportDocumentsModal from './ImportDocumentsModal'
+import SituationsSection from '@/components/situations/SituationsSection'
+import { loadSituationsSummary } from './actions'
+import type { SituationsSummary } from '@/lib/data/queries/invoices'
 import { todayParis } from '@/lib/utils'
 import {
   Search, Plus, FileText, Bot,
   CheckCircle2, Clock, Percent, Wallet, Receipt, AlertTriangle,
   Edit2, Trash2, FileDown, Eye, Repeat, Check, Copy, Landmark, HardHat,
-  ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Upload, Loader2, CalendarClock, X,
+  ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Upload, Loader2, CalendarClock, X, RefreshCw,
 } from 'lucide-react'
 
 // ─── Helpers mois ─────────────────────────────────────────────────────────────
@@ -121,6 +124,7 @@ export default function FinancesClient({
   initialQuotes, initialInvoices,
   canCreateQuote, canEditQuote, canSendQuote, canDeleteQuote,
   canCreateInvoice, canSendInvoice, canRecordPayment, canDeleteInvoice,
+  canCreateSituation = false, canCreateSolde = false,
 }: {
   initialQuotes: Quote[]
   initialInvoices: Invoice[]
@@ -132,6 +136,8 @@ export default function FinancesClient({
   canSendInvoice: boolean
   canRecordPayment: boolean
   canDeleteInvoice: boolean
+  canCreateSituation?: boolean
+  canCreateSolde?: boolean
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -143,9 +149,20 @@ export default function FinancesClient({
   const [quotes, setQuotes] = useState(initialQuotes)
   const [invoices, setInvoices] = useState(initialInvoices)
   const [isNavigating, setIsNavigating] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [loadingScheduleId, setLoadingScheduleId] = useState<string | null>(null)
   const [depositModal, setDepositModal] = useState<{ quoteId: string; quoteTitle: string | null; quoteTtc: number | null } | null>(null)
-  const [statsMonth, setStatsMonth] = useState(getCurrentYM)
-  const [quoteStatsMonth, setQuoteStatsMonth] = useState(getCurrentYM)
+  const [situationsPanel, setSituationsPanel] = useState<{ quoteId: string; quoteTitle: string | null; chantierId: string | null } | null>(null)
+  const [situationsSummary, setSituationsSummary] = useState<SituationsSummary | null>(null)
+  const [situationsSummaryLoading, setSituationsSummaryLoading] = useState(false)
+  const [statsMonth, setStatsMonth] = useState(() => {
+    const m = searchParams.get('month')
+    return m && /^\d{4}-\d{2}$/.test(m) ? m : getCurrentYM()
+  })
+  const [quoteStatsMonth, setQuoteStatsMonth] = useState(() => {
+    const m = searchParams.get('month')
+    return m && /^\d{4}-\d{2}$/.test(m) ? m : getCurrentYM()
+  })
   const [depositRate, setDepositRate] = useState(30)
   const [depositDueDate, setDepositDueDate] = useState('')
   const [depositBalanceDueDate, setDepositBalanceDueDate] = useState('')
@@ -165,7 +182,9 @@ export default function FinancesClient({
   const [paymentRef, setPaymentRef] = useState('')
   const [paymentLoading, setPaymentLoading] = useState(false)
   const [paymentError, setPaymentError] = useState<string | null>(null)
-  const returnTo = `/finances?tab=${activeTab}`
+  const returnTo = activeTab === 'quotes'
+    ? `/finances?tab=quotes&month=${quoteStatsMonth}`
+    : `/finances?tab=invoices&month=${statsMonth}`
   const quoteEditorHref = (id?: string) => buildEditorHref('/finances/quote-editor', { id, returnTo })
   const invoiceEditorHref = (id?: string) => buildEditorHref('/finances/invoice-editor', { id, returnTo })
 
@@ -226,8 +245,8 @@ export default function FinancesClient({
     return matchSearch && matchStatus && matchMonth
   })
 
-  // Stats globales (toutes périodes) — pour les lignes de la table
-  // Stats par mois sélectionné — pour les KPI cards
+  // Stats globales (toutes périodes) - pour les lignes de la table
+  // Stats par mois sélectionné - pour les KPI cards
   const invOfMonth = invoices.filter(inv => invDate(inv).startsWith(statsMonth))
   const invOfPrevMonth = invoices.filter(inv => invDate(inv).startsWith(prevStatsMonth))
 
@@ -245,7 +264,7 @@ export default function FinancesClient({
     inv => (inv.status === 'sent' || inv.status === 'partial') && inv.due_date != null && inv.due_date < today
   ).length
 
-  // CA du mois = factures émises (sent + partial + paid) HT
+  // Montant facturé du mois = factures envoyées ou payées (sent + partial + paid) HT
   const caMois = invOfMonth.filter(inv => ['sent', 'partial', 'paid'].includes(inv.status)).reduce((s, inv) => s + (inv.total_ht ?? 0), 0)
   const caMoisPrev = invOfPrevMonth.filter(inv => ['sent', 'partial', 'paid'].includes(inv.status)).reduce((s, inv) => s + (inv.total_ht ?? 0), 0)
 
@@ -262,14 +281,34 @@ export default function FinancesClient({
   }
 
   const handleMarkPaid = async (id: string) => {
-    await markInvoicePaid(id)
-    setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, status: 'paid' as const } : inv))
+    const res = await markInvoicePaid(id)
+    if (res.error) return
+    setInvoices(prev => prev.map(inv =>
+      inv.id === id
+        ? { ...inv, status: 'paid' as const, total_paid: res.total_paid ?? inv.total_ttc, paid_at: res.paid_at ?? inv.paid_at }
+        : inv
+    ))
   }
 
   const handleRecordScheduledPayment = async () => {
     if (!paymentModal || !paymentScheduleItemId) return
     setPaymentLoading(true)
     setPaymentError(null)
+
+    // Cas sans échéancier : on marque directement comme payée
+    if (paymentScheduleItemId === '__full__') {
+      const res = await markInvoicePaid(paymentModal.invoiceId)
+      setPaymentLoading(false)
+      if (res.error) { setPaymentError(res.error); return }
+      setInvoices(prev => prev.map(inv =>
+        inv.id === paymentModal.invoiceId
+          ? { ...inv, status: 'paid' as const, total_paid: res.total_paid ?? inv.total_ttc, paid_at: res.paid_at ?? inv.paid_at }
+          : inv
+      ))
+      setPaymentModal(null)
+      return
+    }
+
     const scheduleItem = paymentModal.schedule.find(s => s.id === paymentScheduleItemId)
     if (!scheduleItem) { setPaymentError('Échéance introuvable.'); setPaymentLoading(false); return }
     const res = await recordScheduledPayment(paymentModal.invoiceId, paymentScheduleItemId, {
@@ -288,6 +327,17 @@ export default function FinancesClient({
     setPaymentModal(null)
   }
 
+  useEffect(() => {
+    setQuotes(initialQuotes)
+    setInvoices(initialInvoices)
+    setIsRefreshing(false)
+  }, [initialQuotes, initialInvoices])
+
+  const handleRefresh = () => {
+    setIsRefreshing(true)
+    router.refresh()
+  }
+
   const handleMarkQuoteAccepted = async (id: string) => {
     await markQuoteAccepted(id)
     setQuotes(prev => prev.map(q => q.id === id ? { ...q, status: 'accepted' as const } : q))
@@ -301,6 +351,16 @@ export default function FinancesClient({
   const handleCreateChantierFromQuote = async (quoteId: string) => {
     const { chantierId, error } = await createChantierFromQuote(quoteId)
     if (!error && chantierId) { setIsNavigating(true); router.push(`/chantiers/${chantierId}`) }
+  }
+
+  const handleOpenSituations = async (quoteId: string, quoteTitle: string | null) => {
+    setSituationsPanel({ quoteId, quoteTitle, chantierId: null })
+    setSituationsSummary(null)
+    setSituationsSummaryLoading(true)
+    const { summary, chantierId } = await loadSituationsSummary(quoteId)
+    setSituationsPanel({ quoteId, quoteTitle, chantierId })
+    setSituationsSummary(summary)
+    setSituationsSummaryLoading(false)
   }
 
   const handleGenerateDeposit = async () => {
@@ -397,7 +457,7 @@ export default function FinancesClient({
                 <option value="">Sélectionner...</option>
                 {paymentModal.schedule.map(s => (
                   <option key={s.id} value={s.id}>
-                    {s.label} — {s.amount_type === 'percentage' && s.percentage ? `${s.percentage}% · ` : ''}{new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(s.amount)} · {new Date(s.due_date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}
+                    {s.label} - {s.amount_type === 'percentage' && s.percentage ? `${s.percentage}% · ` : ''}{new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(s.amount)} · {new Date(s.due_date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}
                   </option>
                 ))}
               </select>
@@ -544,12 +604,90 @@ export default function FinancesClient({
           </div>
         </div>
       )}
+
+      {/* ── Modal situations de travaux ── */}
+      {situationsPanel && (
+        <div className="modal-overlay">
+          <div className="modal-panel space-y-5 sm:max-w-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+                  <TrendingUp className="w-5 h-5 text-accent" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-primary">Situations de travaux</h2>
+                  <p className="text-xs text-secondary truncate max-w-[240px]">{situationsPanel.quoteTitle ?? 'Devis'}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setSituationsPanel(null); setSituationsSummary(null) }}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex-shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {situationsSummaryLoading && (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-accent" />
+              </div>
+            )}
+
+            {!situationsSummaryLoading && !situationsSummary && (
+              <p className="text-sm text-secondary text-center py-6">
+                Impossible de charger les situations pour ce devis.
+              </p>
+            )}
+
+            {!situationsSummaryLoading && situationsSummary && situationsPanel.chantierId && (
+              <SituationsSection
+                chantierId={situationsPanel.chantierId}
+                summary={situationsSummary}
+                canCreateSituation={canCreateSituation}
+                canCreateSolde={canCreateSolde}
+                returnTo="/finances?tab=quotes"
+              />
+            )}
+
+            {!situationsSummaryLoading && situationsSummary && !situationsPanel.chantierId && (
+              <div className="space-y-4">
+                <SituationsSection
+                  chantierId=""
+                  summary={situationsSummary}
+                  canCreateSituation={false}
+                  canCreateSolde={false}
+                  returnTo="/finances?tab=quotes"
+                />
+                <p className="text-xs text-secondary border-t border-[var(--elevation-border)] pt-3">
+                  Pour créer une situation, ce devis doit être lié à un chantier.{' '}
+                  <button
+                    onClick={() => { setSituationsPanel(null); handleCreateChantierFromQuote(situationsPanel.quoteId) }}
+                    className="text-accent underline"
+                  >
+                    Créer le chantier
+                  </button>
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 text-center md:text-left">
         <div className="flex flex-col gap-2 items-center md:items-start">
           <h1 className="text-4xl font-bold text-primary">Devis & Factures</h1>
           <p className="text-secondary text-lg">Gérez vos documents financiers et suivez vos encaissements.</p>
         </div>
         <div className="flex items-center justify-center md:justify-end gap-3 flex-wrap">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Actualiser"
+            className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center justify-center gap-2 hover:text-primary hover:bg-base transition-all disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            Actualiser
+          </button>
           <button
             onClick={() => { setImportDefaultType(activeTab === 'invoices' ? 'invoices' : 'quotes'); setImportOpen(true) }}
             className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center justify-center gap-2 hover:text-primary hover:bg-base transition-all"
@@ -611,7 +749,7 @@ export default function FinancesClient({
                 </button>
               )}
             </div>
-            {/* Bouton rapport — uniquement onglet factures */}
+            {/* Bouton rapport - uniquement onglet factures */}
             {activeTab === 'invoices' && (
               <button
                 onClick={handleDownloadMonthlyReport}
@@ -627,7 +765,7 @@ export default function FinancesClient({
             )}
           </div>
         )}
-        <div className={`grid grid-cols-1 gap-4 ${activeTab === 'quotes' ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+        <div className={`grid grid-cols-2 gap-4 ${activeTab === 'quotes' ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
           {activeTab === 'quotes' ? (
             <>
               <div className="rounded-3xl card p-6 flex items-center gap-4">
@@ -641,7 +779,7 @@ export default function FinancesClient({
               <div className="rounded-3xl card p-6 flex items-center gap-4">
                 <Wallet className="w-6 h-6 text-accent-green flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Montant émis HT</p>
+                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Montant proposé HT</p>
                   <p className="text-2xl font-bold tabular-nums text-primary">{formatCurrency(qEmisHt)}</p>
                   <DeltaBadge current={qEmisHt} prev={qEmisHtPrev} />
                 </div>
@@ -668,7 +806,7 @@ export default function FinancesClient({
               <div className="rounded-3xl card p-6 flex items-center gap-4">
                 <Wallet className="w-6 h-6 text-accent-green flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">CA émis HT</p>
+                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Montant facturé HT</p>
                   <p className="text-2xl font-bold tabular-nums text-primary">{formatCurrency(caMois)}</p>
                   {caMoisPrev > 0 || caMois > 0 ? (
                     <DeltaBadge current={caMois} prev={caMoisPrev} />
@@ -758,7 +896,7 @@ export default function FinancesClient({
                         </p>
                       </td>
                       <td className="px-6 py-4">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${st.cls}`}>
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${st.cls}`}>
                           {st.label}
                         </span>
                       </td>
@@ -781,9 +919,12 @@ export default function FinancesClient({
                           </a>
                           <ActionMenu actions={[
                             ...(canSendQuote && (q.status === 'sent' || q.status === 'viewed') ? [{ label: 'Marquer accepté', icon: <Check className="w-4 h-4" />, onClick: () => handleMarkQuoteAccepted(q.id) }] : []),
-                            ...(canCreateInvoice && q.status === 'accepted' ? [
+                            ...(canCreateInvoice && (q.status === 'accepted' || q.status === 'converted' || q.status === 'fully_invoiced') ? [
                               { label: 'Générer acompte', icon: <Landmark className="w-4 h-4" />, onClick: () => { setDepositRate(30); setDepositDueDate(''); setDepositBalanceDueDate(''); setDepositError(null); setDepositModal({ quoteId: q.id, quoteTitle: q.title, quoteTtc: q.total_ttc }) } },
                               { label: 'Créer chantier', icon: <HardHat className="w-4 h-4" />, onClick: () => handleCreateChantierFromQuote(q.id) },
+                            ] : []),
+                            ...((canCreateSituation || canCreateSolde) && (q.status === 'accepted' || q.status === 'converted' || q.status === 'fully_invoiced') ? [
+                              { label: 'Situations de travaux', icon: <TrendingUp className="w-4 h-4" />, onClick: () => handleOpenSituations(q.id, q.title) },
                             ] : []),
                             ...(canEditQuote ? [{ label: 'Modifier', icon: <Edit2 className="w-4 h-4" />, onClick: () => router.push(quoteEditorHref(q.id)) }] : []),
                             ...(canCreateQuote ? [{ label: 'Dupliquer', icon: <Copy className="w-4 h-4" />, onClick: () => handleDuplicateQuote(q.id) }] : []),
@@ -837,7 +978,7 @@ export default function FinancesClient({
                         </p>
                       </td>
                       <td className="px-6 py-4">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${st.cls}`}>
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${st.cls}`}>
                           {st.label}
                         </span>
                       </td>
@@ -858,26 +999,46 @@ export default function FinancesClient({
                           >
                             <FileDown className="w-4 h-4" />
                           </a>
+                          {canRecordPayment && inv.status === 'sent' && (
+                            <button
+                              onClick={() => handleMarkPaid(inv.id)}
+                              title="Marquer payée"
+                              className="w-8 h-8 rounded-lg flex items-center justify-center text-accent-green hover:bg-accent-green/10 transition-colors"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                            </button>
+                          )}
                           <ActionMenu actions={[
                             ...(canSendInvoice ? [{ label: 'Modifier', icon: <Edit2 className="w-4 h-4" />, onClick: () => router.push(invoiceEditorHref(inv.id)) }] : []),
                             ...(canCreateInvoice ? [{ label: 'Convertir en récurrente', icon: <Repeat className="w-4 h-4" />, onClick: () => router.push(`/finances/recurring?from_invoice=${inv.id}`) }] : []),
                             ...(canRecordPayment && (inv.status === 'sent' || inv.status === 'partial') ? [{
                               label: 'Encaisser un versement',
-                              icon: <CalendarClock className="w-4 h-4" />,
+                              icon: loadingScheduleId === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />,
                               onClick: async () => {
-                                const res = await fetch(`/api/invoices/${inv.id}/schedule`)
-                                const data = await res.json()
-                                const unpaid = (data.schedule ?? []).filter((s: any) => !s.paid_payment_id)
-                                if (unpaid.length === 0) return
-                                setPaymentScheduleItemId(unpaid[0].id)
-                                setPaymentDate(todayParis())
-                                setPaymentMethod('virement')
-                                setPaymentRef('')
-                                setPaymentError(null)
-                                setPaymentModal({ invoiceId: inv.id, invoiceNumber: inv.number, schedule: unpaid })
+                                setLoadingScheduleId(inv.id)
+                                try {
+                                  const res = await fetch(`/api/invoices/${inv.id}/schedule`)
+                                  const data = await res.json()
+                                  const unpaid = (data.schedule ?? []).filter((s: any) => !s.paid_payment_id)
+                                  const scheduleToShow = unpaid.length > 0 ? unpaid : [{
+                                    id: '__full__',
+                                    label: 'Paiement intégral',
+                                    due_date: todayParis(),
+                                    amount: inv.total_ttc ?? 0,
+                                    amount_type: 'amount',
+                                    percentage: null,
+                                  }]
+                                  setPaymentScheduleItemId(scheduleToShow[0].id)
+                                  setPaymentDate(todayParis())
+                                  setPaymentMethod('virement')
+                                  setPaymentRef('')
+                                  setPaymentError(null)
+                                  setPaymentModal({ invoiceId: inv.id, invoiceNumber: inv.number, schedule: scheduleToShow })
+                                } finally {
+                                  setLoadingScheduleId(null)
+                                }
                               },
                             }] : []),
-                            ...(canRecordPayment && inv.status === 'sent' ? [{ label: 'Marquer payée', icon: <CheckCircle2 className="w-4 h-4" />, onClick: () => handleMarkPaid(inv.id) }] : []),
                             ...(canDeleteInvoice ? [{ label: 'Archiver', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => handleArchiveInvoice(inv.id) }] : []),
                           ]} />
                         </div>

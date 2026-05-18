@@ -4,7 +4,7 @@ import { hasPermission } from '@/lib/data/queries/membership'
 import FinancesClient from './FinancesClient'
 
 export default async function FinancesPage() {
-  const [quotes, invoices, canCreateQuote, canEditQuote, canSendQuote, canDeleteQuote, canCreateInvoice, canSendInvoice, canRecordPayment, canDeleteInvoice] = await Promise.all([
+  const [quotes, invoices, canCreateQuote, canEditQuote, canSendQuote, canDeleteQuote, canCreateInvoice, canSendInvoice, canRecordPayment, canDeleteInvoice, canCreateSituation, canCreateSolde] = await Promise.all([
     getQuotes(),
     getInvoices(),
     hasPermission('quotes.create'),
@@ -15,6 +15,8 @@ export default async function FinancesPage() {
     hasPermission('invoices.send'),
     hasPermission('invoices.record_payment'),
     hasPermission('invoices.delete'),
+    hasPermission('invoices.create_situation'),
+    hasPermission('invoices.create_solde'),
   ])
   return (
     <FinancesClient
@@ -28,6 +30,8 @@ export default async function FinancesPage() {
       canSendInvoice={canSendInvoice}
       canRecordPayment={canRecordPayment}
       canDeleteInvoice={canDeleteInvoice}
+      canCreateSituation={canCreateSituation}
+      canCreateSolde={canCreateSolde}
     />
   )
 }

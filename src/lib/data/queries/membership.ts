@@ -3,6 +3,7 @@ import { cache } from 'react'
 
 export type CurrentMembershipContext = {
   userId: string
+  membershipId: string
   email: string | null
   organizationId: string
   roleSlug: string | null
@@ -17,7 +18,7 @@ export const getCurrentMembershipContext = cache(async function getCurrentMember
 
   const { data, error } = await supabase
     .from('memberships')
-    .select('organization_id, roles(name, slug)')
+    .select('id, organization_id, roles(name, slug)')
     .eq('user_id', user.id)
     .eq('is_active', true)
     .single()
@@ -28,6 +29,7 @@ export const getCurrentMembershipContext = cache(async function getCurrentMember
 
   return {
     userId: user.id,
+    membershipId: data.id,
     email: user.email ?? null,
     organizationId: data.organization_id,
     roleSlug: role?.slug ?? null,
@@ -77,4 +79,21 @@ export const getUserPermissions = cache(async function getUserPermissions(): Pro
 export async function hasPermission(key: string): Promise<boolean> {
   const perms = await getUserPermissions()
   return perms.has('*') || perms.has(key)
+}
+
+/**
+ * Variante stricte pour les Server Actions : retourne un message d'erreur
+ * standard si la permission manque.
+ */
+export async function requirePermission(key: string): Promise<string | null> {
+  return await hasPermission(key) ? null : 'Action non autorisée.'
+}
+
+/**
+ * Les taux horaires sont des données de coût interne.
+ * Ils restent réservés aux owners/admins, indépendamment des permissions chantier.
+ */
+export async function canManageLaborRates(): Promise<boolean> {
+  const membership = await getCurrentMembershipContext()
+  return membership?.roleSlug === 'owner' || membership?.roleSlug === 'admin'
 }

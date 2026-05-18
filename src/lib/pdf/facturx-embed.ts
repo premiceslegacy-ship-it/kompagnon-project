@@ -1,6 +1,6 @@
 // Embarque un XML Factur-X dans un PDF existant.
 // Le XML CII EN 16931 est accessible via /Names/EmbeddedFiles + /AF.
-// Le XMP Metadata est un stream non compressé (PDFRawStream) — obligatoire pour les validateurs.
+// Le XMP Metadata est un stream non compressé (PDFRawStream) - obligatoire pour les validateurs.
 
 import { AFRelationship, PDFDocument, PDFName, PDFRawStream, PDFString } from 'pdf-lib'
 import { FACTURX_FILENAME, FACTURX_VERSION, FACTURX_XMP_NAMESPACE, normalizeFacturxConformanceLevel } from '@/lib/pdf/facturx-profile'
@@ -189,7 +189,7 @@ export async function embedFacturXml(
   addOutputIntent(pdfDoc)
   pdfDoc.catalog.set(PDFName.of('PageMode'), PDFName.of('UseAttachments'))
 
-  // XMP Metadata — stream NON compressé (PDFRawStream obligatoire)
+  // XMP Metadata - stream NON compressé (PDFRawStream obligatoire)
   const xmpString = buildXmpMetadata(metadata)
   const xmpBytes = new TextEncoder().encode(xmpString)
   const xmpDict = pdfDoc.context.obj({

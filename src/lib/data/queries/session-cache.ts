@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 
 /**
  * Retourne l'utilisateur Supabase Auth pour le render courant.
- * Dédupliqué via React cache() — un seul appel réseau par render, peu importe
+ * Dédupliqué via React cache() - un seul appel réseau par render, peu importe
  * combien de Server Components l'importent.
  */
 export const getCachedUser = cache(async () => {

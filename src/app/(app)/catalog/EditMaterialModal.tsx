@@ -5,6 +5,7 @@ import { X, AlertCircle, Loader2 } from 'lucide-react'
 import { type CatalogMaterial } from '@/lib/data/queries/catalog'
 import { updateMaterial } from '@/lib/data/mutations/catalog'
 import { UnitSelect } from '@/components/ui/UnitSelect'
+import { NumericInput } from '@/components/ui/NumericInput'
 import DimensionConfigEditor, { type EditableDimensionSchemaState, type EditableVariantState } from '@/components/catalog/DimensionConfigEditor'
 import {
   buildCatalogPricingPreview,
@@ -285,21 +286,21 @@ export function EditMaterialModal({ material, categories, catalogContext, onClos
             <div className="space-y-2">
               <label className="text-sm font-semibold text-secondary">{material.item_kind === 'service' ? 'Coût de revient (HT)' : "Coût d'achat (HT)"}</label>
               <div className="relative">
-                <input type="number" step="0.01" value={purchasePrice} onChange={e => handlePurchaseChange(e.target.value)} className={`${inputCls} pr-8`} />
+                <NumericInput decimals={2} value={purchasePrice === '' ? null : parseFloat(purchasePrice)} onChange={v => handlePurchaseChange(v == null ? '' : String(v))} className={`${inputCls} pr-8`} />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-secondary">€</span>
               </div>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-semibold text-secondary">Marge cible (%)</label>
               <div className="relative">
-                <input type="number" value={marginRate} onChange={e => handleMarginChange(e.target.value)} className={`${inputCls} pr-8`} />
+                <NumericInput decimals={2} value={marginRate === '' ? null : parseFloat(marginRate)} onChange={v => handleMarginChange(v == null ? '' : String(v))} className={`${inputCls} pr-8`} />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-secondary">%</span>
               </div>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-semibold text-secondary">Prix de vente HT</label>
               <div className="relative">
-                <input type="number" step="0.01" value={computedSalePrice} onChange={e => setSalePrice(e.target.value)} className={`${inputCls} pr-8`} />
+                <NumericInput decimals={2} value={computedSalePrice === '' ? null : parseFloat(computedSalePrice)} onChange={v => setSalePrice(v == null ? '' : String(v))} className={`${inputCls} pr-8`} />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-secondary">€</span>
               </div>
             </div>
@@ -338,18 +339,18 @@ export function EditMaterialModal({ material, categories, catalogContext, onClos
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="space-y-2">
                         <label className="text-xs font-semibold text-secondary uppercase tracking-wider">{dimensionSchemaState.length.label} ({dimensionSchemaState.length.unit})</label>
-                        <input type="number" min="0" step="0.001" value={baseLength} onChange={e => setBaseLength(e.target.value)} placeholder="1.000" className={`${inputCls} ${(!baseLength || parseFloat(baseLength) <= 0) ? 'border-amber-400/60' : ''}`} />
+                        <NumericInput min={0} decimals={3} value={baseLength === '' ? null : parseFloat(baseLength)} onChange={v => setBaseLength(v == null ? '' : String(v))} placeholder="1.000" className={`${inputCls} ${(!baseLength || parseFloat(baseLength) <= 0) ? 'border-amber-400/60' : ''}`} />
                       </div>
                       {(dimMode === 'area' || dimMode === 'volume') && (
                         <div className="space-y-2">
                           <label className="text-xs font-semibold text-secondary uppercase tracking-wider">{dimensionSchemaState.width.label} ({dimensionSchemaState.width.unit})</label>
-                          <input type="number" min="0" step="0.001" value={baseWidth} onChange={e => setBaseWidth(e.target.value)} placeholder="1.000" className={`${inputCls} ${(!baseWidth || parseFloat(baseWidth) <= 0) ? 'border-amber-400/60' : ''}`} />
+                          <NumericInput min={0} decimals={3} value={baseWidth === '' ? null : parseFloat(baseWidth)} onChange={v => setBaseWidth(v == null ? '' : String(v))} placeholder="1.000" className={`${inputCls} ${(!baseWidth || parseFloat(baseWidth) <= 0) ? 'border-amber-400/60' : ''}`} />
                         </div>
                       )}
                       {dimMode === 'volume' && (
                         <div className="space-y-2">
                           <label className="text-xs font-semibold text-secondary uppercase tracking-wider">{dimensionSchemaState.height.label} ({dimensionSchemaState.height.unit})</label>
-                          <input type="number" min="0" step="0.001" value={baseHeight} onChange={e => setBaseHeight(e.target.value)} placeholder="0.100" className={`${inputCls} ${(!baseHeight || parseFloat(baseHeight) <= 0) ? 'border-amber-400/60' : ''}`} />
+                          <NumericInput min={0} decimals={3} value={baseHeight === '' ? null : parseFloat(baseHeight)} onChange={v => setBaseHeight(v == null ? '' : String(v))} placeholder="0.100" className={`${inputCls} ${(!baseHeight || parseFloat(baseHeight) <= 0) ? 'border-amber-400/60' : ''}`} />
                         </div>
                       )}
                     </div>

@@ -3,12 +3,15 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 /**
  * Sauvegarde les paramètres email de l'organisation.
  * Le client configure ici le nom et l'adresse expéditeur (vérifiée sur Resend).
  */
 export async function updateEmailSettings(formData: FormData): Promise<{ error: string | null }> {
+  if (!(await hasPermission('settings.edit_emails'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
 
   const organizationId = await getCurrentOrganizationId()

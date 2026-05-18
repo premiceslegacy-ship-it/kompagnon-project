@@ -4,6 +4,7 @@ import React from 'react'
 import { revalidatePath } from 'next/cache'
 import { renderToBuffer } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import {
   CreateInvoiceSchema,
@@ -20,6 +21,8 @@ import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import InvoicePDF from '@/components/pdf/InvoicePDF'
 import { coerceLegalVatRate } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
+import { renderInvoicePdfBufferById, renderContractPdfBufferById } from '@/lib/pdf/server'
+import { syncInvoiceMemoryEntry } from '@/lib/data/mutations/document-memory'
 
 type Result = { error: string | null }
 
@@ -34,11 +37,51 @@ function wrapHtml(orgName: string, bodyText: string): string {
   return `<div style="max-width:560px;margin:0 auto;font-family:sans-serif"><div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0"><p style="color:white;font-weight:bold;margin:0;font-size:16px">${orgName}</p></div><div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">${bodyHtml}</div></div>`
 }
 
+type ProratedInvoiceRow = {
+  invoice_id: string
+  description: string
+  quantity: number
+  unit: string | null
+  unit_price: number
+  vat_rate: number
+  is_internal: boolean
+  position: number
+}
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100
+}
+
+function buildProratedInvoiceRows(invoiceId: string, items: any[], ratio: number): ProratedInvoiceRow[] {
+  return items.map((item: any, idx: number) => ({
+    invoice_id: invoiceId,
+    description: item.description,
+    quantity: Number(item.quantity) || 0,
+    unit: item.unit ?? null,
+    unit_price: roundMoney((Number(item.unit_price) || 0) * ratio),
+    unit_cost_ht: item.unit_cost_ht ?? null,
+    vat_rate: coerceLegalVatRate(Number(item.vat_rate), 20),
+    is_internal: item.is_internal ?? false,
+    position: idx,
+  }))
+}
+
+function calculateInvoiceTotals(rows: ProratedInvoiceRow[]) {
+  const clientRows = rows.filter(row => !row.is_internal)
+  const totalHt = roundMoney(clientRows.reduce((sum, row) => sum + row.quantity * row.unit_price, 0))
+  const totalTva = roundMoney(clientRows.reduce((sum, row) => sum + row.quantity * row.unit_price * (row.vat_rate / 100), 0))
+  return {
+    totalHt,
+    totalTva,
+    totalTtc: roundMoney(totalHt + totalTva),
+  }
+}
+
 // ─── Save invoice items ────────────────────────────────────────────────────────
 
 export async function saveInvoiceItems(
   invoiceId: string,
-  items: { description: string; quantity: number; unit: string; unit_price: number; vat_rate: number; is_internal?: boolean; length_m?: number | null; width_m?: number | null; height_m?: number | null; material_id?: string | null }[],
+  items: { description: string; quantity: number; unit: string; unit_price: number; unit_cost_ht?: number | null; vat_rate: number; is_internal?: boolean; length_m?: number | null; width_m?: number | null; height_m?: number | null; dim_quantity?: number; material_id?: string | null }[],
   meta: {
     clientId: string | null
     issueDate: string
@@ -79,11 +122,13 @@ export async function saveInvoiceItems(
       quantity: item.quantity,
       unit: item.unit || null,
       unit_price: item.unit_price,
+      unit_cost_ht: item.unit_cost_ht ?? null,
       vat_rate: coerceLegalVatRate(item.vat_rate, 20),
       is_internal: item.is_internal ?? false,
       length_m: item.length_m ?? null,
       width_m: item.width_m ?? null,
       height_m: item.height_m ?? null,
+      dim_quantity: item.dim_quantity ?? 1,
       material_id: item.material_id ?? null,
       position: idx,
     }))
@@ -117,6 +162,7 @@ export async function saveInvoiceItems(
     .eq('organization_id', orgId)
 
   if (updateError) return { error: updateError.message }
+  await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
   revalidatePath('/finances')
   return { error: null }
 }
@@ -128,22 +174,73 @@ export async function saveInvoiceItems(
  * Met le statut à 'paid', enregistre la date de paiement,
  * et envoie un email de remerciement au client.
  */
-export async function markInvoicePaid(invoiceId: string): Promise<Result> {
+export async function markInvoicePaid(invoiceId: string): Promise<Result & { total_paid?: number; paid_at?: string }> {
   if (!(await hasPermission('invoices.record_payment'))) return { error: 'Permission refusée.' }
 
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Non authentifié.' }
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
 
   const paidAt = new Date()
+  const paymentDate = paidAt.toISOString().split('T')[0]
+
+  const { data: invoiceBeforePayment, error: invoiceError } = await supabase
+    .from('invoices')
+    .select('id, number, title, status, total_ttc, total_paid, currency, client_id')
+    .eq('id', invoiceId)
+    .eq('organization_id', orgId)
+    .single()
+
+  if (invoiceError || !invoiceBeforePayment) return { error: invoiceError?.message ?? 'Facture introuvable.' }
+  if (!['sent', 'partial'].includes(invoiceBeforePayment.status)) {
+    return { error: 'Cette facture ne peut pas être marquée comme payée.' }
+  }
+
+  const { data: existingPayments, error: paymentsError } = await supabase
+    .from('payments')
+    .select('amount')
+    .eq('invoice_id', invoiceId)
+    .eq('organization_id', orgId)
+
+  if (paymentsError) return { error: paymentsError.message }
+
+  const totalTtc = roundMoney(invoiceBeforePayment.total_ttc ?? 0)
+  const paymentsTotal = roundMoney(
+    (existingPayments ?? []).reduce((sum, payment) => sum + (payment.amount ?? 0), 0)
+  )
+  const alreadyPaid = Math.max(paymentsTotal, roundMoney(invoiceBeforePayment.total_paid ?? 0))
+  const amountToRecord = roundMoney(Math.max(0, totalTtc - alreadyPaid))
+
+  if (amountToRecord > 0) {
+    const { error: paymentError } = await supabase
+      .from('payments')
+      .insert({
+        organization_id: orgId,
+        invoice_id: invoiceId,
+        client_id: invoiceBeforePayment.client_id,
+        amount: amountToRecord,
+        payment_date: paymentDate,
+        method: 'manual',
+        notes: 'Paiement total enregistré depuis la liste des factures',
+        created_by: user.id,
+      })
+
+    if (paymentError) return { error: paymentError.message }
+  }
+
+  const totalPaid = roundMoney(alreadyPaid + amountToRecord)
 
   const { error } = await supabase
     .from('invoices')
-    .update({ status: 'paid', paid_at: paidAt.toISOString() })
+    .update({ status: 'paid', total_paid: totalPaid, paid_at: paidAt.toISOString() })
     .eq('id', invoiceId)
     .eq('organization_id', orgId)
 
   if (error) return { error: error.message }
+  await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
 
   // Charger les infos de la facture + client + org pour l'email
   const { data: invoice } = await supabase
@@ -203,7 +300,8 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result> {
 
   revalidatePath('/finances')
   revalidatePath('/clients')
-  return { error: null }
+  revalidatePath('/dashboard')
+  return { error: null, total_paid: totalPaid, paid_at: paidAt.toISOString() }
 }
 
 // ─── Create ───────────────────────────────────────────────────────────────────
@@ -247,6 +345,7 @@ export async function createInvoice(data: {
     return { invoiceId: null, error: 'Erreur lors de la création de la facture.' }
   }
 
+  await syncInvoiceMemoryEntry(supabase, orgId, invoice.id)
   revalidatePath('/finances')
   return { invoiceId: invoice.id, error: null }
 }
@@ -282,7 +381,17 @@ export async function updateInvoice(
     .eq('organization_id', orgId)
 
   if (error) return { error: error.message }
+
+  await supabase
+    .from('invoice_schedules')
+    .update({ status: 'sent', confirmed_at: new Date().toISOString() })
+    .eq('invoice_id', invoiceId)
+    .eq('organization_id', orgId)
+    .eq('status', 'pending_confirmation')
+
+  await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
   revalidatePath('/finances')
+  revalidatePath('/finances/recurring')
   return { error: null }
 }
 
@@ -313,6 +422,7 @@ export async function linkInvoiceToChantier(invoiceId: string, chantierId: strin
     .eq('organization_id', orgId)
 
   if (error) return { error: error.message }
+  await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
   revalidatePath('/finances')
   revalidatePath('/chantiers', 'layout')
   return { error: null }
@@ -320,19 +430,48 @@ export async function linkInvoiceToChantier(invoiceId: string, chantierId: strin
 
 // ─── Send ─────────────────────────────────────────────────────────────────────
 
-export async function sendInvoice(invoiceId: string): Promise<Result> {
+export async function sendInvoice(invoiceId: string, options?: { attachContractIds?: string[] }): Promise<Result> {
   if (!(await hasPermission('invoices.send'))) return { error: 'Permission refusée.' }
 
   const supabase = await createClient()
+  const admin = createAdminClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
 
-  const [invoice, organization] = await Promise.all([
-    getInvoiceById(invoiceId),
+  const [{ data: invoiceData, error: invoiceError }, organization] = await Promise.all([
+    admin
+      .from('invoices')
+      .select(`
+        id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
+        issue_date, due_date, sent_at, paid_at, created_at,
+        notes_client, payment_conditions, aid_label, aid_amount, quote_id, chantier_id, client_id,
+        situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference,
+        client:clients(id, company_name, contact_name, first_name, last_name, email, phone,
+          address_line1, postal_code, city, siret, siren, vat_number, type),
+        items:invoice_items(id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, position, length_m, width_m, height_m, dim_quantity, is_internal, material_id),
+        payment_schedule:invoice_payment_schedule(id, invoice_id, label, due_date, amount, amount_type, percentage, position, paid_payment_id)
+      `)
+      .eq('id', invoiceId)
+      .eq('organization_id', orgId)
+      .order('position', { referencedTable: 'invoice_items', ascending: true })
+      .order('position', { referencedTable: 'invoice_payment_schedule', ascending: true })
+      .single(),
     getOrganization(),
   ])
-  if (!invoice) return { error: 'Facture introuvable.' }
+  if (invoiceError) {
+    console.error('[sendInvoice] invoice lookup error:', invoiceError)
+    return { error: `Erreur de chargement de la facture : ${invoiceError.message}` }
+  }
+  if (!invoiceData) {
+    return { error: 'Facture introuvable.' }
+  }
   if (!organization) return { error: 'Organisation introuvable.' }
+  const invoice = {
+    ...invoiceData,
+    client: Array.isArray(invoiceData.client) ? invoiceData.client[0] ?? null : invoiceData.client ?? null,
+    quote_number: null,
+  } as Awaited<ReturnType<typeof getInvoiceById>>
+  if (!invoice) return { error: 'Facture introuvable.' }
 
   // Récupérer l'email client
   let clientEmail: string | null = null
@@ -348,7 +487,7 @@ export async function sendInvoice(invoiceId: string): Promise<Result> {
   let html: string
 
   if (invoice.invoice_type === 'acompte') {
-    // Template dédié acompte — mentionne le devis parent et le caractère d'avance
+    // Template dédié acompte - mentionne le devis parent et le caractère d'avance
     let quoteNumber: string | null = null
     let quoteTitle: string | null = null
     let depositRate: number | null = null
@@ -415,12 +554,35 @@ export async function sendInvoice(invoiceId: string): Promise<Result> {
   // Générer le PDF
   let attachments: Array<{ filename: string; content: Buffer }> | undefined
   try {
-    const pdfBuffer = await renderToBuffer(
-      React.createElement(InvoicePDF, { invoice, organization }) as any,
-    )
-    attachments = [{ filename: `facture-${invoice.number ?? invoiceId}.pdf`, content: Buffer.from(pdfBuffer) }]
+    const rendered = await renderInvoicePdfBufferById(invoiceId, orgId)
+    if (rendered) {
+      attachments = [{ filename: rendered.fileName, content: rendered.buffer }]
+    } else {
+      const pdfBuffer = await renderToBuffer(
+        React.createElement(InvoicePDF, { invoice, organization }) as any,
+      )
+      attachments = [{ filename: `facture-${invoice.number ?? invoiceId}.pdf`, content: Buffer.from(pdfBuffer) }]
+    }
   } catch (pdfErr) {
     console.error('[sendInvoice] PDF generation error:', pdfErr)
+  }
+
+  // Pièces jointes additionnelles : contrats du client lié
+  const attachContractIds = (options?.attachContractIds ?? []).filter(Boolean)
+  if (attachContractIds.length > 0 && invoice.client_id) {
+    const { data: ownedContracts } = await supabase
+      .from('contracts')
+      .select('id, title, pdf_snapshot')
+      .eq('organization_id', orgId)
+      .eq('client_id', invoice.client_id)
+      .in('id', attachContractIds)
+    for (const c of ownedContracts ?? []) {
+      if (!c.pdf_snapshot) continue
+      const pdf = await renderContractPdfBufferById(c.id, orgId).catch(() => null)
+      if (pdf) {
+        attachments = [...(attachments ?? []), { filename: pdf.fileName, content: pdf.buffer }]
+      }
+    }
   }
 
   // Envoyer l'email
@@ -437,6 +599,7 @@ export async function sendInvoice(invoiceId: string): Promise<Result> {
     .eq('organization_id', orgId)
 
   if (error) return { error: error.message }
+  await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
   revalidatePath('/finances')
   return { error: null }
 }
@@ -473,7 +636,7 @@ export async function generateDepositInvoice(
     .select(`
       id, number, title, status, total_ht, total_tva, total_ttc, currency,
       client_id, payment_conditions,
-      items:quote_items(description, quantity, unit, unit_price, vat_rate, position, is_internal)
+      items:quote_items(description, quantity, unit, unit_price, unit_cost_ht, vat_rate, position, is_internal)
     `)
     .eq('id', quoteId)
     .eq('organization_id', orgId)
@@ -484,11 +647,23 @@ export async function generateDepositInvoice(
     return { invoiceId: null, error: 'Le devis doit être accepté pour générer un acompte.' }
   }
 
+  const { data: chantier } = await supabase
+    .from('chantiers')
+    .select('id')
+    .eq('quote_id', quoteId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+
   const ratio = depositRate / 100
-  // Les totaux du devis excluent déjà les items internes — on les utilise directement
-  const depositHt = Math.round((quote.total_ht ?? 0) * ratio * 100) / 100
-  const depositTva = Math.round((quote.total_tva ?? 0) * ratio * 100) / 100
-  const depositTtc = Math.round((quote.total_ttc ?? 0) * ratio * 100) / 100
+  const items = (quote.items ?? []) as any[]
+  const previewRows = buildProratedInvoiceRows('preview', items, ratio)
+  const rowTotals = previewRows.length > 0
+    ? calculateInvoiceTotals(previewRows)
+    : {
+        totalHt: roundMoney((quote.total_ht ?? 0) * ratio),
+        totalTva: roundMoney((quote.total_tva ?? 0) * ratio),
+        totalTtc: roundMoney((quote.total_ttc ?? 0) * ratio),
+      }
 
   const quoteNum = quote.number ?? quoteId.slice(0, 8)
   const title = `Acompte ${depositRate}% · ${quote.title ?? `Devis ${quoteNum}`}`
@@ -500,14 +675,15 @@ export async function generateDepositInvoice(
       organization_id: orgId,
       client_id: quote.client_id ?? null,
       quote_id: quoteId,
+      chantier_id: chantier?.id ?? null,
       invoice_type: 'acompte',
       title,
       currency: quote.currency ?? 'EUR',
       status: 'draft',
       created_by: user.id,
-      total_ht: depositHt,
-      total_tva: depositTva,
-      total_ttc: depositTtc,
+      total_ht: rowTotals.totalHt,
+      total_tva: rowTotals.totalTva,
+      total_ttc: rowTotals.totalTtc,
       payment_conditions: quote.payment_conditions ?? null,
       notes_client: `Acompte de ${depositRate}% sur devis n° ${quoteNum}`,
       due_date: dueDate ?? null,
@@ -523,23 +699,121 @@ export async function generateDepositInvoice(
 
   // Copier les lignes du devis avec les montants proratisés
   // Les items internes sont copiés avec is_internal=true → masqués du PDF client
-  const items = (quote.items ?? []) as any[]
   if (items.length > 0) {
-    const rows = items.map((item: any, idx: number) => ({
-      invoice_id: invoice.id,
-      description: item.description,
-      quantity: item.quantity,
-      unit: item.unit,
-      unit_price: Math.round(item.unit_price * ratio * 100) / 100,
-      vat_rate: item.vat_rate,
-      is_internal: item.is_internal ?? false,
-      position: idx,
-    }))
+    const rows = buildProratedInvoiceRows(invoice.id, items, ratio)
     await supabase.from('invoice_items').insert(rows)
   }
 
+  await syncInvoiceMemoryEntry(supabase, orgId, invoice.id)
   revalidatePath('/finances')
+  if (chantier?.id) revalidatePath(`/chantiers/${chantier.id}`)
   return { invoiceId: invoice.id, error: null }
+}
+
+// ─── Échéancier de paiement ───────────────────────────────────────────────────
+
+export async function savePaymentSchedule(
+  invoiceId: string,
+  items: { id?: string; label: string; due_date: string; amount: number; amount_type?: 'amount' | 'percentage'; percentage?: number | null; position: number }[],
+): Promise<Result> {
+  if (!(await hasPermission('invoices.edit'))) return { error: 'Permission refusée.' }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Non authentifié.' }
+
+  const { data: inv } = await supabase
+    .from('invoices')
+    .select('id')
+    .eq('id', invoiceId)
+    .eq('organization_id', orgId)
+    .single()
+  if (!inv) return { error: 'Facture introuvable.' }
+
+  const { data: paidSchedule, error: paidErr } = await supabase
+    .from('invoice_payment_schedule')
+    .select('id')
+    .eq('invoice_id', invoiceId)
+    .eq('organization_id', orgId)
+    .not('paid_payment_id', 'is', null)
+  if (paidErr) return { error: paidErr.message }
+
+  const paidIds = new Set((paidSchedule ?? []).map(item => item.id))
+  const submittedPaidItems = items.filter(item => item.id && paidIds.has(item.id))
+  for (const item of submittedPaidItems) {
+    const { error } = await supabase
+      .from('invoice_payment_schedule')
+      .update({ position: item.position })
+      .eq('id', item.id)
+      .eq('invoice_id', invoiceId)
+      .eq('organization_id', orgId)
+      .not('paid_payment_id', 'is', null)
+    if (error) return { error: error.message }
+  }
+
+  const { error: deleteErr } = await supabase
+    .from('invoice_payment_schedule')
+    .delete()
+    .eq('invoice_id', invoiceId)
+    .eq('organization_id', orgId)
+    .is('paid_payment_id', null)
+  if (deleteErr) return { error: deleteErr.message }
+
+  const unpaidItems = items.filter(item => !item.id || !paidIds.has(item.id))
+  if (unpaidItems.some(item => !item.label.trim() || !item.due_date || Number(item.amount) <= 0)) {
+    return { error: 'Chaque échéance doit avoir un label, une date et un montant supérieur à 0.' }
+  }
+  if (unpaidItems.some(item => item.amount_type === 'percentage' && (!(Number(item.percentage) > 0) || Number(item.percentage) > 100))) {
+    return { error: 'Chaque échéance en pourcentage doit être comprise entre 0 et 100%.' }
+  }
+
+  if (unpaidItems.length > 0) {
+    const rows = unpaidItems.map(item => ({
+      invoice_id: invoiceId,
+      organization_id: orgId,
+      label: item.label.trim(),
+      due_date: item.due_date,
+      amount: item.amount,
+      amount_type: item.amount_type ?? 'amount',
+      percentage: item.amount_type === 'percentage' ? item.percentage ?? null : null,
+      position: item.position,
+    }))
+    const { error } = await supabase.from('invoice_payment_schedule').insert(rows)
+    if (error) return { error: error.message }
+  }
+
+  revalidatePath('/finances')
+  return { error: null }
+}
+
+export async function recordScheduledPayment(
+  invoiceId: string,
+  scheduleItemId: string,
+  payment: { amount: number; payment_date: string; method?: string; reference?: string; notes?: string },
+): Promise<Result & { status?: 'partial' | 'paid'; total_paid?: number }> {
+  if (!(await hasPermission('invoices.record_payment'))) return { error: 'Permission refusée.' }
+
+  if (Number(payment.amount) <= 0) return { error: 'Le montant encaissé doit être supérieur à 0.' }
+
+  const supabase = await createClient()
+  const { data, error } = await supabase.rpc('record_invoice_schedule_payment', {
+    p_invoice_id: invoiceId,
+    p_schedule_item_id: scheduleItemId,
+    p_amount: payment.amount,
+    p_payment_date: payment.payment_date,
+    p_method: payment.method ?? null,
+    p_reference: payment.reference ?? null,
+    p_notes: payment.notes ?? null,
+  })
+  if (error) return { error: error.message }
+
+  const result = data as { status?: 'partial' | 'paid'; total_paid?: number } | null
+
+  const orgId = await getCurrentOrganizationId()
+  if (orgId) await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
+  revalidatePath('/finances')
+  revalidatePath('/dashboard')
+  return { error: null, status: result?.status, total_paid: result?.total_paid }
 }
 
 // ─── Archive ──────────────────────────────────────────────────────────────────
@@ -553,7 +827,7 @@ export async function archiveInvoice(invoiceId: string): Promise<Result> {
 
   const { error } = await supabase
     .from('invoices')
-    .update({ status: 'cancelled' })
+    .update({ status: 'cancelled', is_archived: true })
     .eq('id', invoiceId)
     .eq('organization_id', orgId)
 

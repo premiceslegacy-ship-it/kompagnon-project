@@ -78,9 +78,10 @@ type Props = {
   open: boolean
   onClose: () => void
   onCreated: (count: number) => void
+  bundleTemplateLabel?: string
 }
 
-export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
+export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplateLabel = 'Modèle de devis' }: Props) {
   const [mode, setMode] = useState<Mode>('voice')
   const [text, setText] = useState('')
   const [file, setFile] = useState<File | null>(null)
@@ -224,17 +225,17 @@ export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
   if (!open) return null
 
   return (
-    <div className="fixed bottom-20 right-6 z-50 w-full max-w-[480px] flex flex-col rounded-3xl card shadow-2xl overflow-hidden border border-[var(--elevation-border)] animate-in slide-in-from-bottom-4 fade-in duration-300"
+    <div className="fixed bottom-20 right-6 z-50 w-full max-w-[480px] flex flex-col rounded-3xl shadow-2xl overflow-hidden border border-[var(--elevation-border)] animate-in slide-in-from-bottom-4 fade-in duration-300 bg-white dark:bg-[#111118]"
       style={{ maxHeight: 'calc(100vh - 120px)' }}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--elevation-border)] flex-shrink-0 bg-gradient-to-r from-violet-500/10 to-indigo-500/10">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm">
-            <Sparkles className="w-3.5 h-3.5 text-white" />
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm text-white text-[10px] font-bold">
+            L
           </div>
           <div>
-            <p className="font-bold text-primary text-sm">Assistant catalogue</p>
+            <p className="font-bold text-primary text-sm">Léa <span className="font-normal text-secondary">, assistante catalogue</span></p>
             <p className="text-xs text-secondary">Dictez, écrivez ou importez un document</p>
           </div>
         </div>
@@ -255,7 +256,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
                 { id: 'voice' as const, label: 'Vocal', icon: Mic },
                 { id: 'text' as const, label: 'Texte', icon: FileText },
                 { id: 'pdf' as const, label: 'Document', icon: ImageIcon },
-                { id: 'presets' as const, label: 'Gammes IA', icon: Wand2 },
+                { id: 'presets' as const, label: `${bundleTemplateLabel}s IA`, icon: Wand2 },
               ]).map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
@@ -270,7 +271,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
             {/* Vocal */}
             {mode === 'voice' && (
               <div className="flex flex-col gap-3">
-                <p className="text-xs text-secondary">Décrivez vos produits, matières, services, ressources ou fournisseurs. L&apos;IA les classifie automatiquement dans le bon onglet.</p>
+                <p className="text-xs text-secondary">Décrivez vos produits, matières, services, ressources ou fournisseurs. Léa les classe dans le bon onglet.</p>
                 <div className="flex flex-col items-center gap-3 py-4">
                   <button
                     onClick={isRecording ? stopRecording : startRecording}
@@ -311,7 +312,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
                 {!presetsCustomMode ? (
                   <>
                     <p className="text-xs text-secondary">
-                      L&apos;IA génère des modèles de devis types adaptés à votre métier. Ajoutez une description optionnelle pour affiner les suggestions.
+                      Léa génère des {bundleTemplateLabel.toLowerCase()}s types adaptés à votre métier. Ajoutez une description pour affiner si besoin.
                     </p>
                     <div className="flex flex-col gap-1">
                       <label className="text-[10px] font-semibold text-secondary uppercase tracking-wide">Description (optionnelle)</label>
@@ -325,7 +326,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
                     </div>
                     <div className="flex items-center gap-2 p-3 rounded-xl bg-violet-500/5 border border-violet-500/10">
                       <Wand2 className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
-                      <p className="text-xs text-secondary">L&apos;IA propose 5 à 8 gammes. Vous les passez en revue et supprimez ce qui ne convient pas.</p>
+                      <p className="text-xs text-secondary">Léa propose 5 à 8 {bundleTemplateLabel.toLowerCase()}s. Passez-les en revue et supprimez ce qui ne convient pas.</p>
                     </div>
                   </>
                 ) : (
@@ -338,7 +339,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
                         <RotateCcw className="w-3 h-3" /> Retour aux suggestions automatiques
                       </button>
                     </div>
-                    <p className="text-xs text-secondary">Décrivez précisément le modèle de devis que vous souhaitez créer.</p>
+                    <p className="text-xs text-secondary">Décrivez précisément le {bundleTemplateLabel.toLowerCase()} que vous souhaitez créer.</p>
                     <textarea
                       value={presetsDescription}
                       onChange={e => setPresetsDescription(e.target.value)}
@@ -354,7 +355,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
             {/* Document */}
             {mode === 'pdf' && (
               <div className="flex flex-col gap-2">
-                <p className="text-xs text-secondary">PDF, PNG ou JPEG — cahier des charges, catalogue fournisseur, modèle papier scanné…</p>
+                <p className="text-xs text-secondary">PDF, PNG ou JPEG - cahier des charges, catalogue fournisseur, modèle papier scanné…</p>
                 {!file ? (
                   <div
                     className="border-2 border-dashed border-[var(--elevation-border)] rounded-xl flex flex-col items-center justify-center gap-3 py-8 text-secondary hover:border-violet-400/50 hover:bg-violet-500/5 transition-all cursor-pointer"
@@ -397,10 +398,10 @@ export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold text-sm hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
             >
               {isAnalyzing
-                ? <><Loader2 className="w-4 h-4 animate-spin" />{mode === 'presets' ? 'Génération…' : 'Analyse…'}</>
+                ? <><Loader2 className="w-4 h-4 animate-spin" />{mode === 'presets' ? 'Léa génère...' : 'Léa analyse...'}</>
                 : mode === 'presets'
-                  ? <><Wand2 className="w-4 h-4" />{presetsCustomMode ? 'Générer ce modèle' : 'Générer les gammes'}</>
-                  : <><Sparkles className="w-4 h-4" />Analyser</>
+                  ? <><Wand2 className="w-4 h-4" />Demander à Léa</>
+                  : <>Confier à Léa</>
               }
             </button>
           </div>
@@ -423,11 +424,11 @@ export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
           </div>
         )}
 
-        {/* Revue des items — pagination 1 par 1 */}
+        {/* Revue des items - pagination 1 par 1 */}
         {items.length > 0 && !successMsg && (
           <div className="p-4 flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-primary text-sm">{items.length} modèle{items.length > 1 ? 's' : ''} {mode === 'presets' ? 'généré' : 'détecté'}{items.length > 1 ? 's' : ''}</span>
+              <span className="font-bold text-primary text-sm">{items.length} {mode === 'presets' ? bundleTemplateLabel.toLowerCase() : 'élément'}{items.length > 1 ? 's' : ''} {mode === 'presets' ? 'généré' : 'détecté'}{items.length > 1 ? 's' : ''}</span>
               <button onClick={() => { setItems([]); setCurrentPage(0); setError(null) }} className="flex items-center gap-1 text-xs text-secondary hover:text-primary transition-colors">
                 <RotateCcw className="w-3 h-3" /> Recommencer
               </button>
@@ -445,7 +446,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated }: Props) {
                 className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-[var(--elevation-border)] text-xs text-secondary hover:text-primary hover:border-violet-400/40 hover:bg-violet-500/5 transition-all"
               >
                 <PenLine className="w-3.5 h-3.5" />
-                Ces gammes ne me conviennent pas, décrire un modèle précis
+                Ces {bundleTemplateLabel.toLowerCase()}s ne me conviennent pas, décrire un {bundleTemplateLabel.toLowerCase()} précis
               </button>
             )}
 

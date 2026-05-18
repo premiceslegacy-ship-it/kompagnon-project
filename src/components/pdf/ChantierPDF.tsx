@@ -20,11 +20,6 @@ const fmtMoney = (n: number) =>
     .format(n)
     .replace(/\s/g, ' ')
 
-function fmtHours(hours: number): string {
-  const h = Math.floor(hours)
-  const min = Math.round((hours - h) * 60)
-  return min === 0 ? `${h}h` : `${h}h${String(min).padStart(2, '0')}`
-}
 
 const STATUS_LABELS: Record<string, string> = {
   planifie: 'Planifie',
@@ -67,7 +62,7 @@ const S = StyleSheet.create({
     paddingHorizontal: DS.space.page,
   },
 
-  // Header — dans le flow normal, affiché une seule fois, pas fixed
+  // Header - dans le flow normal, affiché une seule fois, pas fixed
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -258,13 +253,6 @@ const S = StyleSheet.create({
   tableCell:  { fontFamily: DS.font.body, fontSize: DS.size.sm, color: DS.color.body, lineHeight: 1.4 },
   tableMuted: { fontFamily: DS.font.body, fontSize: DS.size.sm, color: DS.color.secondary, lineHeight: 1.4 },
 
-  // Colonnes pointages : largeurs fixes + marginRight pour garantir l'espace
-  ptDate:  { width: 58, flexShrink: 0, marginRight: 8 },
-  ptUser:  { width: 95, flexShrink: 0, marginRight: 8 },
-  ptHours: { width: 36, flexShrink: 0, marginRight: 8, textAlign: 'right' },
-  ptTache: { flex: 1,   marginRight: 8 },
-  ptDesc:  { flex: 2 },
-
   noteBlock: {
     paddingVertical: DS.space.sm,
     paddingHorizontal: DS.space.md,
@@ -371,8 +359,7 @@ export default function ChantierPDF({
     ? Math.round((chantier.taches_done / chantier.taches_count) * 100)
     : 0
 
-  const totalHours = pointages.reduce((s, p) => s + p.hours, 0)
-  const today = fmtDate(new Date().toISOString())
+const today = fmtDate(new Date().toISOString())
 
   const tachesEnCours   = taches.filter(t => t.status === 'en_cours')
   const tachesAFaire    = taches.filter(t => t.status === 'a_faire')
@@ -404,7 +391,7 @@ export default function ChantierPDF({
             {organization.siret ? <Text style={S.orgDetail}>{'SIRET ' + organization.siret}</Text> : null}
           </View>
           <View style={{ alignItems: 'flex-end' }}>
-            <Text style={S.orgDetail}>{'Rapport genere le ' + today}</Text>
+            <Text style={S.orgDetail}>{'Rapport généré le ' + today}</Text>
             {organization.phone ? <Text style={S.orgDetail}>{organization.phone}</Text> : null}
             {organization.email ? <Text style={S.orgDetail}>{organization.email}</Text> : null}
           </View>
@@ -417,7 +404,7 @@ export default function ChantierPDF({
           <View style={{ flexDirection: 'row', gap: DS.space.xl, marginTop: 4 }}>
             <Text style={S.titleMeta}>{STATUS_LABELS[chantier.status] ?? chantier.status}</Text>
             {chantier.client?.company_name ? (
-              <Text style={S.titleMeta}>{'Client : ' + chantier.client.company_name}</Text>
+              <Text style={S.titleMeta}>{chantier.client.company_name}</Text>
             ) : null}
             {periodLabel ? <Text style={S.titleMeta}>{'Periode : ' + periodLabel}</Text> : null}
           </View>
@@ -433,10 +420,6 @@ export default function ChantierPDF({
           <View style={S.infoBlock}>
             <Text style={S.infoLabel}>Budget HT</Text>
             <Text style={S.infoBig}>{fmtMoney(chantier.budget_ht)}</Text>
-          </View>
-          <View style={S.infoBlock}>
-            <Text style={S.infoLabel}>Heures pointees</Text>
-            <Text style={S.infoBig}>{fmtHours(totalHours)}</Text>
           </View>
           <View style={S.infoBlock}>
             <Text style={S.infoLabel}>Avancement</Text>
@@ -483,32 +466,6 @@ export default function ChantierPDF({
         <TacheGroup label={'A faire (' + tachesAFaire.length + ')'} taches={tachesAFaire} />
         <TacheGroup label={'Terminees (' + tachesTerminees.length + ')'} taches={tachesTerminees} />
 
-        {/* ── Section Pointages : s'enchaine apres les taches ── */}
-        {pointages.length > 0 ? (
-          <View>
-            <Text style={S.sectionTitle}>
-              {'Pointages (' + pointages.length + ' entree' + (pointages.length > 1 ? 's' : '') + ' - ' + fmtHours(totalHours) + ' au total)'}
-            </Text>
-
-            <View style={S.tableHeader}>
-              <Text style={{ ...S.tableHeaderCell, ...S.ptDate }}>Date</Text>
-              <Text style={{ ...S.tableHeaderCell, ...S.ptUser }}>Collaborateur</Text>
-              <Text style={{ ...S.tableHeaderCell, ...S.ptHours }}>Heures</Text>
-              <Text style={{ ...S.tableHeaderCell, ...S.ptTache }}>Tache</Text>
-              <Text style={{ ...S.tableHeaderCell, ...S.ptDesc }}>Description</Text>
-            </View>
-
-            {pointages.map(p => (
-              <View key={p.id} style={S.tableRow} wrap={false}>
-                <Text style={{ ...S.tableMuted, ...S.ptDate }}>{fmtDate(p.date)}</Text>
-                <Text style={{ ...S.tableCell,  ...S.ptUser }}>{p.user_name}</Text>
-                <Text style={{ ...S.tableMuted, ...S.ptHours }}>{fmtHours(p.hours)}</Text>
-                <Text style={{ ...S.tableMuted, ...S.ptTache }}>{p.tache_title ?? '-'}</Text>
-                <Text style={{ ...S.tableMuted, ...S.ptDesc }}>{p.description ?? '-'}</Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
 
         {/* ── Section Journal : s'enchaine apres les pointages ── */}
         {notes.length > 0 ? (

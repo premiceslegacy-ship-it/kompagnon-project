@@ -364,6 +364,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   if (req.method === 'POST') {
     const payload = await req.json() as WebhookPayload
+    console.log('[whatsapp-webhook] received', {
+      entries: payload.entry?.length ?? 0,
+      changes: payload.entry?.reduce((sum, entry) => sum + (entry.changes?.length ?? 0), 0) ?? 0,
+    })
     const supabase = getAdminClient()
     await processPayload(supabase, payload)
     return new Response('OK', { status: 200 })
@@ -505,9 +509,16 @@ async function handleMessage(
   let messageType = msg.type
 
   if (msg.type === 'audio' && msg.audio?.id) {
+    const quotaCheck = await checkLocalQuota(supabase, orgConfig.id, 'whatsapp_transcription', 1)
+    if (!quotaCheck.allowed) {
+      await sendWhatsAppText(orgConfig, fromNumber,
+        "Quota mensuel de messages vocaux WhatsApp atteint. Vous pouvez passer sur une offre supérieure ou attendre le renouvellement.")
+      return
+    }
+
     try {
       const audioBuffer = await downloadWhatsAppMedia(orgConfig.access_token, msg.audio.id)
-      transcription = await transcribeWithVoxtral(supabase, orgConfig.id, audioBuffer, msg.audio.mime_type)
+      transcription = await transcribeWithVoxtral(supabase, orgConfig.id, audioBuffer, msg.audio.mime_type, quotaCheck)
       userText = transcription
     } catch (err) {
       console.error('[whatsapp-agent] STT error:', err)
@@ -561,6 +572,14 @@ async function callGemini(
   orgConfig: OrgConfig,
   userText: string,
 ): Promise<{ reply: string; toolCalls: unknown[] }> {
+  const quotaCheck = await checkLocalQuota(supabase, orgConfig.id, 'whatsapp_reply', 1)
+  if (!quotaCheck.allowed) {
+    return {
+      reply: "Quota mensuel de messages WhatsApp atteint. Vous pouvez passer sur une offre supérieure ou attendre le renouvellement.",
+      toolCalls: [],
+    }
+  }
+
   const openrouterKey = Deno.env.get('OPENROUTER_API_KEY')!
   const appUrl = Deno.env.get('APP_URL') ?? ''
   const today = new Date().toISOString().split('T')[0]
@@ -618,6 +637,7 @@ Règles de style : aucun emoji, aucun tiret cadratin (—), français soigné et
           status: 'error',
           usage: emptyUsageMetrics(),
           externalRequestId: null,
+          quotaCheck,
           metadata: {
             turn,
             error: errorText,
@@ -636,6 +656,7 @@ Règles de style : aucun emoji, aucun tiret cadratin (—), français soigné et
         status: 'success',
         usage: buildUsageMetrics(json.usage as Record<string, unknown> | undefined),
         externalRequestId: typeof json.id === 'string' ? json.id : null,
+        quotaCheck,
         metadata: {
           turn,
           tool_count: Array.isArray(json.choices?.[0]?.message?.tool_calls)
@@ -698,7 +719,7 @@ async function executeTool(
     case 'get_resume': {
       const [{ data: chantiers }, { data: invoices }, { data: quotes }, { data: acomptes }] = await Promise.all([
         supabase.from('chantiers').select('title, status, city').eq('organization_id', orgId).in('status', ['en_cours', 'planifie']).limit(5),
-        supabase.from('invoices').select('number, total_ttc, currency, due_date, client:clients(company_name)').eq('organization_id', orgId).eq('status', 'sent').lt('due_date', today).limit(5),
+        supabase.from('invoices').select('number, total_ttc, currency, due_date, client:clients(company_name)').eq('organization_id', orgId).in('status', ['sent', 'partial']).lt('due_date', today).limit(5),
         supabase.from('quotes').select('number, total_ttc, currency, status').eq('organization_id', orgId).in('status', ['sent', 'viewed']).limit(5),
         supabase.from('acomptes').select('amount_ht, label, due_date, status, quote:quotes(number, title, client:clients(company_name))').eq('organization_id', orgId).in('status', ['pending', 'partial']).limit(5),
       ])
@@ -1392,6 +1413,7 @@ async function transcribeWithVoxtral(
   orgId: string,
   audioBuffer: ArrayBuffer,
   mimeType: string,
+  quotaCheck: LocalQuotaCheck,
 ): Promise<string> {
   const mistralKey = Deno.env.get('MISTRAL_API_KEY')!
   const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mpeg') ? 'mp3' : 'ogg'
@@ -1417,6 +1439,7 @@ async function transcribeWithVoxtral(
       status: 'error',
       usage: emptyUsageMetrics(),
       externalRequestId: null,
+      quotaCheck,
       metadata: {
         error: errorText,
         mime_type: mimeType,
@@ -1435,6 +1458,7 @@ async function transcribeWithVoxtral(
     status: 'success',
     usage: buildUsageMetrics(json.usage),
     externalRequestId: typeof json.id === 'string' ? json.id : null,
+    quotaCheck,
     metadata: {
       mime_type: mimeType,
     },
@@ -1546,6 +1570,114 @@ async function isWhatsAppModuleEnabled(
   return data?.modules?.whatsapp_agent === true
 }
 
+type LocalQuotaCheck = {
+  allowed: boolean
+  quotaFeature: string | null
+  quotaUnit: 'message' | 'minute' | null
+  quotaMonthly: number | null
+  usedQuantity: number
+  requestedQuantity: number
+  remaining: number | null
+  overflowMode: 'block' | 'upgrade_prompt' | 'charge'
+  overQuota: boolean
+}
+
+const WHATSAPP_QUOTA_BY_FEATURE: Record<string, { quotaFeature: string; quotaUnit: 'message' | 'minute' }> = {
+  whatsapp_reply: { quotaFeature: 'wa_messages', quotaUnit: 'message' },
+  whatsapp_transcription: { quotaFeature: 'wa_vocal_minutes', quotaUnit: 'minute' },
+}
+
+function monthStartIso(): string {
+  const now = new Date()
+  now.setDate(1)
+  now.setHours(0, 0, 0, 0)
+  return now.toISOString()
+}
+
+function isOverflowMode(value: string): value is 'block' | 'upgrade_prompt' | 'charge' {
+  return value === 'block' || value === 'upgrade_prompt' || value === 'charge'
+}
+
+async function checkLocalQuota(
+  supabase: ReturnType<typeof getAdminClient>,
+  orgId: string,
+  technicalFeature: 'whatsapp_reply' | 'whatsapp_transcription',
+  quantity: number,
+): Promise<LocalQuotaCheck> {
+  const quotaMeta = WHATSAPP_QUOTA_BY_FEATURE[technicalFeature]
+  const fallback: LocalQuotaCheck = {
+    allowed: true,
+    quotaFeature: quotaMeta?.quotaFeature ?? null,
+    quotaUnit: quotaMeta?.quotaUnit ?? null,
+    quotaMonthly: null,
+    usedQuantity: 0,
+    requestedQuantity: quantity,
+    remaining: null,
+    overflowMode: 'block',
+    overQuota: false,
+  }
+  if (!quotaMeta) return fallback
+
+  const { data, error } = await supabase
+    .from('organization_modules')
+    .select('quota_config, overflow_mode')
+    .eq('organization_id', orgId)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[whatsapp-agent.quota.modules]', error)
+    return fallback
+  }
+
+  const quotaConfig = data?.quota_config && typeof data.quota_config === 'object'
+    ? data.quota_config as Record<string, unknown>
+    : {}
+  const rawQuota = quotaConfig[quotaMeta.quotaFeature]
+  const quotaMonthly = typeof rawQuota === 'number' ? rawQuota : Number.parseFloat(String(rawQuota ?? -1))
+  const overflowRaw = String(data?.overflow_mode ?? 'block')
+  const overflowMode = isOverflowMode(overflowRaw) ? overflowRaw : 'block'
+
+  if (!Number.isFinite(quotaMonthly) || quotaMonthly < 0) {
+    return {
+      ...fallback,
+      quotaMonthly: Number.isFinite(quotaMonthly) ? quotaMonthly : -1,
+      overflowMode,
+    }
+  }
+
+  const { data: rows, error: usageError } = await supabase
+    .from('usage_logs')
+    .select('quota_quantity')
+    .eq('organization_id', orgId)
+    .eq('quota_feature', quotaMeta.quotaFeature)
+    .eq('status', 'success')
+    .gte('created_at', monthStartIso())
+    .limit(10000)
+
+  if (usageError) {
+    console.error('[whatsapp-agent.quota.usage]', usageError)
+    return { ...fallback, quotaMonthly, overflowMode }
+  }
+
+  const usedQuantity = (rows ?? []).reduce((sum: number, row: { quota_quantity?: number | string | null }) => {
+    const parsed = Number(row.quota_quantity ?? 1)
+    return sum + (Number.isFinite(parsed) ? parsed : 1)
+  }, 0)
+  const overQuota = usedQuantity + quantity > quotaMonthly
+
+  return {
+    allowed: !overQuota || overflowMode !== 'block',
+    quotaFeature: quotaMeta.quotaFeature,
+    quotaUnit: quotaMeta.quotaUnit,
+    quotaMonthly,
+    usedQuantity,
+    requestedQuantity: quantity,
+    remaining: Math.max(quotaMonthly - usedQuantity - quantity, 0),
+    overflowMode,
+    overQuota,
+  }
+}
+
 async function logProviderUsage(
   supabase: ReturnType<typeof getAdminClient>,
   params: {
@@ -1557,6 +1689,7 @@ async function logProviderUsage(
     status: 'success' | 'error'
     usage: UsageMetrics
     externalRequestId: string | null
+    quotaCheck?: LocalQuotaCheck | null
     metadata?: Record<string, unknown>
   },
 ) {
@@ -1576,6 +1709,11 @@ async function logProviderUsage(
       currency: params.usage.currency,
       external_request_id: params.externalRequestId,
       metadata: params.metadata ?? null,
+      quota_feature: params.quotaCheck?.quotaFeature ?? null,
+      quota_unit: params.quotaCheck?.quotaUnit ?? null,
+      quota_quantity: params.quotaCheck?.requestedQuantity ?? 1,
+      overflow_mode: params.quotaCheck?.overflowMode ?? null,
+      over_quota: params.quotaCheck?.overQuota ?? false,
     })
     .select('id')
     .single()
@@ -1600,6 +1738,11 @@ async function logProviderUsage(
     total_tokens: params.usage.totalTokens,
     status: params.status,
     local_usage_log_id: logId,
+    quota_feature: params.quotaCheck?.quotaFeature ?? null,
+    quota_unit: params.quotaCheck?.quotaUnit ?? null,
+    quota_quantity: params.quotaCheck?.requestedQuantity ?? 1,
+    overflow_mode: params.quotaCheck?.overflowMode ?? null,
+    over_quota: params.quotaCheck?.overQuota ?? false,
     metadata: params.metadata ?? null,
   })
 }
@@ -1651,6 +1794,11 @@ async function syncUsageLogToOperator(
     total_tokens: number | null
     status: string
     local_usage_log_id: string
+    quota_feature?: string | null
+    quota_unit?: string | null
+    quota_quantity?: number | null
+    overflow_mode?: string | null
+    over_quota?: boolean | null
     metadata?: Record<string, unknown> | null
   },
 ) {

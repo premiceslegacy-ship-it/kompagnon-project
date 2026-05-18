@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
 
   const events = (slots ?? []).map((slot: any) => {
     const chantierTitle = chantierMap[slot.chantier_id] ?? 'Chantier'
-    const summary = escapeIcal(`${slot.label} — ${chantierTitle}`)
+    const summary = escapeIcal(`${slot.label} - ${chantierTitle}`)
     const allDay = !slot.start_time
     const dtstart = formatIcalDate(slot.planned_date, slot.start_time, allDay)
     const dtend = slot.end_time ? formatIcalDate(slot.planned_date, slot.end_time, false) : dtstart
@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
       `DTSTART${allDay ? ';VALUE=DATE' : ''}:${dtstart}`,
       `DTEND${allDay ? ';VALUE=DATE' : ''}:${dtend}`,
       `SUMMARY:${summary}`,
-      ...(descParts.length > 0 ? [`DESCRIPTION:${escapeIcal(descParts.join(' — '))}`] : []),
+      ...(descParts.length > 0 ? [`DESCRIPTION:${escapeIcal(descParts.join(' - '))}`] : []),
       'END:VEVENT',
     ].join('\r\n')
   })

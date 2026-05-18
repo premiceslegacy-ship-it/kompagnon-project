@@ -27,8 +27,8 @@
     --accent-glow: none;
 
     /* Header */
-    --header-blur: 16px;
-    --header-bg: rgba(244, 246, 249, 0.75);
+    --header-blur: 20px;
+    --header-bg: rgba(244, 246, 249, 0.55);
     --header-border: rgba(0, 0, 0, 0.07);
 
     /* Accents */
@@ -156,9 +156,7 @@
   }
 
   .dark .card {
-    background: rgba(255, 255, 255, 0.02);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
+    background: rgba(255, 255, 255, 0.08);
     border-color: var(--elevation-border);
     box-shadow: var(--elevation-shadow), var(--accent-glow);
   }

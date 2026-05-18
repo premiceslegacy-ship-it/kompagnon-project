@@ -206,7 +206,7 @@ ${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#A1A1AA;line-
   return { subject, html }
 }
 
-// ─── Confirmation client — devis accepté ──────────────────────────────────────
+// ─── Confirmation client - devis accepté ──────────────────────────────────────
 
 export function buildQuoteAcceptedClientEmail({
   orgName,
@@ -346,7 +346,7 @@ ${renderTextBox(
   return { subject, html }
 }
 
-// ─── Notification pro — devis accepté par le client ──────────────────────────
+// ─── Notification pro - devis accepté par le client ──────────────────────────
 
 export function buildQuoteAcceptedProfessionalEmail({
   orgName,
@@ -414,7 +414,7 @@ ${renderCTA(`Voir le devis dans ${APP_NAME} →`, quoteEditorUrl)}
   return { subject, html }
 }
 
-// ─── Paiement reçu — confirmation client ─────────────────────────────────────
+// ─── Paiement reçu - confirmation client ─────────────────────────────────────
 
 export function buildInvoicePaidEmail({
   orgName,
@@ -561,7 +561,7 @@ ${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#A1A1AA;line-
   return { subject, html }
 }
 
-// ─── Notification pro — nouvelle demande via formulaire public ────────────────
+// ─── Notification pro - nouvelle demande via formulaire public ────────────────
 
 export function buildQuoteRequestNotificationEmail({
   orgName,
@@ -610,7 +610,7 @@ ${renderTextBox(description, 'Message du client')}
   return { subject, html }
 }
 
-// ─── Espace membre — invitation au lien magique ───────────────────────────────
+// ─── Espace membre - invitation au lien magique ───────────────────────────────
 
 export function buildMemberSpaceInviteEmail({
   orgName,
@@ -621,7 +621,7 @@ export function buildMemberSpaceInviteEmail({
   memberFirstName: string | null
   spaceUrl: string
 }): { subject: string; html: string } {
-  const subject = `Accédez à votre espace ${orgName} — vos heures et créneaux`
+  const subject = `Accédez à votre espace ${orgName} - vos heures et créneaux`
 
   const greeting = memberFirstName ? `Bonjour ${escHtml(memberFirstName)},` : 'Bonjour,'
 
@@ -671,7 +671,7 @@ export function buildMemberMonthlyReportEmail({
   totalHours: number
   spaceUrl: string | null
 }): { subject: string; html: string } {
-  const subject = `Votre rapport d'heures — ${periodLabel}`
+  const subject = `Votre rapport d'heures - ${periodLabel}`
 
   const greeting = memberFirstName ? `Bonjour ${escHtml(memberFirstName)},` : 'Bonjour,'
 

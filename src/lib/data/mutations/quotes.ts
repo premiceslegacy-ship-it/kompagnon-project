@@ -12,9 +12,11 @@ import { buildQuoteSentEmail } from '@/lib/email/templates'
 import { getClientGreetingName } from '@/lib/client'
 import { renderToBuffer } from '@react-pdf/renderer'
 import QuotePDF from '@/components/pdf/QuotePDF'
+import { renderContractPdfBufferById } from '@/lib/pdf/server'
 import type { Client } from '@/lib/data/queries/clients'
 import { coerceLegalVatRate } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
+import { syncQuoteMemoryEntry } from '@/lib/data/mutations/document-memory'
 
 type Result = { error: string | null }
 
@@ -179,6 +181,7 @@ export async function createQuote(data: {
     return { quoteId: null, error: 'Erreur lors de la création du devis.' }
   }
 
+  await syncQuoteMemoryEntry(supabase, orgId, quote.id)
   revalidatePath('/finances')
   return { quoteId: quote.id, error: null }
 }
@@ -239,6 +242,7 @@ export async function updateQuote(
     client_request_visible_on_pdf?: boolean
     aid_label?: string | null
     aid_amount?: number | null
+    parent_quote_id?: string | null
   },
 ): Promise<Result> {
   if (!(await hasPermission('quotes.edit'))) return { error: 'Permission refusée.' }
@@ -261,6 +265,7 @@ export async function updateQuote(
     return { error: 'Erreur lors de la mise à jour.' }
   }
 
+  await syncQuoteMemoryEntry(supabase, orgId, quoteId)
   revalidatePath('/finances')
   return { error: null }
 }
@@ -293,6 +298,7 @@ export async function upsertQuoteSection(section: {
     .single()
 
   if (error) return { sectionId: null, error: error.message }
+  revalidatePath('/finances/quote-editor')
   return { sectionId: data.id, error: null }
 }
 
@@ -306,10 +312,15 @@ export async function deleteQuoteSection(sectionId: string): Promise<Result> {
   const quoteId = await getQuoteIdForSection(sectionId, orgId)
   if (!quoteId) return { error: 'Section introuvable.' }
 
+  const { error: itemsError } = await supabase.from('quote_items').delete().eq('section_id', sectionId)
+  if (itemsError) return { error: itemsError.message }
+
   const { error } = await supabase.from('quote_sections').delete().eq('id', sectionId)
   if (error) return { error: error.message }
   await recalcQuoteTotals(quoteId, orgId)
+  await syncQuoteMemoryEntry(supabase, orgId, quoteId)
   revalidatePath('/finances')
+  revalidatePath('/finances/quote-editor')
   return { error: null }
 }
 
@@ -331,6 +342,7 @@ export async function upsertQuoteItem(item: {
   length_m?: number | null
   width_m?: number | null
   height_m?: number | null
+  dim_quantity?: number
   is_internal?: boolean
 }): Promise<{ itemId: string | null; error: string | null }> {
   if (!(await hasPermission('quotes.edit'))) return { itemId: null, error: 'Permission refusée.' }
@@ -372,6 +384,8 @@ export async function upsertQuoteItem(item: {
 
   // Recalcul des totaux du devis
   await recalcQuoteTotals(item.quote_id, orgId)
+  await syncQuoteMemoryEntry(supabase, orgId, item.quote_id)
+  revalidatePath('/finances/quote-editor')
   return { itemId: data.id, error: null }
 }
 
@@ -388,7 +402,47 @@ export async function deleteQuoteItem(itemId: string, quoteId: string): Promise<
   const { error } = await supabase.from('quote_items').delete().eq('id', itemId)
   if (error) return { error: error.message }
   await recalcQuoteTotals(quoteId, orgId)
+  await syncQuoteMemoryEntry(supabase, orgId, quoteId)
+  revalidatePath('/finances/quote-editor')
   return { error: null }
+}
+
+export async function pruneQuoteItems(
+  quoteId: string,
+  keepItemIds: string[],
+): Promise<Result & { deletedCount?: number }> {
+  if (!(await hasPermission('quotes.edit'))) return { error: 'Permission refusée.' }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Non authentifié.' }
+  if (!(await ensureQuoteEditable(quoteId, orgId))) return { error: 'Devis introuvable.' }
+
+  const { data, error: fetchError } = await supabase
+    .from('quote_items')
+    .select('id')
+    .eq('quote_id', quoteId)
+
+  if (fetchError) return { error: fetchError.message }
+
+  const keep = new Set(keepItemIds)
+  const idsToDelete = (data ?? [])
+    .map(row => row.id)
+    .filter((id): id is string => typeof id === 'string' && !keep.has(id))
+
+  if (idsToDelete.length === 0) return { error: null, deletedCount: 0 }
+
+  const { error } = await supabase
+    .from('quote_items')
+    .delete()
+    .eq('quote_id', quoteId)
+    .in('id', idsToDelete)
+
+  if (error) return { error: error.message }
+  await recalcQuoteTotals(quoteId, orgId)
+  await syncQuoteMemoryEntry(supabase, orgId, quoteId)
+  revalidatePath('/finances/quote-editor')
+  return { error: null, deletedCount: idsToDelete.length }
 }
 
 // ─── Recalcul totaux ──────────────────────────────────────────────────────────
@@ -419,7 +473,7 @@ async function recalcQuoteTotals(quoteId: string, orgId: string) {
 
 // ─── Send ─────────────────────────────────────────────────────────────────────
 
-export async function sendQuote(quoteId: string): Promise<Result & { signUrl?: string }> {
+export async function sendQuote(quoteId: string, options?: { attachContractIds?: string[] }): Promise<Result & { signUrl?: string }> {
   if (!(await hasPermission('quotes.send'))) return { error: 'Permission refusée.' }
 
   const supabase = await createClient()
@@ -447,6 +501,7 @@ export async function sendQuote(quoteId: string): Promise<Result & { signUrl?: s
 
   // Forcer le recalcul des totaux avant lecture (garantit que total_ttc est à jour)
   await recalcQuoteTotals(quoteId, orgId)
+  await syncQuoteMemoryEntry(supabase, orgId, quoteId)
 
   // Charger les infos du devis + client + org pour l'email
   const { data: quote } = await supabase
@@ -531,6 +586,24 @@ export async function sendQuote(quoteId: string): Promise<Result & { signUrl?: s
         }
       }
 
+      // Pièces jointes additionnelles : contrats du client lié
+      const attachContractIds = (options?.attachContractIds ?? []).filter(Boolean)
+      if (attachContractIds.length > 0 && quote.client_id) {
+        const { data: ownedContracts } = await supabase
+          .from('contracts')
+          .select('id, pdf_snapshot')
+          .eq('organization_id', orgId)
+          .eq('client_id', quote.client_id)
+          .in('id', attachContractIds)
+        for (const c of ownedContracts ?? []) {
+          if (!c.pdf_snapshot) continue
+          const pdf = await renderContractPdfBufferById(c.id, orgId).catch(() => null)
+          if (pdf) {
+            attachments = [...(attachments ?? []), { filename: pdf.fileName, content: pdf.buffer }]
+          }
+        }
+      }
+
       const emailResult = await sendEmail({ organizationId: orgId, to: client.email, subject, html, attachments })
       if (emailResult.error) {
         console.error('[sendQuote] email error:', emailResult.error)
@@ -567,6 +640,7 @@ export async function markQuoteAccepted(quoteId: string): Promise<Result> {
     .eq('organization_id', orgId)
 
   if (error) return { error: error.message }
+  await syncQuoteMemoryEntry(supabase, orgId, quoteId)
   revalidatePath('/finances')
   revalidatePath('/clients')
   return { error: null }
@@ -645,6 +719,7 @@ export async function duplicateQuote(quoteId: string): Promise<{ quoteId: string
     await recalcQuoteTotals(newId, orgId)
   }
 
+  await syncQuoteMemoryEntry(supabase, orgId, newId)
   revalidatePath('/finances')
   return { quoteId: newId, error: null }
 }

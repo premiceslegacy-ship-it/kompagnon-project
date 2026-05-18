@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 type Result = { error: string | null }
 
@@ -16,9 +17,18 @@ export async function createJalon(
     taskIds?: string[]
   },
 ): Promise<{ jalonId: string | null; error: string | null }> {
+  if (!(await hasPermission('chantiers.edit'))) return { jalonId: null, error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { jalonId: null, error: 'Non authentifié.' }
+  const { data: chantier } = await supabase
+    .from('chantiers')
+    .select('id')
+    .eq('id', chantierId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  if (!chantier) return { jalonId: null, error: 'Chantier introuvable ou non autorisé.' }
 
   if (!data.title?.trim()) return { jalonId: null, error: 'Le titre est requis.' }
   if (data.acomptePct < 0 || data.acomptePct > 100) return { jalonId: null, error: 'Pourcentage invalide (0–100).' }
@@ -74,7 +84,11 @@ export async function updateJalon(
     description?: string | null
   },
 ): Promise<Result> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
   const update: Record<string, any> = {}
   if (patch.title !== undefined) update.title = patch.title.trim()
   if (patch.acomptePct !== undefined) {
@@ -87,6 +101,7 @@ export async function updateJalon(
     .from('chantier_jalons')
     .update(update)
     .eq('id', jalonId)
+    .eq('organization_id', orgId)
 
   if (error) {
     console.error('[updateJalon]', error)
@@ -97,17 +112,32 @@ export async function updateJalon(
 }
 
 export async function deleteJalon(jalonId: string): Promise<Result> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
-  const { error } = await supabase.from('chantier_jalons').delete().eq('id', jalonId)
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  const { error } = await supabase.from('chantier_jalons').delete().eq('id', jalonId).eq('organization_id', orgId)
   if (error) return { error: 'Erreur lors de la suppression du jalon.' }
   revalidatePath('/chantiers')
   return { error: null }
 }
 
 export async function reorderJalons(chantierId: string, orderedIds: string[]): Promise<Result> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  const { data: chantier } = await supabase
+    .from('chantiers')
+    .select('id')
+    .eq('id', chantierId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
   for (let i = 0; i < orderedIds.length; i++) {
-    await supabase.from('chantier_jalons').update({ position: i }).eq('id', orderedIds[i])
+    await supabase.from('chantier_jalons').update({ position: i }).eq('id', orderedIds[i]).eq('chantier_id', chantierId).eq('organization_id', orgId)
   }
   revalidatePath(`/chantiers/${chantierId}`)
   return { error: null }
@@ -118,8 +148,19 @@ export async function assignTasksToJalon(
   taskIds: string[],
   chantierId: string,
 ): Promise<Result> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Action non autorisée.' }
+
   if (!taskIds.length) return { error: null }
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  const { data: chantier } = await supabase
+    .from('chantiers')
+    .select('id')
+    .eq('id', chantierId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
   const { error } = await supabase
     .from('chantier_taches')
     .update({ jalon_id: jalonId })
@@ -131,7 +172,11 @@ export async function assignTasksToJalon(
 }
 
 export async function completeJalon(jalonId: string, report: string): Promise<Result> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
   const { error } = await supabase
     .from('chantier_jalons')
     .update({
@@ -140,6 +185,7 @@ export async function completeJalon(jalonId: string, report: string): Promise<Re
       completed_at: new Date().toISOString(),
     })
     .eq('id', jalonId)
+    .eq('organization_id', orgId)
   if (error) return { error: 'Erreur lors de la validation du jalon.' }
   revalidatePath('/chantiers')
   return { error: null }
@@ -147,10 +193,13 @@ export async function completeJalon(jalonId: string, report: string): Promise<Re
 
 /**
  * Génère une facture pour un jalon completé.
- * Montant = budget_ht × acompte_pct% − montants déjà facturés via jalons précédents.
+ * Montant = budget_ht × acompte_pct%.
  * Si le chantier a un devis, utilise quote.total_ht comme base, sinon chantier.budget_ht.
  */
 export async function generateJalonInvoice(jalonId: string): Promise<{ invoiceId: string | null; error: string | null }> {
+  if (!(await hasPermission('chantiers.edit'))) return { invoiceId: null, error: 'Action non autorisée.' }
+  if (!(await hasPermission('invoices.create'))) return { invoiceId: null, error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { invoiceId: null, error: 'Non authentifié.' }
@@ -201,25 +250,14 @@ export async function generateJalonInvoice(jalonId: string): Promise<{ invoiceId
   }
 
   const ratio = (jalon.acompte_pct ?? 0) / 100
-  const amountHt = Math.round(baseHt * ratio * 100) / 100
-
-  // Soustraire les jalons déjà facturés du même chantier
-  const { data: previousJalons } = await supabase
-    .from('chantier_jalons')
-    .select('acompte_pct')
-    .eq('chantier_id', jalon.chantier_id)
-    .eq('status', 'invoiced')
-
-  const alreadyBilledRatio = (previousJalons ?? []).reduce((s: number, j: any) => s + (j.acompte_pct ?? 0), 0) / 100
-  const alreadyBilledHt = Math.round(baseHt * alreadyBilledRatio * 100) / 100
-  const netHt = Math.max(0, Math.round((amountHt - alreadyBilledHt) * 100) / 100)
+  const netHt = Math.round(baseHt * ratio * 100) / 100
 
   // VAT à 20% par défaut (la facture sera éditable)
   const vatRate = 20
   const totalTva = Math.round(netHt * (vatRate / 100) * 100) / 100
   const totalTtc = Math.round((netHt + totalTva) * 100) / 100
 
-  const title = `Acompte ${jalon.acompte_pct}% — ${jalon.title}`
+  const title = `Acompte ${jalon.acompte_pct}% - ${jalon.title}`
   const notesClient = `Acompte au titre du jalon "${jalon.title}" (${jalon.acompte_pct}% du chantier "${chantier.title}").`
 
   const { data: invoice, error: createErr } = await supabase

@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 type Result = { error: string | null }
 
@@ -25,6 +26,8 @@ export type ImportSuppliersState = {
 }
 
 export async function createSupplier(data: SupplierInput): Promise<{ id: string | null; error: string | null }> {
+  if (!(await hasPermission('catalog.edit'))) return { id: null, error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { id: null, error: 'Non authentifié.' }
@@ -60,6 +63,8 @@ export async function createSupplier(data: SupplierInput): Promise<{ id: string 
 }
 
 export async function updateSupplier(supplierId: string, data: Partial<SupplierInput>): Promise<Result> {
+  if (!(await hasPermission('catalog.edit'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
@@ -93,6 +98,8 @@ export async function updateSupplier(supplierId: string, data: Partial<SupplierI
 }
 
 export async function deleteSupplier(supplierId: string): Promise<Result> {
+  if (!(await hasPermission('catalog.delete'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
@@ -119,6 +126,8 @@ export async function importSuppliers(
   _prevState: ImportSuppliersState,
   formData: FormData,
 ): Promise<ImportSuppliersState> {
+  if (!(await hasPermission('catalog.edit'))) return { error: 'Action non autorisée.', imported: 0, skipped: 0, skipped_reasons: [] }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.', imported: 0, skipped: 0, skipped_reasons: [] }

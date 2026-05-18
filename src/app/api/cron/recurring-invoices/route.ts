@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
         const daysSinceCreation = Math.floor((today.getTime() - notifiedAt.getTime()) / 86400000)
         if (daysSinceCreation < autoSendDelay) continue
 
-        // Délai écoulé — envoyer la facture au client avec PDF
+        // Délai écoulé - envoyer la facture au client avec PDF
         const sent = await autoSendInvoice(admin, schedule.organization_id, schedule.invoice_id!)
         if (sent) {
           await admin

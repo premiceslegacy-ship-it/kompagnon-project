@@ -3,15 +3,16 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Archive, CheckCircle, CopyPlus, Download, Edit3, FileText, Plus, Save, Search, Send, ShieldAlert, X } from 'lucide-react'
+import { Archive, CheckCircle, CopyPlus, Download, Edit3, FileText, LayoutTemplate, Plus, RefreshCw, Save, Search, Send, ShieldAlert, Trash2, X } from 'lucide-react'
 import type { Chantier } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
 import type { ContractListItem, ContractTemplateOption } from '@/lib/data/queries/contracts'
+import type { Quote } from '@/lib/data/queries/quotes'
 import {
   CLAUSE_LABELS,
   CONTRACT_DISCLAIMER,
-  CONTRACT_ROLE_LABELS,
   CONTRACT_TYPE_LABELS,
+  getRoleLabel,
   type ContractClauseKey,
   type ContractClauses,
   type ContractCustomSection,
@@ -19,13 +20,15 @@ import {
   type ContractStatus,
   type ContractType,
 } from '@/lib/contracts/templates'
-import { createContract, createContractTemplate, createContractTemplateFromContract, deleteContract, generateContractPdfSnapshot, sendContract, updateContract } from '@/lib/data/mutations/contracts'
+import { createContract, createContractTemplate, createContractTemplateFromContract, deleteContract, deleteContractTemplate, fetchClientDocsForAttachment, generateContractPdfSnapshot, sendContract, updateContract } from '@/lib/data/mutations/contracts'
+import AttachmentPickerModal, { type AttachmentGroup } from '@/components/AttachmentPickerModal'
 
 type Props = {
   initialContracts: ContractListItem[]
   clients: Client[]
   chantiers: Chantier[]
   templates: ContractTemplateOption[]
+  quotes: Quote[]
   canCreate: boolean
   canEdit: boolean
   canDelete: boolean
@@ -37,6 +40,7 @@ type ContractFormState = {
   role: ContractRole
   clientId: string
   chantierId: string
+  quoteId: string
   counterpartyName: string
   counterpartyEmail: string
   counterpartyPhone: string
@@ -44,6 +48,7 @@ type ContractFormState = {
   templateKey: string
   clauses: ContractClauses
   customSections: ContractCustomSection[]
+  durationText: string
 }
 
 const STATUS_CONFIG: Record<ContractStatus, { label: string; color: string }> = {
@@ -76,6 +81,7 @@ function buildInitialForm(templates: ContractTemplateOption[], contract?: Contra
       role: contract.role,
       clientId: contract.client_id ?? '',
       chantierId: contract.chantier_id ?? '',
+      quoteId: contract.quote_id ?? '',
       counterpartyName: contract.counterparty_name,
       counterpartyEmail: contract.counterparty_email ?? '',
       counterpartyPhone: contract.counterparty_phone ?? '',
@@ -83,16 +89,18 @@ function buildInitialForm(templates: ContractTemplateOption[], contract?: Contra
       templateKey: contract.template_key,
       clauses: contract.clauses,
       customSections: contract.custom_sections ?? [],
+      durationText: contract.duration_text ?? '',
     }
   }
 
   const template = firstTemplateFor('sous_traitance', templates)
   return {
-    title: template?.title ?? '',
+    title: '',
     contractType: 'sous_traitance',
     role: 'donneur_ordre',
     clientId: '',
     chantierId: '',
+    quoteId: '',
     counterpartyName: '',
     counterpartyEmail: '',
     counterpartyPhone: '',
@@ -100,6 +108,7 @@ function buildInitialForm(templates: ContractTemplateOption[], contract?: Contra
     templateKey: template?.key ?? '',
     clauses: template?.clauses ?? {} as ContractClauses,
     customSections: template?.customSections ?? [],
+    durationText: '',
   }
 }
 
@@ -152,12 +161,13 @@ function LinkActionButton({ children, icon, href }: { children: React.ReactNode;
   )
 }
 
-function ContractFormModal({ mode, contract, clients, chantiers, templates, onClose, onSaved }: {
+function ContractFormModal({ mode, contract, clients, chantiers, templates, quotes, onClose, onSaved }: {
   mode: 'create' | 'edit'
   contract?: ContractListItem | null
   clients: Client[]
   chantiers: Chantier[]
   templates: ContractTemplateOption[]
+  quotes: Quote[]
   onClose: () => void
   onSaved: () => void
 }) {
@@ -165,6 +175,10 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, onCl
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<ContractFormState>(() => buildInitialForm(templates, contract))
   const availableTemplates = templates.filter(template => template.type === form.contractType)
+  // Devis filtrés par client sélectionné, ou tous si pas de client
+  const availableQuotes = form.clientId
+    ? quotes.filter(q => q.client?.id === form.clientId && q.number)
+    : quotes.filter(q => q.number)
 
   const set = (field: keyof ContractFormState, value: string) => setForm(current => ({ ...current, [field]: value }))
 
@@ -174,7 +188,6 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, onCl
       ...current,
       contractType: nextType,
       templateKey: template?.key ?? '',
-      title: template?.title ?? current.title,
       clauses: template?.clauses ?? current.clauses,
       customSections: template?.customSections ?? [],
     }))
@@ -186,7 +199,6 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, onCl
     setForm(current => ({
       ...current,
       templateKey,
-      title: mode === 'create' ? template.title : current.title,
       clauses: template.clauses,
       customSections: template.customSections ?? [],
     }))
@@ -194,14 +206,20 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, onCl
 
   const handleClientChange = (clientId: string) => {
     const client = clients.find(item => item.id === clientId)
-    setForm(current => ({
-      ...current,
-      clientId,
-      counterpartyName: client ? clientName(client) : '',
-      counterpartyEmail: client?.email ?? '',
-      counterpartyPhone: client?.phone ?? '',
-      counterpartyAddress: client ? [client.address_line1, client.postal_code, client.city].filter(Boolean).join(', ') : '',
-    }))
+    setForm(current => {
+      const quoteStillValid = current.quoteId
+        ? quotes.some(q => q.id === current.quoteId && q.client?.id === clientId)
+        : true
+      return {
+        ...current,
+        clientId,
+        quoteId: quoteStillValid ? current.quoteId : '',
+        counterpartyName: client ? clientName(client) : '',
+        counterpartyEmail: client?.email ?? '',
+        counterpartyPhone: client?.phone ?? '',
+        counterpartyAddress: client ? [client.address_line1, client.postal_code, client.city].filter(Boolean).join(', ') : '',
+      }
+    })
   }
 
   const handleChantierChange = (chantierId: string) => {
@@ -231,6 +249,7 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, onCl
       role: form.role,
       clientId: form.clientId || null,
       chantierId: form.chantierId || null,
+      quoteId: form.quoteId || null,
       counterpartyName: form.counterpartyName,
       counterpartyEmail: form.counterpartyEmail || null,
       counterpartyPhone: form.counterpartyPhone || null,
@@ -238,6 +257,7 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, onCl
       templateKey: form.templateKey,
       clauses: form.clauses,
       customSections: form.customSections,
+      durationText: form.durationText.trim() || null,
     }
 
     const result = mode === 'edit' && contract
@@ -273,8 +293,8 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, onCl
           <div>
             <label className="block text-sm font-semibold text-primary mb-1">Rôle</label>
             <select className="input w-full" value={form.role} onChange={event => set('role', event.target.value)}>
-              <option value="donneur_ordre">Donneur d&apos;ordre</option>
-              <option value="sous_traitant">Sous-traitant</option>
+              <option value="donneur_ordre">{getRoleLabel('donneur_ordre', form.contractType)}</option>
+              <option value="sous_traitant">{getRoleLabel('sous_traitant', form.contractType)}</option>
             </select>
           </div>
           <div>
@@ -305,6 +325,20 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, onCl
             </select>
           </div>
           <div>
+            <label className="block text-sm font-semibold text-primary mb-1">
+              Devis lié <span className="text-secondary font-normal">(facultatif - validation en ligne par le client)</span>
+            </label>
+            <select className="input w-full" value={form.quoteId} onChange={event => set('quoteId', event.target.value)}>
+              <option value="">Aucun devis lié</option>
+              {availableQuotes.map(q => (
+                <option key={q.id} value={q.id}>
+                  {q.number} - {q.title ?? 'Sans titre'}{q.total_ttc != null ? ` · ${new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(q.total_ttc)}` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-secondary">Si renseigné, le client pourra valider ce devis en même temps qu'il signe le contrat.</p>
+          </div>
+          <div>
             <label className="block text-sm font-semibold text-primary mb-1">Partie contractante</label>
             <input className="input w-full" value={form.counterpartyName} onChange={event => set('counterpartyName', event.target.value)} required />
           </div>
@@ -319,6 +353,16 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, onCl
           <div>
             <label className="block text-sm font-semibold text-primary mb-1">Adresse</label>
             <input className="input w-full" value={form.counterpartyAddress} onChange={event => set('counterpartyAddress', event.target.value)} />
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-sm font-semibold text-primary mb-1">Durée du contrat <span className="text-secondary font-normal">(facultatif)</span></label>
+            <input
+              className="input w-full"
+              value={form.durationText}
+              onChange={event => set('durationText', event.target.value)}
+              placeholder="Ex : 12 mois renouvelable, jusqu'au 31/12/2026, durée du chantier…"
+            />
+            <p className="mt-1 text-xs text-secondary">Si renseignée, cette durée sera ajoutée en tête de la clause Durée du contrat.</p>
           </div>
         </div>
 
@@ -417,18 +461,22 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, onCl
   )
 }
 
-function TemplateModal({ templates, onClose, onSaved }: {
+function TemplateModal({ templates, canDelete, onClose, onSaved }: {
   templates: ContractTemplateOption[]
+  canDelete: boolean
   onClose: () => void
   onSaved: () => void
 }) {
+  const customTemplates = templates.filter(t => t.isCustom)
   const base = firstTemplateFor('sous_traitance', templates)
+  const [tab, setTab] = useState<'create' | 'manage'>('create')
   const [contractType, setContractType] = useState<ContractType>('sous_traitance')
   const [title, setTitle] = useState('')
   const [baseKey, setBaseKey] = useState(base?.key ?? '')
   const [clauses, setClauses] = useState<ContractClauses>(base?.clauses ?? {} as ContractClauses)
   const [customSections, setCustomSections] = useState<ContractCustomSection[]>(base?.customSections ?? [])
   const [loading, setLoading] = useState(false)
+  const [deletingKey, setDeletingKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const availableTemplates = templates.filter(template => template.type === contractType)
 
@@ -458,115 +506,190 @@ function TemplateModal({ templates, onClose, onSaved }: {
     onSaved()
   }
 
+  const handleDeleteTemplate = async (templateKey: string) => {
+    const templateId = templateKey.replace('custom:', '')
+    if (!confirm('Supprimer ce template ? Cette action est irréversible.')) return
+    setDeletingKey(templateKey)
+    setError(null)
+    const result = await deleteContractTemplate(templateId)
+    setDeletingKey(null)
+    if (result.error) return setError(result.error)
+    onSaved()
+  }
+
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <form onSubmit={handleSubmit} className="card w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6">
+      <div className="card w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6">
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>
-            <h2 className="text-xl font-extrabold text-primary">Nouveau template</h2>
-            <p className="text-sm text-secondary mt-1">Créez une base réutilisable pour vos futurs contrats.</p>
+            <h2 className="text-xl font-extrabold text-primary">Templates de contrat</h2>
+            <p className="text-sm text-secondary mt-1">Créez et gérez vos modèles réutilisables.</p>
           </div>
           <button type="button" onClick={onClose} className="p-2 rounded hover:bg-base text-secondary hover:text-primary">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-semibold text-primary mb-1">Type</label>
-            <select className="input w-full" value={contractType} onChange={event => handleTypeChange(event.target.value as ContractType)}>
-              <option value="sous_traitance">Sous-traitance</option>
-              <option value="maintenance">Maintenance</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-primary mb-1">Base</label>
-            <select className="input w-full" value={baseKey} onChange={event => handleBaseChange(event.target.value)}>
-              {availableTemplates.map(template => <option key={template.key} value={template.key}>{template.title}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-primary mb-1">Nom du template</label>
-            <input className="input w-full" value={title} onChange={event => setTitle(event.target.value)} required placeholder="Ex. Maintenance copropriété" />
-          </div>
+        <div className="flex gap-1 mb-6 border-b border-[var(--elevation-border)]">
+          <button
+            type="button"
+            onClick={() => setTab('create')}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${tab === 'create' ? 'border-accent text-accent' : 'border-transparent text-secondary hover:text-primary'}`}
+          >
+            Nouveau template
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('manage')}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors flex items-center gap-2 ${tab === 'manage' ? 'border-accent text-accent' : 'border-transparent text-secondary hover:text-primary'}`}
+          >
+            Mes templates
+            {customTemplates.length > 0 && (
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-accent/15 text-accent text-xs font-bold">
+                {customTemplates.length}
+              </span>
+            )}
+          </button>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-          {CLAUSE_ORDER.map(key => (
-            <div key={key}>
-              <label className="block text-sm font-semibold text-primary mb-1">{CLAUSE_LABELS[key]}</label>
-              <textarea
-                className="input w-full min-h-28 text-sm"
-                value={clauses[key] ?? ''}
-                onChange={event => setClauses(current => ({ ...current, [key]: event.target.value }))}
-              />
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-6">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <h3 className="text-sm font-extrabold text-primary uppercase tracking-wider">Sections supplémentaires</h3>
-            <button
-              type="button"
-              className="btn-secondary text-sm inline-flex items-center gap-2 py-2 px-3"
-              onClick={() => setCustomSections(current => [...current, { id: `section-${Date.now()}`, title: '', content: '' }])}
-            >
-              <Plus className="w-4 h-4" />
-              Ajouter une section
-            </button>
-          </div>
-          {customSections.length === 0 ? (
-            <p className="text-sm text-secondary">Aucune section supplémentaire.</p>
-          ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {customSections.map((section, index) => (
-                <div key={section.id} className="rounded-lg border border-[var(--elevation-border)] p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 flex-1">
-                      <input
-                        className="input w-full"
-                        value={section.title}
-                        placeholder={`Titre de la section ${index + 1}`}
-                        onChange={event => setCustomSections(current => current.map(item => item.id === section.id ? { ...item, title: event.target.value } : item))}
-                      />
-                      <textarea
-                        className="input w-full md:col-span-2 min-h-24 text-sm"
-                        value={section.content}
-                        placeholder="Contenu de la section"
-                        onChange={event => setCustomSections(current => current.map(item => item.id === section.id ? { ...item, content: event.target.value } : item))}
-                      />
+        {tab === 'manage' ? (
+          <div>
+            {customTemplates.length === 0 ? (
+              <div className="py-10 text-center">
+                <LayoutTemplate className="w-8 h-8 text-secondary mx-auto mb-3" />
+                <p className="text-sm text-secondary">Aucun template personnalisé pour le moment.</p>
+                <button type="button" onClick={() => setTab('create')} className="mt-3 text-sm font-semibold text-accent hover:underline">
+                  Créer un template
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {customTemplates.map(template => (
+                  <div key={template.key} className="flex items-center justify-between gap-4 rounded-lg border border-[var(--elevation-border)] px-4 py-3">
+                    <div>
+                      <p className="font-semibold text-primary text-sm">{template.title}</p>
+                      <p className="text-xs text-secondary mt-0.5">{CONTRACT_TYPE_LABELS[template.type]}</p>
                     </div>
-                    <button
-                      type="button"
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-500/25 text-red-500 hover:bg-red-500/10"
-                      onClick={() => setCustomSections(current => current.filter(item => item.id !== section.id))}
-                      title="Supprimer la section"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    {canDelete && (
+                      <button
+                        type="button"
+                        disabled={deletingKey === template.key}
+                        onClick={() => handleDeleteTemplate(template.key)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-500/25 text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                        title="Supprimer ce template"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
+                ))}
+              </div>
+            )}
+            {error && <p className="mt-4 rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500 font-semibold">{error}</p>}
+            <div className="mt-6 flex justify-end">
+              <button type="button" onClick={onClose} className="btn-secondary">Fermer</button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-primary mb-1">Type</label>
+                <select className="input w-full" value={contractType} onChange={event => handleTypeChange(event.target.value as ContractType)}>
+                  <option value="sous_traitance">Sous-traitance</option>
+                  <option value="maintenance">Maintenance</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-primary mb-1">Base</label>
+                <select className="input w-full" value={baseKey} onChange={event => handleBaseChange(event.target.value)}>
+                  {availableTemplates.map(template => <option key={template.key} value={template.key}>{template.title}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-primary mb-1">Nom du template</label>
+                <input className="input w-full" value={title} onChange={event => setTitle(event.target.value)} required placeholder="Ex. Maintenance copropriété" />
+              </div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {CLAUSE_ORDER.map(key => (
+                <div key={key}>
+                  <label className="block text-sm font-semibold text-primary mb-1">{CLAUSE_LABELS[key]}</label>
+                  <textarea
+                    className="input w-full min-h-28 text-sm"
+                    value={clauses[key] ?? ''}
+                    onChange={event => setClauses(current => ({ ...current, [key]: event.target.value }))}
+                  />
                 </div>
               ))}
             </div>
-          )}
-        </div>
 
-        {error && <p className="mt-4 rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500 font-semibold">{error}</p>}
+            <div className="mt-6">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h3 className="text-sm font-extrabold text-primary uppercase tracking-wider">Sections supplémentaires</h3>
+                <button
+                  type="button"
+                  className="btn-secondary text-sm inline-flex items-center gap-2 py-2 px-3"
+                  onClick={() => setCustomSections(current => [...current, { id: `section-${Date.now()}`, title: '', content: '' }])}
+                >
+                  <Plus className="w-4 h-4" />
+                  Ajouter une section
+                </button>
+              </div>
+              {customSections.length === 0 ? (
+                <p className="text-sm text-secondary">Aucune section supplémentaire.</p>
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {customSections.map((section, index) => (
+                    <div key={section.id} className="rounded-lg border border-[var(--elevation-border)] p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 flex-1">
+                          <input
+                            className="input w-full"
+                            value={section.title}
+                            placeholder={`Titre de la section ${index + 1}`}
+                            onChange={event => setCustomSections(current => current.map(item => item.id === section.id ? { ...item, title: event.target.value } : item))}
+                          />
+                          <textarea
+                            className="input w-full md:col-span-2 min-h-24 text-sm"
+                            value={section.content}
+                            placeholder="Contenu de la section"
+                            onChange={event => setCustomSections(current => current.map(item => item.id === section.id ? { ...item, content: event.target.value } : item))}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-500/25 text-red-500 hover:bg-red-500/10"
+                          onClick={() => setCustomSections(current => current.filter(item => item.id !== section.id))}
+                          title="Supprimer la section"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
-        <div className="mt-6 flex justify-end gap-3">
-          <button type="button" onClick={onClose} className="btn-secondary">Annuler</button>
-          <button type="submit" disabled={loading} className="btn-primary inline-flex items-center gap-2">
-            <Save className="w-4 h-4" />
-            {loading ? 'Création...' : 'Créer le template'}
-          </button>
-        </div>
-      </form>
+            {error && <p className="mt-4 rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500 font-semibold">{error}</p>}
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={onClose} className="btn-secondary">Annuler</button>
+              <button type="submit" disabled={loading} className="btn-primary inline-flex items-center gap-2">
+                <Save className="w-4 h-4" />
+                {loading ? 'Création...' : 'Créer le template'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   )
 }
 
-export default function ContractsClient({ initialContracts, clients, chantiers, templates, canCreate, canEdit, canDelete }: Props) {
+export default function ContractsClient({ initialContracts, clients, chantiers, templates, quotes, canCreate, canEdit, canDelete }: Props) {
   const router = useRouter()
   const [contracts, setContracts] = useState(initialContracts)
   const [query, setQuery] = useState('')
@@ -576,6 +699,53 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [sendModalContract, setSendModalContract] = useState<ContractListItem | null>(null)
+  const [sendModalGroups, setSendModalGroups] = useState<AttachmentGroup[]>([])
+  const [sendModalLoading, setSendModalLoading] = useState(false)
+  const [sendModalSubmitting, setSendModalSubmitting] = useState(false)
+  const [sendModalError, setSendModalError] = useState<string | null>(null)
+
+  const openSendModal = async (contract: ContractListItem) => {
+    setSendModalContract(contract)
+    setSendModalGroups([])
+    setSendModalError(null)
+    if (!contract.client_id) {
+      setSendModalGroups([
+        { key: 'quotes', label: 'Devis liés', items: [] },
+        { key: 'invoices', label: 'Factures liées', items: [] },
+      ])
+      return
+    }
+    setSendModalLoading(true)
+    try {
+      const docs = await fetchClientDocsForAttachment(contract.client_id)
+      setSendModalGroups([
+        { key: 'quotes', label: 'Devis du client', items: docs.quotes },
+        { key: 'invoices', label: 'Factures du client', items: docs.invoices },
+      ])
+    } catch (err) {
+      setSendModalError(err instanceof Error ? err.message : 'Erreur de chargement des documents.')
+    } finally {
+      setSendModalLoading(false)
+    }
+  }
+
+  const confirmSend = async (selected: Record<string, string[]>) => {
+    if (!sendModalContract) return
+    setSendModalSubmitting(true)
+    setSendModalError(null)
+    const result = await sendContract(sendModalContract.id, {
+      attachQuoteIds: selected.quotes ?? [],
+      attachInvoiceIds: selected.invoices ?? [],
+    })
+    setSendModalSubmitting(false)
+    if (result.error) {
+      setSendModalError(result.error)
+      return
+    }
+    setSendModalContract(null)
+    refresh()
+  }
 
   useEffect(() => {
     setContracts(initialContracts)
@@ -649,13 +819,22 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
   }
 
   return (
-    <main className="container mx-auto px-4 py-8 max-w-7xl">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
+    <main className="page-container space-y-6 md:space-y-8">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="text-sm font-semibold text-accent uppercase tracking-wider mb-1">Contrats</p>
           <h1 className="text-3xl font-extrabold text-primary">Contrats métier</h1>
         </div>
         <div className="flex flex-wrap gap-3">
+          <button
+            onClick={refresh}
+            disabled={isRefreshing}
+            title="Actualiser"
+            className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            Actualiser
+          </button>
           {canCreate && (
             <button onClick={() => setShowTemplate(true)} className="btn-secondary inline-flex items-center gap-2">
               <Save className="w-4 h-4" />
@@ -731,7 +910,7 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
                   </td>
                   <td className="px-4 py-4 min-w-44">
                     <p className="font-semibold text-primary">{contract.counterparty_name}</p>
-                    <p className="text-xs text-secondary">{CONTRACT_ROLE_LABELS[contract.role]}</p>
+                    <p className="text-xs text-secondary">{getRoleLabel(contract.role, contract.contract_type)}</p>
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap">{CONTRACT_TYPE_LABELS[contract.contract_type]}</td>
                   <td className="px-4 py-4 whitespace-nowrap"><StatusBadge status={contract.status} /></td>
@@ -769,7 +948,7 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
                         <ActionButton
                           title="Envoyer le contrat par e-mail"
                           disabled={busyId === contract.id}
-                          onClick={() => runAction(contract.id, () => sendContract(contract.id))}
+                          onClick={() => openSendModal(contract)}
                           icon={<Send className="w-3.5 h-3.5" />}
                         >
                           Envoyer
@@ -852,6 +1031,7 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
           clients={clients}
           chantiers={chantiers}
           templates={templates}
+          quotes={quotes}
           onClose={() => setShowCreate(false)}
           onSaved={() => {
             setShowCreate(false)
@@ -867,6 +1047,7 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
           clients={clients}
           chantiers={chantiers}
           templates={templates}
+          quotes={quotes}
           onClose={() => setEditingContract(null)}
           onSaved={() => {
             setEditingContract(null)
@@ -878,11 +1059,26 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
       {showTemplate && (
         <TemplateModal
           templates={templates}
+          canDelete={canDelete}
           onClose={() => setShowTemplate(false)}
           onSaved={() => {
             setShowTemplate(false)
             refresh()
           }}
+        />
+      )}
+
+      {sendModalContract && (
+        <AttachmentPickerModal
+          title="Envoyer le contrat"
+          description="Sélectionnez les devis et factures du même client à joindre en pièces jointes."
+          recipientEmail={sendModalContract.counterparty_email ?? null}
+          groups={sendModalGroups}
+          loading={sendModalLoading}
+          submitting={sendModalSubmitting}
+          error={sendModalError}
+          onCancel={() => setSendModalContract(null)}
+          onConfirm={confirmSend}
         />
       )}
     </main>

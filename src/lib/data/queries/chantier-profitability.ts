@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from './clients'
+import { hasPermission } from './membership'
 
 export type ChantierExpense = {
   id: string
@@ -14,6 +15,7 @@ export type ChantierExpense = {
   receipt_storage_path: string | null
   notes: string | null
   created_by: string | null
+  created_by_name?: string | null
   created_at: string
 }
 
@@ -40,12 +42,23 @@ export type ChantierProfitability = {
   hoursLogged: number
   expenses: ChantierExpense[]
   laborByMember: LaborByMemberEntry[]
+  ownExpensesOnly?: boolean   // vrai si l'utilisateur ne voit que ses propres dépenses
 }
 
 export async function getChantierProfitability(chantierId: string): Promise<ChantierProfitability | null> {
+  const [canView, canCreate] = await Promise.all([
+    hasPermission('chantiers.expenses.view'),
+    hasPermission('chantiers.expenses.create'),
+  ])
+  if (!canView && !canCreate) return null
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return null
+
+  // Si l'utilisateur peut créer des dépenses mais pas les voir toutes, on filtre sur ses propres dépenses
+  const { data: { user } } = await supabase.auth.getUser()
+  const ownExpensesOnly = !canView && canCreate
 
   // 1. Budget + devis lié
   const { data: chantier } = await supabase
@@ -166,12 +179,29 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   const hoursLogged = laborByMember.reduce((s, e) => s + e.hours, 0)
   const costLabor   = laborByMember.reduce((s, e) => s + e.cost, 0)
 
-  // 4. Dépenses enregistrées
-  const { data: expenses } = await supabase
+  // 4. Dépenses enregistrées (filtrées par créateur si l'utilisateur ne peut voir que les siennes)
+  let expensesQuery = supabase
     .from('chantier_expenses')
     .select('*')
     .eq('chantier_id', chantierId)
     .order('expense_date', { ascending: false })
+  if (ownExpensesOnly && user?.id) {
+    expensesQuery = expensesQuery.eq('created_by', user.id)
+  }
+  const { data: expenses } = await expensesQuery
+
+  // Résoudre les noms des créateurs de dépenses
+  const creatorIds = [...new Set((expenses ?? []).map((e: any) => e.created_by).filter(Boolean))]
+  const creatorNameMap: Record<string, string | null> = {}
+  if (creatorIds.length > 0) {
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', creatorIds)
+    for (const p of profiles ?? []) {
+      creatorNameMap[p.id] = (p as any).full_name ?? null
+    }
+  }
 
   const expenseList: ChantierExpense[] = (expenses ?? []).map((e: any) => ({
     id: e.id,
@@ -186,6 +216,7 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
     receipt_storage_path: e.receipt_storage_path,
     notes: e.notes,
     created_by: e.created_by,
+    created_by_name: e.created_by ? (creatorNameMap[e.created_by] ?? null) : null,
     created_at: e.created_at,
   }))
 
@@ -208,13 +239,36 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
 
     // Dédupliquer par id (au cas où une facture matche à la fois chantier_id et quote_id)
     const seen = new Set<string>()
-    revenueHt = (invoices ?? [])
-      .filter((inv: any) => {
-        if (seen.has(inv.id)) return false
-        seen.add(inv.id)
-        return inv.invoice_type !== 'avoir'
-      })
+    const allValid = (invoices ?? []).filter((inv: any) => {
+      if (seen.has(inv.id)) return false
+      seen.add(inv.id)
+      return inv.invoice_type !== 'avoir' && inv.invoice_type !== 'acompte'
+    })
+    // Si des situations/soldes existent, exclure les factures standard liées via quote_id
+    // (elles ont été remplacées par le mode situations et ne doivent pas être doublonnées)
+    const hasSituations = allValid.some((inv: any) => inv.invoice_type === 'situation' || inv.invoice_type === 'solde')
+    revenueHt = allValid
+      .filter((inv: any) => !hasSituations || inv.invoice_type !== 'standard')
       .reduce((sum: number, inv: any) => sum + (inv.total_ht ?? 0), 0)
+  }
+
+  // En mode "propres dépenses uniquement", on ne calcule pas les agrégats financiers globaux
+  if (ownExpensesOnly) {
+    return {
+      budgetHt: 0,
+      revenueHt: 0,
+      costMaterial: 0,
+      costLabor: 0,
+      costSubcontract: 0,
+      costOther: 0,
+      costTotal: 0,
+      marginEur: 0,
+      marginPct: 0,
+      hoursLogged,
+      expenses: expenseList,
+      laborByMember: [],
+      ownExpensesOnly: true,
+    }
   }
 
   const costTotal = costMaterial + costLabor + costSubcontract + costOther
@@ -234,5 +288,6 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
     hoursLogged,
     expenses: expenseList,
     laborByMember,
+    ownExpensesOnly: false,
   }
 }

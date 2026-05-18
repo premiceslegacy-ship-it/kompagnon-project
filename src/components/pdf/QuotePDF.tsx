@@ -4,7 +4,7 @@ import type { Organization } from '@/lib/data/queries/organization'
 import type { QuoteWithItems } from '@/lib/data/queries/quotes'
 import type { Client } from '@/lib/data/queries/clients'
 import { APP_NAME } from '@/lib/brand'
-import { registerFonts, makePageStyles, DS } from '@/lib/pdf/pdf-design-system'
+import { registerFonts, makePageStyles, DS, splitItemDescription, formatDimDetail } from '@/lib/pdf/pdf-design-system'
 
 registerFonts()
 
@@ -28,6 +28,22 @@ function addDays(iso: string, days: number): string {
 
 function clientDisplayName(client: Client): string {
   return client.company_name || [client.first_name, client.last_name].filter(Boolean).join(' ') || client.email || ''
+}
+
+function ItemDescription({ value, dimDetail, S }: { value: string | null | undefined; dimDetail?: string | null; S: ReturnType<typeof makePageStyles> }) {
+  const parts = splitItemDescription(value)
+
+  return (
+    <View style={S.colDesc}>
+      <Text style={S.itemText}>{parts.title}</Text>
+      {parts.details.length > 0 && (
+        <Text style={S.itemDetailText}>Comprend : {parts.details.join(' · ')}</Text>
+      )}
+      {dimDetail && (
+        <Text style={S.itemDetailText}>{dimDetail}</Text>
+      )}
+    </View>
+  )
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -115,7 +131,7 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
 
   return (
     <Document
-      title={`Devis ${quote.number ?? ''} — ${organization.name}`}
+      title={`Devis ${quote.number ?? ''} - ${organization.name}`}
       author={organization.name}
       creator={APP_NAME}
     >
@@ -202,14 +218,14 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
         {organization.decennale_enabled && organization.decennale_assureur && (
           <View style={{ marginBottom: DS.space.lg, paddingVertical: DS.space.md, paddingHorizontal: DS.space.md, borderWidth: 0.5, borderColor: DS.color.divider, backgroundColor: DS.color.surface }} wrap={false}>
             <Text style={{ fontFamily: DS.font.heading, fontWeight: 700, fontSize: DS.size.xxs, color: DS.color.secondary, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: DS.space.sm }}>
-              Garantie décennale — Art. L241-1 Code des assurances
+              Garantie décennale - Art. L241-1 Code des assurances
             </Text>
             <Text style={{ fontFamily: DS.font.body, fontSize: DS.size.sm, color: DS.color.body, lineHeight: 1.5 }}>
               {`Assureur : ${organization.decennale_assureur}`}
               {organization.decennale_police ? `  ·  Police n° ${organization.decennale_police}` : ''}
               {organization.decennale_couverture ? `  ·  Couverture : ${organization.decennale_couverture}` : ''}
               {(organization.decennale_date_debut || organization.decennale_date_fin)
-                ? `  ·  Validité : ${organization.decennale_date_debut ? new Date(organization.decennale_date_debut).toLocaleDateString('fr-FR') : '?'} – ${organization.decennale_date_fin ? new Date(organization.decennale_date_fin).toLocaleDateString('fr-FR') : '?'}`
+                ? `  ·  Validité : ${organization.decennale_date_debut ? new Date(organization.decennale_date_debut).toLocaleDateString('fr-FR') : '?'} - ${organization.decennale_date_fin ? new Date(organization.decennale_date_fin).toLocaleDateString('fr-FR') : '?'}`
                 : ''}
             </Text>
           </View>
@@ -241,7 +257,7 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
             )}
             {section.items.map(item => (
               <View key={item.id} style={S.itemRow} wrap={false}>
-                <Text style={[S.itemText, S.colDesc]}>{item.description ?? ''}</Text>
+                <ItemDescription value={item.description} dimDetail={formatDimDetail(item)} S={S} />
                 <Text style={[S.itemTextRight, S.colQty]}>{item.quantity}</Text>
                 <Text style={[S.itemText, S.colUnit, { textAlign: 'center' }]}>{item.unit ?? ''}</Text>
                 <Text style={[S.itemTextRight, S.colPu]}>{fmt(item.unit_price, quote.currency)}</Text>
@@ -254,7 +270,7 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
 
         {visibleUnsectioned.map(item => (
           <View key={item.id} style={S.itemRow} wrap={false}>
-            <Text style={[S.itemText, S.colDesc]}>{item.description ?? ''}</Text>
+            <ItemDescription value={item.description} dimDetail={formatDimDetail(item)} S={S} />
             <Text style={[S.itemTextRight, S.colQty]}>{item.quantity}</Text>
             <Text style={[S.itemText, S.colUnit, { textAlign: 'center' }]}>{item.unit ?? ''}</Text>
             <Text style={[S.itemTextRight, S.colPu]}>{fmt(item.unit_price, quote.currency)}</Text>

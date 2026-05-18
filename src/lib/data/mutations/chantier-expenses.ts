@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 type Result = { error: string | null }
 
@@ -36,12 +37,21 @@ export type ChantierExpenseInput = {
 }
 
 export async function createChantierExpense(data: ChantierExpenseInput): Promise<Result & { id?: string }> {
+  if (!(await hasPermission('chantiers.expenses.create'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
 
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
+  const { data: chantier } = await supabase
+    .from('chantiers')
+    .select('id')
+    .eq('id', data.chantierId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
 
   const amountHt = computeAmountHt(data)
 
@@ -89,9 +99,18 @@ export async function updateChantierExpense(
   chantierId: string,
   data: Partial<Omit<ChantierExpenseInput, 'chantierId'>>,
 ): Promise<Result> {
+  if (!(await hasPermission('chantiers.expenses.edit'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
+  const { data: chantier } = await supabase
+    .from('chantiers')
+    .select('id')
+    .eq('id', chantierId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
 
   const update: Record<string, unknown> = {}
   if (data.category !== undefined)             update.category               = data.category
@@ -138,7 +157,18 @@ export async function updateChantierExpense(
 }
 
 export async function deleteChantierExpense(expenseId: string, chantierId: string): Promise<Result> {
+  if (!(await hasPermission('chantiers.expenses.delete'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  const { data: chantier } = await supabase
+    .from('chantiers')
+    .select('id')
+    .eq('id', chantierId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
 
   const { error } = await supabase
     .from('chantier_expenses')
@@ -159,9 +189,20 @@ export async function linkReceivedInvoiceToChantier(
   receivedInvoiceId: string,
   chantierId: string | null,
 ): Promise<Result> {
+  if (!(await hasPermission('chantiers.expenses.edit'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
+  if (chantierId) {
+    const { data: chantier } = await supabase
+      .from('chantiers')
+      .select('id')
+      .eq('id', chantierId)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const { error } = await supabase
     .from('received_invoices')
@@ -182,12 +223,21 @@ export async function uploadExpenseReceipt(
   chantierId: string,
   formData: FormData,
 ): Promise<{ storagePath: string | null; error: string | null }> {
+  if (!(await hasPermission('chantiers.expenses.create'))) return { storagePath: null, error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { storagePath: null, error: 'Non authentifié.' }
 
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { storagePath: null, error: 'Organisation introuvable.' }
+  const { data: chantier } = await supabase
+    .from('chantiers')
+    .select('id')
+    .eq('id', chantierId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  if (!chantier) return { storagePath: null, error: 'Chantier introuvable ou non autorisé.' }
 
   const file = formData.get('file')
   if (!(file instanceof File)) {
@@ -210,7 +260,14 @@ export async function uploadExpenseReceipt(
 }
 
 export async function getReceiptSignedUrl(storagePath: string): Promise<{ url: string | null; error: string | null }> {
+  if (!(await hasPermission('chantiers.expenses.view'))) return { url: null, error: 'Action non autorisée.' }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { url: null, error: 'Organisation introuvable.' }
+  if (!storagePath.startsWith(`${orgId}/receipts/`)) {
+    return { url: null, error: 'Fichier introuvable ou non autorisé.' }
+  }
   const { data, error } = await supabase.storage
     .from('chantier-photos')
     .createSignedUrl(storagePath, 3600)

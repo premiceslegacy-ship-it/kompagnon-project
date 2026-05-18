@@ -82,10 +82,11 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'chantiers.manage_team':  'Gérer l’équipe d’un chantier',
   'chantiers.view_tasks':   'Voir les tâches',
   'chantiers.manage_tasks': 'Gérer les tâches',
-  'chantiers.expenses.view':   'Voir les dépenses chantier',
-  'chantiers.expenses.create': 'Ajouter des dépenses chantier',
-  'chantiers.expenses.edit':   'Modifier des dépenses chantier',
-  'chantiers.expenses.delete': 'Supprimer des dépenses chantier',
+  'chantiers.expenses.view':      'Voir les dépenses chantier',
+  'chantiers.expenses.create':    'Ajouter des dépenses chantier',
+  'chantiers.expenses.edit':      'Modifier des dépenses chantier',
+  'chantiers.expenses.delete':    'Supprimer des dépenses chantier',
+  'chantiers.manage_pointages':   'Ajuster/supprimer les pointages de l’équipe',
 
   // ─── Demandes (leads) ─────────────────────────────────────────────────────
   'leads.view':   'Voir les demandes',

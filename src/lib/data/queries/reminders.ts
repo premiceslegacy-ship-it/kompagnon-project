@@ -5,9 +5,12 @@ import { todayParis } from '@/lib/utils'
 export type OverdueInvoice = {
   id: string
   number: string | null
+  title: string | null
   total_ttc: number | null
   due_date: string | null
+  sent_at: string | null
   daysOverdue: number
+  reason: 'overdue' | 'sent_unpaid'
   clientName: string
   clientEmail: string | null
   clientId: string | null
@@ -35,7 +38,20 @@ export type RemindersData = {
 }
 
 // Nombre de jours de silence après une relance avant de réafficher l'item
-const COOLDOWN_DAYS = 3
+const COOLDOWN_DAYS = 2
+const FOLLOW_UP_DELAY_DAYS = 2
+
+function formatClientName(client: {
+  company_name?: string | null
+  contact_name?: string | null
+  first_name?: string | null
+  last_name?: string | null
+}) {
+  return client.company_name
+    || client.contact_name
+    || [client.first_name, client.last_name].filter(Boolean).join(' ')
+    || 'Client inconnu'
+}
 
 export async function getRemindersData(): Promise<RemindersData> {
   const supabase = await createClient()
@@ -46,7 +62,7 @@ export async function getRemindersData(): Promise<RemindersData> {
   const today = new Date()
   const todayStr = todayParis()
   const todayMidnight = new Date(todayStr)
-  const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  const followUpCutoff = new Date(today.getTime() - FOLLOW_UP_DELAY_DAYS * 24 * 60 * 60 * 1000).toISOString()
   const cooldownCutoff = new Date(todayMidnight.getTime() - COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString()
 
   const [
@@ -55,23 +71,25 @@ export async function getRemindersData(): Promise<RemindersData> {
     { data: invoiceReminderData },
     { data: quoteReminderData },
   ] = await Promise.all([
-    // Factures envoyées avec due_date dépassé
+    // Factures envoyées ou partiellement payées :
+    // - échéance dépassée si due_date existe ;
+    // - sinon facture envoyée depuis 2 jours sans règlement.
     supabase
       .from('invoices')
-      .select('id, number, total_ttc, due_date, client_id')
+      .select('id, number, title, total_ttc, due_date, sent_at, client_id')
       .eq('organization_id', orgId)
-      .eq('status', 'sent')
-      .not('due_date', 'is', null)
-      .lt('due_date', todayStr)
-      .order('due_date'),
+      .eq('is_archived', false)
+      .in('status', ['sent', 'partial'])
+      .or(`due_date.lt.${todayStr},sent_at.lt.${followUpCutoff}`)
+      .order('due_date', { nullsFirst: false }),
 
-    // Devis envoyés > 7 jours sans réponse
+    // Devis envoyés depuis 2 jours sans réponse
     supabase
       .from('quotes')
       .select('id, number, title, total_ttc, sent_at, client_id')
       .eq('organization_id', orgId)
       .in('status', ['sent', 'viewed'])
-      .lt('sent_at', sevenDaysAgo)
+      .lt('sent_at', followUpCutoff)
       .order('sent_at'),
 
     // Relances factures avec date d'envoi (pour cooldown)
@@ -107,7 +125,7 @@ export async function getRemindersData(): Promise<RemindersData> {
       .in('id', clientIds)
     clients?.forEach(c => {
       clientMap[c.id] = {
-        name: (c as any).company_name || [(c as any).first_name, (c as any).last_name].filter(Boolean).join(' ') || 'Client inconnu',
+        name: formatClientName(c),
         email: (c as any).email ?? null,
       }
     })
@@ -144,15 +162,21 @@ export async function getRemindersData(): Promise<RemindersData> {
       return !lastAt || lastAt < cooldownCutoff
     })
     .map(inv => {
-      const dueDate = new Date(inv.due_date!)
-      const daysOverdue = Math.floor((todayMidnight.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
+      const isOverdue = Boolean(inv.due_date && inv.due_date < todayStr)
+      const reason = isOverdue ? 'overdue' : 'sent_unpaid'
+      const referenceDate = isOverdue ? inv.due_date! : inv.sent_at?.split('T')[0] ?? todayStr
+      const referenceDateMidnight = new Date(referenceDate)
+      const daysOverdue = Math.floor((todayMidnight.getTime() - referenceDateMidnight.getTime()) / (1000 * 60 * 60 * 24))
       const client = inv.client_id ? clientMap[inv.client_id] : null
       return {
         id: inv.id,
         number: inv.number,
+        title: inv.title,
         total_ttc: inv.total_ttc,
         due_date: inv.due_date,
+        sent_at: inv.sent_at,
         daysOverdue,
+        reason,
         clientName: client?.name ?? 'Client inconnu',
         clientEmail: client?.email ?? null,
         clientId: inv.client_id,

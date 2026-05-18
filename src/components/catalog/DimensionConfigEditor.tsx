@@ -60,13 +60,13 @@ export default function DimensionConfigEditor({
   onSchemaChange,
   onVariantsChange,
 }: Props) {
-  if (mode === 'none') return null
-
   const [showVariants, setShowVariants] = useState(false)
   const enabledAxes = AXES.filter((axis) => schema[axis].enabled)
   const visibleAxes = useMemo(() => (
     AXES.filter((axis) => AXIS_MODE_REQUIRED[axis].includes(mode) || schema[axis].enabled)
   ), [mode, schema])
+
+  if (mode === 'none') return null
 
   function patchAxis(axis: DimensionAxisKey, patch: Partial<EditableDimensionSchemaState[DimensionAxisKey]>) {
     onSchemaChange({

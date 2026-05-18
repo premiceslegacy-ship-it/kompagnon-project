@@ -12,6 +12,11 @@ export type OperatorUsageEventPayload = {
   total_tokens: number | null
   status: string
   local_usage_log_id: string
+  quota_feature?: string | null
+  quota_unit?: string | null
+  quota_quantity?: number | null
+  overflow_mode?: string | null
+  over_quota?: boolean | null
   metadata?: Record<string, unknown> | null
 }
 

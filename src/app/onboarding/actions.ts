@@ -9,6 +9,16 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { sendEmail } from '@/lib/email'
 import { buildInviteEmail } from '@/lib/email/templates'
 import { resolveBusinessSelection, type BusinessActivityId, type BusinessProfileConfig } from '@/lib/catalog-context'
+import {
+  normalizeBic,
+  normalizeCommercialCourt,
+  normalizeEmail,
+  normalizeFrenchIban,
+  normalizeFrenchVatNumber,
+  normalizePostalCode,
+  normalizeSiret,
+} from '@/lib/validations/organization'
+import { LEGAL_VAT_RATES } from '@/lib/utils'
 
 const ONBOARDED_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -46,6 +56,79 @@ function buildOrganizationCatalogDefaults(activityId: BusinessActivityId) {
     unit_set: config.unitSet,
     default_categories: config.defaultCategories,
     starter_presets: config.starterPresets,
+  }
+}
+
+function formString(formData: FormData, key: string): string {
+  return ((formData.get(key) as string | null) ?? '').trim()
+}
+
+function buildOrganizationUpdateFromForm(formData: FormData) {
+  const companyName = formString(formData, 'company_name')
+  const selection = resolveBusinessSelection({
+    activityId: (formData.get('business_activity') as string | null) ?? null,
+    businessProfile: (formData.get('business_profile') as string | null) ?? null,
+    sector: (formData.get('sector') as string | null) ?? null,
+  })
+  const siret = normalizeSiret(formString(formData, 'siret'))
+  const vatNumber = normalizeFrenchVatNumber(formString(formData, 'vat_number'))
+  const email = normalizeEmail(formString(formData, 'email'))
+  const postalCode = normalizePostalCode(formString(formData, 'postal_code'))
+  const iban = normalizeFrenchIban(formString(formData, 'iban'))
+  const bic = normalizeBic(formString(formData, 'bic'))
+  const paymentTermsDays = Number(formString(formData, 'payment_terms_days') || 30)
+  const latePenaltyRate = Number(formString(formData, 'late_penalty_rate') || 3)
+  const isVatSubject = formString(formData, 'is_vat_subject') !== 'false'
+  const defaultVatRate = Number(formString(formData, 'default_vat_rate') || (isVatSubject ? 20 : 0))
+
+  if (!companyName || !email.value) return { error: 'missing_fields' as const }
+  if (
+    siret.error ||
+    vatNumber.error ||
+    email.error ||
+    postalCode.error ||
+    iban.error ||
+    bic.error ||
+    !Number.isFinite(paymentTermsDays) ||
+    paymentTermsDays < 0 ||
+    paymentTermsDays > 90 ||
+    !Number.isFinite(latePenaltyRate) ||
+    latePenaltyRate < 0 ||
+    latePenaltyRate > 100 ||
+    !LEGAL_VAT_RATES.includes(defaultVatRate as typeof LEGAL_VAT_RATES[number])
+  ) {
+    return { error: 'invalid_org_details' as const }
+  }
+
+  return {
+    selection,
+    update: {
+      name: companyName,
+      slug: buildSlug(companyName),
+      sector: selection.sectorLabel,
+      siret: siret.value,
+      siren: siret.siren,
+      vat_number: vatNumber.value,
+      email: email.value,
+      phone: formString(formData, 'phone') || null,
+      address_line1: formString(formData, 'address_line1') || null,
+      city: formString(formData, 'city') || null,
+      postal_code: postalCode.value,
+      logo_url: formString(formData, 'logo_url') || null,
+      forme_juridique: formString(formData, 'forme_juridique') || null,
+      capital_social: formString(formData, 'capital_social') || null,
+      rcs: formString(formData, 'rcs') || null,
+      rcs_ville: formString(formData, 'rcs_ville') || null,
+      iban: iban.value,
+      bic: bic.value,
+      bank_name: formString(formData, 'bank_name') || null,
+      payment_terms_days: paymentTermsDays,
+      late_penalty_rate: latePenaltyRate,
+      court_competent: normalizeCommercialCourt(formString(formData, 'court_competent')),
+      is_vat_subject: isVatSubject,
+      default_vat_rate: isVatSubject ? defaultVatRate : 0,
+      ...buildOrganizationCatalogDefaults(selection.activity.id),
+    },
   }
 }
 
@@ -135,16 +218,8 @@ export async function completeOnboarding(formData: FormData) {
 
   if (!user) redirect('/login')
 
-  const companyName = (formData.get('company_name') as string)?.trim()
-  const selection = resolveBusinessSelection({
-    activityId: (formData.get('business_activity') as string | null) ?? null,
-    businessProfile: (formData.get('business_profile') as string | null) ?? null,
-    sector: (formData.get('sector') as string | null) ?? null,
-  })
-  const siret = (formData.get('siret') as string)?.trim() || null
-  const logoUrl = (formData.get('logo_url') as string)?.trim() || null
-
-  if (!companyName) redirect('/onboarding?error=missing_fields')
+  const orgForm = buildOrganizationUpdateFromForm(formData)
+  if ('error' in orgForm) redirect(`/onboarding?error=${orgForm.error}`)
 
   // L'organisation est créée automatiquement par le trigger on_auth_user_created_init_org
   const organizationId = await getCurrentOrganizationId()
@@ -153,14 +228,7 @@ export async function completeOnboarding(formData: FormData) {
   // Mettre à jour l'organisation avec les infos saisies
   const { error: orgError } = await supabase
     .from('organizations')
-    .update({
-      name: companyName,
-      slug: buildSlug(companyName),
-      sector: selection.sectorLabel,
-      siret,
-      logo_url: logoUrl,
-      ...buildOrganizationCatalogDefaults(selection.activity.id),
-    })
+    .update(orgForm.update)
     .eq('id', organizationId)
 
   if (orgError) {
@@ -174,7 +242,7 @@ export async function completeOnboarding(formData: FormData) {
     admin,
     organizationId,
     createdBy: user.id,
-    config: selection.profileConfig,
+    config: orgForm.selection.profileConfig,
   })
   const inviteErrors: string[] = []
 
@@ -285,28 +353,15 @@ export async function skipInvites(formData: FormData) {
 
   if (!user) redirect('/login')
 
-  const companyName = (formData.get('company_name') as string)?.trim()
-  const selection = resolveBusinessSelection({
-    activityId: (formData.get('business_activity') as string | null) ?? null,
-    businessProfile: (formData.get('business_profile') as string | null) ?? null,
-    sector: (formData.get('sector') as string | null) ?? null,
-  })
-  const siret = (formData.get('siret') as string)?.trim() || null
-
-  if (!companyName) redirect('/onboarding?error=missing_fields')
+  const orgForm = buildOrganizationUpdateFromForm(formData)
+  if ('error' in orgForm) redirect(`/onboarding?error=${orgForm.error}`)
 
   const organizationId = await getCurrentOrganizationId()
   if (!organizationId) redirect('/onboarding?error=org_not_found')
 
   const { error: orgError } = await supabase
     .from('organizations')
-    .update({
-      name: companyName,
-      slug: buildSlug(companyName),
-      sector: selection.sectorLabel,
-      siret,
-      ...buildOrganizationCatalogDefaults(selection.activity.id),
-    })
+    .update(orgForm.update)
     .eq('id', organizationId)
 
   if (orgError) {
@@ -318,7 +373,7 @@ export async function skipInvites(formData: FormData) {
     admin: createAdminClient(),
     organizationId,
     createdBy: user.id,
-    config: selection.profileConfig,
+    config: orgForm.selection.profileConfig,
   })
 
   await supabase

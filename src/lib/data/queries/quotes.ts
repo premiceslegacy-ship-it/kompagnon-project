@@ -3,7 +3,7 @@ import { getCurrentOrganizationId } from './clients'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type QuoteStatus = 'draft' | 'sent' | 'viewed' | 'accepted' | 'refused' | 'expired' | 'converted'
+export type QuoteStatus = 'draft' | 'sent' | 'viewed' | 'accepted' | 'refused' | 'expired' | 'converted' | 'fully_invoiced'
 
 export type Quote = {
   id: string
@@ -36,12 +36,14 @@ export type QuoteItem = {
   quantity: number
   unit: string | null
   unit_price: number
+  unit_cost_ht: number | null
   vat_rate: number
   total_ht: number | null
   position: number
   length_m: number | null
   width_m: number | null
   height_m: number | null
+  dim_quantity: number
   is_internal: boolean
 }
 
@@ -201,7 +203,7 @@ export async function getAcceptedQuotesWithItems(): Promise<QuoteWithItems[]> {
       .order('position'),
     supabase
       .from('quote_items')
-      .select('id, quote_id, section_id, type, material_id, labor_rate_id, description, quantity, unit, unit_price, vat_rate, total_ht, position, length_m, width_m, height_m, is_internal')
+      .select('id, quote_id, section_id, type, material_id, labor_rate_id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal')
       .in('quote_id', quoteIds)
       .order('position'),
   ])
@@ -258,7 +260,7 @@ export async function getQuoteById(id: string): Promise<QuoteWithItems | null> {
 
   const { data: items } = await supabase
     .from('quote_items')
-    .select('id, quote_id, section_id, type, material_id, labor_rate_id, description, quantity, unit, unit_price, vat_rate, total_ht, position, length_m, width_m, height_m, is_internal')
+    .select('id, quote_id, section_id, type, material_id, labor_rate_id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal')
     .eq('quote_id', id)
     .order('position')
 

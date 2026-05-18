@@ -182,14 +182,14 @@ export function ClientActions({ client }: { client: Client }) {
     <>
       <button
         onClick={() => setEditOpen(true)}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary hover:border-accent/50 transition-all font-semibold text-sm"
+        className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-[var(--elevation-border)] px-5 py-2.5 text-sm font-semibold text-secondary transition-all hover:border-accent/50 hover:text-primary"
       >
         <Edit2 className="w-4 h-4" />
         Modifier
       </button>
       <button
         onClick={handleDelete}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-all font-semibold text-sm"
+        className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-red-500/20 px-5 py-2.5 text-sm font-semibold text-red-400 transition-all hover:bg-red-500/10"
       >
         <Trash2 className="w-4 h-4" />
         Supprimer
@@ -215,13 +215,13 @@ export function MarkInvoicePaidButton({ invoiceId, onDone }: { invoiceId: string
     })
   }
 
-  if (done) return <span className="flex items-center gap-1.5 text-sm text-emerald-500 font-semibold"><CheckCircle2 className="w-4 h-4" />Marquée payée</span>
+  if (done) return <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm font-semibold text-emerald-500"><CheckCircle2 className="w-4 h-4" />Marquée payée</span>
 
   return (
     <button
       onClick={handleClick}
       disabled={isPending}
-      className="flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 hover:bg-emerald-500/20 transition-all font-semibold text-sm disabled:opacity-50"
+      className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-600 transition-all hover:bg-emerald-500/20 disabled:opacity-50"
     >
       {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
       Marquer payée
@@ -273,13 +273,13 @@ export function MarkQuoteAcceptedButton({ quoteId, onDone }: { quoteId: string; 
     })
   }
 
-  if (done) return <span className="flex items-center gap-1.5 text-sm text-accent font-semibold"><CheckCircle2 className="w-4 h-4" />Accepté</span>
+  if (done) return <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm font-semibold text-accent"><CheckCircle2 className="w-4 h-4" />Accepté</span>
 
   return (
     <button
       onClick={handleClick}
       disabled={isPending}
-      className="flex items-center gap-2 px-4 py-2 rounded-full bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20 transition-all font-semibold text-sm disabled:opacity-50"
+      className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-accent/20 bg-accent/10 px-4 py-2 text-sm font-semibold text-accent transition-all hover:bg-accent/20 disabled:opacity-50"
     >
       {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
       Marquer accepté

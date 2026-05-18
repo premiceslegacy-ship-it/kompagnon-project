@@ -554,6 +554,7 @@ export default function RentabiliteTab({
   materials = [],
   invoiceStubs = [],
   targetMarginPct: initialTargetMarginPct = 30,
+  permissions,
 }: {
   chantierId: string
   initialProfitability: ChantierProfitability
@@ -562,13 +563,22 @@ export default function RentabiliteTab({
   materials?: CatalogMaterial[]
   invoiceStubs?: InvoiceStub[]
   targetMarginPct?: number
+  permissions: {
+    canCreateExpenses: boolean
+    canEditExpenses: boolean
+    canDeleteExpenses: boolean
+    canEditRates: boolean
+    canEditChantier: boolean
+  }
 }) {
+  const { canCreateExpenses, canEditExpenses, canDeleteExpenses, canEditRates, canEditChantier } = permissions
+  const ownExpensesOnly = initialProfitability.ownExpensesOnly ?? false
   const today = new Date().toISOString().slice(0, 10)
 
   const [profitability, setProfitability] = useState(initialProfitability)
   const [laborByMember, setLaborByMember] = useState<LaborByMemberEntry[]>(initialProfitability.laborByMember)
 
-  // Marge cible — éditable inline
+  // Marge cible - éditable inline
   const [targetMarginPct, setTargetMarginPct] = useState(initialTargetMarginPct)
   const [editingMargin, setEditingMargin] = useState(false)
   const [marginInput, setMarginInput] = useState(String(initialTargetMarginPct))
@@ -590,6 +600,7 @@ export default function RentabiliteTab({
   const [receiptUrls, setReceiptUrls] = useState<Record<string, string>>({})
 
   const handleScan = async (file: File) => {
+    if (!canCreateExpenses) return
     setScanning(true)
     setScanError(null)
     const uploadFormData = new FormData()
@@ -623,7 +634,7 @@ export default function RentabiliteTab({
       scanWarnings.push(`Montant TTC lu (${fmtMoney(ocrRes.amountTtc, 2)}) converti en HT avec TVA ${ocrRes.vatRate} %.`)
     }
     if (ocrRes.amountSource === 'unknown') {
-      scanWarnings.push('Montant non détecté — renseignez le montant manuellement.')
+      scanWarnings.push('Montant non détecté - renseignez le montant manuellement.')
     }
 
     const override: Partial<ExpenseFormState> = {
@@ -645,7 +656,7 @@ export default function RentabiliteTab({
     setEditingExpense(null)
     setShowAddForm(true)
     if (ocrRes.confidence === 'low') {
-      scanWarnings.push('Ticket peu lisible — vérifiez les valeurs avant d\'enregistrer.')
+      scanWarnings.push('Ticket peu lisible - vérifiez les valeurs avant d\'enregistrer.')
     }
     if (scanWarnings.length) {
       setScanError(scanWarnings.join(' '))
@@ -664,7 +675,7 @@ export default function RentabiliteTab({
     }
   }
 
-  // Factures rattachées — géré localement pour éviter un reload
+  // Factures rattachées - géré localement pour éviter un reload
   const [linkedInvoices, setLinkedInvoices] = useState<InvoiceStub[]>(
     () => invoiceStubs.filter(inv => inv.chantier_id === chantierId)
   )
@@ -681,6 +692,7 @@ export default function RentabiliteTab({
   )
 
   const handleLinkInvoice = async () => {
+    if (!canEditChantier) return
     if (!linkingInvoiceId) return
     setLinkingInvoice(true)
     setLinkInvoiceError(null)
@@ -697,6 +709,7 @@ export default function RentabiliteTab({
   }
 
   const handleUnlinkInvoice = async (invoiceId: string) => {
+    if (!canEditChantier) return
     setUnlinkingId(invoiceId)
     const { error } = await linkInvoiceToChantier(invoiceId, null)
     setUnlinkingId(null)
@@ -713,7 +726,8 @@ export default function RentabiliteTab({
   const [rateError, setRateError] = useState<string | null>(null)
 
   const {
-    budgetHt, revenueHt, costMaterial, costLabor, costSubcontract, costOther,
+    budgetHt,
+    revenueHt, costMaterial, costLabor, costSubcontract, costOther,
     costTotal, marginEur, marginPct, hoursLogged,
   } = profitability
 
@@ -743,6 +757,7 @@ export default function RentabiliteTab({
   }
 
   const handleDelete = async (id: string) => {
+    if (!canDeleteExpenses) return
     setDeletingId(id)
     const { error } = await deleteChantierExpense(id, chantierId)
     setDeletingId(null)
@@ -753,12 +768,14 @@ export default function RentabiliteTab({
   // ── Handler taux main-d'œuvre ──
 
   const handleEditRate = (entry: LaborByMemberEntry) => {
+    if (!canEditRates) return
     setEditingRateMemberId(entry.membership_id)
     setRateInputValue(entry.ratePerHour != null ? String(entry.ratePerHour) : '')
     setRateError(null)
   }
 
   const handleSaveRate = async (membershipId: string) => {
+    if (!canEditRates) return
     const parsed = parseFloat(rateInputValue.replace(',', '.'))
     if (isNaN(parsed) || parsed < 0) { setRateError('Taux invalide.'); return }
     setRateSaving(true)
@@ -780,6 +797,7 @@ export default function RentabiliteTab({
   }
 
   const handleSaveMargin = async () => {
+    if (!canEditChantier) return
     const parsed = parseFloat(marginInput.replace(',', '.'))
     if (isNaN(parsed) || parsed < 0 || parsed >= 100) return
     setMarginSaving(true)
@@ -794,7 +812,12 @@ export default function RentabiliteTab({
     <div className="space-y-6">
 
       {/* ── 1. Bandeau KPI ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {ownExpensesOnly && (
+        <div className="card p-4 text-sm text-secondary">
+          Vous voyez uniquement vos propres dépenses. Les indicateurs financiers du chantier ne sont pas accessibles avec votre rôle.
+        </div>
+      )}
+      {!ownExpensesOnly && <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {/* Budget devis + marge cible éditable */}
         <div className="card p-4 space-y-1">
           <p className="text-xs text-secondary font-semibold uppercase tracking-wider">Budget devis HT</p>
@@ -802,7 +825,7 @@ export default function RentabiliteTab({
           {/* Marge cible */}
           <div className="flex items-center gap-1 pt-0.5">
             <Target className="w-3 h-3 text-secondary flex-shrink-0" />
-            {editingMargin ? (
+            {canEditChantier && editingMargin ? (
               <div className="flex items-center gap-1">
                 <input
                   type="number"
@@ -823,7 +846,7 @@ export default function RentabiliteTab({
                   <X className="w-3 h-3" />
                 </button>
               </div>
-            ) : (
+            ) : canEditChantier ? (
               <button
                 onClick={() => { setMarginInput(String(targetMarginPct)); setEditingMargin(true) }}
                 className="text-xs text-secondary hover:text-primary flex items-center gap-1 group"
@@ -832,6 +855,10 @@ export default function RentabiliteTab({
                 Marge cible : <span className="font-semibold text-primary">{targetMarginPct} %</span>
                 <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 transition-opacity" />
               </button>
+            ) : (
+              <span className="text-xs text-secondary">
+                Marge cible : <span className="font-semibold text-primary">{targetMarginPct} %</span>
+              </span>
             )}
           </div>
           {costBudget > 0 && (
@@ -850,24 +877,26 @@ export default function RentabiliteTab({
               {linkedInvoices.map(inv => (
                 <div key={inv.id} className="flex items-center gap-1.5 text-xs">
                   <span className="flex-1 truncate text-secondary">
-                    {[inv.number, inv.title].filter(Boolean).join(' — ') || '(sans titre)'}
+                    {[inv.number, inv.title].filter(Boolean).join(' - ') || '(sans titre)'}
                     {inv.total_ht != null && <span className="ml-1 font-semibold text-primary">{fmtMoney(inv.total_ht)}</span>}
                   </span>
-                  <button
-                    onClick={() => handleUnlinkInvoice(inv.id)}
-                    disabled={unlinkingId === inv.id}
-                    className="text-secondary hover:text-red-500 transition-colors p-0.5 flex-shrink-0 disabled:opacity-40"
-                    title="Détacher cette facture"
-                  >
-                    {unlinkingId === inv.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
-                  </button>
+                  {canEditChantier && (
+                    <button
+                      onClick={() => handleUnlinkInvoice(inv.id)}
+                      disabled={unlinkingId === inv.id}
+                      className="text-secondary hover:text-red-500 transition-colors p-0.5 flex-shrink-0 disabled:opacity-40"
+                      title="Détacher cette facture"
+                    >
+                      {unlinkingId === inv.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
           )}
 
           {/* Actions */}
-          <div className="flex gap-2 flex-wrap pt-0.5">
+          {canEditChantier && <div className="flex gap-2 flex-wrap pt-0.5">
             <Link
               href={`/finances/invoice-editor?chantier=${chantierId}&returnTo=${encodeURIComponent(`/chantiers/${chantierId}`)}`}
               className="text-xs text-accent hover:text-accent/80 flex items-center gap-1"
@@ -882,9 +911,9 @@ export default function RentabiliteTab({
                 <Plus className="w-3 h-3" /> Rattacher
               </button>
             )}
-          </div>
+          </div>}
 
-          {showLinkInvoice && (
+          {canEditChantier && showLinkInvoice && (
             <div className="pt-1 space-y-1.5">
               <select
                 className="input w-full text-xs py-1"
@@ -893,7 +922,7 @@ export default function RentabiliteTab({
               >
                 <option value="">— Choisir une facture —</option>
                 {availableToLink.map(inv => {
-                  const label = [inv.number, inv.title].filter(Boolean).join(' — ') || inv.id
+                  const label = [inv.number, inv.title].filter(Boolean).join(' - ') || inv.id
                   const amount = inv.total_ht != null ? ` · ${fmtMoney(inv.total_ht)}` : ''
                   return <option key={inv.id} value={inv.id}>{label}{amount}</option>
                 })}
@@ -921,10 +950,10 @@ export default function RentabiliteTab({
           </p>
           {revenueHt > 0 && <p className="text-xs text-secondary mt-0.5">{fmtMoney(marginEur)}</p>}
         </div>
-      </div>
+      </div>}
 
       {/* ── 2. Main-d'œuvre par membre ── */}
-      <div className="space-y-3">
+      {!ownExpensesOnly && <div className="space-y-3">
         <div className="flex items-center gap-2">
           <Users className="w-4 h-4 text-secondary" />
           <h3 className="text-sm font-semibold text-primary">Main-d&apos;œuvre</h3>
@@ -987,11 +1016,11 @@ export default function RentabiliteTab({
                           ) : (
                             <span className="text-xs text-yellow-500 font-semibold">Taux non défini</span>
                           )}
-                          {entry.membership_id && (
+                          {canEditRates && entry.membership_id && (
                             <button
                               onClick={() => handleEditRate(entry)}
                               className="p-1 text-secondary hover:text-primary transition-colors rounded opacity-0 group-hover:opacity-100"
-                              title="Modifier le taux — s'applique à tous les chantiers de ce membre"
+                              title="Modifier le taux - s'applique à tous les chantiers de ce membre"
                             >
                               <Pencil className="w-3 h-3" />
                             </button>
@@ -1017,13 +1046,13 @@ export default function RentabiliteTab({
             )}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* ── 3. Dépenses ── */}
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="text-sm font-semibold text-primary">Dépenses enregistrées</h3>
-          {!showAddForm && !editingExpense && (
+          {canCreateExpenses && !showAddForm && !editingExpense && (
             <div className="flex items-center gap-2">
               <input
                 ref={scanInputRef}
@@ -1100,7 +1129,7 @@ export default function RentabiliteTab({
           ))}
         </div>
 
-        {showAddForm && (
+        {canCreateExpenses && showAddForm && (
           <ExpenseForm
             chantierId={chantierId}
             initial={{ ...emptyForm(today), ...(scannedFormOverride ?? {}) }}
@@ -1123,7 +1152,7 @@ export default function RentabiliteTab({
           <div className="space-y-2">
             {filteredExpenses.map(exp => (
               <div key={exp.id}>
-                {editingExpense?.id === exp.id ? (
+                {canEditExpenses && editingExpense?.id === exp.id ? (
                   <ExpenseForm
                     chantierId={chantierId}
                     initial={{
@@ -1153,6 +1182,7 @@ export default function RentabiliteTab({
                         {catLabel(exp.category)}
                         {exp.supplier_name ? ` · ${exp.supplier_name}` : ''}
                         {' · '}{new Date(exp.expense_date).toLocaleDateString('fr-FR')}
+                        {!ownExpensesOnly && exp.created_by_name ? ` · ${exp.created_by_name}` : ''}
                       </p>
                     </div>
                     <span className="text-sm font-bold text-primary flex-shrink-0">{fmtMoney(exp.amount_ht)}</span>
@@ -1166,21 +1196,25 @@ export default function RentabiliteTab({
                           <Receipt className="w-3.5 h-3.5" />
                         </button>
                       )}
-                      <button
-                        onClick={() => { setEditingExpense(exp); setShowAddForm(false) }}
-                        className="p-1.5 text-secondary hover:text-primary transition-colors rounded-lg hover:bg-secondary/10"
-                        title="Modifier"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(exp.id)}
-                        disabled={deletingId === exp.id}
-                        className="p-1.5 text-secondary hover:text-red-500 transition-colors rounded-lg hover:bg-red-500/10 disabled:opacity-40"
-                        title="Supprimer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {canEditExpenses && (
+                        <button
+                          onClick={() => { setEditingExpense(exp); setShowAddForm(false) }}
+                          className="p-1.5 text-secondary hover:text-primary transition-colors rounded-lg hover:bg-secondary/10"
+                          title="Modifier"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {canDeleteExpenses && (
+                        <button
+                          onClick={() => handleDelete(exp.id)}
+                          disabled={deletingId === exp.id}
+                          className="p-1.5 text-secondary hover:text-red-500 transition-colors rounded-lg hover:bg-red-500/10 disabled:opacity-40"
+                          title="Supprimer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1191,7 +1225,7 @@ export default function RentabiliteTab({
       </div>
 
       {/* ── 4. Répartition des coûts ── */}
-      <div className="card p-4 space-y-4">
+      {!ownExpensesOnly && <div className="card p-4 space-y-4">
         <h3 className="text-sm font-semibold text-primary">Répartition des coûts</h3>
         <CostRow label="Matériel" value={costMaterial} total={costTotal} color="bg-blue-500" icon={<Package className="w-3.5 h-3.5" />} />
         <CostRow
@@ -1214,10 +1248,10 @@ export default function RentabiliteTab({
             <ProgressBar value={costTotal} max={costBudget} color={budgetAlert ? 'bg-red-500' : 'bg-accent'} />
           </div>
         )}
-      </div>
+      </div>}
 
       {/* ── 5. Alerte budget ── */}
-      {budgetAlert && (
+      {!ownExpensesOnly && budgetAlert && (
         <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 text-sm">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           Les coûts dépassent 90 % du budget max ({fmtMoney(costBudget)} HT pour {targetMarginPct} % de marge). Risque de travailler sans marge.

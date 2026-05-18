@@ -1,6 +1,6 @@
 import JSZip from 'jszip'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { renderChantierPdfBufferById, renderInvoicePdfBufferById, renderQuotePdfBufferById } from '@/lib/pdf/server'
+import { renderChantierPdfBufferById, renderContractPdfBufferById, renderInvoicePdfBufferById, renderQuotePdfBufferById } from '@/lib/pdf/server'
 import {
   ORGANIZATION_EXPORT_BUCKET,
   ORGANIZATION_EXPORT_KEEP_COUNT,
@@ -8,6 +8,7 @@ import {
   type OrganizationExportSummary,
 } from './shared'
 import { rowsToCsv, sanitizeFileName } from './csv'
+import { assertSafeExternalFetchUrl } from '@/lib/security'
 
 type AdminClient = ReturnType<typeof createAdminClient>
 
@@ -79,8 +80,11 @@ async function blobToBuffer(blob: Blob): Promise<Buffer> {
 }
 
 async function downloadFromPublicUrl(url: string): Promise<{ buffer: Buffer; contentType: string | null } | null> {
+  const safeUrl = assertSafeExternalFetchUrl(url)
+  if (!safeUrl) return null
+
   try {
-    const res = await fetch(url)
+    const res = await fetch(safeUrl)
     if (!res.ok) return null
     const blob = await res.blob()
     return {
@@ -320,6 +324,7 @@ async function fetchPdfArtifacts(
   organizationId: string,
   quoteIds: string[],
   invoiceIds: string[],
+  contractIds: string[],
   chantierIds: string[],
   summary: OrganizationExportSummary,
   warnings: string[],
@@ -342,6 +347,13 @@ async function fetchPdfArtifacts(
     }
     zip.file(`pdfs/invoices/${rendered.fileName}`, rendered.buffer)
     summary.files['pdfs/invoices'] = (summary.files['pdfs/invoices'] ?? 0) + 1
+  }
+
+  for (const contractId of contractIds) {
+    const rendered = await renderContractPdfBufferById(contractId, organizationId)
+    if (!rendered) continue
+    zip.file(`pdfs/contracts/${rendered.fileName}`, rendered.buffer)
+    summary.files['pdfs/contracts'] = (summary.files['pdfs/contracts'] ?? 0) + 1
   }
 
   for (const chantierId of chantierIds) {
@@ -422,6 +434,7 @@ export async function buildOrganizationExportBundle({
     payments,
     recurringInvoices,
     invoiceSchedules,
+    contracts,
     chantiers,
     chantierEquipes,
     materials,
@@ -449,6 +462,7 @@ export async function buildOrganizationExportBundle({
     fetchOrgRows(admin, 'payments', organizationId, 'created_at'),
     fetchOrgRows(admin, 'recurring_invoices', organizationId, 'created_at'),
     fetchOrgRows(admin, 'invoice_schedules', organizationId, 'created_at'),
+    fetchOrgRows(admin, 'contracts', organizationId, 'created_at'),
     fetchOrgRows(admin, 'chantiers', organizationId, 'created_at'),
     fetchOrgRows(admin, 'chantier_equipes', organizationId, 'created_at'),
     fetchOrgRows(admin, 'materials', organizationId, 'created_at'),
@@ -469,6 +483,7 @@ export async function buildOrganizationExportBundle({
 
   const quoteIds = quotes.map((row) => String(row.id))
   const invoiceIds = invoices.map((row) => String(row.id))
+  const contractIds = contracts.map((row) => String(row.id))
   const recurringInvoiceIds = recurringInvoices.map((row) => String(row.id))
   const chantierIds = chantiers.map((row) => String(row.id))
   const chantierEquipeIds = chantierEquipes.map((row) => String(row.id))
@@ -518,6 +533,7 @@ export async function buildOrganizationExportBundle({
   addCsvFile(zip, 'csv/recurring_invoices.csv', recurringInvoices, summary)
   addCsvFile(zip, 'csv/recurring_invoice_items.csv', recurringInvoiceItems, summary)
   addCsvFile(zip, 'csv/invoice_schedules.csv', invoiceSchedules, summary)
+  addCsvFile(zip, 'csv/contracts.csv', contracts, summary)
   addCsvFile(zip, 'csv/chantiers.csv', chantiers, summary)
   addCsvFile(zip, 'csv/chantier_taches.csv', chantierTaches, summary)
   addCsvFile(zip, 'csv/chantier_pointages.csv', chantierPointages, summary)
@@ -580,7 +596,7 @@ export async function buildOrganizationExportBundle({
     }
   }
 
-  await fetchPdfArtifacts(zip, organizationId, quoteIds, invoiceIds, chantierIds, summary, warnings)
+  await fetchPdfArtifacts(zip, organizationId, quoteIds, invoiceIds, contractIds, chantierIds, summary, warnings)
 
   summary.warnings = warnings
 
