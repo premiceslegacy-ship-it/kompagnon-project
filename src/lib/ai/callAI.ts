@@ -3,6 +3,7 @@ import { isModuleEnabledAdmin } from '@/lib/data/queries/organization-modules'
 import type { OrganizationModuleKey } from '@/lib/organization-modules'
 import { getOperatorSourceInstance, signOperatorPayload, type OperatorUsageEventPayload } from '@/lib/operator'
 import { checkAIRateLimit } from '@/lib/rate-limit'
+import { AIQuotaExceededError, checkQuota, type QuotaCheckResult } from '@/lib/quota'
 
 export type AIProvider = 'openrouter' | 'mistral'
 export type AIInputKind = 'text' | 'image' | 'audio' | 'mixed'
@@ -12,10 +13,14 @@ export type AIFeature =
   | 'labor_estimate'
   | 'task_suggestion'
   | 'document_parse'
+  | 'receipt_ocr'
   | 'weekly_summary'
   | 'planning_ai'
   | 'whatsapp_reply'
   | 'whatsapp_transcription'
+  | 'whatsapp_proactive'
+  | 'whatsapp_document_ocr'
+  | 'voice_transcription'
   | 'reminder_draft'
   | 'auto_reminder_draft'
   | 'chantier_report_summary'
@@ -38,6 +43,7 @@ export type CallAIParams = {
   inputKind: AIInputKind
   request: AIRequest
   metadata?: Record<string, unknown> | null
+  quotaQuantity?: number
 }
 
 export type AIUsageMetrics = {
@@ -60,17 +66,21 @@ const MISTRAL_TRANSCRIPTION_URL = 'https://api.mistral.ai/v1/audio/transcription
 
 const MODULE_BY_FEATURE: Record<AIFeature, OrganizationModuleKey> = {
   quote_analysis: 'quote_ai',
-  labor_estimate: 'quote_ai',
-  task_suggestion: 'planning_ai',
-  document_parse: 'document_ai',
-  weekly_summary: 'planning_ai',
+  labor_estimate: 'labor_estimate_ai',
+  task_suggestion: 'suggest_tasks',
+  document_parse: 'document_import_ai',
+  receipt_ocr: 'receipt_ocr',
+  weekly_summary: 'weekly_summary',
   planning_ai: 'planning_ai',
   whatsapp_reply: 'whatsapp_agent',
   whatsapp_transcription: 'whatsapp_agent',
-  reminder_draft: 'quote_ai',
-  auto_reminder_draft: 'quote_ai',
-  chantier_report_summary: 'quote_ai',
-  chantier_assistant: 'planning_ai',
+  whatsapp_proactive: 'whatsapp_proactive',
+  whatsapp_document_ocr: 'whatsapp_ocr',
+  voice_transcription: 'voice_input',
+  reminder_draft: 'relances_ai',
+  auto_reminder_draft: 'relances_ai',
+  chantier_report_summary: 'chantier_report_ai',
+  chantier_assistant: 'chantier_assistant',
   catalog_extract: 'catalog_ai',
 }
 
@@ -110,6 +120,7 @@ type LogUsageParams = {
   usage: AIUsageMetrics
   externalRequestId: string | null
   metadata: Record<string, unknown> | null
+  quotaCheck: QuotaCheckResult | null
 }
 
 function getAppUrl(): string {
@@ -160,6 +171,11 @@ async function insertUsageLog(params: LogUsageParams): Promise<string | null> {
       currency: params.usage.currency,
       external_request_id: params.externalRequestId,
       metadata: params.metadata ?? null,
+      quota_feature: params.quotaCheck?.quotaFeature ?? null,
+      quota_unit: params.quotaCheck?.quotaUnit ?? null,
+      quota_quantity: params.quotaCheck?.requestedQuantity ?? 1,
+      overflow_mode: params.quotaCheck?.overflowMode ?? null,
+      over_quota: params.quotaCheck?.overQuota ?? false,
     })
     .select('id')
     .single()
@@ -268,6 +284,21 @@ function withTimeout(timeoutMs: number | undefined) {
 
 export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> {
   await ensureFeatureEnabled(params.organizationId, params.feature)
+  const quotaCheck = await checkQuota({
+    supabase: createAdminClient(),
+    organizationId: params.organizationId,
+    technicalFeature: params.feature,
+    quantity: params.quotaQuantity ?? 1,
+  })
+  if (!quotaCheck.allowed && quotaCheck.quotaFeature && quotaCheck.quotaMonthly !== null) {
+    throw new AIQuotaExceededError({
+      quotaFeature: quotaCheck.quotaFeature,
+      quotaMonthly: quotaCheck.quotaMonthly,
+      usedQuantity: quotaCheck.usedQuantity,
+      requestedQuantity: quotaCheck.requestedQuantity,
+    })
+  }
+
   const rateLimit = await checkAIRateLimit({
     organizationId: params.organizationId,
     feature: params.feature,
@@ -366,6 +397,7 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
       usage,
       externalRequestId,
       metadata: params.metadata ?? null,
+      quotaCheck,
     })
 
     // Best effort by design: on ne bloque jamais la réponse métier sur le cockpit opérateur.
@@ -382,6 +414,11 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
       currency: usage.currency,
       total_tokens: usage.totalTokens,
       status: 'success',
+      quota_feature: quotaCheck.quotaFeature,
+      quota_unit: quotaCheck.quotaUnit,
+      quota_quantity: quotaCheck.requestedQuantity,
+      overflow_mode: quotaCheck.overflowMode,
+      over_quota: quotaCheck.overQuota,
       metadata: params.metadata ?? null,
     })
 
@@ -409,6 +446,7 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
         error: errorMessage,
         latency_ms: latencyMs,
       },
+      quotaCheck,
     })
 
     // Même stratégie best effort côté erreur: on conserve le log local comme source de vérité
@@ -424,6 +462,11 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
       currency: usage.currency,
       total_tokens: usage.totalTokens,
       status: 'error',
+      quota_feature: quotaCheck.quotaFeature,
+      quota_unit: quotaCheck.quotaUnit,
+      quota_quantity: quotaCheck.requestedQuantity,
+      overflow_mode: quotaCheck.overflowMode,
+      over_quota: quotaCheck.overQuota,
       metadata: {
         ...(params.metadata ?? {}),
         error: errorMessage,

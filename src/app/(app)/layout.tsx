@@ -5,6 +5,7 @@ import { getOrganization } from '@/lib/data/queries/organization';
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients';
 import { createClient } from '@/lib/supabase/server';
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules';
+import { getUserPermissions } from '@/lib/data/queries/membership';
 
 async function getNotificationsData(): Promise<{ overdueInvoices: number; expiringQuotes: number; newRequests: number; decennaleExpiringDays: number | null; chantiersAtRisk: number }> {
     const supabase = await createClient();
@@ -20,7 +21,7 @@ async function getNotificationsData(): Promise<{ overdueInvoices: number; expiri
             .from('invoices')
             .select('id', { count: 'exact', head: true })
             .eq('organization_id', orgId)
-            .eq('status', 'sent')
+            .in('status', ['sent', 'partial'])
             .lt('due_date', today),
         supabase
             .from('quotes')
@@ -55,11 +56,12 @@ export default async function AppLayout({
 }: {
     children: React.ReactNode;
 }) {
-    const [profile, org, notifications, modules] = await Promise.all([
+    const [profile, org, notifications, modules, permissions] = await Promise.all([
         getCurrentUserProfile(),
         getOrganization(),
         getNotificationsData(),
         getOrganizationModules(),
+        getUserPermissions(),
     ]);
 
     return (
@@ -75,12 +77,13 @@ export default async function AppLayout({
                     logoUrl={org?.logo_url ?? null}
                     notifications={notifications}
                     modules={modules}
+                    permissionKeys={[...permissions]}
                 />
                 {notifications.decennaleExpiringDays !== null && (
                     <div className={`w-full px-6 py-2.5 text-center text-sm font-semibold ${notifications.decennaleExpiringDays < 0 ? 'bg-red-500 text-white' : 'bg-orange-500 text-white'}`}>
                         {notifications.decennaleExpiringDays < 0
-                            ? `⚠ Votre garantie décennale a expiré il y a ${Math.abs(notifications.decennaleExpiringDays)} jour${Math.abs(notifications.decennaleExpiringDays) > 1 ? 's' : ''} — renouvelez-la d'urgence dans les Réglages.`
-                            : `⚠ Votre garantie décennale expire dans ${notifications.decennaleExpiringDays} jour${notifications.decennaleExpiringDays > 1 ? 's' : ''} — pensez au renouvellement (Réglages).`
+                            ? `⚠ Votre garantie décennale a expiré il y a ${Math.abs(notifications.decennaleExpiringDays)} jour${Math.abs(notifications.decennaleExpiringDays) > 1 ? 's' : ''} - renouvelez-la d'urgence dans les Réglages.`
+                            : `⚠ Votre garantie décennale expire dans ${notifications.decennaleExpiringDays} jour${notifications.decennaleExpiringDays > 1 ? 's' : ''} - pensez au renouvellement (Réglages).`
                         }
                     </div>
                 )}

@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 import { getChantierById } from '@/lib/data/queries/chantiers'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { renderEmailShell, renderInfoBox, escHtml } from '@/lib/email/layout'
@@ -13,6 +14,8 @@ export async function sendChantierPhotosEmail(params: {
   photoIds: string[]
   message: string
 }): Promise<{ error: string | null; recipient?: string }> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Action non autorisée.' }
+
   const { chantierId, photoIds, message } = params
 
   if (photoIds.length === 0) return { error: 'Sélectionnez au moins une photo.' }

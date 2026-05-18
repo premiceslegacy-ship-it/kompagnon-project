@@ -11,13 +11,14 @@ import {
   getOrgTaskTitles,
 } from '@/lib/data/queries/chantiers'
 import { getQuotesForLinking } from '@/lib/data/queries/quotes'
-import { getInvoiceStubs } from '@/lib/data/queries/invoices'
+import { getInvoiceStubs, getSituationsSummary } from '@/lib/data/queries/invoices'
 import { getTeamMembers } from '@/lib/data/queries/team'
 import { getChantierProfitability } from '@/lib/data/queries/chantier-profitability'
 import { getJalonsForChantier } from '@/lib/data/queries/chantier-jalons'
 import { getChantierIndividualMembers, getOrgIndividualMembers } from '@/lib/data/queries/members'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { getMaterials } from '@/lib/data/queries/catalog'
+import { canManageLaborRates, hasPermission } from '@/lib/data/queries/membership'
 import ChantierDetailClient from './ChantierDetailClient'
 
 export default async function ChantierDetailPage({
@@ -25,7 +26,37 @@ export default async function ChantierDetailPage({
 }: {
   params: { chantierId: string }
 }) {
-  const [chantier, taches, pointages, photos, notes, allEquipes, chantierEquipes, plannings, linkableQuotes, taskLibraryTitles, orgMembers, profitability, jalons, individualMembers, orgPhantomMembers, organization, materials, invoiceStubs] = await Promise.all([
+  const [
+    chantier,
+    taches,
+    pointages,
+    photos,
+    notes,
+    allEquipes,
+    chantierEquipes,
+    plannings,
+    linkableQuotes,
+    taskLibraryTitles,
+    orgMembers,
+    profitability,
+    jalons,
+    individualMembers,
+    orgPhantomMembers,
+    organization,
+    materials,
+    invoiceStubs,
+    canEditChantier,
+    canManageTeam,
+    canPointage,
+    canManagePointages,
+    canViewExpenses,
+    canCreateExpenses,
+    canEditExpenses,
+    canDeleteExpenses,
+    canEditRates,
+    canCreateSituation,
+    canCreateSolde,
+  ] = await Promise.all([
     getChantierById(params.chantierId),
     getChantierTaches(params.chantierId),
     getChantierPointages(params.chantierId),
@@ -44,7 +75,23 @@ export default async function ChantierDetailPage({
     getOrganization(),
     getMaterials(),
     getInvoiceStubs(),
+    hasPermission('chantiers.edit'),
+    hasPermission('chantiers.manage_team'),
+    hasPermission('chantiers.pointage'),
+    hasPermission('chantiers.manage_pointages'),
+    hasPermission('chantiers.expenses.view'),
+    hasPermission('chantiers.expenses.create'),
+    hasPermission('chantiers.expenses.edit'),
+    hasPermission('chantiers.expenses.delete'),
+    canManageLaborRates(),
+    hasPermission('invoices.create_situation'),
+    hasPermission('invoices.create_solde'),
   ])
+
+  // Charger le résumé des situations si le chantier est lié à un devis
+  const situationsSummary = chantier?.quote_id
+    ? await getSituationsSummary(chantier.quote_id)
+    : null
 
   if (!chantier) notFound()
 
@@ -83,6 +130,20 @@ export default async function ChantierDetailPage({
       invoiceStubs={invoiceStubs}
       orgSector={organization?.sector ?? null}
       materials={materials}
+      situationsSummary={situationsSummary}
+      canCreateSituation={canCreateSituation}
+      canCreateSolde={canCreateSolde}
+      permissions={{
+        canEditChantier,
+        canManageTeam,
+        canPointage,
+        canManagePointages,
+        canViewExpenses,
+        canCreateExpenses,
+        canEditExpenses,
+        canDeleteExpenses,
+        canEditRates,
+      }}
     />
   )
 }

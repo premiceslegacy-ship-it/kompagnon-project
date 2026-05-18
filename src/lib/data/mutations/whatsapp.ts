@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 export type AuthorizedContact = {
   number: string
@@ -51,6 +52,8 @@ export async function saveWhatsAppConfig(data: {
   useSharedWaba: boolean
   isActive: boolean
 }): Promise<{ error: string | null }> {
+  if (!(await hasPermission('settings.edit_org'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
@@ -81,6 +84,8 @@ export async function saveWhatsAppConfig(data: {
 }
 
 export async function deleteWhatsAppConfig(): Promise<{ error: string | null }> {
+  if (!(await hasPermission('settings.edit_org'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }

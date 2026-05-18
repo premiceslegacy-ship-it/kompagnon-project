@@ -122,7 +122,9 @@ export type ChantierStats = {
 export type EquipeMembre = {
   id: string
   equipe_id: string
+  prenom: string | null
   name: string
+  email: string | null
   role_label: string | null
   profile_id: string | null
   taux_horaire: number | null
@@ -150,6 +152,11 @@ export type ChantierPlanning = {
   team_size: number
   notes: string | null
   created_at: string
+  // Tournée fields (null si hors tournée)
+  route_id: string | null
+  route_order: number | null
+  duration_min: number | null
+  travel_from_prev_min: number | null
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -502,7 +509,7 @@ export async function getEquipes(): Promise<Equipe[]> {
     .from('chantier_equipes')
     .select(`
       id, organization_id, name, color, description, created_at,
-      membres:chantier_equipe_membres(id, equipe_id, name, role_label, profile_id, taux_horaire)
+      membres:chantier_equipe_membres(id, equipe_id, prenom, name, email, role_label, profile_id, taux_horaire)
     `)
     .eq('organization_id', orgId)
     .order('name', { ascending: true })
@@ -523,7 +530,7 @@ export async function getChantierEquipes(chantierId: string): Promise<Equipe[]> 
     .select(`
       equipe:chantier_equipes(
         id, organization_id, name, color, description, created_at,
-        membres:chantier_equipe_membres(id, equipe_id, name, role_label, profile_id, taux_horaire)
+        membres:chantier_equipe_membres(id, equipe_id, prenom, name, email, role_label, profile_id, taux_horaire)
       )
     `)
     .eq('chantier_id', chantierId)
@@ -543,7 +550,12 @@ export type GlobalPlanning = ChantierPlanning & {
   chantier_city: string | null
   chantier_status: ChantierStatus
   chantier_color_idx: number   // index stable basé sur l'id
+  chantier_address_line1: string | null
+  chantier_postal_code: string | null
 }
+
+// Alias utilisé dans la vue Tournée
+export type TourneeSlot = GlobalPlanning
 
 export async function getAllPlannings(opts?: {
   from?: string  // YYYY-MM-DD
@@ -558,7 +570,8 @@ export async function getAllPlannings(opts?: {
     .select(`
       id, chantier_id, planned_date, start_time, end_time,
       equipe_id, member_id, label, team_size, notes, created_at,
-      chantier:chantiers!inner(title, city, status, organization_id)
+      route_id, route_order, duration_min, travel_from_prev_min,
+      chantier:chantiers!inner(title, city, status, organization_id, address_line1, postal_code)
     `)
     .eq('chantier.organization_id', orgId)
     .order('planned_date', { ascending: true })
@@ -593,10 +606,16 @@ export async function getAllPlannings(opts?: {
     team_size: row.team_size,
     notes: row.notes,
     created_at: row.created_at,
+    route_id: row.route_id ?? null,
+    route_order: row.route_order ?? null,
+    duration_min: row.duration_min ?? null,
+    travel_from_prev_min: row.travel_from_prev_min ?? null,
     chantier_title: row.chantier?.title ?? '-',
     chantier_city: row.chantier?.city ?? null,
     chantier_status: row.chantier?.status ?? 'planifie',
     chantier_color_idx: colorIdx(row.chantier_id),
+    chantier_address_line1: row.chantier?.address_line1 ?? null,
+    chantier_postal_code: row.chantier?.postal_code ?? null,
   }))
 }
 
@@ -605,7 +624,7 @@ export async function getChantierPlannings(chantierId: string): Promise<Chantier
 
   const { data, error } = await supabase
     .from('chantier_plannings')
-    .select('id, chantier_id, planned_date, start_time, end_time, equipe_id, member_id, label, team_size, notes, created_at')
+    .select('id, chantier_id, planned_date, start_time, end_time, equipe_id, member_id, label, team_size, notes, created_at, route_id, route_order, duration_min, travel_from_prev_min')
     .eq('chantier_id', chantierId)
     .order('planned_date', { ascending: true })
     .order('start_time', { ascending: true, nullsFirst: false })

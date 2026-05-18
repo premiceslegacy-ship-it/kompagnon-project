@@ -3,10 +3,92 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { hasPermission } from '@/lib/data/queries/membership'
-import { todayParis } from '@/lib/utils'
+import { canManageLaborRates, hasPermission, requirePermission } from '@/lib/data/queries/membership'
+import { coerceLegalVatRate, todayParis } from '@/lib/utils'
 
 type Result = { error: string | null }
+
+type ProratedInvoiceRow = {
+  invoice_id: string
+  description: string
+  quantity: number
+  unit: string | null
+  unit_price: number
+  vat_rate: number
+  is_internal: boolean
+  position: number
+}
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100
+}
+
+function buildProratedInvoiceRows(invoiceId: string, items: any[], ratio: number): ProratedInvoiceRow[] {
+  return items.map((item: any, idx: number) => ({
+    invoice_id: invoiceId,
+    description: item.description,
+    quantity: Number(item.quantity) || 0,
+    unit: item.unit ?? null,
+    unit_price: roundMoney((Number(item.unit_price) || 0) * ratio),
+    unit_cost_ht: item.unit_cost_ht ?? null,
+    vat_rate: coerceLegalVatRate(Number(item.vat_rate), 20),
+    is_internal: item.is_internal ?? false,
+    position: idx,
+  }))
+}
+
+function calculateInvoiceTotals(rows: ProratedInvoiceRow[]) {
+  const clientRows = rows.filter(row => !row.is_internal)
+  const totalHt = roundMoney(clientRows.reduce((sum, row) => sum + row.quantity * row.unit_price, 0))
+  const totalTva = roundMoney(clientRows.reduce((sum, row) => sum + row.quantity * row.unit_price * (row.vat_rate / 100), 0))
+  return {
+    totalHt,
+    totalTva,
+    totalTtc: roundMoney(totalHt + totalTva),
+  }
+}
+
+async function chantierBelongsToOrg(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  chantierId: string,
+  orgId: string,
+) {
+  const { data } = await supabase
+    .from('chantiers')
+    .select('id')
+    .eq('id', chantierId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  return !!data
+}
+
+async function equipeBelongsToOrg(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  equipeId: string,
+  orgId: string,
+) {
+  const { data } = await supabase
+    .from('chantier_equipes')
+    .select('id')
+    .eq('id', equipeId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  return !!data
+}
+
+async function memberBelongsToOrg(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  memberId: string,
+  orgId: string,
+) {
+  const { data } = await supabase
+    .from('chantier_equipe_membres')
+    .select('id')
+    .eq('id', memberId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  return !!data
+}
 
 // ─── Chantier ─────────────────────────────────────────────────────────────────
 
@@ -88,6 +170,7 @@ export async function createChantier(data: {
 export async function createChantierFromQuote(
   quoteId: string,
 ): Promise<{ chantierId: string | null; error: string | null }> {
+  if (!await hasPermission('chantiers.create')) return { chantierId: null, error: 'Action non autorisée.' }
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { chantierId: null, error: 'Non authentifié.' }
@@ -233,7 +316,15 @@ export async function createTache(
   chantierId: string,
   data: { title: string; description?: string | null; dueDate?: string | null },
 ): Promise<{ tacheId: string | null; error: string | null }> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { tacheId: null, error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { tacheId: null, error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { tacheId: null, error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   // Récupérer le max position actuel
   const { data: maxPos } = await supabase
@@ -269,7 +360,15 @@ export async function updateTache(
   chantierId: string,
   data: { title?: string; description?: string | null; progressNote?: string | null; status?: string; dueDate?: string | null; position?: number },
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const update: Record<string, unknown> = {}
   if (data.title !== undefined) update.title = data.title
@@ -286,6 +385,7 @@ export async function updateTache(
     .from('chantier_taches')
     .update(update)
     .eq('id', tacheId)
+    .eq('chantier_id', chantierId)
 
   if (error) {
     console.error('[updateTache]', error)
@@ -300,7 +400,15 @@ export async function reorderTaches(
   chantierId: string,
   orderedIds: string[],
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   // Met à jour les positions en batch
   const updates = orderedIds.map((id, idx) =>
@@ -323,12 +431,21 @@ export async function reorderTaches(
 }
 
 export async function deleteTache(tacheId: string, chantierId: string): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const { error } = await supabase
     .from('chantier_taches')
     .delete()
     .eq('id', tacheId)
+    .eq('chantier_id', chantierId)
 
   if (error) return { error: 'Erreur lors de la suppression de la tâche.' }
 
@@ -351,6 +468,16 @@ export async function createPointage(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
+
+  if (!await hasPermission('chantiers.pointage')) {
+    return { error: 'Action non autorisée.' }
+  }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   if (data.hours <= 0 || data.hours > 24) {
     return { error: 'Le nombre d\'heures doit être compris entre 0.5 et 24.' }
@@ -382,11 +509,25 @@ export async function createMemberPointageAdmin(
     date: string
     hours: number
     description?: string | null
+    start_time?: string | null
   },
 ): Promise<Result> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
+
+  if (!await hasPermission('chantiers.manage_pointages')) {
+    return { error: 'Action non autorisée.' }
+  }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  const [chantierOk, memberOk] = await Promise.all([
+    chantierBelongsToOrg(supabase, chantierId, orgId),
+    memberBelongsToOrg(supabase, memberId, orgId),
+  ])
+  if (!chantierOk) return { error: 'Chantier introuvable ou non autorisé.' }
+  if (!memberOk) return { error: 'Membre introuvable ou non autorisé.' }
 
   if (data.hours <= 0 || data.hours > 24) {
     return { error: 'Le nombre d\'heures doit être compris entre 0.5 et 24.' }
@@ -398,6 +539,7 @@ export async function createMemberPointageAdmin(
     date: data.date,
     hours: data.hours,
     description: data.description ?? null,
+    start_time: data.start_time ?? null,
   })
 
   if (error) {
@@ -410,17 +552,78 @@ export async function createMemberPointageAdmin(
   return { error: null }
 }
 
+export async function updatePointage(
+  pointageId: string,
+  chantierId: string,
+  data: {
+    hours: number
+    date: string
+    description?: string | null
+  },
+): Promise<Result> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Non authentifié.' }
+
+  if (!await hasPermission('chantiers.manage_pointages')) {
+    return { error: 'Action non autorisée.' }
+  }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
+
+  if (data.hours <= 0 || data.hours > 24) {
+    return { error: 'Le nombre d\'heures doit être compris entre 0.5 et 24.' }
+  }
+
+  const { error } = await supabase
+    .from('chantier_pointages')
+    .update({
+      hours: data.hours,
+      date: data.date,
+      description: data.description ?? null,
+    })
+    .eq('id', pointageId)
+    .eq('chantier_id', chantierId)
+
+  if (error) {
+    console.error('[updatePointage]', error)
+    return { error: 'Erreur lors de la modification du pointage.' }
+  }
+
+  revalidatePath(`/chantiers/${chantierId}`)
+  revalidatePath('/chantiers/heures')
+  return { error: null }
+}
+
 export async function deletePointage(pointageId: string, chantierId: string): Promise<Result> {
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Non authentifié.' }
+
+  if (!await hasPermission('chantiers.manage_pointages')) {
+    return { error: 'Action non autorisée.' }
+  }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const { error } = await supabase
     .from('chantier_pointages')
     .delete()
     .eq('id', pointageId)
+    .eq('chantier_id', chantierId)
 
   if (error) return { error: 'Erreur lors de la suppression du pointage.' }
 
   revalidatePath(`/chantiers/${chantierId}`)
+  revalidatePath('/chantiers/heures')
   return { error: null }
 }
 
@@ -430,9 +633,17 @@ export async function createChantierNote(
   chantierId: string,
   content: string,
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   if (!content?.trim()) return { error: 'La note ne peut pas être vide.' }
 
@@ -452,14 +663,23 @@ export async function createChantierNote(
 }
 
 export async function deleteChantierNote(noteId: string, chantierId: string): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const { error } = await supabase
     .from('chantier_notes')
     .delete()
     .eq('id', noteId)
+    .eq('chantier_id', chantierId)
     .eq('author_id', user.id) // seul l'auteur peut supprimer sa note
 
   if (error) return { error: 'Erreur lors de la suppression de la note.' }
@@ -472,12 +692,20 @@ export async function deleteChantierNote(noteId: string, chantierId: string): Pr
 
 export async function uploadChantierPhoto(
   chantierId: string,
-  orgId: string,
+  _orgId: string,
   formData: FormData,
 ): Promise<{ error: string | null; photo?: { id: string; storage_path: string; caption: string | null; taken_at: string; created_at: string; uploaded_by_name: string; url: string | null } }> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const file = formData.get('file') as File | null
   if (!file) return { error: 'Aucun fichier fourni.' }
@@ -527,12 +755,21 @@ export async function uploadChantierPhoto(
 }
 
 export async function deleteChantierPhoto(photoId: string, chantierId: string): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const { data: photo } = await supabase
     .from('chantier_photos')
     .select('storage_path')
     .eq('id', photoId)
+    .eq('chantier_id', chantierId)
     .single()
 
   if (photo?.storage_path) {
@@ -543,6 +780,7 @@ export async function deleteChantierPhoto(photoId: string, chantierId: string): 
     .from('chantier_photos')
     .delete()
     .eq('id', photoId)
+    .eq('chantier_id', chantierId)
 
   if (error) return { error: 'Erreur lors de la suppression de la photo.' }
 
@@ -555,12 +793,21 @@ export async function updateChantierPhotoCaption(
   chantierId: string,
   caption: string | null,
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const { error } = await supabase
     .from('chantier_photos')
     .update({ caption })
     .eq('id', photoId)
+    .eq('chantier_id', chantierId)
 
   if (error) return { error: 'Erreur lors de la mise à jour de la description.' }
 
@@ -573,12 +820,21 @@ export async function updateChantierPhotoTitle(
   chantierId: string,
   title: string | null,
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const { error } = await supabase
     .from('chantier_photos')
     .update({ title })
     .eq('id', photoId)
+    .eq('chantier_id', chantierId)
 
   if (error) return { error: 'Erreur lors de la mise à jour du titre.' }
 
@@ -591,12 +847,21 @@ export async function togglePhotoReportFlag(
   chantierId: string,
   include: boolean,
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const { error } = await supabase
     .from('chantier_photos')
     .update({ include_in_report: include })
     .eq('id', photoId)
+    .eq('chantier_id', chantierId)
 
   if (error) return { error: 'Erreur lors de la mise à jour du flag rapport.' }
 
@@ -606,16 +871,25 @@ export async function togglePhotoReportFlag(
 
 // ─── Situation de travaux ─────────────────────────────────────────────────────
 
-/**
- * Génère une facture de situation (facturation partielle sur avancement chantier).
- * - Basée sur le devis lié au chantier
- * - invoice_type = 'situation'
- * - Déduit les acomptes déjà facturés pour calculer le reste dû
- */
+export type CreateSituationParams = {
+  chantierId: string
+  progressRate: number      // pourcentage cumulé visé (ex: 60 pour 60% du devis)
+  periodFrom?: string | null
+  periodTo?: string | null
+  retentionPct?: number     // taux retenue de garantie (souvent 5), 0 par défaut
+  marketReference?: string | null
+  isSolde?: boolean         // true = solde final, force cumulative_pct à 100
+}
+
 export async function generateSituationInvoice(
-  chantierId: string,
-  progressRate: number, // avancement en % (ex: 60 pour 60% du devis)
+  params: CreateSituationParams,
 ): Promise<{ invoiceId: string | null; error: string | null }> {
+  const { chantierId, periodFrom, periodTo, marketReference, isSolde = false } = params
+  const retentionPct = params.retentionPct ?? 0
+
+  const permKey = isSolde ? 'invoices.create_solde' : 'invoices.create_situation'
+  if (!await hasPermission(permKey)) return { invoiceId: null, error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { invoiceId: null, error: 'Non authentifié.' }
@@ -623,6 +897,7 @@ export async function generateSituationInvoice(
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { invoiceId: null, error: 'Organisation introuvable.' }
 
+  const progressRate = isSolde ? 100 : params.progressRate
   if (progressRate <= 0 || progressRate > 100) {
     return { invoiceId: null, error: 'Taux d\'avancement invalide (1–100%).' }
   }
@@ -645,7 +920,7 @@ export async function generateSituationInvoice(
     .from('quotes')
     .select(`
       id, number, title, total_ht, total_tva, total_ttc, currency, payment_conditions,
-      items:quote_items(description, quantity, unit, unit_price, vat_rate, position)
+      items:quote_items(description, quantity, unit, unit_price, unit_cost_ht, vat_rate, position, is_internal)
     `)
     .eq('id', chantier.quote_id)
     .eq('organization_id', orgId)
@@ -653,28 +928,73 @@ export async function generateSituationInvoice(
 
   if (!quote) return { invoiceId: null, error: 'Devis lié introuvable.' }
 
-  // Calculer le montant déjà facturé via acomptes/situations précédentes
-  const { data: previousInvoices } = await supabase
+  // Récupérer les situations précédentes pour calculer situation_number et cumul
+  const { data: previousSituations } = await supabase
     .from('invoices')
-    .select('total_ht, invoice_type')
+    .select('id, total_ht, invoice_type, situation_number, cumulative_pct')
     .eq('quote_id', chantier.quote_id)
     .eq('organization_id', orgId)
-    .in('invoice_type', ['acompte', 'situation'])
-    .in('status', ['draft', 'sent', 'paid'])
+    .in('invoice_type', ['situation', 'solde'])
+    .in('status', ['draft', 'sent', 'partial', 'paid'])
+    .order('situation_number', { ascending: true })
 
-  const alreadyBilledHt = previousInvoices?.reduce((s, inv) => s + (inv.total_ht ?? 0), 0) ?? 0
+  // Vérifier qu'aucun solde n'a déjà été émis
+  const hasExistingSolde = previousSituations?.some(s => s.invoice_type === 'solde')
+  if (hasExistingSolde) {
+    return { invoiceId: null, error: 'Un solde a déjà été émis pour ce devis.' }
+  }
 
-  const ratio = progressRate / 100
-  const situationHt = Math.round((quote.total_ht ?? 0) * ratio * 100) / 100
-  const situationTva = Math.round((quote.total_tva ?? 0) * ratio * 100) / 100
-  const situationTtc = Math.round((quote.total_ttc ?? 0) * ratio * 100) / 100
+  const situationNumber = (previousSituations?.length ?? 0) + 1
+  const prevCumulativePct = previousSituations?.reduce((max, s) => Math.max(max, s.cumulative_pct ?? 0), 0) ?? 0
 
-  // Le montant de cette situation = situation cumulée - déjà facturé
-  const thisInvoiceHt = Math.max(0, Math.round((situationHt - alreadyBilledHt) * 100) / 100)
+  // Pour un solde, cumulative_pct = 100 ; sinon valider qu'on ne dépasse pas
+  const cumulative_pct = isSolde ? 100 : progressRate
+  if (!isSolde && cumulative_pct > 100) {
+    return { invoiceId: null, error: 'Le pourcentage cumulé ne peut pas dépasser 100%.' }
+  }
+  if (!isSolde && cumulative_pct <= prevCumulativePct) {
+    return { invoiceId: null, error: `Le pourcentage cumulé (${cumulative_pct}%) doit être supérieur au dernier cumul facturé (${prevCumulativePct}%).` }
+  }
+
+  // Montant des acomptes déjà versés (déduits du total, hors situations)
+  const { data: acomptes } = await supabase
+    .from('invoices')
+    .select('total_ht')
+    .eq('quote_id', chantier.quote_id)
+    .eq('organization_id', orgId)
+    .eq('invoice_type', 'acompte')
+    .in('status', ['sent', 'partial', 'paid'])
+
+  const alreadyBilledHt = previousSituations?.reduce((s, inv) => s + (inv.total_ht ?? 0), 0) ?? 0
+  const acomptesHt = acomptes?.reduce((s, inv) => s + (inv.total_ht ?? 0), 0) ?? 0
+
+  const quoteHt = quote.total_ht ?? 0
+  // Montant HT de cette situation = (cumul% × total devis) - déjà facturé en situations précédentes
+  const targetHt = roundMoney(quoteHt * (cumulative_pct / 100))
+  const thisInvoiceHt = isSolde
+    ? Math.max(0, roundMoney(quoteHt - alreadyBilledHt - acomptesHt))
+    : Math.max(0, roundMoney(targetHt - alreadyBilledHt))
+  const thisInvoiceRatio = quoteHt > 0 ? thisInvoiceHt / quoteHt : 0
+
+  const items = (quote.items ?? []) as any[]
+  const previewRows = buildProratedInvoiceRows('preview', items, thisInvoiceRatio)
+  const rowTotals = previewRows.length > 0
+    ? calculateInvoiceTotals(previewRows)
+    : {
+        totalHt: thisInvoiceHt,
+        totalTva: roundMoney((quote.total_tva ?? 0) * thisInvoiceRatio),
+        totalTtc: roundMoney((quote.total_ttc ?? 0) * thisInvoiceRatio),
+      }
+
+  const retentionAmount = roundMoney(rowTotals.totalHt * (retentionPct / 100))
 
   const quoteNum = quote.number ?? chantier.quote_id.slice(0, 8)
-  const title = `Situation ${progressRate}% · ${quote.title ?? `Devis ${quoteNum}`}`
-  const notesClient = `Situation de travaux à ${progressRate}% d'avancement sur devis n° ${quoteNum}${alreadyBilledHt > 0 ? ` (déduction des acomptes versés : ${alreadyBilledHt.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })} HT)` : ''}`
+  const typeLabel = isSolde ? 'Solde' : `Situation n°${situationNumber}`
+  const title = `${typeLabel} · ${quote.title ?? `Devis ${quoteNum}`}`
+
+  const notesClientParts: string[] = []
+  if (acomptesHt > 0) notesClientParts.push(`Acomptes versés déduits : ${acomptesHt.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}`)
+  const notesClient = notesClientParts.length > 0 ? notesClientParts.join(' · ') : null
 
   const { data: invoice, error: createErr } = await supabase
     .from('invoices')
@@ -683,16 +1003,23 @@ export async function generateSituationInvoice(
       client_id: chantier.client_id ?? null,
       quote_id: chantier.quote_id,
       chantier_id: chantier.id,
-      invoice_type: 'situation',
+      invoice_type: isSolde ? 'solde' : 'situation',
       title,
       currency: quote.currency ?? 'EUR',
       status: 'draft',
       created_by: user.id,
-      total_ht: Math.max(0, thisInvoiceHt),
-      total_tva: Math.max(0, Math.round((situationTva - (alreadyBilledHt * (situationTva / (situationHt || 1)))) * 100) / 100),
-      total_ttc: Math.max(0, Math.round((situationTtc - (alreadyBilledHt * ((quote.total_ttc ?? 0) / (quote.total_ht || 1)))) * 100) / 100),
+      total_ht: rowTotals.totalHt,
+      total_tva: rowTotals.totalTva,
+      total_ttc: rowTotals.totalTtc,
       payment_conditions: quote.payment_conditions ?? null,
       notes_client: notesClient,
+      situation_number: situationNumber,
+      cumulative_pct,
+      period_from: periodFrom ?? null,
+      period_to: periodTo ?? null,
+      retention_pct: retentionPct,
+      retention_amount: retentionAmount,
+      market_reference: marketReference ?? null,
     })
     .select('id')
     .single()
@@ -703,18 +1030,18 @@ export async function generateSituationInvoice(
   }
 
   // Copier les lignes du devis au taux d'avancement
-  const items = (quote.items ?? []) as any[]
   if (items.length > 0) {
-    const rows = items.map((item: any, idx: number) => ({
-      invoice_id: invoice.id,
-      description: item.description,
-      quantity: item.quantity,
-      unit: item.unit,
-      unit_price: Math.round(item.unit_price * ratio * 100) / 100,
-      vat_rate: item.vat_rate,
-      position: idx,
-    }))
+    const rows = buildProratedInvoiceRows(invoice.id, items, thisInvoiceRatio)
     await supabase.from('invoice_items').insert(rows)
+  }
+
+  // Passer le devis en fully_invoiced si cumul atteint 100%
+  if (cumulative_pct >= 99.5) {
+    await supabase
+      .from('quotes')
+      .update({ status: 'fully_invoiced' })
+      .eq('id', chantier.quote_id)
+      .eq('organization_id', orgId)
   }
 
   revalidatePath('/finances')
@@ -729,6 +1056,9 @@ export async function createEquipe(data: {
   color?: string
   description?: string | null
 }): Promise<{ equipeId: string | null; error: string | null }> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { equipeId: null, error: denied }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { equipeId: null, error: 'Non authentifié.' }
@@ -768,7 +1098,12 @@ export async function updateEquipe(
     description?: string | null
   },
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
 
   const { error } = await supabase
     .from('chantier_equipes')
@@ -778,6 +1113,7 @@ export async function updateEquipe(
       ...(data.description !== undefined && { description: data.description }),
     })
     .eq('id', equipeId)
+    .eq('organization_id', orgId)
 
   if (error) {
     console.error('[updateEquipe]', error)
@@ -789,14 +1125,20 @@ export async function updateEquipe(
 }
 
 export async function deleteEquipe(equipeId: string): Promise<Result> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
 
   const { error } = await supabase
     .from('chantier_equipes')
     .delete()
     .eq('id', equipeId)
+    .eq('organization_id', orgId)
 
   if (error) {
     console.error('[deleteEquipe]', error)
@@ -816,7 +1158,18 @@ export async function addEquipeMembre(
     profileId?: string | null
   },
 ): Promise<{ membreId: string | null; error: string | null }> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { membreId: null, error: denied }
+  if (data.tauxHoraire !== undefined && data.tauxHoraire !== null && !await canManageLaborRates()) {
+    return { membreId: null, error: 'Action réservée aux administrateurs.' }
+  }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { membreId: null, error: 'Organisation introuvable.' }
+  if (!await equipeBelongsToOrg(supabase, equipeId, orgId)) {
+    return { membreId: null, error: 'Équipe introuvable ou non autorisée.' }
+  }
 
   if (!data.name?.trim()) {
     return { membreId: null, error: 'Le nom du membre est requis.' }
@@ -825,6 +1178,7 @@ export async function addEquipeMembre(
   const { data: membre, error } = await supabase
     .from('chantier_equipe_membres')
     .insert({
+      organization_id: orgId,
       equipe_id: equipeId,
       name: data.name.trim(),
       role_label: data.roleLabel ?? null,
@@ -847,12 +1201,31 @@ export async function updateEquipeMembreProfile(
   membreId: string,
   profileId: string | null,
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await memberBelongsToOrg(supabase, membreId, orgId)) {
+    return { error: 'Membre introuvable ou non autorisé.' }
+  }
+  if (profileId) {
+    const { data: membership } = await supabase
+      .from('memberships')
+      .select('id')
+      .eq('user_id', profileId)
+      .eq('organization_id', orgId)
+      .eq('is_active', true)
+      .maybeSingle()
+    if (!membership) return { error: 'Compte utilisateur introuvable ou non autorisé.' }
+  }
 
   const { error } = await supabase
     .from('chantier_equipe_membres')
     .update({ profile_id: profileId })
     .eq('id', membreId)
+    .eq('organization_id', orgId)
 
   if (error) {
     console.error('[updateEquipeMembreProfile]', error)
@@ -867,12 +1240,19 @@ export async function updateEquipeMembreTaux(
   membreId: string,
   tauxHoraire: number | null,
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { error: denied }
+  if (!await canManageLaborRates()) return { error: 'Action réservée aux administrateurs.' }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
 
   const { error } = await supabase
     .from('chantier_equipe_membres')
     .update({ taux_horaire: tauxHoraire })
     .eq('id', membreId)
+    .eq('organization_id', orgId)
 
   if (error) {
     console.error('[updateEquipeMembreTaux]', error)
@@ -884,12 +1264,18 @@ export async function updateEquipeMembreTaux(
 }
 
 export async function removeEquipeMembre(membreId: string): Promise<Result> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
 
   const { error } = await supabase
     .from('chantier_equipe_membres')
     .delete()
     .eq('id', membreId)
+    .eq('organization_id', orgId)
 
   if (error) {
     console.error('[removeEquipeMembre]', error)
@@ -900,11 +1286,124 @@ export async function removeEquipeMembre(membreId: string): Promise<Result> {
   return { error: null }
 }
 
+// Rattacher un membre existant (solo ou d'une autre équipe) à une équipe.
+// Ne crée pas de doublon — met à jour equipe_id sur la ligne existante.
+export async function addMembreExistantToEquipe(
+  membreId: string,
+  equipeId: string,
+): Promise<Result> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { error: denied }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+
+  // Vérifier ownership org sur le membre ET sur l'équipe
+  const [{ data: membre }, { data: equipe }] = await Promise.all([
+    supabase.from('chantier_equipe_membres').select('id').eq('id', membreId).eq('organization_id', orgId).single(),
+    supabase.from('chantier_equipes').select('id').eq('id', equipeId).eq('organization_id', orgId).single(),
+  ])
+  if (!membre) return { error: 'Membre introuvable.' }
+  if (!equipe) return { error: 'Équipe introuvable.' }
+
+  const { error } = await supabase
+    .from('chantier_equipe_membres')
+    .update({ equipe_id: equipeId })
+    .eq('id', membreId)
+
+  if (error) {
+    console.error('[addMembreExistantToEquipe]', error)
+    return { error: "Impossible de rattacher le membre à l'équipe." }
+  }
+
+  revalidatePath('/chantiers/equipes')
+  return { error: null }
+}
+
+// Retirer un membre d'une équipe sans le supprimer (redevient membre solo).
+export async function retirerMembreDeEquipe(membreId: string): Promise<Result> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { error: denied }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+
+  const { error } = await supabase
+    .from('chantier_equipe_membres')
+    .update({ equipe_id: null })
+    .eq('id', membreId)
+    .eq('organization_id', orgId)
+
+  if (error) {
+    console.error('[retirerMembreDeEquipe]', error)
+    return { error: "Impossible de retirer le membre de l'équipe." }
+  }
+
+  revalidatePath('/chantiers/equipes')
+  return { error: null }
+}
+
+// Mettre à jour nom/prénom/rôle/email/taux d'un membre (depuis page équipes centralisée).
+export async function updateMembreInfos(
+  membreId: string,
+  patch: {
+    prenom?: string | null
+    name?: string
+    email?: string | null
+    roleLabel?: string | null
+    tauxHoraire?: number | null
+  },
+): Promise<Result> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { error: denied }
+  if (patch.tauxHoraire !== undefined && !await canManageLaborRates()) {
+    return { error: 'Action réservée aux administrateurs.' }
+  }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+
+  const update: Record<string, unknown> = {}
+  if (patch.prenom !== undefined)      update.prenom       = patch.prenom?.trim() || null
+  if (patch.name !== undefined)        update.name         = patch.name.trim()
+  if (patch.email !== undefined)       update.email        = patch.email?.trim().toLowerCase() || null
+  if (patch.roleLabel !== undefined)   update.role_label   = patch.roleLabel?.trim() || null
+  if (patch.tauxHoraire !== undefined) update.taux_horaire = patch.tauxHoraire
+
+  const { error } = await supabase
+    .from('chantier_equipe_membres')
+    .update(update)
+    .eq('id', membreId)
+    .eq('organization_id', orgId)
+
+  if (error) {
+    console.error('[updateMembreInfos]', error)
+    return { error: 'Impossible de mettre à jour le membre.' }
+  }
+
+  revalidatePath('/chantiers/equipes')
+  return { error: null }
+}
+
 export async function assignEquipeToChantier(
   chantierId: string,
   equipeId: string,
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  const [chantierOk, equipeOk] = await Promise.all([
+    chantierBelongsToOrg(supabase, chantierId, orgId),
+    equipeBelongsToOrg(supabase, equipeId, orgId),
+  ])
+  if (!chantierOk) return { error: 'Chantier introuvable ou non autorisé.' }
+  if (!equipeOk) return { error: 'Équipe introuvable ou non autorisée.' }
 
   const { error } = await supabase
     .from('chantier_equipe_chantiers')
@@ -926,7 +1425,18 @@ export async function removeEquipeFromChantier(
   chantierId: string,
   equipeId: string,
 ): Promise<Result> {
+  const denied = await requirePermission('chantiers.manage_team')
+  if (denied) return { error: denied }
+
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  const [chantierOk, equipeOk] = await Promise.all([
+    chantierBelongsToOrg(supabase, chantierId, orgId),
+    equipeBelongsToOrg(supabase, equipeId, orgId),
+  ])
+  if (!chantierOk) return { error: 'Chantier introuvable ou non autorisé.' }
+  if (!equipeOk) return { error: 'Équipe introuvable ou non autorisée.' }
 
   const { error } = await supabase
     .from('chantier_equipe_chantiers')
@@ -962,6 +1472,22 @@ export async function createChantierPlanning(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { planningId: null, error: 'Non authentifié.' }
 
+  if (!await hasPermission('chantiers.edit')) {
+    return { planningId: null, error: 'Action non autorisée.' }
+  }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { planningId: null, error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { planningId: null, error: 'Chantier introuvable ou non autorisé.' }
+  }
+  if (data.equipeId && !await equipeBelongsToOrg(supabase, data.equipeId, orgId)) {
+    return { planningId: null, error: 'Équipe introuvable ou non autorisée.' }
+  }
+  if (data.memberId && !await memberBelongsToOrg(supabase, data.memberId, orgId)) {
+    return { planningId: null, error: 'Membre introuvable ou non autorisé.' }
+  }
+
   if (!data.label?.trim()) return { planningId: null, error: 'Un libellé est requis.' }
   if (!data.plannedDate)    return { planningId: null, error: 'Une date est requise.' }
 
@@ -994,6 +1520,15 @@ export async function createChantierPlanning(
 
 export async function deleteChantierPlanning(planningId: string, chantierId: string): Promise<Result> {
   const supabase = await createClient()
+
+  if (!await hasPermission('chantiers.edit')) {
+    return { error: 'Action non autorisée.' }
+  }
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
+    return { error: 'Chantier introuvable ou non autorisé.' }
+  }
 
   const { error } = await supabase
     .from('chantier_plannings')

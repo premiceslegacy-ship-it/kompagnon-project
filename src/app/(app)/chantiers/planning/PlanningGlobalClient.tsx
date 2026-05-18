@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo, useTransition, useEffect } from 'react'
+import React, { useState, useMemo, useTransition, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Calendar,
@@ -18,9 +18,12 @@ import {
   X,
   Clock,
 } from 'lucide-react'
-import type { GlobalPlanning, Chantier } from '@/lib/data/queries/chantiers'
-import { planWeekWithAI, createPlanningSlots, deletePlanningSlot } from '@/lib/data/mutations/planning'
-import type { AIPlanningDeletion, AIPlanningSlot } from '@/lib/data/mutations/planning'
+import type { GlobalPlanning, Chantier, Equipe } from '@/lib/data/queries/chantiers'
+import type { IndividualMember } from '@/lib/data/queries/members'
+import TourneeView from './TourneeView'
+import { planWeekWithAI, createPlanningSlots, createAITournee, deletePlanningSlot } from '@/lib/data/mutations/planning'
+import type { AIPlanningDeletion, AIPlanningSlot, AIUnknownPerson, AITour } from '@/lib/data/mutations/planning'
+import { createIndividualMember } from '@/lib/data/mutations/members'
 import { todayParis } from '@/lib/utils'
 
 // ─── Palette de couleurs (12 couleurs pour les chantiers) ────────────────────
@@ -44,8 +47,7 @@ const CHANTIER_COLORS = [
 
 const CAL_START_H = 5
 const CAL_END_H = 23
-const CAL_HOURS = CAL_END_H - CAL_START_H // 18
-const ROW_H = 48 // px par heure
+const ROW_H = 56 // px par heure — légèrement plus grand pour la lisibilité desktop
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -69,7 +71,7 @@ function dateFromYmd(date: string): Date {
 function fmtWeekLabel(monday: Date): string {
   const sunday = new Date(monday)
   sunday.setDate(monday.getDate() + 6)
-  return `${monday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} – ${sunday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}`
+  return `${monday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} - ${sunday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}`
 }
 
 function fmtHours(hours: number): string {
@@ -99,7 +101,7 @@ function timeToHour(time: string): number {
   return h + m / 60
 }
 
-function buildTimedPlanningLayout(plannings: GlobalPlanning[]): TimedPlanningLayout[] {
+function buildTimedPlanningLayout(plannings: GlobalPlanning[], calStartH = CAL_START_H): TimedPlanningLayout[] {
   const positioned = plannings
     .filter(p => p.start_time)
     .map(p => {
@@ -109,7 +111,7 @@ function buildTimedPlanningLayout(plannings: GlobalPlanning[]): TimedPlanningLay
         planning: p,
         startH,
         endH: Math.max(endH, startH + 0.25),
-        topPx: Math.max(0, (startH - CAL_START_H) * ROW_H),
+        topPx: Math.max(0, (startH - calStartH) * ROW_H),
         heightPx: Math.max((Math.max(endH, startH + 0.25) - startH) * ROW_H, 36),
         lane: 0,
         laneCount: 1,
@@ -154,14 +156,21 @@ function buildTimedPlanningLayout(plannings: GlobalPlanning[]): TimedPlanningLay
 interface Props {
   initialPlannings: GlobalPlanning[]
   chantiers: Chantier[]
+  equipes: Equipe[]
+  individualMembers: IndividualMember[]
   planningAiEnabled: boolean
   orgId: string | null
   icalToken: string | null
+  canManage: boolean
+  orgDepartureAddress?: string | null
+  orgDeparturePostalCode?: string | null
+  orgDepartureCity?: string | null
+  routeDepartures?: Record<string, { address: string | null; postal_code: string | null; city: string | null }>
 }
 
 // ─── Composant principal ─────────────────────────────────────────────────────
 
-export default function PlanningGlobalClient({ initialPlannings, chantiers, planningAiEnabled, orgId, icalToken }: Props) {
+export default function PlanningGlobalClient({ initialPlannings, chantiers, equipes, individualMembers, planningAiEnabled, orgId, icalToken, canManage, orgDepartureAddress, orgDeparturePostalCode, orgDepartureCity, routeDepartures = {} }: Props) {
   const router = useRouter()
 
   // State
@@ -178,7 +187,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
     return () => window.removeEventListener('resize', check)
   }, [])
 
-  const [viewMode, setViewMode] = useState<'jour' | 'semaine' | 'liste' | null>(null)
+  const [viewMode, setViewMode] = useState<'jour' | 'semaine' | 'liste' | 'tournee' | null>(null)
   const effectiveView = viewMode ?? (isMobile ? 'jour' : 'semaine')
 
   const [filterChantier, setFilterChantier] = useState<string>('tous')
@@ -204,11 +213,24 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
   // ─── Agent IA ────────────────────────────────────────────────────────────────
   const [aiModalOpen, setAiModalOpen] = useState(false)
   const [aiPrompt, setAiPrompt] = useState('')
-  const [aiStatus, setAiStatus] = useState<'idle' | 'loading' | 'preview' | 'saving' | 'done' | 'error'>('idle')
+  const [aiStatus, setAiStatus] = useState<'idle' | 'loading' | 'new_member' | 'preview' | 'saving' | 'done' | 'error'>('idle')
   const [aiSlots, setAiSlots] = useState<AIPlanningSlot[]>([])
   const [aiDeletions, setAiDeletions] = useState<AIPlanningDeletion[]>([])
+  const [aiTours, setAiTours] = useState<AITour[]>([])
+  const [aiUnknownPeople, setAiUnknownPeople] = useState<AIUnknownPerson[]>([])
   const [aiSummary, setAiSummary] = useState('')
   const [aiError, setAiError] = useState('')
+
+  // Modale nouveau membre
+  const [newMemberQueue, setNewMemberQueue] = useState<AIUnknownPerson[]>([])
+  const [newMemberCurrent, setNewMemberCurrent] = useState<AIUnknownPerson | null>(null)
+  const [newMemberPrenom, setNewMemberPrenom] = useState('')
+  const [newMemberNom, setNewMemberNom] = useState('')
+  const [newMemberEmail, setNewMemberEmail] = useState('')
+  const [newMemberTaux, setNewMemberTaux] = useState('')
+  const [newMemberSaving, setNewMemberSaving] = useState(false)
+  const [newMemberError, setNewMemberError] = useState('')
+
   const [, startTransition] = useTransition()
 
   useEffect(() => {
@@ -221,8 +243,12 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
     setAiStatus('idle')
     setAiSlots([])
     setAiDeletions([])
+    setAiTours([])
+    setAiUnknownPeople([])
     setAiSummary('')
     setAiError('')
+    setNewMemberQueue([])
+    setNewMemberCurrent(null)
     setAiModalOpen(true)
   }
 
@@ -232,15 +258,68 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
     setAiError('')
     const weekDateStr = `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, '0')}-${String(weekStart.getDate()).padStart(2, '0')}`
     const result = await planWeekWithAI(aiPrompt, weekDateStr)
-    if (result.error || (!result.slots.length && !result.deletions.length)) {
+    if (result.error || (!result.slots.length && !result.deletions.length && !result.unknownPeople.length)) {
       setAiError(result.error ?? 'Aucune action détectée. Reformulez votre demande.')
       setAiStatus('error')
       return
     }
     setAiSlots(result.slots)
     setAiDeletions(result.deletions)
+    setAiTours(result.tours)
+    setAiUnknownPeople(result.unknownPeople)
     setAiSummary(result.summary)
+
+    // Si des noms inconnus existent, lancer le flow d'ajout avant la preview
+    if (result.unknownPeople.length > 0) {
+      setNewMemberQueue(result.unknownPeople.slice(1))
+      startNewMemberFlow(result.unknownPeople[0])
+      return
+    }
     setAiStatus('preview')
+  }
+
+  function startNewMemberFlow(person: AIUnknownPerson) {
+    const parts = person.name.trim().split(/\s+/)
+    setNewMemberPrenom(parts[0] ?? '')
+    setNewMemberNom(parts.slice(1).join(' '))
+    setNewMemberEmail('')
+    setNewMemberTaux('')
+    setNewMemberError('')
+    setNewMemberCurrent(person)
+    setAiStatus('new_member')
+  }
+
+  async function handleNewMemberSave() {
+    if (!newMemberNom.trim() && !newMemberPrenom.trim()) return
+    setNewMemberSaving(true)
+    setNewMemberError('')
+    const result = await createIndividualMember({
+      prenom: newMemberPrenom.trim() || null,
+      name: (newMemberNom.trim() || newMemberPrenom.trim()),
+      email: newMemberEmail.trim() || null,
+      tauxHoraire: newMemberTaux ? parseFloat(newMemberTaux) : null,
+    })
+    setNewMemberSaving(false)
+    if (result.error) {
+      setNewMemberError(result.error)
+      return
+    }
+    advanceNewMemberQueue()
+  }
+
+  function handleNewMemberSkip() {
+    advanceNewMemberQueue()
+  }
+
+  function advanceNewMemberQueue() {
+    setNewMemberCurrent(null)
+    if (newMemberQueue.length > 0) {
+      const [next, ...rest] = newMemberQueue
+      setNewMemberQueue(rest)
+      startNewMemberFlow(next)
+    } else {
+      setAiStatus('preview')
+    }
   }
 
   async function handleAiConfirm() {
@@ -250,25 +329,53 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
 
       for (const deletion of aiDeletions) {
         const result = await deletePlanningSlot(deletion.id)
-        if (result.error) {
-          error = result.error
-          break
-        }
+        if (result.error) { error = result.error; break }
       }
 
-      if (!error && aiSlots.length > 0) {
-        const result = await createPlanningSlots(aiSlots.map(s => ({
-          chantierId: s.chantierId,
-          plannedDate: s.plannedDate,
-          startTime: s.startTime,
-          endTime: s.endTime,
-          label: s.label,
-          teamSize: s.teamSize,
-          notes: s.notes,
-          equipeId: s.equipeId ?? null,
-          memberId: s.memberId ?? null,
-        })))
-        error = result.error
+      if (!error) {
+        // Indices des slots qui font partie d'une tournée
+        const tourSlotIndices = new Set(aiTours.flatMap(t => t.slotIndices))
+
+        // Créer les tournées IA (les slots qu'elles contiennent)
+        for (const tour of aiTours) {
+          if (error) break
+          const tourSlots = tour.slotIndices.map(i => aiSlots[i]).filter(Boolean)
+          const result = await createAITournee(
+            tourSlots.map(s => ({
+              chantierId: s.chantierId,
+              plannedDate: s.plannedDate,
+              startTime: s.startTime,
+              endTime: s.endTime,
+              label: s.label,
+              teamSize: s.teamSize,
+              notes: s.notes,
+              equipeId: s.equipeId ?? null,
+              memberId: s.memberId ?? null,
+            })),
+            tour.date,
+            orgDepartureAddress ?? null,
+            orgDeparturePostalCode ?? null,
+            orgDepartureCity ?? null,
+          )
+          if (result.error) error = result.error
+        }
+
+        // Créer les slots hors tournée
+        const standaloneSlots = aiSlots.filter((_, i) => !tourSlotIndices.has(i))
+        if (!error && standaloneSlots.length > 0) {
+          const result = await createPlanningSlots(standaloneSlots.map(s => ({
+            chantierId: s.chantierId,
+            plannedDate: s.plannedDate,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            label: s.label,
+            teamSize: s.teamSize,
+            notes: s.notes,
+            equipeId: s.equipeId ?? null,
+            memberId: s.memberId ?? null,
+          })))
+          if (result.error) error = result.error
+        }
       }
 
       if (error) {
@@ -297,19 +404,15 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
   }
 
   // Valeurs dérivées
-  const days = Array.from({ length: effectiveView === 'jour' ? 1 : 7 }, (_, i) => {
-    const d = new Date(effectiveView === 'jour' ? selectedDate : weekStart)
-    if (effectiveView !== 'jour') {
+  const isSingleDay = effectiveView === 'jour' || effectiveView === 'tournee' || (effectiveView === 'semaine' && isMobile)
+  const days = Array.from({ length: isSingleDay ? 1 : 7 }, (_, i) => {
+    const d = new Date(isSingleDay ? selectedDate : weekStart)
+    if (!isSingleDay) {
       d.setDate(weekStart.getDate() + i)
     }
     return d
   })
   const todayStr = todayParis()
-  const dayNames = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
-  const timeLabels = Array.from({ length: CAL_HOURS }, (_, i) =>
-    `${String(CAL_START_H + i).padStart(2, '0')}:00`
-  )
-  const TOTAL_H = CAL_HOURS * ROW_H
   const weekDates = days.map(getLocalDateStr)
 
   const filteredPlannings = useMemo(
@@ -362,12 +465,12 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
   // Navigation semaine
   const prevDate = () => {
     const d = new Date(selectedDate)
-    d.setDate(d.getDate() - (effectiveView === 'jour' ? 1 : 7))
+    d.setDate(d.getDate() - (isSingleDay ? 1 : 7))
     setSelectedDate(d)
   }
   const nextDate = () => {
     const d = new Date(selectedDate)
-    d.setDate(d.getDate() + (effectiveView === 'jour' ? 1 : 7))
+    d.setDate(d.getDate() + (isSingleDay ? 1 : 7))
     setSelectedDate(d)
   }
   const goToday = () => setSelectedDate(dateFromYmd(todayParis()))
@@ -375,9 +478,8 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
   // Heure actuelle pour la ligne rouge
   const now = new Date()
   const nowH = now.getHours() + now.getMinutes() / 60
-  const nowTopPx = (nowH - CAL_START_H) * ROW_H
 
-  // Jour le plus chargé — libellé lisible
+  // Jour le plus chargé - libellé lisible
   const jourLePlusChargeLabel = useMemo(() => {
     if (!weekStats.jourLePlusCharge) return '/'
     const [dateStr] = weekStats.jourLePlusCharge
@@ -543,13 +645,13 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
         <div className="flex-1" />
 
         {/* Bouton IA */}
-        {planningAiEnabled && (
+        {planningAiEnabled && canManage && (
           <button
             onClick={openAiModal}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-accent text-black font-semibold text-sm hover:scale-105 transition-all shadow-lg shadow-accent/20"
           >
             <Sparkles className="w-4 h-4" />
-            Planifier avec l&apos;IA
+            Planifier avec Sarah
           </button>
         )}
 
@@ -559,33 +661,44 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
             onClick={() => setViewMode('jour')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
               effectiveView === 'jour'
-                ? 'bg-accent text-white'
-                : 'text-secondary hover:text-primary hover:bg-[var(--elevation-1)]'
+                ? 'bg-accent text-black'
+                : 'text-secondary hover:text-primary hover:bg-interactive dark:hover:bg-white/[0.08]'
             }`}
           >
             Jour
           </button>
           <button
             onClick={() => setViewMode('semaine')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
+            className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
               effectiveView === 'semaine'
-                ? 'bg-accent text-white'
-                : 'text-secondary hover:text-primary hover:bg-[var(--elevation-1)]'
+                ? 'bg-accent text-black'
+                : 'text-secondary hover:text-primary hover:bg-interactive dark:hover:bg-white/[0.08]'
             }`}
           >
             <CalendarDays className="w-4 h-4" />
-            <span className="hidden sm:inline">Semaine</span>
+            <span>Semaine</span>
           </button>
           <button
             onClick={() => setViewMode('liste')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
               effectiveView === 'liste'
-                ? 'bg-accent text-white'
-                : 'text-secondary hover:text-primary hover:bg-[var(--elevation-1)]'
+                ? 'bg-accent text-black'
+                : 'text-secondary hover:text-primary hover:bg-interactive dark:hover:bg-white/[0.08]'
             }`}
           >
             <LayoutList className="w-4 h-4" />
             <span className="hidden sm:inline">Liste</span>
+          </button>
+          <button
+            onClick={() => setViewMode('tournee')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
+              effectiveView === 'tournee'
+                ? 'bg-accent text-black'
+                : 'text-secondary hover:text-primary hover:bg-interactive dark:hover:bg-white/[0.08]'
+            }`}
+          >
+            <MapPin className="w-4 h-4" />
+            <span className="hidden sm:inline">Tourn&eacute;e</span>
           </button>
         </div>
       </div>
@@ -600,7 +713,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
         </button>
         <div className="flex items-center gap-3">
           <span className="text-sm font-semibold text-primary">
-            {effectiveView === 'jour'
+            {isSingleDay
               ? selectedDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
               : fmtWeekLabel(weekStart)}
           </span>
@@ -652,7 +765,58 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
       )}
 
       {/* ── Contenu principal ── */}
-      {weekPlannings.length === 0 ? (
+      {effectiveView === 'tournee' ? (
+        <TourneeView
+          dayPlannings={filteredPlannings.filter(p => p.planned_date === getLocalDateStr(selectedDate))}
+          chantiers={chantiers}
+          equipes={equipes}
+          individualMembers={individualMembers}
+          selectedDate={selectedDate}
+          canManage={canManage}
+          orgDepartureAddress={orgDepartureAddress}
+          orgDeparturePostalCode={orgDeparturePostalCode}
+          orgDepartureCity={orgDepartureCity}
+          routeDepartures={routeDepartures}
+          onPlanningsChange={(updated) => {
+            const dateStr = getLocalDateStr(selectedDate)
+            setPlannings(prev => [
+              ...prev.filter(p => p.planned_date !== dateStr),
+              ...updated,
+            ])
+          }}
+        />
+      ) : effectiveView === 'semaine' && !isMobile ? (
+        <SemaineView
+          days={days}
+          todayStr={todayStr}
+          byDay={byDay}
+          nowH={nowH}
+          onDeletePlanning={canManage ? handleDeletePlanning : undefined}
+        />
+      ) : effectiveView === 'jour' || effectiveView === 'semaine' ? (
+        // Vue jour (desktop) ou mini-calendrier + jour (mobile, y compris quand on tape "Semaine")
+        <>
+          {isMobile && (
+            <MiniCalendar
+              selectedDate={selectedDate}
+              onSelectDate={setSelectedDate}
+              plannings={filteredPlannings}
+            />
+          )}
+          <SemaineView
+            days={days}
+            todayStr={todayStr}
+            byDay={byDay}
+            nowH={nowH}
+            onDeletePlanning={canManage ? handleDeletePlanning : undefined}
+            onSwipeDay={isMobile ? (dir) => {
+              const d = new Date(selectedDate)
+              d.setDate(d.getDate() + dir)
+              setSelectedDate(d)
+            } : undefined}
+          />
+        </>
+      ) : weekPlannings.length === 0 ? (
         <div className="card p-12 flex flex-col items-center justify-center gap-4 text-center">
           <Calendar className="w-12 h-12 text-secondary/40" />
           <p className="text-secondary font-medium">Aucun créneau planifié cette semaine</p>
@@ -660,24 +824,12 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
             Changez de semaine ou ajustez les filtres pour voir les plannings.
           </p>
         </div>
-      ) : viewMode === 'semaine' ? (
-        <SemaineView
-          days={days}
-          dayNames={dayNames}
-          todayStr={todayStr}
-          timeLabels={timeLabels}
-          TOTAL_H={TOTAL_H}
-          byDay={byDay}
-          nowTopPx={nowTopPx}
-          nowH={nowH}
-          onDeletePlanning={handleDeletePlanning}
-        />
       ) : (
         <ListeView
           days={days}
           todayStr={todayStr}
           byDay={byDay}
-          onDeletePlanning={handleDeletePlanning}
+          onDeletePlanning={canManage ? handleDeletePlanning : undefined}
         />
       )}
 
@@ -689,11 +841,11 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
             {/* Header */}
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[var(--elevation-border)]">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-accent/10 flex items-center justify-center">
-                  <Sparkles className="w-4 h-4 text-accent" />
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold">
+                  S
                 </div>
                 <div>
-                  <h2 className="font-bold text-primary text-base">Planifier avec l&apos;IA</h2>
+                  <h2 className="font-bold text-primary text-base">Sarah <span className="font-normal text-secondary">, planification</span></h2>
                   <p className="text-xs text-secondary">Semaine du {fmtWeekLabel(weekStart)}</p>
                 </div>
               </div>
@@ -707,7 +859,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
               {(aiStatus === 'idle' || aiStatus === 'error') && (
                 <>
                   <p className="text-sm text-secondary">
-                    Décrivez votre semaine en langage naturel. L&apos;IA créera les créneaux automatiquement.
+                    Décrivez votre semaine en langage naturel. Sarah crée les créneaux automatiquement.
                   </p>
                   <div className="bg-base rounded-xl p-3 border border-[var(--elevation-border)] text-xs text-secondary/70 space-y-1">
                     <p className="font-semibold text-secondary">Exemples :</p>
@@ -744,14 +896,105 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
               {aiStatus === 'loading' && (
                 <div className="flex flex-col items-center gap-4 py-8">
                   <Loader2 className="w-8 h-8 text-accent animate-spin" />
-                  <p className="text-sm text-secondary">L&apos;IA analyse votre planning...</p>
+                  <p className="text-sm text-secondary">Sarah organise votre semaine...</p>
                 </div>
+              )}
+
+              {/* Phase nouveau membre inconnu */}
+              {aiStatus === 'new_member' && newMemberCurrent && (
+                <>
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 space-y-1">
+                    <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+                      Membre inconnu : &quot;{newMemberCurrent.name}&quot;
+                    </p>
+                    <p className="text-xs text-secondary">
+                      Ce nom ne correspond a aucun membre enregistre. Voulez-vous l&apos;ajouter a votre organisation ?
+                    </p>
+                    {newMemberQueue.length > 0 && (
+                      <p className="text-xs text-secondary/70">
+                        {newMemberQueue.length} autre{newMemberQueue.length > 1 ? 's' : ''} a verifier ensuite.
+                      </p>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-secondary">Prenom</label>
+                      <input
+                        value={newMemberPrenom}
+                        onChange={e => setNewMemberPrenom(e.target.value)}
+                        placeholder="Prenom"
+                        className="input w-full text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-secondary">Nom <span className="text-red-400">*</span></label>
+                      <input
+                        value={newMemberNom}
+                        onChange={e => setNewMemberNom(e.target.value)}
+                        placeholder="Nom de famille"
+                        className="input w-full text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-secondary">Email <span className="text-secondary/50">(facultatif)</span></label>
+                      <input
+                        value={newMemberEmail}
+                        onChange={e => setNewMemberEmail(e.target.value)}
+                        placeholder="email@exemple.fr"
+                        type="email"
+                        className="input w-full text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-secondary">Taux horaire <span className="text-secondary/50">(€/h, facultatif)</span></label>
+                      <input
+                        value={newMemberTaux}
+                        onChange={e => setNewMemberTaux(e.target.value)}
+                        placeholder="ex : 45"
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className="input w-full text-sm"
+                      />
+                    </div>
+                  </div>
+                  {newMemberError && (
+                    <p className="text-sm text-red-500 flex items-center gap-2">
+                      <X className="w-4 h-4 flex-shrink-0" /> {newMemberError}
+                    </p>
+                  )}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleNewMemberSkip}
+                      className="flex-1 py-2.5 rounded-xl border border-[var(--elevation-border)] text-secondary text-sm font-semibold hover:text-primary transition-colors"
+                    >
+                      Ignorer
+                    </button>
+                    <button
+                      onClick={handleNewMemberSave}
+                      disabled={newMemberSaving || (!newMemberNom.trim() && !newMemberPrenom.trim())}
+                      className="flex-1 py-2.5 rounded-xl bg-accent text-black text-sm font-bold hover:scale-[1.02] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {newMemberSaving ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Ajouter le membre'}
+                    </button>
+                  </div>
+                </>
               )}
 
               {/* Phase preview */}
               {aiStatus === 'preview' && (
                 <>
                   <p className="text-sm text-secondary">{aiSummary}</p>
+                  {aiTours.length > 0 && (
+                    <div className="bg-accent/10 border border-accent/30 rounded-xl px-3 py-2 flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-accent flex-shrink-0" />
+                      <p className="text-xs font-semibold text-accent">
+                        {aiTours.length} tournee{aiTours.length > 1 ? 's' : ''} detectee{aiTours.length > 1 ? 's' : ''} ({aiTours.reduce((s, t) => s + t.slotIndices.length, 0)} arrets au total)
+                      </p>
+                    </div>
+                  )}
                   <div className="space-y-2 max-h-64 overflow-y-auto">
                     {aiDeletions.map((slot, i) => (
                       <div key={`delete-${slot.id}-${i}`} className="flex items-start gap-3 p-3 rounded-xl bg-red-500/5 border border-red-500/20">
@@ -772,30 +1015,40 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, plan
                         </div>
                       </div>
                     ))}
-                    {aiSlots.map((slot, i) => (
-                      <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-base border border-[var(--elevation-border)]">
-                        <div className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-primary truncate">{slot.chantierTitle}</p>
-                          <div className="flex items-center gap-3 mt-0.5">
-                            <span className="text-xs text-secondary">
-                              {new Date(slot.plannedDate + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}
-                            </span>
-                            {slot.startTime && (
-                              <span className="text-xs text-secondary flex items-center gap-1">
-                                <Clock className="w-3 h-3" />{slot.startTime}{slot.endTime ? `–${slot.endTime}` : ''}
+                    {aiSlots.map((slot, i) => {
+                      const isTour = aiTours.some(t => t.slotIndices.includes(i))
+                      return (
+                        <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${isTour ? 'bg-accent/5 border-accent/30' : 'bg-base border-[var(--elevation-border)]'}`}>
+                          <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${isTour ? 'bg-accent' : 'bg-accent'}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-semibold text-primary truncate">{slot.chantierTitle}</p>
+                              {isTour && (
+                                <span className="flex items-center gap-0.5 text-xs text-accent font-semibold flex-shrink-0">
+                                  <MapPin className="w-3 h-3" /> tournee
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 mt-0.5">
+                              <span className="text-xs text-secondary">
+                                {new Date(slot.plannedDate + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}
                               </span>
+                              {slot.startTime && (
+                                <span className="text-xs text-secondary flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />{slot.startTime}{slot.endTime ? `–${slot.endTime}` : ''}
+                                </span>
+                              )}
+                              <span className="text-xs text-secondary flex items-center gap-1">
+                                <Users className="w-3 h-3" />{slot.teamSize ?? 1}
+                              </span>
+                            </div>
+                            {slot.label && slot.label !== 'Equipe' && (
+                              <p className="text-xs text-secondary/70 mt-0.5">{slot.label}</p>
                             )}
-                            <span className="text-xs text-secondary flex items-center gap-1">
-                              <Users className="w-3 h-3" />{slot.teamSize ?? 1}
-                            </span>
                           </div>
-                          {slot.label && slot.label !== 'Équipe' && (
-                            <p className="text-xs text-secondary/70 mt-0.5">{slot.label}</p>
-                          )}
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                   <div className="flex gap-3 pt-1">
                     <button
@@ -862,44 +1115,222 @@ function StatCard({
   )
 }
 
-// ─── Sous-composant : Vue semaine ─────────────────────────────────────────────
+// ─── Mini-calendrier mensuel (mobile) ────────────────────────────────────────
+
+interface MiniCalendarProps {
+  selectedDate: Date
+  onSelectDate: (d: Date) => void
+  plannings: GlobalPlanning[]
+}
+
+function MiniCalendar({ selectedDate, onSelectDate, plannings }: MiniCalendarProps) {
+  const [viewMonth, setViewMonth] = useState(() => {
+    const d = new Date(selectedDate)
+    d.setDate(1)
+    d.setHours(0, 0, 0, 0)
+    return d
+  })
+
+  // Sync viewMonth quand selectedDate change depuis l'extérieur (flèches nav)
+  useEffect(() => {
+    const sm = new Date(selectedDate)
+    sm.setDate(1)
+    sm.setHours(0, 0, 0, 0)
+    if (sm.getFullYear() !== viewMonth.getFullYear() || sm.getMonth() !== viewMonth.getMonth()) {
+      setViewMonth(sm)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate])
+
+  const todayStr = todayParis()
+  const selectedStr = getLocalDateStr(selectedDate)
+
+  const daysInMonth = useMemo(() => {
+    const year = viewMonth.getFullYear()
+    const month = viewMonth.getMonth()
+    // Premier jour du mois (0=dim, 1=lun, ...)
+    const firstDow = new Date(year, month, 1).getDay()
+    // Décalage lundi-based
+    const offset = firstDow === 0 ? 6 : firstDow - 1
+    const total = new Date(year, month + 1, 0).getDate()
+    const cells: (Date | null)[] = Array(offset).fill(null)
+    for (let d = 1; d <= total; d++) cells.push(new Date(year, month, d))
+    // Compléter pour avoir des rangées complètes
+    while (cells.length % 7 !== 0) cells.push(null)
+    return cells
+  }, [viewMonth])
+
+  // Set des dates qui ont des plannings ce mois
+  const busyDates = useMemo(() => {
+    const s = new Set<string>()
+    const y = viewMonth.getFullYear()
+    const m = viewMonth.getMonth()
+    plannings.forEach(p => {
+      const pd = dateFromYmd(p.planned_date)
+      if (pd.getFullYear() === y && pd.getMonth() === m) s.add(p.planned_date)
+    })
+    return s
+  }, [plannings, viewMonth])
+
+  function prevMonth() {
+    const d = new Date(viewMonth)
+    d.setMonth(d.getMonth() - 1)
+    setViewMonth(d)
+  }
+  function nextMonth() {
+    const d = new Date(viewMonth)
+    d.setMonth(d.getMonth() + 1)
+    setViewMonth(d)
+  }
+
+  const monthLabel = viewMonth.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+
+  return (
+    <div className="card p-3 select-none">
+      {/* Entête mois */}
+      <div className="flex items-center justify-between mb-2">
+        <button onClick={prevMonth} className="p-1.5 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors">
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <span className="text-sm font-bold text-primary capitalize">{monthLabel}</span>
+        <button onClick={nextMonth} className="p-1.5 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors">
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+      {/* Noms jours */}
+      <div className="grid grid-cols-7 mb-1">
+        {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((n, i) => (
+          <div key={i} className="text-center text-[10px] font-semibold text-secondary/60 py-0.5">{n}</div>
+        ))}
+      </div>
+      {/* Cellules */}
+      <div className="grid grid-cols-7 gap-y-0.5">
+        {daysInMonth.map((day, i) => {
+          if (!day) return <div key={i} />
+          const ds = getLocalDateStr(day)
+          const isToday = ds === todayStr
+          const isSelected = ds === selectedStr
+          const hasPlannings = busyDates.has(ds)
+          return (
+            <button
+              key={ds}
+              onClick={() => onSelectDate(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 12, 0, 0))}
+              className={`flex flex-col items-center justify-center rounded-full w-8 h-8 mx-auto text-xs font-semibold transition-colors ${
+                isSelected
+                  ? 'bg-accent text-white'
+                  : isToday
+                  ? 'border border-accent text-accent'
+                  : 'text-primary hover:bg-[var(--elevation-1)]'
+              }`}
+            >
+              {day.getDate()}
+              {hasPlannings && !isSelected && (
+                <span className={`w-1 h-1 rounded-full mt-0.5 ${isToday ? 'bg-accent' : 'bg-accent/60'}`} />
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── Sous-composant : Vue semaine / jour ──────────────────────────────────────
 
 interface SemaineViewProps {
   days: Date[]
-  dayNames: string[]
   todayStr: string
-  timeLabels: string[]
-  TOTAL_H: number
   byDay: Record<string, GlobalPlanning[]>
-  nowTopPx: number
   nowH: number
-  onDeletePlanning: (planning: GlobalPlanning) => void
+  onDeletePlanning?: (planning: GlobalPlanning) => void
+  onSwipeDay?: (dir: 1 | -1) => void
 }
 
 function SemaineView({
   days,
-  dayNames,
   todayStr,
-  timeLabels,
-  TOTAL_H,
   byDay,
-  nowTopPx,
   nowH,
   onDeletePlanning,
+  onSwipeDay,
 }: SemaineViewProps) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Calcule la plage horaire dynamique selon les events existants
+  const { startH, endH, totalH, timeLabels } = useMemo(() => {
+    const allPlannings = days.flatMap(d => byDay[getLocalDateStr(d)] ?? [])
+    const timedPlannings = allPlannings.filter(p => p.start_time)
+
+    let minH = 8  // défaut : 8h si aucun event
+    let maxH = 19 // défaut : 19h si aucun event
+
+    if (timedPlannings.length > 0) {
+      minH = Math.min(...timedPlannings.map(p => timeToHour(p.start_time!)))
+      maxH = Math.max(...timedPlannings.map(p => p.end_time ? timeToHour(p.end_time) : timeToHour(p.start_time!) + 2))
+    }
+
+    // Marge d'1h avant/après, clampée aux bornes absolues
+    const sH = Math.max(CAL_START_H, Math.floor(minH) - 1)
+    const eH = Math.min(CAL_END_H, Math.ceil(maxH) + 1)
+    const hours = eH - sH
+    const labels = Array.from({ length: hours }, (_, i) => `${String(sH + i).padStart(2, '0')}:00`)
+
+    return { startH: sH, endH: eH, totalH: hours * ROW_H, timeLabels: labels }
+  }, [days, byDay])
+
+  // Auto-scroll vers la première heure avec un event (ou maintenant si aujourd'hui visible)
+  useEffect(() => {
+    if (!scrollRef.current) return
+    const allPlannings = days.flatMap(d => byDay[getLocalDateStr(d)] ?? [])
+    const timedPlannings = allPlannings.filter(p => p.start_time)
+
+    let targetH: number
+    const isShowingToday = days.some(d => getLocalDateStr(d) === todayStr)
+
+    if (isShowingToday && timedPlannings.length === 0) {
+      targetH = Math.max(startH, nowH - 1)
+    } else if (timedPlannings.length > 0) {
+      targetH = Math.min(...timedPlannings.map(p => timeToHour(p.start_time!)))
+    } else {
+      return
+    }
+
+    const targetPx = Math.max(0, (targetH - startH - 1) * ROW_H)
+    scrollRef.current.scrollTop = targetPx
+  // Se déclenche quand les jours ou les données changent
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days.map(d => getLocalDateStr(d)).join(','), startH])
+
+  // Swipe horizontal (mobile) — changement de jour
+  const swipeStartX = useRef<number | null>(null)
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    swipeStartX.current = e.touches[0].clientX
+  }, [])
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (swipeStartX.current === null) return
+    const dx = e.changedTouches[0].clientX - swipeStartX.current
+    swipeStartX.current = null
+    if (Math.abs(dx) < 50) return
+    const dir = (dx < 0 ? 1 : -1) as 1 | -1
+    onSwipeDay?.(dir)
+  }, [onSwipeDay])
+
+  const nowTopPx = (nowH - startH) * ROW_H
+
   return (
     <div className="card overflow-hidden">
       <div className="overflow-x-auto">
       <div style={{ minWidth: days.length === 1 ? '100%' : '560px' }}>
       {/* En-tête jours */}
-      <div 
+      <div
         className="grid border-b border-[var(--elevation-border)]"
-        style={{ gridTemplateColumns: `48px repeat(${days.length}, 1fr)` }}
+        style={{ gridTemplateColumns: `44px repeat(${days.length}, 1fr)` }}
       >
         <div className="border-r border-[var(--elevation-border)]" />
-        {days.map((day, i) => {
+        {days.map((day) => {
           const dateStr = getLocalDateStr(day)
           const isToday = dateStr === todayStr
+          const count = (byDay[dateStr] ?? []).length
           return (
             <div
               key={dateStr}
@@ -910,35 +1341,47 @@ function SemaineView({
               <p className="text-[10px] font-semibold text-secondary uppercase tracking-wide">
                 {day.toLocaleDateString('fr-FR', { weekday: 'short' })}
               </p>
-              <p
-                className={`text-sm font-bold mt-0.5 w-7 h-7 flex items-center justify-center rounded-full mx-auto ${
-                  isToday
-                    ? 'bg-accent text-white'
-                    : 'text-primary'
-                }`}
-              >
-                {day.getDate()}
-              </p>
+              <div className="flex flex-col items-center">
+                <p
+                  className={`text-sm font-bold mt-0.5 w-7 h-7 flex items-center justify-center rounded-full ${
+                    isToday ? 'bg-accent text-white' : 'text-primary'
+                  }`}
+                >
+                  {day.getDate()}
+                </p>
+                {/* Badge nombre d'events */}
+                {count > 0 && (
+                  <span className="text-[9px] text-secondary/60 font-medium mt-0.5">
+                    {count} créneau{count > 1 ? 'x' : ''}
+                  </span>
+                )}
+              </div>
             </div>
           )
         })}
       </div>
 
-      {/* Grille horaire */}
-      <div className="overflow-y-auto max-h-[680px]">
-        <div 
+      {/* Grille horaire scrollable */}
+      <div
+        ref={scrollRef}
+        className="overflow-y-auto"
+        style={{ maxHeight: 'min(68vh, 640px)' }}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
+        <div
           className="grid"
-          style={{ gridTemplateColumns: `48px repeat(${days.length}, 1fr)` }}
+          style={{ gridTemplateColumns: `44px repeat(${days.length}, 1fr)` }}
         >
           {/* Colonne heures */}
-          <div className="border-r border-[var(--elevation-border)]" style={{ height: TOTAL_H }}>
+          <div className="border-r border-[var(--elevation-border)]" style={{ height: totalH }}>
             {timeLabels.map(t => (
               <div
                 key={t}
-                className="flex items-start justify-end pr-2 pt-0.5"
+                className="flex items-start justify-end pr-2 pt-1"
                 style={{ height: ROW_H }}
               >
-                <span className="text-[10px] text-secondary/70 font-medium">{t}</span>
+                <span className="text-[10px] text-secondary/60 font-medium tabular-nums">{t}</span>
               </div>
             ))}
           </div>
@@ -948,7 +1391,7 @@ function SemaineView({
             const dateStr = getLocalDateStr(day)
             const isToday = dateStr === todayStr
             const dayPlannings = byDay[dateStr] ?? []
-            const timedLayouts = buildTimedPlanningLayout(dayPlannings)
+            const timedLayouts = buildTimedPlanningLayout(dayPlannings, startH)
             const withoutTime = dayPlannings.filter(p => !p.start_time)
 
             return (
@@ -957,30 +1400,34 @@ function SemaineView({
                 className={`relative border-r border-[var(--elevation-border)] last:border-r-0 ${
                   isToday ? 'bg-accent/[0.03]' : ''
                 }`}
-                style={{ height: TOTAL_H }}
+                style={{ height: totalH }}
               >
                 {/* Lignes horaires */}
                 {timeLabels.map((_, idx) => (
                   <div
                     key={idx}
-                    className="absolute left-0 right-0 border-t border-[var(--elevation-border)]/50"
+                    className={`absolute left-0 right-0 border-t ${
+                      idx === 0
+                        ? 'border-[var(--elevation-border)]/80'
+                        : 'border-[var(--elevation-border)]/40'
+                    }`}
                     style={{ top: idx * ROW_H }}
                   />
                 ))}
 
                 {/* Ligne heure actuelle */}
-                {isToday && nowH >= CAL_START_H && nowH <= CAL_END_H && (
+                {isToday && nowH >= startH && nowH <= endH && (
                   <div
-                    className="absolute left-0 right-0 z-20 flex items-center"
+                    className="absolute left-0 right-0 z-20 flex items-center pointer-events-none"
                     style={{ top: nowTopPx }}
                   >
                     <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0 -ml-1" />
-                    <div className="flex-1 h-px bg-red-500" />
+                    <div className="flex-1 h-[1.5px] bg-red-500" />
                   </div>
                 )}
 
                 {/* Créneaux avec heure */}
-                {timedLayouts.map(({ planning: p, topPx, heightPx, startH, endH, lane, laneCount }) => {
+                {timedLayouts.map(({ planning: p, topPx, heightPx, startH: sH, endH: eH, lane, laneCount }) => {
                   const col = CHANTIER_COLORS[p.chantier_color_idx]
                   const hasOverlap = laneCount > 1
                   const widthPct = 100 / laneCount
@@ -995,44 +1442,40 @@ function SemaineView({
                         left: `calc(${leftPct}% + 2px)`,
                         width: `calc(${widthPct}% - 4px)`,
                       }}
-                      title={`${p.chantier_title} · ${fmtTime(p.start_time!)}${p.end_time ? ` à ${fmtTime(p.end_time)}` : ''}${hasOverlap ? ' · Créneau en conflit visuel' : ''}`}
-                      className={`absolute rounded-sm sm:rounded-lg border p-0.5 sm:px-1.5 sm:py-1 overflow-hidden z-10 group/slot shadow-sm transition-shadow hover:z-30 hover:shadow-lg ${col.bg} ${col.border} ${
+                      title={`${p.chantier_title} · ${fmtTime(p.start_time!)}${p.end_time ? ` à ${fmtTime(p.end_time)}` : ''}`}
+                      className={`absolute rounded-md border px-1.5 py-1 overflow-hidden z-10 group/slot shadow-sm transition-shadow hover:z-30 hover:shadow-md ${col.bg} ${col.border} ${
                         hasOverlap ? 'ring-1 ring-white/70 dark:ring-black/40' : ''
                       }`}
                     >
-                      <button
-                        onClick={() => onDeletePlanning(p)}
-                        className="absolute top-1 right-1 rounded bg-white/80 p-0.5 text-red-500 opacity-0 transition-opacity hover:text-red-600 group-hover/slot:opacity-100 dark:bg-black/50"
-                        title="Supprimer ce créneau"
-                      >
-                        <X className="w-2.5 h-2.5" />
-                      </button>
-                      {/* Plage horaire */}
-                      <p className={`text-[8px] sm:text-[9px] font-semibold leading-tight ${col.text} opacity-90 truncate pr-4`}>
-                        {fmtTime(p.start_time!)}{p.end_time ? ` à ${fmtTime(p.end_time)}` : ''}
+                      {onDeletePlanning && (
+                        <button
+                          onClick={() => onDeletePlanning(p)}
+                          className="absolute top-1 right-1 rounded bg-white/80 p-0.5 text-red-500 opacity-0 transition-opacity hover:text-red-600 group-hover/slot:opacity-100 dark:bg-black/50"
+                          title="Supprimer ce créneau"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                      <p className={`text-[9px] font-semibold leading-tight ${col.text} opacity-90 truncate pr-4`}>
+                        {fmtTime(p.start_time!)}{p.end_time ? ` — ${fmtTime(p.end_time)}` : ''}
                       </p>
-                      {/* Titre chantier */}
-                      <p className={`text-[9px] sm:text-[10px] font-bold leading-tight truncate mt-0.5 ${col.text}`}>
+                      <p className={`text-[10px] font-bold leading-tight truncate mt-0.5 ${col.text}`}>
                         {p.chantier_title}
                       </p>
-                      <p className={`text-[8px] sm:text-[10px] leading-tight truncate ${col.text} opacity-80`}>
+                      <p className={`text-[9px] leading-tight truncate ${col.text} opacity-75`}>
                         {p.label}
                       </p>
-                      {heightPx > 44 && (
-                        <div className={`text-[8px] sm:text-[9px] leading-tight ${col.text} flex flex-col mt-0.5 overflow-hidden gap-0.5`}>
-                          {/* Durée calculée */}
+                      {heightPx > 52 && (
+                        <div className={`text-[9px] leading-tight ${col.text} flex flex-col mt-1 overflow-hidden gap-0.5`}>
                           {p.end_time && (
-                            <p className="font-bold opacity-90">{fmtHours(endH - startH)}</p>
+                            <p className="font-bold opacity-90">{fmtHours(eH - sH)}</p>
                           )}
                           <p className="opacity-70 flex items-center gap-0.5">
                             <Users className="w-2.5 h-2.5" />
                             {p.team_size} pers.
                           </p>
-                          {hasOverlap && heightPx > 62 && (
-                            <p className="opacity-80 truncate">Chevauchement</p>
-                          )}
-                          {p.notes && (
-                            <p className="opacity-80 mt-0.5 whitespace-pre-wrap break-words overflow-y-auto">{p.notes}</p>
+                          {p.notes && heightPx > 80 && (
+                            <p className="opacity-70 mt-0.5 whitespace-pre-wrap break-words">{p.notes}</p>
                           )}
                         </div>
                       )}
@@ -1040,7 +1483,7 @@ function SemaineView({
                   )
                 })}
 
-                {/* Créneaux sans heure — bandeaux en bas */}
+                {/* Créneaux sans heure — bandeaux collés en bas */}
                 {withoutTime.length > 0 && (
                   <div className="absolute bottom-1 left-0.5 right-0.5 flex flex-col gap-0.5">
                     {withoutTime.map(p => {
@@ -1057,13 +1500,15 @@ function SemaineView({
                           <p className={`text-[9px] font-semibold truncate ${col.text}`}>
                             {p.chantier_title}
                           </p>
-                          <button
-                            onClick={() => onDeletePlanning(p)}
-                            className="ml-auto text-red-500 opacity-0 transition-opacity hover:text-red-600 group-hover/slot:opacity-100"
-                            title="Supprimer ce créneau"
-                          >
-                            <X className="w-2.5 h-2.5" />
-                          </button>
+                          {onDeletePlanning && (
+                            <button
+                              onClick={() => onDeletePlanning(p)}
+                              className="ml-auto text-red-500 opacity-0 transition-opacity hover:text-red-600 group-hover/slot:opacity-100"
+                              title="Supprimer ce créneau"
+                            >
+                              <X className="w-2.5 h-2.5" />
+                            </button>
+                          )}
                         </div>
                       )
                     })}
@@ -1086,7 +1531,7 @@ interface ListeViewProps {
   days: Date[]
   todayStr: string
   byDay: Record<string, GlobalPlanning[]>
-  onDeletePlanning: (planning: GlobalPlanning) => void
+  onDeletePlanning?: (planning: GlobalPlanning) => void
 }
 
 function ListeView({ days, todayStr, byDay, onDeletePlanning }: ListeViewProps) {
@@ -1185,13 +1630,15 @@ function ListeView({ days, todayStr, byDay, onDeletePlanning }: ListeViewProps) 
                           {p.chantier_city}
                         </span>
                       )}
-                      <button
-                        onClick={() => onDeletePlanning(p)}
-                        className="rounded-lg p-1 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"
-                        title="Supprimer ce créneau"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
+                      {onDeletePlanning && (
+                        <button
+                          onClick={() => onDeletePlanning(p)}
+                          className="rounded-lg p-1 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"
+                          title="Supprimer ce créneau"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                     </div>
                     {p.notes && (

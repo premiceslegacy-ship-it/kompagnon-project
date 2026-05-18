@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { AIQuotaExceededError } from '@/lib/quota'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 const VISION_MODEL = 'google/gemini-2.5-flash-lite'
 const VISION_FALLBACK = 'anthropic/claude-sonnet-4-6'
@@ -86,7 +88,7 @@ async function callModel(
     const { data } = await callAI<any>({
       organizationId,
       provider: 'openrouter',
-      feature: 'document_parse',
+      feature: 'receipt_ocr',
       model,
       inputKind: 'mixed',
       request: {
@@ -141,6 +143,7 @@ async function callModel(
   } catch (err: any) {
     if (err instanceof AIModuleDisabledError) return { error: 'module_disabled' }
     if (err instanceof AIRateLimitError) return { error: 'rate_limited' }
+    if (err instanceof AIQuotaExceededError) return { error: 'quota_exceeded' }
     if (err?.name === 'AbortError') return { error: 'timeout' }
     throw err
   }
@@ -150,6 +153,10 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+
+  if (!await hasPermission('chantiers.expenses.create')) {
+    return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
+  }
 
   if (!process.env.OPENROUTER_API_KEY) {
     return NextResponse.json({ error: 'Clé API IA non configurée' }, { status: 500 })
@@ -180,6 +187,9 @@ export async function POST(req: NextRequest) {
       }
       if (res.error === 'rate_limited') {
         return NextResponse.json({ error: 'Trop de requêtes IA pour cette organisation. Réessayez plus tard.' }, { status: 429 })
+      }
+      if (res.error === 'quota_exceeded') {
+        return NextResponse.json({ error: 'Quota mensuel OCR atteint pour cette organisation.' }, { status: 402 })
       }
       return NextResponse.json({ error: 'Impossible d\'analyser ce document. Vérifiez que l\'image est lisible.' }, { status: 500 })
     }

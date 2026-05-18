@@ -13,7 +13,7 @@
 #   Chaque Worker lit sa configuration Supabase au runtime via ses
 #   variables Cloudflare. Aucun switch de .env.local n'est nécessaire.
 #
-# Prérequis : wrangler login + npm install -g wrangler @opennextjs/cloudflare
+# Prérequis : wrangler login (@opennextjs/cloudflare est une dépendance locale — pas d'install globale nécessaire)
 
 set -euo pipefail
 

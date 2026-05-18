@@ -20,6 +20,7 @@ export const UpdateQuoteSchema = z.object({
   client_request_visible_on_pdf: z.boolean().optional(),
   aid_label: z.string().max(200).nullable().optional(),
   aid_amount: z.number().min(0).nullable().optional(),
+  parent_quote_id: z.string().uuid().nullable().optional(),
 })
 
 export const UpsertQuoteItemSchema = z.object({
@@ -38,6 +39,7 @@ export const UpsertQuoteItemSchema = z.object({
   length_m: z.number().nullable().optional(),
   width_m: z.number().nullable().optional(),
   height_m: z.number().nullable().optional(),
+  dim_quantity: z.number().min(0.001).optional(),
   is_internal: z.boolean().optional(),
 })
 

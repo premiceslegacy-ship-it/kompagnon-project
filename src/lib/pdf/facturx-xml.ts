@@ -1,9 +1,11 @@
-// Générateur XML CII (Cross Industry Invoice) — profil EN 16931
+// Générateur XML CII (Cross Industry Invoice) - profil EN 16931
 // Spécification : Factur-X 1.0 / ZUGFeRD 2.3 / norme EN 16931
 // Validateur officiel : https://services.fnfe-mpe.org
 
 import type { Organization } from '@/lib/data/queries/organization'
 import type { InvoiceWithItems } from '@/lib/data/queries/invoices'
+
+const INVOICE_SECTION_UNIT = '__section__'
 import { facturxGuidelineId } from '@/lib/pdf/facturx-profile'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -39,7 +41,7 @@ function invoiceTypeCode(type: string | null | undefined): string {
 }
 
 // Mapping des unités vers les codes UN/ECE Rec 20 (codelist 8 du Factur-X)
-// C62 = pièce (unité sans dimension) — valeur par défaut
+// C62 = pièce (unité sans dimension) - valeur par défaut
 const UNIT_CODE_MAP: Record<string, string> = {
   'u': 'C62', 'unite': 'C62', 'unité': 'C62', 'unit': 'C62', 'pc': 'C62', 'piece': 'C62', 'pièce': 'C62',
   'h': 'HUR', 'heure': 'HUR', 'hr': 'HUR', 'hour': 'HUR',
@@ -95,9 +97,15 @@ function xmlSeller(org: Organization): string {
       </ram:SpecifiedLegalOrganization>`
     : ''
 
+  // BT-31 (numéro TVA intracommunautaire) ou BT-32 (SIRET/SIREN, schemeID="FC")
+  // L'un ou l'autre est obligatoire quand des lignes ont une TVA > 0 (BR-S-02)
   const vatBlock = org.vat_number
     ? `<ram:SpecifiedTaxRegistration>
         <ram:ID schemeID="VA">${esc(org.vat_number)}</ram:ID>
+      </ram:SpecifiedTaxRegistration>`
+    : (org.siret || org.siren)
+    ? `<ram:SpecifiedTaxRegistration>
+        <ram:ID schemeID="FC">${esc(org.siret ?? org.siren)}</ram:ID>
       </ram:SpecifiedTaxRegistration>`
     : ''
 
@@ -143,7 +151,7 @@ function xmlBuyer(client: NonNullable<InvoiceWithItems['client']>): string {
 
 function xmlTradeLines(items: InvoiceWithItems['items']): string {
   return items
-    .filter(item => !item.is_internal)
+    .filter(item => !item.is_internal && item.unit !== INVOICE_SECTION_UNIT)
     .map((item, idx) => {
       const lineHt = (item.quantity * item.unit_price).toFixed(2)
       const isVatExempt = item.vat_rate === 0
@@ -186,14 +194,14 @@ function xmlVatBreakdown(items: InvoiceWithItems['items'], isVatSubject: boolean
       <ram:CalculatedAmount>0.00</ram:CalculatedAmount>
       <ram:TypeCode>VAT</ram:TypeCode>
       <ram:ExemptionReason>TVA non applicable, art. 293B du CGI</ram:ExemptionReason>
-      <ram:BasisAmount>${fmtAmount(items.filter(i => !i.is_internal).reduce((s, i) => s + i.quantity * i.unit_price, 0))}</ram:BasisAmount>
+      <ram:BasisAmount>${fmtAmount(items.filter(i => !i.is_internal && i.unit !== INVOICE_SECTION_UNIT).reduce((s, i) => s + i.quantity * i.unit_price, 0))}</ram:BasisAmount>
       <ram:CategoryCode>E</ram:CategoryCode>
       <ram:RateApplicablePercent>0.00</ram:RateApplicablePercent>
     </ram:ApplicableTradeTax>`
   }
 
   const vatMap: Record<number, { basis: number; amount: number }> = {}
-  for (const item of items.filter(i => !i.is_internal)) {
+  for (const item of items.filter(i => !i.is_internal && i.unit !== INVOICE_SECTION_UNIT)) {
     const ht = item.quantity * item.unit_price
     const vat = ht * (item.vat_rate / 100)
     if (!vatMap[item.vat_rate]) vatMap[item.vat_rate] = { basis: 0, amount: 0 }
@@ -221,7 +229,7 @@ export function generateFacturXml(
   organization: Organization,
 ): string {
   const isVatSubject = organization.is_vat_subject !== false
-  const visibleItems = invoice.items.filter(i => !i.is_internal)
+  const visibleItems = invoice.items.filter(i => !i.is_internal && i.unit !== INVOICE_SECTION_UNIT)
 
   const totalHt = invoice.total_ht ?? visibleItems.reduce((s, i) => s + i.quantity * i.unit_price, 0)
   const totalTva = invoice.total_tva ?? (isVatSubject ? visibleItems.reduce((s, i) => s + i.quantity * i.unit_price * (i.vat_rate / 100), 0) : 0)

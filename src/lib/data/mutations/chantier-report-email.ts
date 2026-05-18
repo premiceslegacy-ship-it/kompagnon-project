@@ -1,10 +1,11 @@
 'use server'
 
 import React from 'react'
-import { pdf } from '@react-pdf/renderer'
+import { renderToBuffer } from '@react-pdf/renderer'
 import { sendEmail } from '@/lib/email'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 import {
   getChantierById,
   getChantierTaches,
@@ -21,6 +22,8 @@ export async function sendChantierReportEmail(
   chantierId: string,
   options?: { dateFrom?: string; dateTo?: string },
 ): Promise<{ error: string | null; recipient?: string }> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Action non autorisée.' }
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
 
@@ -95,7 +98,7 @@ export async function sendChantierReportEmail(
 
   // ── Render PDF to Buffer ───────────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pdfBuffer: Buffer = await (pdf as any)(
+  const pdfBuffer: Buffer = await renderToBuffer(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     React.createElement(ChantierPDF as any, {
       chantier,
@@ -106,8 +109,8 @@ export async function sendChantierReportEmail(
       periodFrom: dateFrom ?? null,
       periodTo:   dateTo   ?? null,
       reportPhotos,
-    }),
-  ).toBuffer()
+    }) as any,
+  )
 
   const fileName = `rapport-chantier-${chantier.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.pdf`
 

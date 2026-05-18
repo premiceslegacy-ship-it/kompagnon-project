@@ -20,7 +20,7 @@
 #   Le script de déploiement ignore temporairement .env.local et
 #   conserve les vars configurées dans Cloudflare Dashboard.
 #
-# Prérequis : wrangler login + npm install -g wrangler @opennextjs/cloudflare
+# Prérequis : wrangler login (@opennextjs/cloudflare est une dépendance locale — pas d'install globale nécessaire)
 
 set -euo pipefail
 
@@ -68,5 +68,5 @@ echo ""
 echo "👉 Penser à injecter les variables dans Cloudflare Dashboard si c'est un nouveau client :"
 echo "   dash.cloudflare.com → Workers & Pages → $WORKER_NAME → Settings → Variables and Secrets"
 echo "   Variables Supabase attendues : SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY"
-echo "   Secrets uniques par client      : CRON_SECRET, MEMBER_SESSION_SECRET (cookie /mon-espace)"
+echo "   Secrets uniques par client      : CRON_SECRET, MEMBER_SESSION_SECRET, RATE_LIMIT_SECRET"
 echo "   → Voir DEPLOIEMENT_CLIENT.md §3 pour la liste complète"

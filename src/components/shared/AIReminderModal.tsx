@@ -125,7 +125,7 @@ export default function AIReminderModal({ type, id, onSent, onClose }: Props) {
               )}
               {!clientEmail && (
                 <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 rounded-xl">
-                  Aucun email enregistré pour ce client — l&apos;email ne sera pas envoyé mais la relance sera loguée.
+                  Aucun email enregistré pour ce client - l&apos;email ne sera pas envoyé mais la relance sera loguée.
                 </p>
               )}
             </>

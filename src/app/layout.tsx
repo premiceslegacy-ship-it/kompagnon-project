@@ -3,7 +3,8 @@ import './globals.css';
 
 export const dynamic = 'force-dynamic';
 import { ThemeProvider } from '@/components/theme-provider';
-import { APP_NAME, BRAND_ASSETS } from '@/lib/brand';
+import { APP_NAME } from '@/lib/brand';
+import { appIconPath } from '@/lib/pwa';
 import { getPublicRuntimeConfig, serializeRuntimeConfig } from '@/lib/supabase/config';
 
 import { Plus_Jakarta_Sans, Inter } from 'next/font/google';
@@ -24,9 +25,13 @@ export const metadata: Metadata = {
     title: `${APP_NAME} - ERP`,
     description: 'Gérez vos chantiers, vos finances et vos clients avec une intelligence artificielle intégrée.',
     icons: {
-        icon: BRAND_ASSETS.monogram.light,
-        shortcut: BRAND_ASSETS.monogram.light,
-        apple: BRAND_ASSETS.monogram.light,
+        icon: appIconPath(192),
+        shortcut: appIconPath(192),
+        apple: appIconPath(180),
+    },
+    appleWebApp: {
+        capable: true,
+        statusBarStyle: 'black-translucent',
     },
     manifest: '/api/manifest',
 };

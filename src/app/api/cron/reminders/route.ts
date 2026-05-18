@@ -56,8 +56,8 @@ export async function GET(req: NextRequest) {
     const orgHour = (org.reminder_hour_utc as number) ?? 8
     if (currentHour !== orgHour) continue
 
-    const invoiceDays: number[] = (org.invoice_reminder_days as number[]) ?? [2, 7]
-    const quoteDays: number[] = (org.quote_reminder_days as number[]) ?? [3, 10]
+    const invoiceDays: number[] = ((org.invoice_reminder_days as number[]) ?? [3, 7]).map((day, index) => index === 0 ? Math.max(3, day) : day)
+    const quoteDays: number[] = (org.quote_reminder_days as number[]) ?? [2, 7, 10]
 
     // ── Charger les templates personnalisés de l'org ──────────────────────────
 
@@ -77,17 +77,21 @@ export async function GET(req: NextRequest) {
     // ── Relances FACTURES ─────────────────────────────────────────────────────
 
     for (const delayDays of invoiceDays) {
-      // Factures dont l'échéance était exactement il y a `delayDays` jours
+      // Factures envoyées exactement il y a `delayDays` jours et toujours impayées.
       const targetDate = new Date(today)
       targetDate.setDate(targetDate.getDate() - delayDays)
-      const targetDateStr = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(targetDate).split('/').reverse().join('-')
+      const windowStart = new Date(targetDate)
+      windowStart.setHours(0, 0, 0, 0)
+      const windowEnd = new Date(targetDate)
+      windowEnd.setHours(23, 59, 59, 999)
 
       const { data: invoices } = await admin
         .from('invoices')
-        .select('id, number, total_ttc, currency, due_date, client_id')
+        .select('id, number, total_ttc, currency, due_date, sent_at, client_id')
         .eq('organization_id', org.id)
-        .eq('status', 'sent')
-        .eq('due_date', targetDateStr)
+        .in('status', ['sent', 'partial'])
+        .gte('sent_at', windowStart.toISOString())
+        .lte('sent_at', windowEnd.toISOString())
 
       for (const invoice of invoices ?? []) {
         // Vérifier qu'une relance auto n'a pas déjà été envoyée aujourd'hui pour cette facture

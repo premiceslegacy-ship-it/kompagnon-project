@@ -8,7 +8,7 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 /**
  * Sauvegarde les permissions d'un rôle.
  * Utilise le client admin pour contourner la RLS (qui exige settings.edit_roles
- * via user_has_permission — non fiable avec le client standard).
+ * via user_has_permission - non fiable avec le client standard).
  * La vérification d'autorisation est faite manuellement avant.
  */
 export async function saveRolePermissions(

@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { getClients } from '@/lib/data/queries/clients'
-import { getQuoteById } from '@/lib/data/queries/quotes'
+import { getQuoteById, getQuotesForLinking } from '@/lib/data/queries/quotes'
 import { getMaterials, getLaborRates, getPrestationTypes } from '@/lib/data/queries/catalog'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { resolveCatalogContext } from '@/lib/catalog-context'
@@ -12,13 +12,14 @@ export default async function QuoteEditorPage({
 }: {
   searchParams: { id?: string; client?: string; returnTo?: string }
 }) {
-  const [clients, materials, laborRates, prestationTypes, organization, modules] = await Promise.all([
+  const [clients, materials, laborRates, prestationTypes, organization, modules, allQuotes] = await Promise.all([
     getClients(),
     getMaterials(),
     getLaborRates(),
     getPrestationTypes(),
     getOrganization(),
     getOrganizationModules(),
+    getQuotesForLinking(),
   ])
 
   let initialQuote = null
@@ -40,6 +41,7 @@ export default async function QuoteEditorPage({
       returnTo={searchParams.returnTo ?? null}
       catalogContext={catalogContext}
       modules={modules}
+      allQuotes={allQuotes}
       vatConfig={{
         isVatSubject: organization?.is_vat_subject ?? true,
         defaultVatRate: organization?.default_vat_rate ?? 20,

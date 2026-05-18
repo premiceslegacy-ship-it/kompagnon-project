@@ -1,14 +1,18 @@
 'use client'
 
-import React, { useState, useTransition, useRef } from 'react'
+import React, { useEffect, useState, useTransition, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { submitQuoteRequest } from '@/lib/data/mutations/quote-requests'
 import {
   buildMaterialSelectionPricing,
+  computeLinearQuantity,
+  computeSurfaceQuantity,
+  computeVolumeQuantity,
   displayUnitToMeters,
   formatPublicUnit,
   getDimensionFieldDefinition,
   metersToDisplayUnit,
+  type DimensionDisplayUnit,
   type DimensionPricingMode,
 } from '@/lib/catalog-pricing'
 import {
@@ -46,6 +50,7 @@ type SelectedMaterial = {
   length_m?: number | null
   width_m?: number | null
   height_m?: number | null
+  dimension_count?: number
   dimension_pricing_mode: DimensionPricingMode
   dimension_pricing_enabled?: boolean
   dimension_schema?: PublicMaterial['dimension_schema']
@@ -70,6 +75,7 @@ type PrestationLine = {
   length_m?: number | null
   width_m?: number | null
   height_m?: number | null
+  dimension_count?: number
   isCustom: boolean
   dimension_schema?: PublicPrestationLine['dimension_schema']
   price_variants?: PublicPrestationLine['price_variants']
@@ -131,7 +137,11 @@ function buildDimensionSelection(params: {
   lengthM?: number | null
   widthM?: number | null
   heightM?: number | null
+  dimensionCount?: number
 }) {
+  const requestedLengthM = params.lengthM ?? null
+  const requestedWidthM = params.widthM ?? null
+  const requestedHeightM = params.heightM ?? null
   const pricing = buildMaterialSelectionPricing({
     item: {
       sale_price: 0,
@@ -143,10 +153,50 @@ function buildDimensionSelection(params: {
       base_height_m: params.baseHeightM,
       price_variants: (params.priceVariants as any) ?? [],
     },
-    requestedLengthM: params.lengthM ?? null,
-    requestedWidthM: params.widthM ?? null,
-    requestedHeightM: params.heightM ?? null,
+    requestedLengthM,
+    requestedWidthM,
+    requestedHeightM,
   })
+
+  const lengthM = requestedLengthM ?? pricing.lengthM ?? params.baseLengthM ?? null
+  const widthM = requestedWidthM ?? pricing.widthM ?? params.baseWidthM ?? null
+  const heightM = requestedHeightM ?? pricing.heightM ?? params.baseHeightM ?? null
+  const dimensionCount = Math.max(1, Math.floor(params.dimensionCount ?? 1))
+
+  if (params.mode === 'linear' && lengthM != null) {
+    return {
+      quantity: computeLinearQuantity(lengthM) * dimensionCount,
+      unit: 'ml',
+      length_m: lengthM,
+      width_m: null,
+      height_m: null,
+      dimension_count: dimensionCount,
+    }
+  }
+
+  if (params.mode === 'area') {
+    return {
+      quantity: (lengthM != null && widthM != null ? computeSurfaceQuantity(lengthM, widthM) : pricing.quantity) * dimensionCount,
+      unit: 'm²',
+      length_m: lengthM,
+      width_m: widthM,
+      height_m: null,
+      dimension_count: dimensionCount,
+    }
+  }
+
+  if (params.mode === 'volume') {
+    return {
+      quantity: lengthM != null && widthM != null && heightM != null
+        ? computeVolumeQuantity(lengthM, widthM, heightM) * dimensionCount
+        : pricing.quantity * dimensionCount,
+      unit: 'm³',
+      length_m: lengthM,
+      width_m: widthM,
+      height_m: heightM,
+      dimension_count: dimensionCount,
+    }
+  }
 
   return {
     quantity: pricing.quantity,
@@ -154,6 +204,7 @@ function buildDimensionSelection(params: {
     length_m: pricing.lengthM,
     width_m: pricing.widthM,
     height_m: pricing.heightM,
+    dimension_count: dimensionCount,
   }
 }
 
@@ -181,6 +232,69 @@ function getDimensionFieldMeta(
   mode: DimensionPricingMode,
 ) {
   return getDimensionFieldDefinition(schema, axis, mode)
+}
+
+function formatDimensionInputValue(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return ''
+  return String(value)
+}
+
+function parseDimensionInputValue(value: string): number | null | undefined {
+  const normalized = value.trim().replace(',', '.')
+  if (!normalized) return null
+  if (!/^\d*\.?\d*$/.test(normalized) || normalized === '.') return undefined
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function DimensionInput({
+  valueM,
+  fallbackM,
+  unit,
+  placeholder,
+  className,
+  onValueM,
+}: {
+  valueM: number | null | undefined
+  fallbackM: number | null | undefined
+  unit: DimensionDisplayUnit
+  placeholder?: string
+  className: string
+  onValueM: (value: number | null) => void
+}) {
+  const displayValue = formatDimensionInputValue(metersToDisplayUnit(valueM ?? fallbackM ?? null, unit))
+  const [draft, setDraft] = useState(displayValue)
+  const [focused, setFocused] = useState(false)
+
+  useEffect(() => {
+    if (!focused) setDraft(displayValue)
+  }, [displayValue, focused])
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      pattern="[0-9]*[,.]?[0-9]*"
+      value={focused ? draft : displayValue}
+      placeholder={placeholder}
+      onFocus={() => {
+        setFocused(true)
+        setDraft(displayValue)
+      }}
+      onBlur={() => {
+        setFocused(false)
+        setDraft(displayValue)
+      }}
+      onChange={e => {
+        const next = e.target.value
+        const parsed = parseDimensionInputValue(next)
+        if (parsed === undefined) return
+        setDraft(next)
+        onValueM(parsed == null ? null : displayUnitToMeters(parsed, unit))
+      }}
+      className={className}
+    />
+  )
 }
 
 function groupByCategory<T extends { category: string | null }>(items: T[]): Array<{ label: string; items: T[] }> {
@@ -236,11 +350,12 @@ function ProgressBar({ step }: { step: number }) {
 // ─── Carte matériau ───────────────────────────────────────────────────────────
 
 function MaterialCard({
-  material, selected, quantity, details, lengthM, widthM, heightM, itemKindLabel, onToggle, onQty, onSetQty, onSetDetails, onSetLength, onSetWidth, onSetHeight
+  material, selected, quantity, dimensionCount, details, lengthM, widthM, heightM, itemKindLabel, onToggle, onQty, onSetQty, onSetDimensionCount, onSetDetails, onSetLength, onSetWidth, onSetHeight
 }: {
   material: PublicMaterial
   selected: boolean
   quantity: number
+  dimensionCount: number
   details: string
   lengthM: number | null
   widthM: number | null
@@ -249,6 +364,7 @@ function MaterialCard({
   onToggle: () => void
   onQty: (d: number) => void
   onSetQty: (q: number) => void
+  onSetDimensionCount: (q: number) => void
   onSetDetails: (v: string) => void
   onSetLength: (v: number | null) => void
   onSetWidth: (v: number | null) => void
@@ -296,23 +412,46 @@ function MaterialCard({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <label className="text-xs text-gray-600">
                 {lengthMeta.label} ({lengthMeta.unit})
-                <input type="number" min="0" step="0.01" value={metersToDisplayUnit(lengthM ?? material.base_length_m ?? null, lengthMeta.unit) ?? ''} onChange={e => onSetLength(e.target.value ? displayUnitToMeters(Number(e.target.value), lengthMeta.unit) : null)} className="mt-1 w-full text-sm px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-900 focus:outline-none focus:border-blue-400" />
+                <DimensionInput valueM={lengthM} fallbackM={material.base_length_m} unit={lengthMeta.unit} onValueM={onSetLength} className="mt-1 w-full text-sm px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-900 focus:outline-none focus:border-blue-400" />
               </label>
               {(dimensionMode === 'area' || dimensionMode === 'volume' || widthMeta.enabled) && (
                 <label className="text-xs text-gray-600">
                   {widthMeta.label} ({widthMeta.unit})
-                  <input type="number" min="0" step="0.01" value={metersToDisplayUnit(widthM ?? material.base_width_m ?? null, widthMeta.unit) ?? ''} onChange={e => onSetWidth(e.target.value ? displayUnitToMeters(Number(e.target.value), widthMeta.unit) : null)} className="mt-1 w-full text-sm px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-900 focus:outline-none focus:border-blue-400" />
+                  <DimensionInput valueM={widthM} fallbackM={material.base_width_m} unit={widthMeta.unit} onValueM={onSetWidth} className="mt-1 w-full text-sm px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-900 focus:outline-none focus:border-blue-400" />
                 </label>
               )}
               {(dimensionMode === 'volume' || heightMeta.enabled) && (
                 <label className="text-xs text-gray-600">
                   {heightMeta.label} ({heightMeta.unit})
-                  <input type="number" min="0" step="0.01" value={metersToDisplayUnit(heightM ?? material.base_height_m ?? null, heightMeta.unit) ?? ''} onChange={e => onSetHeight(e.target.value ? displayUnitToMeters(Number(e.target.value), heightMeta.unit) : null)} className="mt-1 w-full text-sm px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-900 focus:outline-none focus:border-blue-400" />
+                  <DimensionInput valueM={heightM} fallbackM={material.base_height_m} unit={heightMeta.unit} onValueM={onSetHeight} className="mt-1 w-full text-sm px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-900 focus:outline-none focus:border-blue-400" />
                 </label>
               )}
               <div className="flex items-end">
                 <div className="w-full text-xs text-blue-700 bg-blue-100 rounded-lg px-3 py-2 font-semibold">
                   Quantité calculée : {quantity.toFixed(2)} {dimensionMode === 'linear' ? 'm' : dimensionMode === 'area' ? 'm²' : 'm³'}
+                </div>
+              </div>
+              <div className="sm:col-span-3 flex items-center justify-between gap-3 rounded-lg bg-white border border-blue-100 px-3 py-2">
+                <span className="text-xs font-semibold text-gray-600">Nombre</span>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => onSetDimensionCount(Math.max(1, dimensionCount - 1))}
+                    className="w-8 h-8 rounded-full bg-gray-200 border border-gray-300 flex items-center justify-center hover:bg-gray-300 text-gray-800 shadow-sm transition-all focus:outline-none">
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    value={dimensionCount || 1}
+                    onChange={e => {
+                      const val = parseInt(e.target.value)
+                      if (!isNaN(val)) onSetDimensionCount(Math.max(1, val))
+                    }}
+                    className="w-16 h-8 font-bold text-center tabular-nums text-gray-900 border border-gray-300 bg-white rounded-lg px-1 py-1 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  />
+                  <button type="button" onClick={() => onSetDimensionCount(dimensionCount + 1)}
+                    className="w-8 h-8 rounded-full bg-gray-200 border border-gray-300 flex items-center justify-center hover:bg-gray-300 text-gray-800 shadow-sm transition-all focus:outline-none">
+                    <Plus className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             </div>
@@ -422,7 +561,7 @@ function LaborCard({
 // ─── Carte prestation type ────────────────────────────────────────────────────
 
 function PrestationCard({
-  pt, selected, data, onToggle, onLineQty, onLineSetQty, onLineSetDetails, onLineSetLength, onLineSetWidth, onLineSetHeight, onLineRemove, onLineAdd,
+  pt, selected, data, onToggle, onLineQty, onLineSetQty, onLineSetDimensionCount, onLineSetDetails, onLineSetLength, onLineSetWidth, onLineSetHeight, onLineRemove, onLineAdd,
 }: {
   pt: PublicPrestationType
   selected: boolean
@@ -430,6 +569,7 @@ function PrestationCard({
   onToggle: () => void
   onLineQty: (lineId: string, d: number) => void
   onLineSetQty: (lineId: string, q: number) => void
+  onLineSetDimensionCount: (lineId: string, q: number) => void
   onLineSetDetails: (lineId: string, d: string) => void
   onLineSetLength: (lineId: string, length_m: number | null) => void
   onLineSetWidth: (lineId: string, width_m: number | null) => void
@@ -525,6 +665,7 @@ function PrestationCard({
                 const lengthMeta = getDimensionFieldMeta(line.dimension_schema, 'length', line.dimension_pricing_mode)
                 const widthMeta = getDimensionFieldMeta(line.dimension_schema, 'width', line.dimension_pricing_mode)
                 const heightMeta = getDimensionFieldMeta(line.dimension_schema, 'height', line.dimension_pricing_mode)
+                const lineDimensionCount = line.dimension_count ?? 1
                 return (
                 <div key={line.id} className="flex flex-col gap-2 bg-white rounded-lg p-2.5 border border-blue-200">
                   <div className="flex items-center gap-2">
@@ -563,13 +704,38 @@ function PrestationCard({
                   </div>
                   {line.dimension_pricing_mode !== 'none' && (
                     <div className={`grid grid-cols-1 gap-2 ${line.dimension_pricing_mode === 'linear' ? 'sm:grid-cols-1' : line.dimension_pricing_mode === 'area' ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
-                      <input type="number" min="0" step="0.01" value={metersToDisplayUnit(line.length_m ?? line.base_length_m ?? null, lengthMeta.unit) ?? ''} onChange={e => onLineSetLength(line.id, e.target.value ? displayUnitToMeters(Number(e.target.value), lengthMeta.unit) : null)} placeholder={`${lengthMeta.label} (${lengthMeta.unit})`} className="w-full text-xs px-2.5 py-1.5 rounded border border-gray-100 text-gray-900 bg-gray-50 focus:bg-white focus:outline-none focus:border-blue-300 transition-colors" />
+                      <DimensionInput valueM={line.length_m} fallbackM={line.base_length_m} unit={lengthMeta.unit} onValueM={value => onLineSetLength(line.id, value)} placeholder={`${lengthMeta.label} (${lengthMeta.unit})`} className="w-full text-xs px-2.5 py-1.5 rounded border border-gray-100 text-gray-900 bg-gray-50 focus:bg-white focus:outline-none focus:border-blue-300 transition-colors" />
                       {(line.dimension_pricing_mode === 'area' || line.dimension_pricing_mode === 'volume' || widthMeta.enabled) && (
-                        <input type="number" min="0" step="0.01" value={metersToDisplayUnit(line.width_m ?? line.base_width_m ?? null, widthMeta.unit) ?? ''} onChange={e => onLineSetWidth(line.id, e.target.value ? displayUnitToMeters(Number(e.target.value), widthMeta.unit) : null)} placeholder={`${widthMeta.label} (${widthMeta.unit})`} className="w-full text-xs px-2.5 py-1.5 rounded border border-gray-100 text-gray-900 bg-gray-50 focus:bg-white focus:outline-none focus:border-blue-300 transition-colors" />
+                        <DimensionInput valueM={line.width_m} fallbackM={line.base_width_m} unit={widthMeta.unit} onValueM={value => onLineSetWidth(line.id, value)} placeholder={`${widthMeta.label} (${widthMeta.unit})`} className="w-full text-xs px-2.5 py-1.5 rounded border border-gray-100 text-gray-900 bg-gray-50 focus:bg-white focus:outline-none focus:border-blue-300 transition-colors" />
                       )}
                       {(line.dimension_pricing_mode === 'volume' || heightMeta.enabled) && (
-                        <input type="number" min="0" step="0.01" value={metersToDisplayUnit(line.height_m ?? line.base_height_m ?? null, heightMeta.unit) ?? ''} onChange={e => onLineSetHeight(line.id, e.target.value ? displayUnitToMeters(Number(e.target.value), heightMeta.unit) : null)} placeholder={`${heightMeta.label} (${heightMeta.unit})`} className="w-full text-xs px-2.5 py-1.5 rounded border border-gray-100 text-gray-900 bg-gray-50 focus:bg-white focus:outline-none focus:border-blue-300 transition-colors" />
+                        <DimensionInput valueM={line.height_m} fallbackM={line.base_height_m} unit={heightMeta.unit} onValueM={value => onLineSetHeight(line.id, value)} placeholder={`${heightMeta.label} (${heightMeta.unit})`} className="w-full text-xs px-2.5 py-1.5 rounded border border-gray-100 text-gray-900 bg-gray-50 focus:bg-white focus:outline-none focus:border-blue-300 transition-colors" />
                       )}
+                    </div>
+                  )}
+                  {line.dimension_pricing_mode !== 'none' && (
+                    <div className="flex items-center justify-between gap-2 rounded bg-gray-50 border border-gray-100 px-2.5 py-1.5">
+                      <span className="text-xs font-semibold text-gray-600">Nombre</span>
+                      <div className="flex items-center gap-1.5">
+                        <button type="button" onClick={() => onLineSetDimensionCount(line.id, Math.max(1, lineDimensionCount - 1))}
+                          className="w-7 h-7 rounded-full bg-gray-200 border border-gray-300 hover:bg-gray-300 flex items-center justify-center text-gray-800 transition-colors">
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <input
+                          type="number"
+                          min="1"
+                          value={lineDimensionCount}
+                          onChange={e => {
+                            const val = parseInt(e.target.value)
+                            if (!isNaN(val)) onLineSetDimensionCount(line.id, Math.max(1, val))
+                          }}
+                          className="w-14 px-1 py-1 text-sm font-bold text-center tabular-nums text-gray-900 bg-white border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                        />
+                        <button type="button" onClick={() => onLineSetDimensionCount(line.id, lineDimensionCount + 1)}
+                          className="w-7 h-7 rounded-full bg-gray-200 border border-gray-300 hover:bg-gray-300 flex items-center justify-center text-gray-800 transition-colors">
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   )}
                   <input type="text" value={line.details || ''} onChange={e => onLineSetDetails(line.id, e.target.value)} placeholder="Précisions (dimensions...)" className="w-full text-xs px-2.5 py-1.5 rounded border border-gray-100 text-gray-900 bg-gray-50 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:border-blue-300 transition-colors" />
@@ -639,7 +805,7 @@ export default function PublicFormClient({
   // Honeypot anti-bot : ce champ doit rester vide
   const [honeypot, setHoneypot] = useState('')
 
-  // Étape 1 — Identité
+  // Étape 1 - Identité
   const [clientType, setClientType] = useState<'particulier' | 'pro'>('particulier')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -648,7 +814,7 @@ export default function PublicFormClient({
   const [siret, setSiret] = useState('')
   const [step1Error, setStep1Error] = useState<string | null>(null)
 
-  // Étape 2 — Projet
+  // Étape 2 - Projet
   const [selectedMaterials, setSelectedMaterials] = useState<Record<string, SelectedMaterial>>({})
   const [selectedLaborRates, setSelectedLaborRates] = useState<Record<string, SelectedLaborRate>>({})
   const [selectedPrestations, setSelectedPrestations] = useState<Record<string, SelectedPrestation>>({})
@@ -657,7 +823,7 @@ export default function PublicFormClient({
   const [step2Search, setStep2Search] = useState('')
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
 
-  // Étape 3 — Chantier
+  // Étape 3 - Chantier
   const [chantierAddress, setChantierAddress] = useState('')
   const [chantierPostalCode, setChantierPostalCode] = useState('')
   const [chantierCity, setChantierCity] = useState('')
@@ -703,6 +869,7 @@ export default function PublicFormClient({
           length_m: selection.length_m,
           width_m: selection.width_m,
           height_m: selection.height_m,
+          dimension_count: selection.dimension_count,
         },
       }
     })
@@ -719,6 +886,26 @@ export default function PublicFormClient({
     setSelectedMaterials(prev => {
       if (!prev[id]) return prev
       return { ...prev, [id]: { ...prev[id], quantity } }
+    })
+  }
+
+  function setMaterialDimensionCount(id: string, dimensionCount: number) {
+    setSelectedMaterials(prev => {
+      if (!prev[id]) return prev
+      const current = prev[id]
+      const selection = buildDimensionSelection({
+        priceVariants: current.price_variants,
+        mode: current.dimension_pricing_mode,
+        fallbackUnit: current.unit,
+        baseLengthM: current.base_length_m,
+        baseWidthM: current.base_width_m,
+        baseHeightM: current.base_height_m,
+        lengthM: current.length_m,
+        widthM: current.width_m,
+        heightM: current.height_m,
+        dimensionCount,
+      })
+      return { ...prev, [id]: { ...current, ...selection } }
     })
   }
 
@@ -783,6 +970,7 @@ export default function PublicFormClient({
         lengthM: length_m,
         widthM: current.width_m,
         heightM: current.height_m,
+        dimensionCount: current.dimension_count,
       })
       return { ...prev, [id]: { ...current, ...selection } }
     })
@@ -802,6 +990,7 @@ export default function PublicFormClient({
         lengthM: current.length_m,
         widthM: width_m,
         heightM: current.height_m,
+        dimensionCount: current.dimension_count,
       })
       return { ...prev, [id]: { ...current, ...selection } }
     })
@@ -821,6 +1010,7 @@ export default function PublicFormClient({
         lengthM: current.length_m,
         widthM: current.width_m,
         heightM: height_m,
+        dimensionCount: current.dimension_count,
       })
       return { ...prev, [id]: { ...current, ...selection } }
     })
@@ -862,6 +1052,7 @@ export default function PublicFormClient({
               length_m: selection.length_m,
               width_m: selection.width_m,
               height_m: selection.height_m,
+              dimension_count: selection.dimension_count,
             }
           }),
         },
@@ -893,6 +1084,37 @@ export default function PublicFormClient({
           ...prev[prestId],
           lines: prev[prestId].lines.map(l =>
             l.id === lineId ? { ...l, quantity } : l
+          ),
+        },
+      }
+    })
+  }
+
+  function setPrestationLineDimensionCount(prestId: string, lineId: string, dimensionCount: number) {
+    setSelectedPrestations(prev => {
+      if (!prev[prestId]) return prev
+      return {
+        ...prev,
+        [prestId]: {
+          ...prev[prestId],
+          lines: prev[prestId].lines.map(l =>
+            l.id === lineId
+              ? {
+                  ...l,
+                  ...buildDimensionSelection({
+                    priceVariants: l.price_variants,
+                    mode: l.dimension_pricing_mode,
+                    fallbackUnit: l.unit,
+                    baseLengthM: l.base_length_m,
+                    baseWidthM: l.base_width_m,
+                    baseHeightM: l.base_height_m,
+                    lengthM: l.length_m,
+                    widthM: l.width_m,
+                    heightM: l.height_m,
+                    dimensionCount,
+                  }),
+                }
+              : l
           ),
         },
       }
@@ -935,6 +1157,7 @@ export default function PublicFormClient({
                     lengthM: length_m,
                     widthM: l.width_m,
                     heightM: l.height_m,
+                    dimensionCount: l.dimension_count,
                   }),
                 }
               : l
@@ -965,6 +1188,7 @@ export default function PublicFormClient({
                     lengthM: l.length_m,
                     widthM: width_m,
                     heightM: l.height_m,
+                    dimensionCount: l.dimension_count,
                   }),
                 }
               : l
@@ -995,6 +1219,7 @@ export default function PublicFormClient({
                     lengthM: l.length_m,
                     widthM: l.width_m,
                     heightM: height_m,
+                    dimensionCount: l.dimension_count,
                   }),
                 }
               : l
@@ -1153,6 +1378,7 @@ export default function PublicFormClient({
       length_m?: number | null
       width_m?: number | null
       height_m?: number | null
+      dimension_count?: number
       dimension_pricing_mode?: DimensionPricingMode | null
       dimension_pricing_enabled?: boolean
       base_length_m?: number | null
@@ -1172,6 +1398,7 @@ export default function PublicFormClient({
         length_m?: number | null
         width_m?: number | null
         height_m?: number | null
+        dimension_count?: number
         dimension_pricing_mode?: DimensionPricingMode | null
         dimension_pricing_enabled: boolean
         base_length_m: number | null
@@ -1196,6 +1423,7 @@ export default function PublicFormClient({
           dimension_pricing_mode: m.dimension_pricing_mode,
           length_m: m.length_m ?? null,
           width_m: m.width_m ?? null,
+          dimension_count: m.dimension_count ?? 1,
           dimension_pricing_enabled: m.dimension_pricing_enabled ?? false,
           base_length_m: m.base_length_m,
           base_width_m: m.base_width_m,
@@ -1204,7 +1432,7 @@ export default function PublicFormClient({
       }
       descParts.push('Catalogue : ' + mats.map(m =>
         m.dimension_pricing_mode !== 'none'
-          ? `${m.name} (${formatDimensionSummary(m.dimension_pricing_mode, m.length_m, m.width_m, m.height_m)})${m.details ? ` [${m.details}]` : ''}`
+          ? `${m.name} (${formatDimensionSummary(m.dimension_pricing_mode, m.length_m, m.width_m, m.height_m)} × ${m.dimension_count ?? 1})${m.details ? ` [${m.details}]` : ''}`
           : `${m.name} x ${m.quantity}${m.unit ? ' ' + m.unit : ''}${m.details ? ` [${m.details}]` : ''}`,
       ).join(', '))
     }
@@ -1235,7 +1463,7 @@ export default function PublicFormClient({
       descParts.push('Prestations : ' + prestas.map(p => {
         const linesSummary = p.lines.map(l =>
           l.dimension_pricing_mode !== 'none'
-            ? `${l.designation} (${formatDimensionSummary(l.dimension_pricing_mode, l.length_m, l.width_m, l.height_m)})${l.details ? ` [${l.details}]` : ''}`
+            ? `${l.designation} (${formatDimensionSummary(l.dimension_pricing_mode, l.length_m, l.width_m, l.height_m)} × ${l.dimension_count ?? 1})${l.details ? ` [${l.details}]` : ''}`
             : `${l.designation} x ${l.quantity} ${l.unit}${l.details ? ` [${l.details}]` : ''}`,
         ).join(', ')
         return linesSummary ? `${p.name} (${linesSummary})` : p.name
@@ -1317,7 +1545,7 @@ export default function PublicFormClient({
       label: 'Catalogue',
       value: Object.values(selectedMaterials).map(m =>
         m.dimension_pricing_mode !== 'none'
-          ? `${m.name} (${formatDimensionSummary(m.dimension_pricing_mode, m.length_m, m.width_m, m.height_m)})${m.details ? ` [${m.details}]` : ''}`
+          ? `${m.name} (${formatDimensionSummary(m.dimension_pricing_mode, m.length_m, m.width_m, m.height_m)} × ${m.dimension_count ?? 1})${m.details ? ` [${m.details}]` : ''}`
           : `${m.name} × ${m.quantity}${m.details ? ` [${m.details}]` : ''}`,
       ).join(', '),
     }] : []),
@@ -1505,6 +1733,7 @@ export default function PublicFormClient({
                                 itemKindLabel={catalogContext.labelSet.material.singular}
                                 selected={!!selectedMaterials[m.id]}
                                 quantity={selectedMaterials[m.id]?.quantity ?? 1}
+                                dimensionCount={selectedMaterials[m.id]?.dimension_count ?? 1}
                                 details={selectedMaterials[m.id]?.details ?? ''}
                                 lengthM={selectedMaterials[m.id]?.length_m ?? null}
                                 widthM={selectedMaterials[m.id]?.width_m ?? null}
@@ -1512,6 +1741,7 @@ export default function PublicFormClient({
                                 onToggle={() => toggleMaterial(m)}
                                 onQty={d => setMaterialQty(m.id, d)}
                                 onSetQty={q => setMaterialExactQty(m.id, q)}
+                                onSetDimensionCount={q => setMaterialDimensionCount(m.id, q)}
                                 onSetDetails={d => setMaterialDetails(m.id, d)}
                                 onSetLength={v => setMaterialLength(m.id, v)}
                                 onSetWidth={v => setMaterialWidth(m.id, v)}
@@ -1565,6 +1795,7 @@ export default function PublicFormClient({
                                 itemKindLabel={catalogContext.labelSet.service.singular}
                                 selected={!!selectedMaterials[m.id]}
                                 quantity={selectedMaterials[m.id]?.quantity ?? 1}
+                                dimensionCount={selectedMaterials[m.id]?.dimension_count ?? 1}
                                 details={selectedMaterials[m.id]?.details ?? ''}
                                 lengthM={selectedMaterials[m.id]?.length_m ?? null}
                                 widthM={selectedMaterials[m.id]?.width_m ?? null}
@@ -1572,6 +1803,7 @@ export default function PublicFormClient({
                                 onToggle={() => toggleMaterial(m)}
                                 onQty={d => setMaterialQty(m.id, d)}
                                 onSetQty={q => setMaterialExactQty(m.id, q)}
+                                onSetDimensionCount={q => setMaterialDimensionCount(m.id, q)}
                                 onSetDetails={d => setMaterialDetails(m.id, d)}
                                 onSetLength={v => setMaterialLength(m.id, v)}
                                 onSetWidth={v => setMaterialWidth(m.id, v)}
@@ -1685,6 +1917,7 @@ export default function PublicFormClient({
                                 onToggle={() => togglePrestation(pt)}
                                 onLineQty={(lineId, d) => setPrestationLineQty(pt.id, lineId, d)}
                                 onLineSetQty={(lineId, q) => setPrestationLineExactQty(pt.id, lineId, q)}
+                                onLineSetDimensionCount={(lineId, q) => setPrestationLineDimensionCount(pt.id, lineId, q)}
                                 onLineSetDetails={(lineId, d) => setPrestationLineDetails(pt.id, lineId, d)}
                                 onLineSetLength={(lineId, v) => setPrestationLineLength(pt.id, lineId, v)}
                                 onLineSetWidth={(lineId, v) => setPrestationLineWidth(pt.id, lineId, v)}
@@ -1737,7 +1970,7 @@ export default function PublicFormClient({
             <>
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Le chantier</h2>
-                <p className="text-sm text-gray-400 mt-1">Tout est optionnel — renseignez ce qui est pertinent.</p>
+                <p className="text-sm text-gray-400 mt-1">Tout est optionnel - renseignez ce qui est pertinent.</p>
               </div>
 
               <div className="space-y-4">
@@ -1771,7 +2004,7 @@ export default function PublicFormClient({
               {/* Fichier joint */}
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-gray-700">Fichier joint (optionnel)</label>
-                <p className="text-xs text-gray-400">Photo, plan, PDF — 10 Mo max</p>
+                <p className="text-xs text-gray-400">Photo, plan, PDF - 10 Mo max</p>
                 <div
                   onClick={() => fileInputRef.current?.click()}
                   className={`flex items-center gap-3 p-4 rounded-xl border-2 border-dashed cursor-pointer transition-all ${
@@ -1833,7 +2066,7 @@ export default function PublicFormClient({
             </>
           )}
 
-          {/* Champ honeypot anti-bot — invisible aux humains, ne pas toucher */}
+          {/* Champ honeypot anti-bot - invisible aux humains, ne pas toucher */}
           <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', opacity: 0, pointerEvents: 'none', tabIndex: -1 } as React.CSSProperties}>
             <label htmlFor="_hp_website">Ne pas remplir ce champ</label>
             <input

@@ -21,14 +21,18 @@ import type { CatalogMaterial, CatalogLaborRate, PrestationType } from '@/lib/da
 import {
   createQuote, updateQuote,
   upsertQuoteSection, deleteQuoteSection,
-  upsertQuoteItem, deleteQuoteItem,
+  upsertQuoteItem, deleteQuoteItem, pruneQuoteItems,
   sendQuote,
 } from '@/lib/data/mutations/quotes'
+import SaveToCatalogModal, { type SaveToCatalogSource, type SaveToCatalogResult } from '@/components/catalog/SaveToCatalogModal'
 import { createClientInline } from '@/lib/data/mutations/clients'
+import { fetchClientContractsForAttachment } from '@/lib/data/mutations/contracts'
+import AttachmentPickerModal, { type AttachmentGroup } from '@/components/AttachmentPickerModal'
 import { UnitSelect } from '@/components/ui/UnitSelect'
+import { NumericInput } from '@/components/ui/NumericInput'
 import {
   ArrowLeft, Send, Plus, Trash2, Search, X,
-  Loader2, CheckCircle2, Package, Wrench, FileDown, Bot, Ruler, ChevronDown, ChevronUp, Sparkles, Eye, EyeOff, Layers, Truck, MessageSquare,
+  Loader2, CheckCircle2, Package, Wrench, FileDown, Bot, Ruler, ChevronDown, ChevronUp, Sparkles, Eye, EyeOff, Layers, Truck, MessageSquare, BookmarkPlus, LayoutGrid,
 } from 'lucide-react'
 import AtelierAIPanel from '@/components/ai/AtelierAIPanel'
 import LaborEstimatePanel, { type MOInsertItem } from '@/components/ai/LaborEstimatePanel'
@@ -133,9 +137,10 @@ type LocalItem = {
   width_m: number | null
   height_m: number | null
   dimension_pricing_mode: 'none' | 'linear' | 'area' | 'volume' | null
-  is_estimated: boolean  // UI uniquement — non persisté en DB
+  dim_quantity: number
+  is_estimated: boolean  // UI uniquement - non persisté en DB
   is_internal: boolean
-  // Métadonnées transport — UI uniquement, non persistées en DB
+  // Métadonnées transport - UI uniquement, non persistées en DB
   transport_km: number | null
   transport_conso: number | null
   transport_prix_l: number | null
@@ -193,14 +198,16 @@ function computeDimensionQuantity(
   widthM: number | null,
   heightM: number | null,
   fallbackQuantity: number,
+  dimQuantity = 1,
 ): number {
+  const mult = dimQuantity > 0 ? dimQuantity : 1
   switch (mode) {
     case 'linear':
-      return computeLinearQuantity(lengthM ?? 0)
+      return parseFloat((computeLinearQuantity(lengthM ?? 0) * mult).toFixed(3))
     case 'area':
-      return computeSurfaceQuantity(lengthM ?? 0, widthM ?? 0)
+      return parseFloat((computeSurfaceQuantity(lengthM ?? 0, widthM ?? 0) * mult).toFixed(3))
     case 'volume':
-      return computeVolumeQuantity(lengthM ?? 0, widthM ?? 0, heightM ?? 0)
+      return parseFloat((computeVolumeQuantity(lengthM ?? 0, widthM ?? 0, heightM ?? 0) * mult).toFixed(3))
     default:
       return fallbackQuantity
   }
@@ -220,6 +227,7 @@ function itemToLocal(i: QuoteItem): LocalItem {
     width_m: i.width_m ?? null,
     height_m: i.height_m ?? null,
     dimension_pricing_mode: dimensionMode,
+    dim_quantity: (i as { dim_quantity?: number }).dim_quantity ?? 1,
     vat_rate: i.vat_rate,
     type: i.type,
     material_id: i.material_id,
@@ -246,20 +254,26 @@ type Props = {
   modules: OrganizationModules
   vatConfig: VatConfig
   returnTo?: string | null
+  allQuotes?: import('@/lib/data/queries/quotes').QuoteStub[]
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export default function QuoteEditorClient({ clients: initialClients, initialQuote, materials, laborRates, prestationTypes, initialClientId, catalogContext, modules, vatConfig, returnTo: rawReturnTo = null }: Props) {
+export default function QuoteEditorClient({ clients: initialClients, initialQuote, materials, laborRates, prestationTypes, initialClientId, catalogContext, modules, vatConfig, returnTo: rawReturnTo = null, allQuotes = [] }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [isSending, setIsSending] = useState(false)
+  const [sendModalOpen, setSendModalOpen] = useState(false)
+  const [sendModalGroups, setSendModalGroups] = useState<AttachmentGroup[]>([])
+  const [sendModalLoading, setSendModalLoading] = useState(false)
+  const [sendModalError, setSendModalError] = useState<string | null>(null)
+  const [pendingQuoteId, setPendingQuoteId] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const defaultVatRate = getCatalogDocumentVatRate(vatConfig)
   const returnTo = getSafeReturnTo(rawReturnTo, '/finances?tab=quotes')
 
-  // Client list (mutable — peut être étendue par création inline)
+  // Client list (mutable - peut être étendue par création inline)
   const [clients, setClients] = useState<Client[]>(initialClients)
 
   // Modal création client inline
@@ -310,6 +324,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const [aidLabel, setAidLabel] = useState<string>(initialQuote?.aid_label ?? '')
   const [aidAmount, setAidAmount] = useState<number | null>(initialQuote?.aid_amount ?? null)
   const [showAid, setShowAid] = useState<boolean>(!!(initialQuote?.aid_label || initialQuote?.aid_amount))
+  const [parentQuoteId, setParentQuoteId] = useState<string | null>((initialQuote as any)?.parent_quote_id ?? null)
   const [aidMode, setAidMode] = useState<'€' | '%'>('€')
   const [notesClient, setNotesClient] = useState(
     (initialQuote as any)?.notes_client ?? getIntroForClient(initialClientForIntro as Client | null),
@@ -390,6 +405,72 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const headerDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
   const itemDebounces = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const pendingItemKeys = useRef<Set<string>>(new Set())
+  const deletedSectionTempIds = useRef<Set<string>>(new Set())
+  const deletedItemKeys = useRef<Set<string>>(new Set())
+  const deletedItemIds = useRef<Set<string>>(new Set())
+  const persistedItemIdsByKey = useRef<Map<string, string>>(new Map())
+  const pendingCreatedItemSaves = useRef<Set<Promise<void>>>(new Set())
+  const pendingDeleteTasks = useRef<Set<Promise<unknown>>>(new Set())
+
+  function setSectionsSynced(updater: React.SetStateAction<LocalSection[]>) {
+    setSections(prev => {
+      const next = typeof updater === 'function'
+        ? (updater as (value: LocalSection[]) => LocalSection[])(prev)
+        : updater
+      sectionsRef.current = next
+      return next
+    })
+  }
+
+  async function deleteQuoteItemOrReport(itemId: string, qId: string) {
+    const task = (async () => {
+      const res = await deleteQuoteItem(itemId, qId)
+      if (res.error) {
+        console.error('[deleteQuoteItem]', res.error)
+        setErrorMsg(res.error)
+      }
+      return res
+    })()
+    pendingDeleteTasks.current.add(task)
+    task.finally(() => pendingDeleteTasks.current.delete(task))
+    return task
+  }
+
+  async function deleteQuoteSectionOrReport(sectionId: string) {
+    const task = (async () => {
+      const res = await deleteQuoteSection(sectionId)
+      if (res.error) {
+        console.error('[deleteQuoteSection]', res.error)
+        setErrorMsg(res.error)
+      }
+      return res
+    })()
+    pendingDeleteTasks.current.add(task)
+    task.finally(() => pendingDeleteTasks.current.delete(task))
+    return task
+  }
+
+  async function waitForPendingDeletes() {
+    while (pendingDeleteTasks.current.size > 0) {
+      await Promise.allSettled([...pendingDeleteTasks.current])
+    }
+  }
+
+  function getCurrentPersistedItemIds() {
+    return sectionsRef.current
+      .flatMap(section => section.items)
+      .map(item => item.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0 && !deletedItemIds.current.has(id))
+  }
+
+  async function pruneRemovedQuoteItems(qId: string) {
+    const res = await pruneQuoteItems(qId, getCurrentPersistedItemIds())
+    if (res.error) {
+      console.error('[pruneQuoteItems]', res.error)
+      setErrorMsg(res.error)
+    }
+    return res
+  }
 
   // ─── Totals ──────────────────────────────────────────────────────────────
 
@@ -413,6 +494,30 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const [equipmentUses, setEquipmentUses] = useState(100)
   const equipmentCostPerUse = equipmentUses > 0 ? Math.round((equipmentPurchase / equipmentUses) * 100) / 100 : 0
 
+  // ─── Enregistrer dans le catalogue ────────────────────────────────────────
+  const [saveCatalogItem, setSaveCatalogItem] = useState<LocalItem | null>(null)
+
+  function openSaveCatalog(item: LocalItem) {
+    setSaveCatalogItem(item)
+  }
+
+  function handleSavedToCatalog(item: LocalItem, result: SaveToCatalogResult) {
+    if (result.kind === 'labor') {
+      setSectionsSynced(prev => prev.map(s => ({ ...s, items: s.items.map(i =>
+        i._tempId === item._tempId ? { ...i, type: 'labor' as const, labor_rate_id: result.id, material_id: null } : i
+      )})))
+    } else {
+      setSectionsSynced(prev => prev.map(s => ({ ...s, items: s.items.map(i =>
+        i._tempId === item._tempId ? { ...i, type: 'material' as const, material_id: result.id, labor_rate_id: null } : i
+      )})))
+    }
+    setSaveCatalogItem(null)
+  }
+
+  function isEquipmentLine(item: Pick<LocalItem, 'is_internal' | 'unit' | 'transport_prix_l'>) {
+    return item.is_internal && item.unit === 'usage' && item.transport_prix_l == null
+  }
+
   async function handleAddEquipment() {
     if (!equipmentTarget || equipmentPurchase <= 0 || equipmentUses <= 0) return
     const qId = await ensureQuote()
@@ -420,19 +525,18 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const sec = sectionsRef.current.find(s => s._tempId === equipmentTarget)!
     const pos = sec.items.length + 1
     const tempId = `item_${Date.now()}`
-    const desc = equipmentName.trim() || `Équipement amorti (${equipmentPurchase} € / ${equipmentUses} usages)`
-    setSections(prev => prev.map(s =>
+    deletedItemKeys.current.delete(`${equipmentTarget}_${tempId}`)
+    const equipmentLabel = equipmentName.trim() || 'Équipement amorti'
+    const desc = `${equipmentLabel}\n\nAmortissement : ${equipmentPurchase} € / ${equipmentUses} usages`
+    setSectionsSynced(prev => prev.map(s =>
       s._tempId === equipmentTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: 0, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null }] }
         : s
     ))
     setShowEquipment(false)
     const sectionId = await ensureSectionSaved(equipmentTarget, qId)
     if (!sectionId) return
-    const res = await upsertQuoteItem({ quote_id: qId, section_id: sectionId, type: 'custom', description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, vat_rate: defaultVatRate, position: pos, is_internal: true })
-    if (res.itemId) {
-      await finalizeCreatedItem(equipmentTarget, tempId, res.itemId, qId, sectionId)
-    }
+    await createQuoteItemAndFinalize(equipmentTarget, tempId, qId, sectionId, { quote_id: qId, section_id: sectionId, type: 'custom', description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, vat_rate: defaultVatRate, position: pos, is_internal: true })
   }
 
   // ─── Transport ────────────────────────────────────────────────────────────
@@ -451,19 +555,17 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const sec = sectionsRef.current.find(s => s._tempId === transportTarget)!
     const pos = sec.items.length + 1
     const tempId = `item_${Date.now()}`
+    deletedItemKeys.current.delete(`${transportTarget}_${tempId}`)
     const desc = `Carburant - trajet ${transportKm} km`
-    setSections(prev => prev.map(s =>
+    setSectionsSynced(prev => prev.map(s =>
       s._tempId === transportTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL }] }
         : s
     ))
     setShowTransport(false)
     const sectionId = await ensureSectionSaved(transportTarget, qId)
     if (!sectionId) return
-    const res = await upsertQuoteItem({ quote_id: qId, section_id: sectionId, type: 'custom', description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, vat_rate: defaultVatRate, position: pos, is_internal: true })
-    if (res.itemId) {
-      await finalizeCreatedItem(transportTarget, tempId, res.itemId, qId, sectionId)
-    }
+    await createQuoteItemAndFinalize(transportTarget, tempId, qId, sectionId, { quote_id: qId, section_id: sectionId, type: 'custom', description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, vat_rate: defaultVatRate, position: pos, is_internal: true })
   }
 
   function handleTransportMetaChange(
@@ -472,7 +574,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     field: 'transport_km' | 'transport_conso' | 'transport_prix_l',
     value: number | null,
   ) {
-    setSections(prev => prev.map(s => {
+    setSectionsSynced(prev => prev.map(s => {
       if (s._tempId !== secTempId) return s
       return {
         ...s,
@@ -549,17 +651,22 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     if (!qId) return
     const pos = sections.length + 1
     const tempId = `sec_${Date.now()}`
-    setSections(prev => [...prev, { _tempId: tempId, id: null, title: `Section ${pos}`, position: pos, items: [] }])
+    deletedSectionTempIds.current.delete(tempId)
+    setSectionsSynced(prev => [...prev, { _tempId: tempId, id: null, title: `Section ${pos}`, position: pos, items: [] }])
     startTransition(async () => {
       const res = await upsertQuoteSection({ quote_id: qId, title: `Section ${pos}`, position: pos })
       if (res.sectionId) {
-        setSections(prev => prev.map(s => s._tempId === tempId ? { ...s, id: res.sectionId } : s))
+        if (deletedSectionTempIds.current.has(tempId)) {
+          await deleteQuoteSectionOrReport(res.sectionId)
+          return
+        }
+        setSectionsSynced(prev => prev.map(s => s._tempId === tempId ? { ...s, id: res.sectionId } : s))
       }
     })
   }
 
   function handleSectionTitleChange(tempId: string, newTitle: string) {
-    setSections(prev => prev.map(s => s._tempId === tempId ? { ...s, title: newTitle } : s))
+    setSectionsSynced(prev => prev.map(s => s._tempId === tempId ? { ...s, title: newTitle } : s))
     const sec = sectionsRef.current.find(s => s._tempId === tempId)
     if (!sec?.id || !quoteIdRef.current) return
     startTransition(async () => {
@@ -569,21 +676,41 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
   async function handleRemoveSection(tempId: string) {
     const sec = sections.find(s => s._tempId === tempId)
-    setSections(prev => prev.filter(s => s._tempId !== tempId))
+    deletedSectionTempIds.current.add(tempId)
+    // Annuler tous les debounces de sauvegarde des items de cette section
+    for (const item of sec?.items ?? []) {
+      const key = `${tempId}_${item._tempId}`
+      const itemId = item.id ?? persistedItemIdsByKey.current.get(key)
+      deletedItemKeys.current.add(key)
+      if (itemId) deletedItemIds.current.add(itemId)
+      if (itemDebounces.current[key]) {
+        clearTimeout(itemDebounces.current[key])
+        delete itemDebounces.current[key]
+      }
+      pendingItemKeys.current.delete(key)
+    }
+    setSectionsSynced(prev => prev.filter(s => s._tempId !== tempId))
     if (sec?.id) {
-      startTransition(async () => { await deleteQuoteSection(sec.id!) })
+      startTransition(async () => { await deleteQuoteSectionOrReport(sec.id!) })
     }
   }
 
   // ─── Item mutations ───────────────────────────────────────────────────────
 
   async function ensureSectionSaved(sectionTempId: string, qId: string): Promise<string | null> {
+    if (deletedSectionTempIds.current.has(sectionTempId)) return null
     const sec = sectionsRef.current.find(s => s._tempId === sectionTempId)
     if (!sec) return null
     if (sec.id) return sec.id
     const res = await upsertQuoteSection({ quote_id: qId, title: sec.title, position: sec.position })
     if (res.sectionId) {
-      setSections(prev => prev.map(s => s._tempId === sectionTempId ? { ...s, id: res.sectionId } : s))
+      // Vérifier que la section n'a pas été supprimée pendant l'upsert
+      const stillExists = !deletedSectionTempIds.current.has(sectionTempId) && sectionsRef.current.some(s => s._tempId === sectionTempId)
+      if (!stillExists) {
+        await deleteQuoteSectionOrReport(res.sectionId)
+        return null
+      }
+      setSectionsSynced(prev => prev.map(s => s._tempId === sectionTempId ? { ...s, id: res.sectionId } : s))
     }
     return res.sectionId
   }
@@ -596,9 +723,16 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     sectionId: string,
   ) {
     const key = `${sectionTempId}_${itemTempId}`
+    persistedItemIdsByKey.current.set(key, itemId)
     const currentItem = sectionsRef.current.find(s => s._tempId === sectionTempId)?.items.find(i => i._tempId === itemTempId)
 
-    setSections(prev => prev.map(s =>
+    // Si la ligne a été supprimée pendant l'upsert initial, supprimer en DB et ignorer
+    if (deletedSectionTempIds.current.has(sectionTempId) || deletedItemKeys.current.has(key) || deletedItemIds.current.has(itemId) || !currentItem) {
+      await deleteQuoteItemOrReport(itemId, qId)
+      return
+    }
+
+    setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
         ? { ...s, items: s.items.map(i => i._tempId === itemTempId ? { ...i, id: itemId } : i) }
         : s
@@ -632,27 +766,58 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     })
   }
 
+  function trackCreatedItemSave(task: Promise<void>) {
+    pendingCreatedItemSaves.current.add(task)
+    task.finally(() => pendingCreatedItemSaves.current.delete(task))
+    return task
+  }
+
+  async function createQuoteItemAndFinalize(
+    sectionTempId: string,
+    itemTempId: string,
+    qId: string,
+    sectionId: string,
+    item: Parameters<typeof upsertQuoteItem>[0],
+  ) {
+    const task = (async () => {
+      const res = await upsertQuoteItem(item)
+      if (res.error) {
+        setErrorMsg(res.error)
+        return
+      }
+      if (res.itemId) {
+        await finalizeCreatedItem(sectionTempId, itemTempId, res.itemId, qId, sectionId)
+      }
+    })()
+    return trackCreatedItemSave(task)
+  }
+
+  async function waitForPendingCreatedItemSaves() {
+    while (pendingCreatedItemSaves.current.size > 0) {
+      await Promise.allSettled([...pendingCreatedItemSaves.current])
+    }
+  }
+
   async function handleAddFreeItem(sectionTempId: string) {
     const qId = await ensureQuote()
     if (!qId) return
     const sec = sectionsRef.current.find(s => s._tempId === sectionTempId)!
     const pos = sec.items.length + 1
     const tempId = `item_${Date.now()}`
-    setSections(prev => prev.map(s =>
+    const key = `${sectionTempId}_${tempId}`
+    deletedItemKeys.current.delete(key)
+    setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, is_estimated: false, is_internal: false, transport_km: null, transport_conso: null, transport_prix_l: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: false, transport_km: null, transport_conso: null, transport_prix_l: null }] }
         : s
     ))
     const sectionId = await ensureSectionSaved(sectionTempId, qId)
     if (!sectionId) return
-    const res = await upsertQuoteItem({ quote_id: qId, section_id: sectionId, type: 'custom', description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, position: pos })
-    if (res.itemId) {
-      await finalizeCreatedItem(sectionTempId, tempId, res.itemId, qId, sectionId)
-    }
+    await createQuoteItemAndFinalize(sectionTempId, tempId, qId, sectionId, { quote_id: qId, section_id: sectionId, type: 'custom', description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, position: pos })
   }
 
   function handleItemChange(sectionTempId: string, itemTempId: string, field: keyof LocalItem, value: string | number | boolean) {
-    setSections(prev => prev.map(s =>
+    setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
         ? { ...s, items: s.items.map(i => i._tempId === itemTempId
             ? { ...i, [field]: value, ...(field === 'unit_price' ? { is_estimated: false } : {}) }
@@ -669,6 +834,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       const item = sec?.items.find(i => i._tempId === itemTempId)
       const sectionId = resolvePersistedSectionId(sec)
       if (!item?.id || sectionId === undefined) return
+      if (deletedSectionTempIds.current.has(sectionTempId) || deletedItemKeys.current.has(key) || deletedItemIds.current.has(item.id)) return
       await upsertQuoteItem({
         id: item.id,
         quote_id: qId,
@@ -687,6 +853,10 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         height_m: item.height_m,
         is_internal: item.is_internal,
       })
+      if (deletedItemIds.current.has(item.id)) {
+        await deleteQuoteItemOrReport(item.id, qId)
+        return
+      }
       pendingItemKeys.current.delete(key)
       delete itemDebounces.current[key]
     }, 800)
@@ -695,11 +865,31 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   async function handleRemoveItem(sectionTempId: string, itemTempId: string) {
     const sec = sections.find(s => s._tempId === sectionTempId)
     const item = sec?.items.find(i => i._tempId === itemTempId)
-    setSections(prev => prev.map(s =>
+    // Annuler le debounce de sauvegarde avant de supprimer
+    const key = `${sectionTempId}_${itemTempId}`
+    const persistedItemId = item?.id ?? persistedItemIdsByKey.current.get(key)
+    deletedItemKeys.current.add(key)
+    if (persistedItemId) deletedItemIds.current.add(persistedItemId)
+    if (itemDebounces.current[key]) {
+      clearTimeout(itemDebounces.current[key])
+      delete itemDebounces.current[key]
+    }
+    pendingItemKeys.current.delete(key)
+    setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId ? { ...s, items: s.items.filter(i => i._tempId !== itemTempId) } : s
     ))
-    if (item?.id && quoteId) {
-      startTransition(async () => { await deleteQuoteItem(item.id!, quoteId!) })
+    const qId = quoteIdRef.current
+    if (persistedItemId && qId) {
+      const res = await deleteQuoteItemOrReport(persistedItemId, qId)
+      if (res.error) {
+        console.error('[deleteQuoteItem]', res.error)
+        setErrorMsg(res.error)
+      }
+    }
+    if (qId) {
+      await waitForPendingCreatedItemSaves()
+      await waitForPendingDeletes()
+      await pruneRemovedQuoteItems(qId)
     }
   }
 
@@ -716,7 +906,12 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       const item = sec?.items.find(i => i._tempId === itemTempId)
       const sectionId = resolvePersistedSectionId(sec)
       if (!item?.id || sectionId === undefined) return
-      await upsertQuoteItem({ id: item.id, quote_id: qId, section_id: sectionId, type: item.type, material_id: item.material_id, labor_rate_id: item.labor_rate_id, description: item.description, quantity: item.quantity, unit: item.unit, unit_price: item.unit_price, vat_rate: item.vat_rate, position: item.position, length_m: item.length_m, width_m: item.width_m, height_m: item.height_m, is_internal: item.is_internal })
+      if (deletedSectionTempIds.current.has(sectionTempId) || deletedItemKeys.current.has(key) || deletedItemIds.current.has(item.id)) return
+      await upsertQuoteItem({ id: item.id, quote_id: qId, section_id: sectionId, type: item.type, material_id: item.material_id, labor_rate_id: item.labor_rate_id, description: item.description, quantity: item.quantity, unit: item.unit, unit_price: item.unit_price, vat_rate: item.vat_rate, position: item.position, length_m: item.length_m, width_m: item.width_m, height_m: item.height_m, dim_quantity: item.dim_quantity, is_internal: item.is_internal })
+      if (deletedItemIds.current.has(item.id)) {
+        await deleteQuoteItemOrReport(item.id, qId)
+        return
+      }
       pendingItemKeys.current.delete(key)
       delete itemDebounces.current[key]
     }, 800)
@@ -728,7 +923,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     field: 'length_m' | 'width_m' | 'height_m',
     value: number | null,
   ) {
-    setSections(prev => prev.map(s => {
+    setSectionsSynced(prev => prev.map(s => {
       if (s._tempId !== sectionTempId) return s
       return { ...s, items: s.items.map(i => {
         if (i._tempId !== itemTempId) return i
@@ -748,9 +943,26 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         return {
           ...i,
           [field]: value,
-          quantity: pricing?.quantity ?? computeDimensionQuantity(mode, nextLength, nextWidth, nextHeight, i.quantity),
+          quantity: pricing?.quantity != null ? pricing.quantity * (i.dim_quantity || 1) : computeDimensionQuantity(mode, nextLength, nextWidth, nextHeight, i.quantity, i.dim_quantity),
           unit: pricing?.unit ?? getModeUnit(mode, i.unit),
           unit_price: pricing?.unitPrice ?? i.unit_price,
+        }
+      })}
+    }))
+    scheduleItemSave(sectionTempId, itemTempId)
+  }
+
+  function handleDimQuantityChange(sectionTempId: string, itemTempId: string, value: number | null) {
+    const qty = value != null && value > 0 ? value : 1
+    setSectionsSynced(prev => prev.map(s => {
+      if (s._tempId !== sectionTempId) return s
+      return { ...s, items: s.items.map(i => {
+        if (i._tempId !== itemTempId) return i
+        const mode = getItemDimensionMode(i)
+        return {
+          ...i,
+          dim_quantity: qty,
+          quantity: computeDimensionQuantity(mode, i.length_m, i.width_m, i.height_m, i.quantity, qty),
         }
       })}
     }))
@@ -771,6 +983,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const sec = sectionsRef.current.find(s => s._tempId === catalogTarget)!
     const pos = sec.items.length + 1
     const tempId = `item_${Date.now()}`
+    deletedItemKeys.current.delete(`${catalogTarget}_${tempId}`)
     const newItem: LocalItem = {
       _tempId: tempId, id: null,
       description: isMat ? m.name : l.designation,
@@ -786,16 +999,17 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       width_m: pricing?.widthM ?? null,
       height_m: pricing?.heightM ?? null,
       dimension_pricing_mode: isMat ? (m.dimension_pricing_mode ?? null) : null,
+      dim_quantity: 1,
       is_estimated: false,
       is_internal: !isMat,
       transport_km: null, transport_conso: null, transport_prix_l: null,
     }
-    setSections(prev => prev.map(s =>
+    setSectionsSynced(prev => prev.map(s =>
       s._tempId === catalogTarget ? { ...s, items: [...s.items, newItem] } : s
     ))
     const sectionId = await ensureSectionSaved(catalogTarget, qId)
     if (!sectionId) return
-    const res = await upsertQuoteItem({
+    await createQuoteItemAndFinalize(catalogTarget, tempId, qId, sectionId, {
       quote_id: qId, section_id: sectionId,
       type: newItem.type,
       material_id: newItem.material_id,
@@ -808,9 +1022,6 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       height_m: newItem.height_m,
       is_internal: newItem.is_internal,
     })
-    if (res.itemId) {
-      await finalizeCreatedItem(catalogTarget, tempId, res.itemId, qId, sectionId)
-    }
   }
 
   // ─── Flush pending item saves ─────────────────────────────────────────────
@@ -828,7 +1039,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           clearTimeout(itemDebounces.current[key])
           delete itemDebounces.current[key]
         }
-        if (!item.id) continue
+        if (!item.id || deletedItemKeys.current.has(key) || deletedItemIds.current.has(item.id)) continue
         saves.push(upsertQuoteItem({
           id: item.id,
           quote_id: qId,
@@ -863,15 +1074,38 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     setIsSending(true)
     const qId = await ensureQuote()
     if (!qId) { setIsSending(false); return }
-    // Toujours synchroniser le header avant envoi : client_id peut être null en DB
-    // si le devis a été créé depuis /atelier-ia (quote créée avant sélection client)
     const headerRes = await syncQuoteHeader(qId)
     if (headerRes.error) { setIsSending(false); return }
-    // Flush any unsaved item changes before sending
+    await waitForPendingCreatedItemSaves()
+    await waitForPendingDeletes()
+    await pruneRemovedQuoteItems(qId)
     await flushPendingItemSaves(qId)
-    const res = await sendQuote(qId)
+
+    // Ouvrir la modale d'envoi avec sélection optionnelle de contrats du client
+    setPendingQuoteId(qId)
+    setSendModalError(null)
+    setSendModalLoading(true)
+    setSendModalOpen(true)
+    try {
+      const contracts = await fetchClientContractsForAttachment(clientId)
+      setSendModalGroups([{ key: 'contracts', label: 'Contrats du client', items: contracts }])
+    } catch (err) {
+      setSendModalError(err instanceof Error ? err.message : 'Erreur de chargement des contrats.')
+    } finally {
+      setSendModalLoading(false)
+    }
     setIsSending(false)
-    if (res.error) { setErrorMsg(res.error); return }
+  }
+
+  async function confirmQuoteSend(selected: Record<string, string[]>) {
+    if (!pendingQuoteId) return
+    setIsSending(true)
+    setSendModalError(null)
+    const res = await sendQuote(pendingQuoteId, { attachContractIds: selected.contracts ?? [] })
+    setIsSending(false)
+    if (res.error) { setSendModalError(res.error); return }
+    setSendModalOpen(false)
+    setPendingQuoteId(null)
     router.push(returnTo)
   }
 
@@ -880,6 +1114,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     if (!qId) return
     const headerRes = await syncQuoteHeader(qId)
     if (headerRes.error) return
+    await waitForPendingCreatedItemSaves()
+    await waitForPendingDeletes()
+    await pruneRemovedQuoteItems(qId)
     await flushPendingItemSaves(qId)
     router.push(`/api/pdf/quote/${qId}`)
   }
@@ -905,18 +1142,24 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     for (const aiSec of aiResult.sections) {
       const pos = sectionsRef.current.length + 1
       const tempId = `sec_ai_${Date.now()}_${Math.random()}`
-      setSections(prev => [...prev, { _tempId: tempId, id: null, title: aiSec.title, position: pos, items: [] }])
+      deletedSectionTempIds.current.delete(tempId)
+      setSectionsSynced(prev => [...prev, { _tempId: tempId, id: null, title: aiSec.title, position: pos, items: [] }])
 
       const res = await upsertQuoteSection({ quote_id: qId, title: aiSec.title, position: pos })
       const sectionId = res.sectionId
       if (!sectionId) continue
+      if (deletedSectionTempIds.current.has(tempId)) {
+        await deleteQuoteSectionOrReport(sectionId)
+        continue
+      }
 
-      setSections(prev => prev.map(s => s._tempId === tempId ? { ...s, id: sectionId } : s))
+      setSectionsSynced(prev => prev.map(s => s._tempId === tempId ? { ...s, id: sectionId } : s))
 
       for (let idx = 0; idx < aiSec.items.length; idx++) {
         const aiItem = aiSec.items[idx]
         const isInternal = isLikelyInternalAIItem(aiSec.title, aiItem)
         const itemTempId = `item_ai_${Date.now()}_${idx}`
+        deletedItemKeys.current.delete(`${tempId}_${itemTempId}`)
         const itemPos = idx + 1
         const newItem: LocalItem = {
           _tempId: itemTempId,
@@ -930,18 +1173,19 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           material_id: null,
           labor_rate_id: null,
           position: itemPos,
-          length_m: null,
-          width_m: null,
-          height_m: null,
-          dimension_pricing_mode: null,
+          length_m: aiItem.length_m ?? null,
+          width_m: aiItem.width_m ?? null,
+          height_m: aiItem.height_m ?? null,
+          dimension_pricing_mode: aiItem.dimension_pricing_mode ?? null,
+          dim_quantity: aiItem.dim_quantity ?? 1,
           is_estimated: aiItem.is_estimated ?? false,
           is_internal: isInternal,
           transport_km: null, transport_conso: null, transport_prix_l: null,
         }
-        setSections(prev => prev.map(s =>
+        setSectionsSynced(prev => prev.map(s =>
           s._tempId === tempId ? { ...s, items: [...s.items, newItem] } : s
         ))
-        const itemRes = await upsertQuoteItem({
+        await createQuoteItemAndFinalize(tempId, itemTempId, qId, sectionId, {
           quote_id: qId,
           section_id: sectionId,
           type: 'custom',
@@ -951,11 +1195,12 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           unit_price: aiItem.unit_price,
           vat_rate: aiItem.vat_rate,
           position: itemPos,
+          length_m: aiItem.length_m ?? null,
+          width_m: aiItem.width_m ?? null,
+          height_m: aiItem.height_m ?? null,
+          dim_quantity: aiItem.dim_quantity ?? 1,
           is_internal: isInternal,
         })
-        if (itemRes.itemId) {
-          await finalizeCreatedItem(tempId, itemTempId, itemRes.itemId, qId, sectionId)
-        }
       }
     }
   }
@@ -982,11 +1227,16 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     } else {
       const pos = sectionsRef.current.length + 1
       sectionTempId = `sec_mo_${Date.now()}`
-      setSections(prev => [...prev, { _tempId: sectionTempId, id: null, title: "Main-d'œuvre", position: pos, items: [] }])
+      deletedSectionTempIds.current.delete(sectionTempId)
+      setSectionsSynced(prev => [...prev, { _tempId: sectionTempId, id: null, title: "Main-d'œuvre", position: pos, items: [] }])
       const res = await upsertQuoteSection({ quote_id: qId, title: "Main-d'œuvre", position: pos })
       sectionId = res.sectionId ?? null
       if (sectionId) {
-        setSections(prev => prev.map(s => s._tempId === sectionTempId ? { ...s, id: sectionId } : s))
+        if (deletedSectionTempIds.current.has(sectionTempId)) {
+          await deleteQuoteSectionOrReport(sectionId)
+          return
+        }
+        setSectionsSynced(prev => prev.map(s => s._tempId === sectionTempId ? { ...s, id: sectionId } : s))
       }
     }
 
@@ -997,6 +1247,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
     for (const item of items) {
       const tempId = `item_mo_${Date.now()}_${Math.random()}`
+      deletedItemKeys.current.delete(`${sectionTempId}_${tempId}`)
       const itemPos = pos++
       const newItem: LocalItem = {
         _tempId: tempId, id: null,
@@ -1004,23 +1255,20 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         quantity: item.quantity, unit: item.unit, unit_price: item.unit_price,
         vat_rate: defaultVatRate, type: 'labor',
         material_id: null, labor_rate_id: item.labor_rate_id,
-        position: itemPos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null,
+        position: itemPos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
         is_estimated: false, is_internal: true,
         transport_km: null, transport_conso: null, transport_prix_l: null,
       }
-      setSections(prev => prev.map(s =>
+      setSectionsSynced(prev => prev.map(s =>
         s._tempId === sectionTempId ? { ...s, items: [...s.items, newItem] } : s
       ))
-      const res = await upsertQuoteItem({
+      await createQuoteItemAndFinalize(sectionTempId, tempId, qId, sectionId, {
         quote_id: qId, section_id: sectionId!,
         type: 'labor', labor_rate_id: item.labor_rate_id,
         description: item.designation,
         quantity: item.quantity, unit: item.unit, unit_price: item.unit_price,
         vat_rate: defaultVatRate, position: itemPos, is_internal: true,
       })
-      if (res.itemId) {
-        await finalizeCreatedItem(sectionTempId, tempId, res.itemId, qId, sectionId)
-      }
     }
 
     setMoaPanelOpen(false)
@@ -1047,6 +1295,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       if (!sectionId) return
       const pos = sectionsRef.current.find(s => s._tempId === targetTempId)!.items.length + 1
       const tempId = `item_${Date.now()}`
+      deletedItemKeys.current.delete(`${targetTempId}_${tempId}`)
       const newItem: LocalItem = {
         _tempId: tempId, id: null,
         description: prestation.name,
@@ -1054,13 +1303,12 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         unit_price: prestation.base_price_ht,
         vat_rate: defaultVatRate,
         type: 'custom', material_id: null, labor_rate_id: null,
-        position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null,
+        position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
         is_estimated: false, is_internal: false,
         transport_km: null, transport_conso: null, transport_prix_l: null,
       }
-      setSections(prev => prev.map(s => s._tempId === targetTempId ? { ...s, items: [...s.items, newItem] } : s))
-      const res = await upsertQuoteItem({ quote_id: qId, section_id: sectionId, type: 'custom', description: newItem.description, quantity: 1, unit: newItem.unit, unit_price: newItem.unit_price, vat_rate: newItem.vat_rate, position: pos })
-      if (res.itemId) await finalizeCreatedItem(targetTempId, tempId, res.itemId, qId, sectionId)
+      setSectionsSynced(prev => prev.map(s => s._tempId === targetTempId ? { ...s, items: [...s.items, newItem] } : s))
+      await createQuoteItemAndFinalize(targetTempId, tempId, qId, sectionId, { quote_id: qId, section_id: sectionId, type: 'custom', description: newItem.description, quantity: 1, unit: newItem.unit, unit_price: newItem.unit_price, vat_rate: newItem.vat_rate, position: pos })
       return
     }
 
@@ -1079,17 +1327,23 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       const [sectionTitle, pItems] = sectionEntries[sIdx]
       const secPos = basePos + sIdx + 1
       const secTempId = `sec_${Date.now()}_${sIdx}`
+      deletedSectionTempIds.current.delete(secTempId)
       const secTitle = sectionTitle || prestation.name || `Section ${secPos}`
 
       // Ajouter la section localement
-      setSections(prev => [...prev, { _tempId: secTempId, id: null, title: secTitle, position: secPos, items: [] }])
+      setSectionsSynced(prev => [...prev, { _tempId: secTempId, id: null, title: secTitle, position: secPos, items: [] }])
 
       const res = await upsertQuoteSection({ quote_id: qId, title: secTitle, position: secPos })
       const sectionId = res.sectionId
       if (!sectionId) continue
-      setSections(prev => prev.map(s => s._tempId === secTempId ? { ...s, id: sectionId } : s))
+      if (deletedSectionTempIds.current.has(secTempId)) {
+        await deleteQuoteSectionOrReport(sectionId)
+        continue
+      }
+      setSectionsSynced(prev => prev.map(s => s._tempId === secTempId ? { ...s, id: sectionId } : s))
 
       const tempIds = pItems.map((_, i) => `item_${Date.now()}_${sIdx}_${i}`)
+      for (const tempId of tempIds) deletedItemKeys.current.delete(`${secTempId}_${tempId}`)
       const newItems: LocalItem[] = pItems.map((pItem, i) => {
         const isTransport = pItem.item_type === 'transport'
         const prixL = pItem.unit_price_ht > 0 ? pItem.unit_price_ht : DEFAULT_FUEL_PRICE_EUR_PER_L
@@ -1110,7 +1364,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           material_id: pItem.material_id,
           labor_rate_id: pItem.labor_rate_id,
           position: i + 1,
-          length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null,
+          length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
           is_estimated: false,
           is_internal: pItem.is_internal || isTransport,
           transport_km: isTransport ? estimatedKm : null,
@@ -1119,11 +1373,11 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         }
       })
 
-      setSections(prev => prev.map(s => s._tempId === secTempId ? { ...s, items: newItems } : s))
+      setSectionsSynced(prev => prev.map(s => s._tempId === secTempId ? { ...s, items: newItems } : s))
 
       for (let i = 0; i < newItems.length; i++) {
         const item = newItems[i]
-        const itemRes = await upsertQuoteItem({
+        await createQuoteItemAndFinalize(secTempId, tempIds[i], qId, sectionId, {
           quote_id: qId, section_id: sectionId,
           type: item.type, description: item.description,
           quantity: item.quantity, unit: item.unit, unit_price: item.unit_price,
@@ -1132,10 +1386,6 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           labor_rate_id: item.labor_rate_id ?? undefined,
           is_internal: item.is_internal,
         })
-        if (itemRes.itemId) {
-          const tid = tempIds[i]
-          await finalizeCreatedItem(secTempId, tid, itemRes.itemId, qId, sectionId)
-        }
       }
     }
   }
@@ -1331,9 +1581,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       {/* Topbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link href={returnTo} className="w-10 h-10 rounded-full bg-surface border border-[var(--elevation-border)] flex items-center justify-center text-secondary hover:text-primary transition-colors dark:bg-white/5 flex-shrink-0">
+          <button onClick={() => router.replace(returnTo)} className="w-10 h-10 rounded-full bg-surface border border-[var(--elevation-border)] flex items-center justify-center text-secondary hover:text-primary transition-colors dark:bg-white/5 flex-shrink-0">
             <ArrowLeft className="w-5 h-5" />
-          </Link>
+          </button>
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-primary">
               {initialQuote?.number ? `Devis ${initialQuote.number}` : quoteId ? 'Édition du devis' : 'Nouveau devis'}
@@ -1397,10 +1647,10 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       {errorMsg && <p className="text-sm text-red-400 px-2">{errorMsg}</p>}
 
       {/* Main layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-5 lg:grid-cols-12 gap-6 lg:gap-8">
 
         {/* Left panel */}
-        <div className="lg:col-span-4 space-y-6">
+        <div className="md:col-span-2 lg:col-span-4 space-y-6">
           <div className="rounded-3xl card p-5 sm:p-8 space-y-5">
             <h3 className="text-lg font-bold text-primary border-b border-[var(--elevation-border)] pb-3">Informations</h3>
             <div className="space-y-4">
@@ -1436,19 +1686,47 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-secondary">Validité (jours)</label>
-                <input
-                  type="number"
+                <NumericInput
                   value={validityDays}
                   min={1}
-                  onChange={e => { setValidityDays(Number(e.target.value)); scheduleHeaderSave({ validity_days: Number(e.target.value) }) }}
+                  decimals={0}
+                  onChange={v => { const n = v ?? 1; setValidityDays(n); scheduleHeaderSave({ validity_days: n }) }}
                   className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums"
                 />
               </div>
+              {allQuotes.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-secondary">Devis de référence (avenant)</label>
+                  <select
+                    value={parentQuoteId ?? ''}
+                    onChange={e => {
+                      const val = e.target.value || null
+                      setParentQuoteId(val)
+                      scheduleHeaderSave({ parent_quote_id: val })
+                    }}
+                    className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none"
+                  >
+                    <option value="">Aucun (devis original)</option>
+                    {allQuotes
+                      .filter(q => q.id !== quoteId)
+                      .map(q => (
+                        <option key={q.id} value={q.id}>
+                          {q.number ? `${q.number} — ` : ''}{q.title ?? 'Sans titre'}{q.client_name ? ` (${q.client_name})` : ''}
+                        </option>
+                      ))}
+                  </select>
+                  {parentQuoteId && (
+                    <p className="text-xs text-accent">
+                      Ce devis est un avenant/modificatif. Les situations de travaux sont calculées sur le total de ce devis.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
           {/* Totals */}
-          <div className="rounded-3xl card p-5 sm:p-8 space-y-4 lg:sticky top-24">
+          <div className="rounded-3xl card p-5 sm:p-8 space-y-4 md:sticky top-24">
             <h3 className="text-lg font-bold text-primary mb-2">Récapitulatif</h3>
             <div className="flex justify-between text-secondary">
               <span>Total HT</span><span className="tabular-nums">{fmt(totalHt)}</span>
@@ -1512,23 +1790,20 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                 />
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-secondary">−</span>
-                  <input
-                    type="number"
+                  <NumericInput
                     min={0}
                     max={aidMode === '%' ? 100 : totalTtc}
-                    step={aidMode === '%' ? 1 : 0.01}
                     placeholder="0"
                     value={aidMode === '%'
-                      ? (aidAmount != null && totalTtc > 0 ? Math.round((aidAmount / totalTtc) * 10000) / 100 : '')
-                      : (aidAmount ?? '')}
-                    onChange={e => {
-                      if (e.target.value === '') { setAidAmount(null); scheduleHeaderSave({ aid_label: aidLabel || null, aid_amount: null }); return }
-                      const raw = parseFloat(e.target.value)
-                      const v = aidMode === '%'
-                        ? Math.round(Math.min(100, Math.max(0, raw)) * totalTtc) / 100
-                        : Math.min(totalTtc, Math.max(0, raw))
-                      setAidAmount(v)
-                      scheduleHeaderSave({ aid_label: aidLabel || null, aid_amount: v })
+                      ? (aidAmount != null && totalTtc > 0 ? Math.round((aidAmount / totalTtc) * 10000) / 100 : null)
+                      : aidAmount}
+                    onChange={v => {
+                      if (v == null) { setAidAmount(null); scheduleHeaderSave({ aid_label: aidLabel || null, aid_amount: null }); return }
+                      const val = aidMode === '%'
+                        ? Math.round(Math.min(100, Math.max(0, v)) * totalTtc) / 100
+                        : Math.min(totalTtc, Math.max(0, v))
+                      setAidAmount(val)
+                      scheduleHeaderSave({ aid_label: aidLabel || null, aid_amount: val })
                     }}
                     className="flex-1 px-3 py-2 text-sm bg-base dark:bg-white/5 border border-[var(--elevation-border)] focus:border-accent rounded-xl text-primary outline-none transition-all tabular-nums text-right"
                   />
@@ -1552,7 +1827,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
               </div>
             )}
 
-            {/* Marge interne — visible uniquement si lignes internes */}
+            {/* Marge interne - visible uniquement si lignes internes */}
             {hasInternalItems && (
               <div className="pt-2 mt-2 border-t border-[var(--elevation-border)] space-y-2">
                 <p className="text-xs font-bold text-secondary uppercase tracking-wider flex items-center gap-1.5">
@@ -1589,7 +1864,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         </div>
 
         {/* Right: sections */}
-        <div className="lg:col-span-8 space-y-6">
+        <div className="md:col-span-3 lg:col-span-8 space-y-6">
 
           {/* Demande du client (formulaire public) */}
           {clientRequestDescription && (
@@ -1607,7 +1882,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                     if (quoteId) scheduleHeaderSave({ client_request_visible_on_pdf: next })
                   }}
                   className={`flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5 border transition-colors ${clientRequestVisibleOnPdf ? 'border-accent/40 text-accent bg-accent/5 hover:bg-accent/10' : 'border-[var(--elevation-border)] text-secondary hover:text-primary hover:bg-base/50'}`}
-                  title={clientRequestVisibleOnPdf ? 'Affiché sur le PDF client — cliquer pour masquer' : 'Masqué sur le PDF client — cliquer pour afficher'}
+                  title={clientRequestVisibleOnPdf ? 'Affiché sur le PDF client - cliquer pour masquer' : 'Masqué sur le PDF client - cliquer pour afficher'}
                 >
                   {clientRequestVisibleOnPdf ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
                   {clientRequestVisibleOnPdf ? 'Visible sur le PDF' : 'Masqué sur le PDF'}
@@ -1669,239 +1944,280 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                 </button>
               </div>
 
-              <div className="space-y-0.5">
+              <div className="space-y-2">
                 {sec.items.length === 0 && (
                   <p className="py-6 text-center text-sm text-secondary opacity-60">
                     Aucune ligne. Ajoutez une saisie libre ou choisissez dans le catalogue.
                   </p>
-                )}
-                {/* Header */}
-                {sec.items.length > 0 && (
-                  <div className="grid grid-cols-[1fr_90px_90px_110px_70px_100px_64px] gap-2 pb-1 border-b border-[var(--elevation-border)]">
-                    <span className="text-xs font-bold text-secondary uppercase tracking-wider">Désignation</span>
-                    <span className="text-xs font-bold text-secondary uppercase tracking-wider text-right">Qté</span>
-                    <span className="text-xs font-bold text-secondary uppercase tracking-wider">Unité</span>
-                    <span className="text-xs font-bold text-secondary uppercase tracking-wider text-right">PU HT</span>
-                    <span className="text-xs font-bold text-secondary uppercase tracking-wider text-right">TVA%</span>
-                    <span className="text-xs font-bold text-secondary uppercase tracking-wider text-right">Total HT</span>
-                    <span />
-                  </div>
                 )}
                 {sec.items.map(item => {
                   const rowKey = `${sec._tempId}_${item._tempId}`
                   const isExpanded = expandedItems.has(rowKey)
                   const dimensionMode = getItemDimensionMode(item)
                   const isDimensioned = dimensionMode !== 'none'
-                  const canUseDimensions = isDimensioned
+                  const canUseDimensions = isDimensioned || item.type === 'custom'
                   const dimensionUnit = getModeUnit(dimensionMode, item.unit)
                   const sourceMaterial = item.material_id ? materials.find(material => material.id === item.material_id) : null
-                  const lengthMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'length', dimensionMode)
-                  const widthMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'width', dimensionMode)
-                  const heightMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'height', dimensionMode)
-                  return (
-                    <div key={item._tempId} className={`rounded-xl border transition-all ${item.is_internal ? 'border-l-2 border-amber-400/50 bg-amber-500/5 opacity-80 hover:opacity-100' : item.is_estimated ? 'border-l-2 border-amber-400/60 bg-amber-500/5 hover:bg-amber-500/10' : 'border-transparent hover:border-[var(--elevation-border)] hover:bg-base/30'}`}>
-                      {/* Main row */}
-                      <div className="grid grid-cols-[1fr_90px_90px_110px_70px_100px_64px] gap-2 items-center px-1 py-1">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          {item.is_internal && (
-                            <span className="flex-shrink-0 text-[9px] font-bold uppercase tracking-wider text-amber-700 bg-amber-500/15 border border-amber-400/40 rounded px-1.5 py-0.5 leading-none">
-                              Coût
-                            </span>
-                          )}
-                          <input
-                            type="text"
-                            value={item.description}
-                            onChange={e => handleItemChange(sec._tempId, item._tempId, 'description', e.target.value)}
-                            placeholder="Désignation..."
-                            className="w-full p-2 bg-transparent border border-transparent rounded-lg focus:border-accent focus:bg-base/50 outline-none text-primary text-sm transition-colors"
-                          />
-                        </div>
-                        {isDimensioned ? (
-                          <p className="p-2 text-right text-sm font-bold tabular-nums text-accent">{item.quantity}</p>
-                        ) : (
-                          <input
-                            type="number"
-                            value={item.quantity}
-                            min={0}
-                            onChange={e => handleItemChange(sec._tempId, item._tempId, 'quantity', Number(e.target.value))}
-                            className="w-full p-2 bg-transparent border border-transparent rounded-lg focus:border-accent focus:bg-base/50 outline-none text-primary tabular-nums text-right text-sm transition-colors"
-                          />
+	                  const lengthMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'length', dimensionMode)
+	                  const widthMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'width', dimensionMode)
+	                  const heightMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'height', dimensionMode)
+	                  const isEquipment = isEquipmentLine(item)
+	                  return (
+	                    <div key={item._tempId} className={`rounded-xl border transition-all ${isEquipment ? 'border-purple-400/40 bg-purple-500/5' : item.is_internal ? 'border-amber-400/40 bg-amber-500/5' : item.is_estimated ? 'border-amber-400/40 bg-amber-500/5' : 'border-[var(--elevation-border)] bg-base/20 hover:bg-base/40'}`}>
+
+                      {/* ── Désignation + actions ── */}
+                      <div className="flex items-start gap-2 px-3 pt-3 pb-2">
+                        {(item.is_internal || isEquipment) && (
+                          <span className={`mt-1 flex-shrink-0 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider border rounded px-1.5 py-0.5 leading-none ${isEquipment ? 'text-purple-700 dark:text-purple-300 bg-purple-500/15 border-purple-400/40' : 'text-amber-700 bg-amber-500/15 border-amber-400/40'}`}>
+                            {isEquipment && <Package className="w-2.5 h-2.5" />}
+                            {isEquipment ? 'Équip.' : 'Coût'}
+                          </span>
                         )}
-                        <UnitSelect
-                          value={item.unit}
-                          onChange={value => handleItemChange(sec._tempId, item._tempId, 'unit', value)}
-                          allowedUnits={catalogContext.unitSet}
-                          compact
-                          className="w-full"
+                        <textarea
+                          value={item.description}
+                          onChange={e => handleItemChange(sec._tempId, item._tempId, 'description', e.target.value)}
+                          placeholder="Désignation..."
+                          rows={Math.min(6, Math.max(2, item.description.split('\n').length))}
+                          className="flex-1 min-h-16 p-2 bg-transparent border border-transparent rounded-lg focus:border-accent focus:bg-base/50 outline-none text-primary text-sm leading-6 transition-colors resize-none"
                         />
-                        <input
-                          type="number"
-                          value={item.unit_price}
-                          min={0}
-                          step={0.01}
-                          onChange={e => handleItemChange(sec._tempId, item._tempId, 'unit_price', Number(e.target.value))}
-                          className={`w-full p-2 bg-transparent border rounded-lg outline-none tabular-nums text-right text-sm transition-colors ${item.is_estimated ? 'border-amber-400/40 text-amber-600 dark:text-amber-400 focus:border-amber-400' : 'border-transparent focus:border-accent focus:bg-base/50 text-primary'}`}
-                          title={item.is_estimated ? 'Prix estimé par l\'IA, à valider' : undefined}
-                        />
-                        <select
-                          value={item.vat_rate}
-                          onChange={e => handleItemChange(sec._tempId, item._tempId, 'vat_rate', Number(e.target.value))}
-                          className="w-full p-2 bg-transparent border border-transparent rounded-lg focus:border-accent focus:bg-base/50 outline-none text-primary tabular-nums text-right text-sm transition-colors appearance-none"
-                        >
-                          {LEGAL_VAT_RATES.map(rate => (
-                            <option key={rate} value={rate}>{rate}%</option>
-                          ))}
-                        </select>
-                        <span className="font-bold text-primary tabular-nums text-sm text-right pr-2">{fmt(item.quantity * item.unit_price)}</span>
-                        <div className="flex items-center gap-0.5">
-                          {item.is_estimated && (
-                            <span title="Prix estimé par l'IA, cliquez sur le prix pour le modifier" className="p-1.5 text-amber-500">
-                              <Sparkles className="w-3.5 h-3.5" />
-                            </span>
-                          )}
-                          <button
-                            onClick={() => handleItemChange(sec._tempId, item._tempId, 'is_internal', !item.is_internal)}
-                            title={item.is_internal ? 'Ligne interne — non visible sur le PDF client (cliquer pour rendre visible)' : 'Ligne visible sur le PDF client (cliquer pour rendre interne)'}
-                            className={`p-1.5 rounded-full transition-all ${item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10 hover:bg-emerald-500/15'}`}
-                          >
+                        <div className="flex flex-col gap-1 pt-0.5">
+                          {item.is_estimated && <span title="Prix estimé par l'IA" className="p-1.5 text-amber-500"><Sparkles className="w-3.5 h-3.5" /></span>}
+                          <button onClick={() => handleItemChange(sec._tempId, item._tempId, 'is_internal', !item.is_internal)}
+                            title={item.is_internal ? 'Ligne interne (cliquer pour rendre visible)' : 'Rendre interne'}
+                            className={`p-1.5 rounded-full transition-all ${item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10 hover:bg-emerald-500/15'}`}>
                             {item.is_internal ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
                           {canUseDimensions && (
-                            <button
-                              onClick={() => toggleItemExpand(rowKey)}
-                              title="Dimensions"
-                              className={`p-1.5 rounded-full transition-all ${isExpanded ? 'text-accent bg-accent/10' : 'text-secondary hover:text-accent hover:bg-accent/10'}`}
-                            >
+                            <button onClick={() => toggleItemExpand(rowKey)} title="Mode / Dimensions"
+                              className={`p-1.5 rounded-full transition-all ${isExpanded ? 'text-accent bg-accent/10' : 'text-secondary hover:text-accent hover:bg-accent/10'}`}>
                               {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                             </button>
                           )}
-                          <button
-                            onClick={() => handleRemoveItem(sec._tempId, item._tempId)}
-                            className="p-1.5 text-secondary hover:text-red-500 rounded-full hover:bg-red-500/10 transition-all"
-                          >
+                          {item.type === 'custom' && !item.material_id && !item.labor_rate_id && (
+                            <button onClick={() => openSaveCatalog(item)} title="Enregistrer dans le catalogue"
+                              className="p-1.5 rounded-full text-secondary hover:text-accent hover:bg-accent/10 transition-all">
+                              <BookmarkPlus className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <button onClick={() => handleRemoveItem(sec._tempId, item._tempId)}
+                            className="p-1.5 text-secondary hover:text-red-500 rounded-full hover:bg-red-500/10 transition-all">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>
 
-                      {/* Panneau transport interne */}
-                      {item.transport_prix_l !== null && (
-                        <div className="px-3 pb-3 pt-2 border-t border-amber-200/60 dark:border-amber-500/20 space-y-2 rounded-b-xl bg-amber-500/3">
+                      {/* ── Champs numériques avec labels ── */}
+                      <div className="px-3 pb-3">
+                        {/* Desktop : rangée horizontale avec label au-dessus de chaque champ */}
+                        <div className="hidden sm:flex items-end gap-3 flex-wrap">
+                          <div className="flex flex-col gap-1 w-20">
+                            <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Qté</span>
+                            {isDimensioned ? (
+                              <div className="h-9 flex items-center px-2 bg-accent/8 border border-accent/30 rounded-lg">
+                                <span className="text-sm font-bold tabular-nums text-accent w-full text-right">{item.quantity}</span>
+                              </div>
+                            ) : (
+                              <NumericInput value={item.quantity} min={0}
+                                onChange={v => handleItemChange(sec._tempId, item._tempId, 'quantity', v ?? 0)}
+                                className="w-full h-9 px-2 bg-base border border-[var(--elevation-border)] rounded-lg focus:border-accent outline-none text-primary tabular-nums text-right text-sm transition-colors" />
+                            )}
+                          </div>
+                          <div className="flex flex-col gap-1 w-24">
+                            <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Unité</span>
+                            <UnitSelect value={item.unit} onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit', v)}
+                              allowedUnits={catalogContext.unitSet} compact className="w-full h-9" />
+                          </div>
+                          <div className="flex flex-col gap-1 w-28">
+                            <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Prix unit. HT</span>
+                            <NumericInput value={item.unit_price} min={0} decimals={2}
+                              onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_price', v ?? 0)}
+                              className={`w-full h-9 px-2 border rounded-lg outline-none tabular-nums text-right text-sm transition-colors ${isEquipment ? 'bg-purple-500/5 border-purple-400/40 text-purple-700 dark:text-purple-300 focus:border-purple-400' : item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400 focus:border-amber-400' : 'bg-base border-[var(--elevation-border)] text-primary focus:border-accent'}`}
+                              title={isEquipment ? 'Coût interne équipement par usage' : item.is_estimated ? "Prix estimé par l'IA" : undefined} />
+                          </div>
+                          <div className="flex flex-col gap-1 w-20">
+                            <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">TVA</span>
+                            <select value={item.vat_rate} onChange={e => handleItemChange(sec._tempId, item._tempId, 'vat_rate', Number(e.target.value))}
+                              className="w-full h-9 px-2 bg-base border border-[var(--elevation-border)] rounded-lg focus:border-accent outline-none text-primary text-sm transition-colors appearance-none">
+                              {LEGAL_VAT_RATES.map(rate => <option key={rate} value={rate}>{rate}%</option>)}
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1 flex-1 min-w-24">
+                            <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Total HT</span>
+                            <div className="h-9 flex items-center px-2 bg-base/60 border border-[var(--elevation-border)]/60 rounded-lg">
+                              <span className={`font-bold tabular-nums text-sm w-full text-right ${isEquipment ? 'text-purple-700 dark:text-purple-300' : 'text-primary'}`}>{fmt(item.quantity * item.unit_price)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Mobile: grille 2×2 + total */}
+                        <div className="sm:hidden space-y-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-0.5">
+                              <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Qté</p>
+                              {isDimensioned ? (
+                                <p className="p-2 text-left text-sm font-bold tabular-nums text-accent">{item.quantity}</p>
+                              ) : (
+                                <NumericInput value={item.quantity} min={0}
+                                  onChange={v => handleItemChange(sec._tempId, item._tempId, 'quantity', v ?? 0)}
+                                  className="w-full p-2 bg-base/50 border border-[var(--elevation-border)] rounded-lg focus:border-accent outline-none text-primary tabular-nums text-sm" />
+                              )}
+                            </div>
+                            <div className="space-y-0.5">
+                              <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Unité</p>
+                              <UnitSelect value={item.unit} onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit', v)}
+                                allowedUnits={catalogContext.unitSet} compact className="w-full" />
+                            </div>
+                            <div className="space-y-0.5">
+                              <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">PU HT</p>
+                              <NumericInput value={item.unit_price} min={0} decimals={2}
+                                onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_price', v ?? 0)}
+                                className={`w-full p-2 border rounded-lg outline-none tabular-nums text-sm ${isEquipment ? 'bg-purple-500/5 border-purple-400/30 text-purple-700 dark:text-purple-300' : item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400' : 'bg-base/50 border-[var(--elevation-border)] text-primary focus:border-accent'}`} />
+                            </div>
+                            <div className="space-y-0.5">
+                              <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">TVA</p>
+                              <select value={item.vat_rate} onChange={e => handleItemChange(sec._tempId, item._tempId, 'vat_rate', Number(e.target.value))}
+                                className="w-full p-2 bg-base/50 border border-[var(--elevation-border)] rounded-lg focus:border-accent outline-none text-primary text-sm appearance-none">
+                                {LEGAL_VAT_RATES.map(rate => <option key={rate} value={rate}>{rate}%</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between pt-1 border-t border-[var(--elevation-border)]/50">
+                            <span className={`font-bold tabular-nums text-sm ${isEquipment ? 'text-purple-700 dark:text-purple-300' : 'text-primary'}`}>{fmt(item.quantity * item.unit_price)}</span>
+                            <button onClick={() => handleItemChange(sec._tempId, item._tempId, 'is_internal', !item.is_internal)}
+                              className={`text-xs font-semibold px-2.5 py-1 rounded-full transition-all ${item.is_internal ? 'text-amber-600 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10'}`}>
+                              {item.is_internal ? 'Interne' : 'Visible'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ── Panneaux internes transport / équipement ── */}
+	                      {item.transport_prix_l !== null && (
+                        <div className="px-3 pb-3 pt-2 border-t border-amber-200/60 dark:border-amber-500/20 space-y-2 bg-amber-500/3 rounded-b-xl">
                           <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
-                            <Truck className="w-3 h-3" />Détail transport (coût interne — non visible client)
+                            <Truck className="w-3 h-3" />Transport interne
                           </p>
-                          <div className="flex flex-wrap items-end gap-3">
+                          <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-end gap-3">
                             <label className="flex flex-col gap-1 text-xs text-secondary">
                               Distance aller-retour (km)
-                              <input
-                                type="number"
-                                min={1}
-                                value={item.transport_km ?? ''}
-                                onChange={e => handleTransportMetaChange(sec._tempId, item._tempId, 'transport_km', e.target.value === '' ? null : Number(e.target.value))}
-                                className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400"
-                              />
+                              <NumericInput min={1} value={item.transport_km}
+                                onChange={v => handleTransportMetaChange(sec._tempId, item._tempId, 'transport_km', v)}
+                                className="w-full sm:w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400" />
                             </label>
-                            <span className="text-secondary text-sm pb-1.5">×</span>
                             <label className="flex flex-col gap-1 text-xs text-secondary">
                               Conso (L/100 km)
-                              <input
-                                type="number"
-                                min={1}
-                                step={0.1}
-                                value={item.transport_conso ?? DEFAULT_CONSUMPTION_L_PER_100KM}
-                                onChange={e => handleTransportMetaChange(sec._tempId, item._tempId, 'transport_conso', Number(e.target.value))}
-                                className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400"
-                              />
+                              <NumericInput min={1} decimals={2} value={item.transport_conso ?? DEFAULT_CONSUMPTION_L_PER_100KM}
+                                onChange={v => handleTransportMetaChange(sec._tempId, item._tempId, 'transport_conso', v ?? DEFAULT_CONSUMPTION_L_PER_100KM)}
+                                className="w-full sm:w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400" />
                             </label>
-                            <span className="text-secondary text-sm pb-1.5">×</span>
                             <label className="flex flex-col gap-1 text-xs text-secondary">
                               Prix carburant (€/L)
-                              <input
-                                type="number"
-                                min={0}
-                                step={0.01}
-                                value={item.transport_prix_l ?? DEFAULT_FUEL_PRICE_EUR_PER_L}
-                                onChange={e => handleTransportMetaChange(sec._tempId, item._tempId, 'transport_prix_l', Number(e.target.value))}
-                                className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400"
-                              />
+                              <NumericInput min={0} decimals={3} value={item.transport_prix_l ?? DEFAULT_FUEL_PRICE_EUR_PER_L}
+                                onChange={v => handleTransportMetaChange(sec._tempId, item._tempId, 'transport_prix_l', v ?? DEFAULT_FUEL_PRICE_EUR_PER_L)}
+                                className="w-full sm:w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-amber-400" />
                             </label>
-                            <span className="text-secondary text-sm pb-1.5">=</span>
-                            <span className="font-bold text-amber-600 dark:text-amber-400 text-sm tabular-nums pb-1">
+                            <span className="font-bold text-amber-600 dark:text-amber-400 text-sm tabular-nums">
                               {item.quantity.toFixed(2)} L &mdash; {fmt(item.quantity * (item.transport_prix_l ?? DEFAULT_FUEL_PRICE_EUR_PER_L))}
                             </span>
                           </div>
                         </div>
-                      )}
+	                      )}
+	                      {isEquipment && (
+	                        <div className="px-3 pb-3 pt-2 border-t border-purple-200/60 dark:border-purple-500/20 rounded-b-xl bg-purple-500/3">
+	                          <p className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
+	                            <Package className="w-3 h-3" />Équipement amorti
+	                          </p>
+	                          <p className="text-xs text-secondary mt-1">
+	                            Coût par usage : <span className="font-bold text-purple-700 dark:text-purple-300 tabular-nums">{fmt(item.unit_price)}</span>. Ajustez la quantité si plusieurs usages sont nécessaires.
+	                          </p>
+	                        </div>
+	                      )}
 
-                      {/* Detail panel */}
+                      {/* ── Panneau mode dim + dimensions ── */}
                       {isExpanded && (
-                        <div className="px-3 pb-3 pt-1 border-t border-[var(--elevation-border)]/50 space-y-3">
-                          {/* Dimensions */}
-                          <div>
-                            <p className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                              <Ruler className="w-3 h-3" />Dimensions (calcul automatique de la quantité)
-                            </p>
-                            <div className="flex flex-wrap items-center gap-3">
-                              <label className="flex items-center gap-2 text-sm text-secondary">
-                                {lengthMeta.label}
-                                <input
-                                  type="number"
-                                  value={metersToDisplayUnit(item.length_m, lengthMeta.unit) ?? ''}
-                                  min={0}
-                                  step={0.001}
-                                  onChange={e => handleDimChange(sec._tempId, item._tempId, 'length_m', e.target.value === '' ? null : displayUnitToMeters(Number(e.target.value), lengthMeta.unit))}
-                                  placeholder=""
-                                  className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-accent"
-                                />
-                                <span className="text-xs text-secondary">{lengthMeta.unit}</span>
-                              </label>
-                              {(dimensionMode === 'area' || dimensionMode === 'volume' || widthMeta.enabled) && (
-                                <>
-                                  <span className="text-secondary font-bold">×</span>
-                                  <label className="flex items-center gap-2 text-sm text-secondary">
-                                    {widthMeta.label}
-                                    <input
-                                      type="number"
-                                      value={metersToDisplayUnit(item.width_m, widthMeta.unit) ?? ''}
-                                      min={0}
-                                      step={0.001}
-                                      onChange={e => handleDimChange(sec._tempId, item._tempId, 'width_m', e.target.value === '' ? null : displayUnitToMeters(Number(e.target.value), widthMeta.unit))}
-                                      placeholder=""
-                                      className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-accent"
-                                    />
-                                    <span className="text-xs text-secondary">{widthMeta.unit}</span>
-                                  </label>
-                                </>
-                              )}
-                              {(dimensionMode === 'volume' || heightMeta.enabled) && (
-                                <>
-                                  <span className="text-secondary font-bold">×</span>
-                                  <label className="flex items-center gap-2 text-sm text-secondary">
-                                    {heightMeta.label}
-                                    <input
-                                      type="number"
-                                      value={metersToDisplayUnit(item.height_m, heightMeta.unit) ?? ''}
-                                      min={0}
-                                      step={0.001}
-                                      onChange={e => handleDimChange(sec._tempId, item._tempId, 'height_m', e.target.value === '' ? null : displayUnitToMeters(Number(e.target.value), heightMeta.unit))}
-                                      placeholder=""
-                                      className="w-24 p-1.5 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-accent"
-                                    />
-                                    <span className="text-xs text-secondary">{heightMeta.unit}</span>
-                                  </label>
-                                </>
-                              )}
-                              <span className="text-secondary">=</span>
-                              <span className="font-bold text-accent text-sm tabular-nums">{item.quantity} {dimensionUnit}</span>
+                        <div className="px-3 pb-3 pt-2 border-t border-[var(--elevation-border)]/60 space-y-4 bg-base/20 rounded-b-xl">
+                          {/* Sélecteur mode — lignes libres seulement */}
+                          {item.type === 'custom' && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-semibold text-secondary uppercase tracking-wider flex items-center gap-1.5">
+                                <LayoutGrid className="w-3 h-3" />Tarification dimensionnelle
+                              </p>
+                              <div className="flex gap-2 flex-wrap">
+                                {(['none', 'linear', 'area', 'volume'] as const).map(mode => (
+                                  <button key={mode}
+                                    onClick={() => {
+                                      const newMode = mode === item.dimension_pricing_mode ? 'none' : mode
+                                      handleItemChange(sec._tempId, item._tempId, 'dimension_pricing_mode', newMode)
+                                      if (newMode !== 'none') handleItemChange(sec._tempId, item._tempId, 'unit', getModeUnit(newMode, item.unit))
+                                    }}
+                                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${item.dimension_pricing_mode === mode || (mode === 'none' && !item.dimension_pricing_mode) ? 'bg-accent text-black border-accent' : 'border-[var(--elevation-border)] text-secondary hover:text-primary hover:border-accent/40'}`}>
+                                    {mode === 'none' ? 'Libre' : mode === 'linear' ? 'Linéaire (ml)' : mode === 'area' ? 'Surface (m²)' : 'Volume (m³)'}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
-                          </div>
+                          )}
+                          {/* Champs dimensions */}
+                          {isDimensioned && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-semibold text-secondary uppercase tracking-wider flex items-center gap-1.5">
+                                <Ruler className="w-3 h-3" />Dimensions &rarr; calcul auto de la quantité
+                              </p>
+                              <div className="grid grid-cols-1 sm:flex sm:flex-wrap sm:items-end gap-3">
+                                <label className="flex flex-col gap-1 text-xs text-secondary">
+                                  {lengthMeta.label}
+                                  <div className="flex items-center gap-1.5">
+                                    <NumericInput value={metersToDisplayUnit(item.length_m, lengthMeta.unit)} min={0} decimals={3}
+                                      onChange={v => handleDimChange(sec._tempId, item._tempId, 'length_m', v == null ? null : displayUnitToMeters(v, lengthMeta.unit))}
+                                      className="w-24 p-2 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-accent" />
+                                    <span className="text-xs text-secondary w-6">{lengthMeta.unit}</span>
+                                  </div>
+                                </label>
+                                {(dimensionMode === 'area' || dimensionMode === 'volume' || widthMeta.enabled) && (
+                                  <label className="flex flex-col gap-1 text-xs text-secondary">
+                                    {widthMeta.label}
+                                    <div className="flex items-center gap-1.5">
+                                      <NumericInput value={metersToDisplayUnit(item.width_m, widthMeta.unit)} min={0} decimals={3}
+                                        onChange={v => handleDimChange(sec._tempId, item._tempId, 'width_m', v == null ? null : displayUnitToMeters(v, widthMeta.unit))}
+                                        className="w-24 p-2 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-accent" />
+                                      <span className="text-xs text-secondary w-6">{widthMeta.unit}</span>
+                                    </div>
+                                  </label>
+                                )}
+                                {(dimensionMode === 'volume' || heightMeta.enabled) && (
+                                  <label className="flex flex-col gap-1 text-xs text-secondary">
+                                    {heightMeta.label}
+                                    <div className="flex items-center gap-1.5">
+                                      <NumericInput value={metersToDisplayUnit(item.height_m, heightMeta.unit)} min={0} decimals={3}
+                                        onChange={v => handleDimChange(sec._tempId, item._tempId, 'height_m', v == null ? null : displayUnitToMeters(v, heightMeta.unit))}
+                                        className="w-24 p-2 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-accent" />
+                                      <span className="text-xs text-secondary w-6">{heightMeta.unit}</span>
+                                    </div>
+                                  </label>
+                                )}
+                                <label className="flex flex-col gap-1 text-xs text-secondary">
+                                  Nb d'unités
+                                  <div className="flex items-center gap-1.5">
+                                    <NumericInput value={item.dim_quantity} min={0.001} decimals={3}
+                                      onChange={v => handleDimQuantityChange(sec._tempId, item._tempId, v)}
+                                      className="w-16 p-2 bg-base border border-[var(--elevation-border)] rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-accent" />
+                                  </div>
+                                </label>
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-xs text-transparent select-none">.</span>
+                                  <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent/10 text-accent font-bold text-sm tabular-nums border border-accent/20">
+                                    = {item.quantity} {dimensionUnit}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
                   )
                 })}
               </div>
-
               <div className="flex items-center gap-3 pt-1 flex-wrap">
                 <button
                   onClick={() => handleAddFreeItem(sec._tempId)}
@@ -1966,18 +2282,18 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-sm font-semibold text-secondary">Distance aller-retour (km)</label>
-                <input type="number" min={1} value={transportKm} onChange={e => setTransportKm(Number(e.target.value))}
+                <NumericInput min={1} value={transportKm} onChange={v => setTransportKm(v ?? 1)}
                   className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="text-sm font-semibold text-secondary">Consommation (L/100 km)</label>
-                  <input type="number" min={1} step={0.1} value={transportConso} onChange={e => setTransportConso(Number(e.target.value))}
+                  <NumericInput min={1} decimals={2} value={transportConso} onChange={v => setTransportConso(v ?? 1)}
                     className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-sm font-semibold text-secondary">Prix carburant (€/L)</label>
-                  <input type="number" min={0} step={0.01} value={transportPrixL} onChange={e => setTransportPrixL(Number(e.target.value))}
+                  <NumericInput min={0} decimals={3} value={transportPrixL} onChange={v => setTransportPrixL(v ?? 0)}
                     className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums" />
                 </div>
               </div>
@@ -1992,7 +2308,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                 </div>
                 <p className="text-xs text-amber-600 flex items-center gap-1 pt-1 border-t border-amber-200 dark:border-amber-500/20 mt-2">
                   <EyeOff className="w-3 h-3 shrink-0" />
-                  Ligne interne — coût de revient, non visible sur le PDF client
+                  Ligne interne - coût de revient, non visible sur le PDF client
                 </p>
               </div>
             </div>
@@ -2030,12 +2346,12 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="text-sm font-semibold text-secondary">Prix d&apos;achat (€)</label>
-                  <input type="number" min={0} step={0.01} value={equipmentPurchase || ''} onChange={e => setEquipmentPurchase(Number(e.target.value))}
+                  <NumericInput min={0} decimals={2} value={equipmentPurchase || null} onChange={v => setEquipmentPurchase(v ?? 0)}
                     className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 tabular-nums" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-sm font-semibold text-secondary">Usages sur la vie</label>
-                  <input type="number" min={1} step={1} value={equipmentUses} onChange={e => setEquipmentUses(Number(e.target.value))}
+                  <NumericInput min={1} decimals={0} value={equipmentUses} onChange={v => setEquipmentUses(v ?? 1)}
                     className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 tabular-nums" />
                 </div>
               </div>
@@ -2047,7 +2363,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                   </div>
                   <p className="text-xs text-purple-600 flex items-center gap-1 pt-1 border-t border-purple-200 dark:border-purple-500/20 mt-2">
                     <EyeOff className="w-3 h-3 shrink-0" />
-                    Ligne interne — coût de revient, non visible sur le PDF client
+                    Ligne interne - coût de revient, non visible sur le PDF client
                   </p>
                 </div>
               )}
@@ -2181,6 +2497,45 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Enregistrer dans le catalogue */}
+      {saveCatalogItem && (
+        <SaveToCatalogModal
+          source={{
+            description: saveCatalogItem.description,
+            unit: saveCatalogItem.unit,
+            unit_price: saveCatalogItem.unit_price,
+            vat_rate: saveCatalogItem.vat_rate,
+            length_m: saveCatalogItem.length_m,
+            width_m: saveCatalogItem.width_m,
+            height_m: saveCatalogItem.height_m,
+            dimension_pricing_mode: saveCatalogItem.dimension_pricing_mode,
+            hint: saveCatalogItem.type === 'labor' ? 'labor' : undefined,
+          } satisfies SaveToCatalogSource}
+          catalogContext={catalogContext}
+          existingCategories={{
+            material: Array.from(new Set(materials.filter(m => m.item_kind !== 'service' && m.category).map(m => m.category as string))),
+            service: Array.from(new Set(materials.filter(m => m.item_kind === 'service' && m.category).map(m => m.category as string))),
+            labor: Array.from(new Set(laborRates.filter(l => l.category).map(l => l.category as string))),
+          }}
+          onClose={() => setSaveCatalogItem(null)}
+          onSaved={(result: SaveToCatalogResult) => handleSavedToCatalog(saveCatalogItem, result)}
+        />
+      )}
+
+      {sendModalOpen && (
+        <AttachmentPickerModal
+          title="Envoyer le devis"
+          description="Sélectionnez les contrats du même client à joindre en pièces jointes."
+          recipientEmail={null}
+          groups={sendModalGroups}
+          loading={sendModalLoading}
+          submitting={isSending}
+          error={sendModalError}
+          onCancel={() => { setSendModalOpen(false); setPendingQuoteId(null); }}
+          onConfirm={confirmQuoteSend}
+        />
       )}
     </main>
   )

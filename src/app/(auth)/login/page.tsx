@@ -47,7 +47,7 @@ export default function AuthPage() {
   return (
     <div className="fixed inset-0 flex bg-[#050505] text-white overflow-y-auto font-body">
 
-      {/* ── LEFT PANEL — Branding ── */}
+      {/* ── LEFT PANEL - Branding ── */}
       <div className="relative hidden lg:flex flex-col justify-between flex-1 p-16 xl:p-24 overflow-hidden">
         {/* Ambient glows */}
         <div className="absolute -top-1/3 -left-1/4 w-[700px] h-[700px] bg-accent/[0.12] rounded-full blur-[180px] pointer-events-none" />
@@ -76,7 +76,7 @@ export default function AuthPage() {
       {/* Divider */}
       <div className="hidden lg:block w-px bg-white/[0.05] self-stretch" />
 
-      {/* ── RIGHT PANEL — Form ── */}
+      {/* ── RIGHT PANEL - Form ── */}
       <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 lg:p-16 min-h-screen lg:min-h-0">
 
         {/* Mobile logo */}
@@ -119,10 +119,12 @@ export default function AuthPage() {
             {/* ── LOGIN FORM ── */}
             {mode === 'login' && (
               <form action={loginAction} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
-                    Email
-                  </label>
+                <div className="space-y-2">
+                  <div className="flex items-center">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
+                      Email
+                    </label>
+                  </div>
                   <input
                     name="email"
                     type="email"
@@ -133,7 +135,7 @@ export default function AuthPage() {
                   />
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
                       Mot de passe
@@ -161,10 +163,12 @@ export default function AuthPage() {
             {/* ── SIGNUP FORM ── */}
             {mode === 'signup' && (
               <form action={signupAction} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
-                    Nom complet
-                  </label>
+                <div className="space-y-2">
+                  <div className="flex items-center">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
+                      Nom complet
+                    </label>
+                  </div>
                   <input
                     name="full_name"
                     type="text"
@@ -175,10 +179,12 @@ export default function AuthPage() {
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
-                    Email
-                  </label>
+                <div className="space-y-2">
+                  <div className="flex items-center">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
+                      Email
+                    </label>
+                  </div>
                   <input
                     name="email"
                     type="email"
@@ -189,10 +195,12 @@ export default function AuthPage() {
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
-                    Mot de passe
-                  </label>
+                <div className="space-y-2">
+                  <div className="flex items-center">
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
+                      Mot de passe
+                    </label>
+                  </div>
                   <input
                     name="password"
                     type="password"

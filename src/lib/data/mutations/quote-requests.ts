@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { getCatalogDocumentVatRate, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 import { buildMaterialSelectionPricing, type DimensionPricingMode, type MaterialPriceVariant } from '@/lib/catalog-pricing'
 import { sendAuthEmail } from '@/lib/email'
 import { buildQuoteRequestNotificationEmail } from '@/lib/email/templates'
@@ -52,7 +53,7 @@ function buildClientPayloadFromRequest(req: {
   }
 }
 
-// ─── Submit (public — pas d'auth requise) ─────────────────────────────────────
+// ─── Submit (public - pas d'auth requise) ─────────────────────────────────────
 
 export type SubmitRequestState = {
   error: string | null
@@ -208,6 +209,8 @@ export async function submitQuoteRequest(
 // ─── Actions in-app ───────────────────────────────────────────────────────────
 
 export async function markRequestRead(requestId: string): Promise<{ error: string | null }> {
+  if (!(await hasPermission('leads.manage'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -224,6 +227,8 @@ export async function markRequestRead(requestId: string): Promise<{ error: strin
 }
 
 export async function archiveRequest(requestId: string): Promise<{ error: string | null }> {
+  if (!(await hasPermission('leads.manage'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -254,6 +259,10 @@ export type ConvertRequestResult = {
 export async function convertRequestToLeadAndQuote(
   requestId: string,
 ): Promise<ConvertRequestResult> {
+  if (!(await hasPermission('leads.manage'))) return { error: 'Action non autorisée.', clientId: null, quoteId: null }
+  if (!(await hasPermission('clients.create'))) return { error: 'Action non autorisée.', clientId: null, quoteId: null }
+  if (!(await hasPermission('quotes.create'))) return { error: 'Action non autorisée.', clientId: null, quoteId: null }
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.', clientId: null, quoteId: null }
@@ -411,6 +420,7 @@ type CatalogItem = {
   length_m?: number | null
   width_m?: number | null
   height_m?: number | null
+  dimension_count?: number | null
   dimension_pricing_mode?: DimensionPricingMode | null
   dimension_pricing_enabled?: boolean
   base_length_m?: number | null
@@ -429,6 +439,7 @@ type CatalogItem = {
     length_m?: number | null
     width_m?: number | null
     height_m?: number | null
+    dimension_count?: number | null
     dimension_pricing_mode?: DimensionPricingMode | null
     dimension_pricing_enabled: boolean
     base_length_m: number | null
@@ -567,6 +578,7 @@ export async function createQuoteFromCatalogRequest(
           ci.dimension_pricing_enabled ?? (mat as { dimension_pricing_enabled?: boolean | null } | undefined)?.dimension_pricing_enabled,
         )
         const usesDimensionPricing = itemMode !== 'none'
+        const dimensionCount = usesDimensionPricing ? Math.max(1, Math.floor(ci.dimension_count ?? 1)) : 1
         const pricing = buildMaterialSelectionPricing({
           item: {
             sale_price: mat?.sale_price ?? null,
@@ -582,6 +594,9 @@ export async function createQuoteFromCatalogRequest(
           requestedWidthM: ci.width_m ?? null,
           requestedHeightM: ci.height_m ?? null,
         })
+        const dimensionQuantity = usesDimensionPricing
+          ? Math.max(0, ci.quantity || pricing.quantity * dimensionCount)
+          : ci.quantity
 
         visibleItems.push({
           quote_id: newQuote.id,
@@ -589,14 +604,14 @@ export async function createQuoteFromCatalogRequest(
           type: 'material',
           material_id: ci.id,
           description: ci.description,
-          unit: pricing.unit,
-          quantity: usesDimensionPricing ? pricing.quantity : ci.quantity,
+          unit: usesDimensionPricing ? (ci.unit ?? pricing.unit) : pricing.unit,
+          quantity: dimensionQuantity,
           unit_price: usesDimensionPricing ? pricing.unitPrice : (mat?.sale_price ?? 0),
           vat_rate: defaultVatRate,
           position: position++,
-          length_m: usesDimensionPricing ? pricing.lengthM : null,
-          width_m: usesDimensionPricing ? pricing.widthM : null,
-          height_m: usesDimensionPricing ? pricing.heightM : null,
+          length_m: usesDimensionPricing ? (ci.length_m ?? pricing.lengthM) : null,
+          width_m: usesDimensionPricing ? (ci.width_m ?? pricing.widthM) : null,
+          height_m: usesDimensionPricing ? (ci.height_m ?? pricing.heightM) : null,
           is_internal: false,
         })
 
@@ -607,14 +622,14 @@ export async function createQuoteFromCatalogRequest(
             type: 'material',
             material_id: ci.id,
             description: ci.description,
-            unit: pricing.unit,
-            quantity: usesDimensionPricing ? pricing.quantity : ci.quantity,
+            unit: usesDimensionPricing ? (ci.unit ?? pricing.unit) : pricing.unit,
+            quantity: dimensionQuantity,
             unit_price: usesDimensionPricing ? pricing.purchaseUnitPrice : (mat?.purchase_price ?? 0),
             vat_rate: defaultVatRate,
             position: position++,
-            length_m: usesDimensionPricing ? pricing.lengthM : null,
-            width_m: usesDimensionPricing ? pricing.widthM : null,
-            height_m: usesDimensionPricing ? pricing.heightM : null,
+            length_m: usesDimensionPricing ? (ci.length_m ?? pricing.lengthM) : null,
+            width_m: usesDimensionPricing ? (ci.width_m ?? pricing.widthM) : null,
+            height_m: usesDimensionPricing ? (ci.height_m ?? pricing.heightM) : null,
             is_internal: true,
           })
         }
@@ -662,6 +677,7 @@ export async function createQuoteFromCatalogRequest(
           line.dimension_pricing_enabled ?? (mat as { dimension_pricing_enabled?: boolean | null } | undefined)?.dimension_pricing_enabled,
         )
         const usesDimensionPricing = lineMode !== 'none'
+        const dimensionCount = usesDimensionPricing ? Math.max(1, Math.floor(line.dimension_count ?? 1)) : 1
         const pricing = usesDimensionPricing
           ? buildMaterialSelectionPricing({
               item: {
@@ -679,6 +695,9 @@ export async function createQuoteFromCatalogRequest(
               requestedHeightM: line.height_m ?? null,
             })
           : null
+        const dimensionQuantity = pricing
+          ? Math.max(0, line.quantity || pricing.quantity * dimensionCount)
+          : null
 
         visibleItems.push({
           quote_id: newQuote.id,
@@ -687,14 +706,14 @@ export async function createQuoteFromCatalogRequest(
           material_id: line.material_id,
           labor_rate_id: line.labor_rate_id,
           description: line.designation,
-          unit: pricing?.unit ?? line.unit,
-          quantity: pricing?.quantity ?? line.quantity,
+          unit: usesDimensionPricing ? line.unit : (pricing?.unit ?? line.unit),
+          quantity: dimensionQuantity ?? line.quantity,
           unit_price: pricing?.unitPrice ?? line.unit_price_ht,
           vat_rate: defaultVatRate,
           position: position++,
-          length_m: pricing?.lengthM ?? null,
-          width_m: pricing?.widthM ?? null,
-          height_m: pricing?.heightM ?? null,
+          length_m: usesDimensionPricing ? (line.length_m ?? pricing?.lengthM ?? null) : null,
+          width_m: usesDimensionPricing ? (line.width_m ?? pricing?.widthM ?? null) : null,
+          height_m: usesDimensionPricing ? (line.height_m ?? pricing?.heightM ?? null) : null,
           is_internal: false,
         })
 
@@ -705,14 +724,14 @@ export async function createQuoteFromCatalogRequest(
             type: 'material',
             material_id: line.material_id,
             description: `${line.designation}`,
-            unit: pricing?.unit ?? line.unit,
-            quantity: pricing?.quantity ?? line.quantity,
+            unit: usesDimensionPricing ? line.unit : (pricing?.unit ?? line.unit),
+            quantity: dimensionQuantity ?? line.quantity,
             unit_price: pricing?.purchaseUnitPrice ?? mat?.purchase_price ?? 0,
             vat_rate: defaultVatRate,
             position: position++,
-            length_m: pricing?.lengthM ?? null,
-            width_m: pricing?.widthM ?? null,
-            height_m: pricing?.heightM ?? null,
+            length_m: usesDimensionPricing ? (line.length_m ?? pricing?.lengthM ?? null) : null,
+            width_m: usesDimensionPricing ? (line.width_m ?? pricing?.widthM ?? null) : null,
+            height_m: usesDimensionPricing ? (line.height_m ?? pricing?.heightM ?? null) : null,
             is_internal: true,
           })
         }
@@ -748,6 +767,8 @@ export type PublicFormSettings = {
 export async function updatePublicFormSettings(
   settings: PublicFormSettings,
 ): Promise<{ error: string | null }> {
+  if (!(await hasPermission('settings.edit_org'))) return { error: 'Action non autorisée.' }
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
 

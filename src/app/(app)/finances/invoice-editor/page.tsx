@@ -1,3 +1,4 @@
+import { notFound } from 'next/navigation'
 import { getClients } from '@/lib/data/queries/clients'
 import { getAcceptedQuotesWithItems } from '@/lib/data/queries/quotes'
 import { getInvoiceById } from '@/lib/data/queries/invoices'
@@ -5,13 +6,20 @@ import { getMaterials, getLaborRates, getPrestationTypes } from '@/lib/data/quer
 import { getOrganization } from '@/lib/data/queries/organization'
 import { getChantiers } from '@/lib/data/queries/chantiers'
 import { resolveCatalogContext } from '@/lib/catalog-context'
+import { hasPermission } from '@/lib/data/queries/membership'
 import InvoiceEditorClient from './InvoiceEditorClient'
+
+export const dynamic = 'force-dynamic'
 
 export default async function InvoiceEditorPage({
   searchParams,
 }: {
   searchParams: { id?: string; chantier?: string; returnTo?: string }
 }) {
+  const canCreate = await hasPermission('invoices.create')
+  const canEdit = searchParams.id ? await hasPermission('invoices.edit') : false
+  if (!canCreate && !canEdit) notFound()
+
   const [clients, acceptedQuotes, materials, laborRates, prestationTypes, organization, chantiers] = await Promise.all([
     getClients(),
     getAcceptedQuotesWithItems(),
@@ -32,6 +40,7 @@ export default async function InvoiceEditorPage({
     id: c.id,
     title: c.title,
     client_id: (c as any).client?.id ?? null,
+    quote_id: (c as any).quote_id ?? null,
   }))
 
   return (

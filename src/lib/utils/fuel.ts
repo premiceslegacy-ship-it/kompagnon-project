@@ -1,5 +1,5 @@
 /**
- * Calculs carburant — partagé entre devis/facture (catalogue) et rentabilité chantier.
+ * Calculs carburant - partagé entre devis/facture (catalogue) et rentabilité chantier.
  * Formule : litres = km × consommation L/100km / 100  → coût = litres × prix €/L
  */
 

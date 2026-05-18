@@ -2,10 +2,18 @@
 
 import React, { useState, useMemo, useTransition } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Clock, Users, Calendar, Filter, FileDown, PlusCircle, CheckCircle2, AlertCircle } from 'lucide-react'
+import {
+  ArrowLeft, Clock, Users, Calendar, Filter, FileDown,
+  PlusCircle, CheckCircle2, AlertCircle, Pencil, Trash2,
+  AlertTriangle, X, Check,
+} from 'lucide-react'
 import type { GlobalPointage } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
-import { createMemberPointageAdmin } from '@/lib/data/mutations/chantiers'
+import {
+  createMemberPointageAdmin,
+  updatePointage,
+  deletePointage,
+} from '@/lib/data/mutations/chantiers'
 
 function getWeekStart(date: Date): Date {
   const d = new Date(date)
@@ -45,6 +53,116 @@ function fmtHours(hours: number): string {
 }
 
 type Period = 'week' | 'month' | 'custom'
+
+// ─── Modal d'édition d'un pointage ───────────────────────────────────────────
+
+function EditPointageModal({
+  pointage,
+  onClose,
+  onSaved,
+}: {
+  pointage: GlobalPointage
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [hours, setHours] = useState(String(pointage.hours))
+  const [date, setDate] = useState(pointage.date)
+  const [description, setDescription] = useState(pointage.description ?? '')
+  const [status, setStatus] = useState<'idle' | 'saving' | 'error'>('idle')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [isPending, startTransition] = useTransition()
+
+  const handleSave = () => {
+    const h = parseFloat(hours)
+    if (isNaN(h) || h <= 0) return
+    setStatus('saving')
+    startTransition(async () => {
+      const res = await updatePointage(pointage.id, pointage.chantier_id, {
+        hours: h,
+        date,
+        description: description.trim() || null,
+      })
+      if (res.error) {
+        setErrorMsg(res.error)
+        setStatus('error')
+      } else {
+        onSaved()
+        onClose()
+      }
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/50">
+      <div className="w-full max-w-sm bg-surface rounded-2xl shadow-xl border border-[var(--elevation-border)] overflow-hidden dark:bg-[#121212]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--elevation-border)]">
+          <h3 className="font-semibold text-primary text-sm">Modifier le pointage</h3>
+          <button onClick={onClose} className="text-secondary hover:text-primary transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <p className="text-xs text-secondary mb-0.5">Personne</p>
+            <p className="font-semibold text-primary text-sm">{pointage.user_name}</p>
+            <p className="text-xs text-secondary">{pointage.chantier_title}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wider">Date</label>
+              <input
+                type="date"
+                className="input w-full text-sm"
+                value={date}
+                onChange={e => setDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wider">Heures</label>
+              <input
+                type="number"
+                className="input w-full text-sm"
+                min="0.5"
+                max="24"
+                step="0.5"
+                value={hours}
+                onChange={e => setHours(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wider">Description (opt.)</label>
+            <input
+              type="text"
+              className="input w-full text-sm"
+              placeholder="Travail effectué..."
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+            />
+          </div>
+          {status === 'error' && (
+            <p className="text-sm text-red-500 flex items-center gap-1.5">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" /> {errorMsg}
+            </p>
+          )}
+        </div>
+        <div className="flex gap-3 px-5 pb-5">
+          <button onClick={onClose} className="btn-secondary flex-1 text-sm">Annuler</button>
+          <button
+            onClick={handleSave}
+            disabled={isPending || !hours || !date}
+            className="btn-primary flex-1 text-sm flex items-center justify-center gap-2"
+          >
+            {isPending ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            Enregistrer
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Panel pointage manuel membre ────────────────────────────────────────────
 
 function PointageMemberPanel({
   members,
@@ -107,7 +225,7 @@ function PointageMemberPanel({
               <option value="">Sélectionner un membre...</option>
               {members.map(m => {
                 const fullName = [m.prenom, m.name].filter(Boolean).join(' ')
-                return <option key={m.id} value={m.id}>{fullName}{m.role_label ? ` — ${m.role_label}` : ''}</option>
+                return <option key={m.id} value={m.id}>{fullName}{m.role_label ? ` - ${m.role_label}` : ''}</option>
               })}
             </select>
           </div>
@@ -185,6 +303,8 @@ function PointageMemberPanel({
   )
 }
 
+// ─── Panel rapports PDF ───────────────────────────────────────────────────────
+
 type ReportEntry = {
   id: string
   idType: 'member' | 'user'
@@ -237,7 +357,7 @@ function MemberReportsPanel({
     <div className="card overflow-hidden">
       <div className="p-4 border-b border-[var(--elevation-border)] flex items-center gap-2">
         <FileDown className="w-4 h-4 text-accent" />
-        <p className="font-bold text-primary text-sm">Rapports d&apos;heures — par membre</p>
+        <p className="font-bold text-primary text-sm">Rapports d&apos;heures - par membre</p>
       </div>
       <div className="divide-y divide-[var(--elevation-border)]">
         {members.map(m => (
@@ -270,14 +390,18 @@ function MemberReportsPanel({
   )
 }
 
+// ─── Composant principal ──────────────────────────────────────────────────────
+
 export default function HeuresGlobalesClient({
   initialPointages,
   individualMembers = [],
   chantiers = [],
+  canManage = false,
 }: {
   initialPointages: GlobalPointage[]
   individualMembers?: IndividualMember[]
   chantiers?: { id: string; title: string }[]
+  canManage?: boolean
 }) {
   const today = new Date()
   const [period, setPeriod] = useState<Period>('week')
@@ -287,6 +411,15 @@ export default function HeuresGlobalesClient({
   const [customTo, setCustomTo] = useState(toLocalDateStr(today))
   const [selectedChantier, setSelectedChantier] = useState('')
   const [selectedUser, setSelectedUser] = useState('')
+
+  // Gestion edition/suppression
+  const [editingPointage, setEditingPointage] = useState<GlobalPointage | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState('')
+  const [isDeleting, startDeleteTransition] = useTransition()
+
+  // Seuil d'alerte : pointage > 12h sur une journée = potentiellement oublié de pointer la fin
+  const HOURS_ALERT_THRESHOLD = 12
 
   const chantiersFilter = useMemo(() => {
     const map = new Map<string, string>()
@@ -323,7 +456,6 @@ export default function HeuresGlobalesClient({
     })
   }, [initialPointages, fromStr, toStr, selectedChantier, selectedUser])
 
-  // Totaux par personne
   const byUser = useMemo(() => {
     const map = new Map<string, { name: string; hours: number; chantiers: Set<string> }>()
     filtered.forEach(p => {
@@ -341,7 +473,6 @@ export default function HeuresGlobalesClient({
       .sort((a, b) => b.hours - a.hours)
   }, [filtered])
 
-  // Totaux par chantier
   const byChantier = useMemo(() => {
     const map = new Map<string, { title: string; hours: number; members: Set<string> }>()
     filtered.forEach(p => {
@@ -367,6 +498,20 @@ export default function HeuresGlobalesClient({
     ? new Date(selectedMonth + '-01').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
     : `${customFrom} → ${customTo}`
 
+  const handleDelete = (p: GlobalPointage) => {
+    setDeletingId(p.id)
+    setDeleteError('')
+    startDeleteTransition(async () => {
+      const res = await deletePointage(p.id, p.chantier_id)
+      if (res.error) {
+        setDeleteError(res.error)
+        setDeletingId(null)
+      } else {
+        setDeletingId(null)
+      }
+    })
+  }
+
   return (
     <div className="page-container space-y-6" style={{ maxWidth: '72rem' }}>
       <div className="flex items-center justify-between">
@@ -385,7 +530,6 @@ export default function HeuresGlobalesClient({
 
       {/* Filtres */}
       <div className="card p-4 space-y-4">
-        {/* Période */}
         <div className="flex flex-wrap gap-2 items-center">
           <Filter className="w-4 h-4 text-secondary" />
           {(['week', 'month', 'custom'] as Period[]).map(p => (
@@ -437,7 +581,6 @@ export default function HeuresGlobalesClient({
           </div>
         )}
 
-        {/* Filtres chantier / personne */}
         <div className="flex flex-wrap gap-3">
           <select className="input text-sm" value={selectedChantier} onChange={e => setSelectedChantier(e.target.value)}>
             <option value="">Tous les chantiers</option>
@@ -531,21 +674,29 @@ export default function HeuresGlobalesClient({
       )}
 
       {/* Pointage manuel pour membres sans accès app */}
-      {individualMembers.length > 0 && (
+      {canManage && individualMembers.length > 0 && (
         <PointageMemberPanel members={individualMembers} chantiers={chantiers} />
       )}
 
       {/* Rapport PDF par membre */}
-      {initialPointages.length > 0 && (
+      {canManage && initialPointages.length > 0 && (
         <MemberReportsPanel pointages={initialPointages} individualMembers={individualMembers} />
       )}
 
       {/* Détail ligne par ligne */}
       {filtered.length > 0 && (
         <div className="card overflow-hidden">
-          <div className="p-4 border-b border-[var(--elevation-border)]">
+          <div className="p-4 border-b border-[var(--elevation-border)] flex items-center justify-between gap-3">
             <p className="font-bold text-primary text-sm">Détail des pointages</p>
+            {canManage && (
+              <span className="text-xs text-secondary">Cliquez sur une ligne pour modifier ou supprimer</span>
+            )}
           </div>
+          {deleteError && (
+            <div className="px-4 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-800 text-sm text-red-600 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" /> {deleteError}
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -555,41 +706,103 @@ export default function HeuresGlobalesClient({
                   <th className="text-left px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Chantier</th>
                   <th className="text-left px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Tâche</th>
                   <th className="text-right px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Heures</th>
+                  {canManage && (
+                    <th className="px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap w-20"></th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
-                {filtered.map(p => (
-                  <tr key={p.id} className="hover:bg-[var(--elevation-1)] transition-colors">
-                    <td className="px-4 py-2.5 text-secondary whitespace-nowrap">
-                      {new Date(p.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' })}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0" style={{ backgroundColor: getUserColor(getPersonKey(p)) }}>
-                          {p.user_name[0]?.toUpperCase() ?? '?'}
+                {filtered.map(p => {
+                  const isAlert = p.hours >= HOURS_ALERT_THRESHOLD
+                  const isBeingDeleted = deletingId === p.id
+                  return (
+                    <tr
+                      key={p.id}
+                      className={`transition-colors ${isBeingDeleted ? 'opacity-40' : ''} ${isAlert ? 'bg-amber-50/60 dark:bg-amber-950/20' : 'hover:bg-[var(--elevation-1)]'}`}
+                    >
+                      <td className="px-4 py-2.5 text-secondary whitespace-nowrap">
+                        {new Date(p.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' })}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0" style={{ backgroundColor: getUserColor(getPersonKey(p)) }}>
+                            {p.user_name[0]?.toUpperCase() ?? '?'}
+                          </div>
+                          <span className="font-medium text-primary">
+                            {p.user_name}
+                            {p.member_id && <span className="ml-1 text-xs text-secondary">(ext.)</span>}
+                          </span>
                         </div>
-                        <span className="font-medium text-primary">{p.user_name}{p.member_id && <span className="ml-1 text-xs text-secondary">(ext.)</span>}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <Link href={`/chantiers/${p.chantier_id}`} className="text-primary hover:text-accent transition-colors">
-                        {p.chantier_title}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2.5 text-secondary">{p.tache_title ?? <span className="opacity-40">—</span>}</td>
-                    <td className="px-4 py-2.5 text-right font-bold text-primary">{fmtHours(p.hours)}</td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <Link href={`/chantiers/${p.chantier_id}`} className="text-primary hover:text-accent transition-colors">
+                          {p.chantier_title}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2.5 text-secondary">{p.tache_title ?? <span className="opacity-40">—</span>}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {isAlert && (
+                            <span title="Pointage inhabituellement long — vérifier si la fin a bien été pointée">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                            </span>
+                          )}
+                          <span className={`font-bold ${isAlert ? 'text-amber-600 dark:text-amber-400' : 'text-primary'}`}>
+                            {fmtHours(p.hours)}
+                          </span>
+                        </div>
+                      </td>
+                      {canManage && (
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => setEditingPointage(p)}
+                              disabled={isBeingDeleted}
+                              title="Modifier"
+                              className="p-1.5 rounded-lg text-secondary hover:text-accent hover:bg-accent/10 transition-colors"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(p)}
+                              disabled={isBeingDeleted}
+                              title="Supprimer"
+                              className="p-1.5 rounded-lg text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  )
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-[var(--elevation-border)] bg-[var(--elevation-1)]">
-                  <td colSpan={4} className="px-4 py-2.5 text-xs font-semibold text-secondary uppercase tracking-wider">Total</td>
+                  <td colSpan={canManage ? 4 : 4} className="px-4 py-2.5 text-xs font-semibold text-secondary uppercase tracking-wider">Total</td>
                   <td className="px-4 py-2.5 text-right font-extrabold text-primary">{fmtHours(totalHours)}</td>
+                  {canManage && <td />}
                 </tr>
               </tfoot>
             </table>
           </div>
+          {canManage && filtered.some(p => p.hours >= HOURS_ALERT_THRESHOLD) && (
+            <div className="px-4 py-3 border-t border-[var(--elevation-border)] flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/20">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>Les lignes surlignées ont un pointage de 12h ou plus — probable oubli de dépointer. Vérifiez avec l'équipe et ajustez si nécessaire.</span>
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Modal d'édition */}
+      {editingPointage && (
+        <EditPointageModal
+          pointage={editingPointage}
+          onClose={() => setEditingPointage(null)}
+          onSaved={() => setEditingPointage(null)}
+        />
       )}
     </div>
   )

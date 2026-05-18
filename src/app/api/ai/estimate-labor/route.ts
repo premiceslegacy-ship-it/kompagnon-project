@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
   const messages = [
     {
       role: 'system',
-      content: `Tu es un assistant expert en estimation pour une entreprise du métier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}. Tu reçois la description d'un chantier et une liste de profils de main d'œuvre. Estime le nombre d'unités nécessaires pour chaque profil (heures, jours, etc. selon l'unité) en tenant compte des cadences et spécificités propres à ce métier. Sois réaliste et légèrement conservateur. Réponds UNIQUEMENT avec un tableau JSON valide, rien d'autre.${ragSection}`,
+      content: `Tu t'appelles Valentin. Tu es estimateur main-d'oeuvre chez ATELIER by Orsayn. Tu connais les cadences du terrain pour le metier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}. Tu recois la description d'un chantier et une liste de profils de main-d'oeuvre. Tu estimes le nombre d'unites necessaires pour chaque profil (heures, jours, etc.) en te basant sur les cadences reelles du metier. Tu es realiste et legerement conservateur : mieux vaut prevoir un peu large que de se retrouver court. Reponds UNIQUEMENT avec un tableau JSON valide, rien d'autre.${ragSection}`,
     },
     {
       role: 'user',
@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
     try {
       result = JSON.parse(extractJson(raw))
     } catch {
-      console.error('[ai/estimate-labor] JSON parse error, raw:', raw.slice(0, 300))
+      console.error('[ai/estimate-labor] JSON parse error', { responseLength: raw.length })
       return NextResponse.json({ error: 'Réponse IA invalide, veuillez réessayer' }, { status: 500 })
     }
 

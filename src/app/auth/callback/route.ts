@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     if (!error) return NextResponse.redirect(`${origin}${next}`)
   }
 
-  // OTP flow (token_hash) — utilisé par les liens d'invitation Supabase
+  // OTP flow (token_hash) - utilisé par les liens d'invitation Supabase
   if (token_hash && type) {
     const { error } = await supabase.auth.verifyOtp({ token_hash, type: type as 'invite' | 'magiclink' | 'email' })
     if (!error) return NextResponse.redirect(`${origin}${next}`)

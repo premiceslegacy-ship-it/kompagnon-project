@@ -6,7 +6,7 @@ import { sendMemberHoursReport } from '@/lib/data/mutations/members'
 export const dynamic = 'force-dynamic'
 
 /**
- * Cron mensuel — envoie le rapport d'heures du mois précédent à chaque membre individuel
+ * Cron mensuel - envoie le rapport d'heures du mois précédent à chaque membre individuel
  * ayant un email, pour chaque organisation avec auto_send_member_reports = true.
  *
  * Programmé dans vercel.json : "0 6 1 * *" (1er du mois à 6h UTC).

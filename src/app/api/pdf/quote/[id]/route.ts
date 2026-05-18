@@ -7,11 +7,16 @@ import { getOrganization } from '@/lib/data/queries/organization'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import QuotePDF from '@/components/pdf/QuotePDF'
 import type { Client } from '@/lib/data/queries/clients'
+import { assertSafeExternalFetchUrl } from '@/lib/security'
+
+export const dynamic = 'force-dynamic'
 
 async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null
+  const safeUrl = assertSafeExternalFetchUrl(url)
+  if (!safeUrl) return null
   try {
-    const res = await fetch(url)
+    const res = await fetch(safeUrl)
     if (!res.ok) return null
     const buf = await res.arrayBuffer()
     const ct = res.headers.get('content-type') ?? 'image/png'
@@ -91,6 +96,7 @@ export async function GET(
   return new NextResponse(stream as unknown as ReadableStream, {
     headers: {
       'Content-Type': 'application/pdf',
+      'Cache-Control': 'no-store, max-age=0',
       'Content-Disposition': download
         ? `attachment; filename="${fileName}"`
         : `inline; filename="${fileName}"`,

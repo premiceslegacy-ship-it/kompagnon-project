@@ -20,11 +20,13 @@ export default function IndividualMembersSection({
   initialMembers,
   orgMembers,
   orgPhantomMembers = [],
+  canEditRates,
 }: {
   chantierId: string
   initialMembers: IndividualMember[]
   orgMembers: TeamMember[]
   orgPhantomMembers?: IndividualMember[]
+  canEditRates: boolean
 }) {
   const [members, setMembers] = useState<IndividualMember[]>(initialMembers)
   const [showCreate, setShowCreate] = useState(false)
@@ -74,8 +76,8 @@ export default function IndividualMembersSection({
 
   const handleSaveEdit = async (memberId: string) => {
     if (!editName.trim()) { setEditError('Le nom est requis.'); return }
-    const taux = editTaux ? parseFloat(editTaux.replace(',', '.')) : null
-    if (editTaux && (taux === null || isNaN(taux) || taux < 0)) {
+    const taux = canEditRates && editTaux ? parseFloat(editTaux.replace(',', '.')) : null
+    if (canEditRates && editTaux && (taux === null || isNaN(taux) || taux < 0)) {
       setEditError('Taux horaire invalide.'); return
     }
     setEditSaving(true)
@@ -85,13 +87,13 @@ export default function IndividualMembersSection({
       name: editName.trim(),
       email: editEmail.trim() || null,
       roleLabel: editRole.trim() || null,
-      tauxHoraire: taux,
+      ...(canEditRates && { tauxHoraire: taux }),
     })
     setEditSaving(false)
     if (err) { setEditError(err); return }
     setMembers(prev => prev.map(m =>
       m.id === memberId
-        ? { ...m, prenom: editPrenom.trim() || null, name: editName.trim(), email: editEmail.trim() || null, role_label: editRole.trim() || null, taux_horaire: taux }
+        ? { ...m, prenom: editPrenom.trim() || null, name: editName.trim(), email: editEmail.trim() || null, role_label: editRole.trim() || null, ...(canEditRates && { taux_horaire: taux }) }
         : m
     ))
     setEditingId(null)
@@ -133,14 +135,14 @@ export default function IndividualMembersSection({
       if (err || !id) { setError(err ?? 'Erreur inconnue.'); return }
       const optimistic: IndividualMember = {
         id, organization_id: '', equipe_id: null, prenom: firstName, name: lastName,
-        email: m.email, role_label: m.role_name ?? null, taux_horaire: m.labor_cost_per_hour ?? null,
+        email: m.email, role_label: m.role_name ?? null, taux_horaire: canEditRates ? m.labor_cost_per_hour ?? null : null,
         profile_id: m.user_id, created_at: new Date().toISOString(),
       }
       setMembers(prev => [optimistic, ...prev])
     } else {
       if (!name.trim()) { setError('Le nom est requis.'); return }
-      const taux = tauxHoraire ? parseFloat(tauxHoraire.replace(',', '.')) : null
-      if (tauxHoraire && (taux === null || isNaN(taux) || taux < 0)) {
+      const taux = canEditRates && tauxHoraire ? parseFloat(tauxHoraire.replace(',', '.')) : null
+      if (canEditRates && tauxHoraire && (taux === null || isNaN(taux) || taux < 0)) {
         setError('Taux horaire invalide.'); return
       }
       setSaving(true)
@@ -149,7 +151,7 @@ export default function IndividualMembersSection({
         name: name.trim(),
         email: email.trim() || null,
         roleLabel: roleLabel.trim() || null,
-        tauxHoraire: taux,
+        ...(canEditRates && { tauxHoraire: taux }),
         attachToChantierId: chantierId,
         sendInvite: sendInvite && !!email.trim(),
       })
@@ -161,7 +163,7 @@ export default function IndividualMembersSection({
         name: name.trim(),
         email: email.trim() || null,
         role_label: roleLabel.trim() || null,
-        taux_horaire: taux,
+        taux_horaire: canEditRates ? taux : null,
         profile_id: null,
         created_at: new Date().toISOString(),
       }
@@ -270,7 +272,7 @@ export default function IndividualMembersSection({
                   const fullName = [pm.prenom, pm.name].filter(Boolean).join(' ')
                   return (
                     <option key={pm.id} value={pm.id}>
-                      {fullName}{pm.role_label ? ` · ${pm.role_label}` : ''}{pm.taux_horaire != null ? ` · ${pm.taux_horaire}€/h` : ''}
+                      {fullName}{pm.role_label ? ` · ${pm.role_label}` : ''}{canEditRates && pm.taux_horaire != null ? ` · ${pm.taux_horaire}€/h` : ''}
                     </option>
                   )
                 })}
@@ -320,7 +322,7 @@ export default function IndividualMembersSection({
               <input
                 className="input w-full text-sm"
                 type="email"
-                placeholder="Email (facultatif — permet d'envoyer le rapport et le lien d'accès)"
+                placeholder="Email (facultatif - permet d'envoyer le rapport et le lien d'accès)"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
               />
@@ -331,15 +333,17 @@ export default function IndividualMembersSection({
                   value={roleLabel}
                   onChange={e => setRoleLabel(e.target.value)}
                 />
-                <input
-                  className="input w-full text-sm"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="Taux horaire (€/h)"
-                  value={tauxHoraire}
-                  onChange={e => setTauxHoraire(e.target.value)}
-                />
+                {canEditRates && (
+                  <input
+                    className="input w-full text-sm"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="Taux horaire (€/h)"
+                    value={tauxHoraire}
+                    onChange={e => setTauxHoraire(e.target.value)}
+                  />
+                )}
               </div>
               {email.trim() && (
                 <label className="flex items-center gap-2 cursor-pointer text-sm text-secondary">
@@ -408,15 +412,17 @@ export default function IndividualMembersSection({
                       value={editRole}
                       onChange={e => setEditRole(e.target.value)}
                     />
-                    <input
-                      className="input w-full text-sm"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="Taux horaire (€/h)"
-                      value={editTaux}
-                      onChange={e => setEditTaux(e.target.value)}
-                    />
+                    {canEditRates && (
+                      <input
+                        className="input w-full text-sm"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="Taux horaire (€/h)"
+                        value={editTaux}
+                        onChange={e => setEditTaux(e.target.value)}
+                      />
+                    )}
                   </div>
                   {editError && <p className="text-xs text-red-500">{editError}</p>}
                   <div className="flex gap-2 justify-end">
@@ -447,7 +453,7 @@ export default function IndividualMembersSection({
                   <p className="text-xs text-secondary truncate">
                     {m.role_label ?? '—'}
                     {m.email && <> · <Mail className="inline w-3 h-3" /> {m.email}</>}
-                    {m.taux_horaire != null && <> · {m.taux_horaire}€/h</>}
+                    {canEditRates && m.taux_horaire != null && <> · {m.taux_horaire}€/h</>}
                   </p>
                 </div>
                 {m.email && !m.profile_id && (

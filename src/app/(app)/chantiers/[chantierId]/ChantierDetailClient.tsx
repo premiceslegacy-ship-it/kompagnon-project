@@ -26,11 +26,10 @@ import type { TeamMember } from '@/lib/data/queries/team'
 import { getQuoteItemsForSuggestions } from '@/lib/data/mutations/quotes'
 import {
   createTache, updateTache, deleteTache, reorderTaches,
-  createPointage, deletePointage,
+  createPointage, createMemberPointageAdmin, deletePointage,
   createChantierNote, deleteChantierNote,
   uploadChantierPhoto, deleteChantierPhoto, updateChantierPhotoCaption, updateChantierPhotoTitle,
   togglePhotoReportFlag,
-  generateSituationInvoice,
   updateChantier,
   createEquipe, deleteEquipe, addEquipeMembre, removeEquipeMembre, updateEquipeMembreTaux, updateEquipeMembreProfile,
   assignEquipeToChantier, removeEquipeFromChantier,
@@ -45,6 +44,8 @@ import JalonsTab from './JalonsTab'
 import type { ChantierProfitability } from '@/lib/data/queries/chantier-profitability'
 import type { ChantierJalon } from '@/lib/data/queries/chantier-jalons'
 import ChantierAIAssistant from '@/components/ai/ChantierAIAssistant'
+import SituationsSection from '@/components/situations/SituationsSection'
+import type { SituationsSummary } from '@/lib/data/queries/invoices'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,18 @@ function fmtHours(hours: number): string {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Tab = 'taches' | 'jalons' | 'planning' | 'pointages' | 'photos' | 'notes' | 'equipes' | 'rentabilite'
+
+type ChantierPermissions = {
+  canEditChantier: boolean
+  canManageTeam: boolean
+  canPointage: boolean
+  canManagePointages: boolean
+  canViewExpenses: boolean
+  canCreateExpenses: boolean
+  canEditExpenses: boolean
+  canDeleteExpenses: boolean
+  canEditRates: boolean
+}
 
 const STATUS_CYCLE: Record<TacheStatus, TacheStatus> = {
   a_faire: 'en_cours',
@@ -144,7 +157,7 @@ function fmtWeekLabel(monday: Date): string {
   const sunday = new Date(monday)
   sunday.setDate(monday.getDate() + 6)
   const opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' }
-  return `${monday.toLocaleDateString('fr-FR', opts)} – ${sunday.toLocaleDateString('fr-FR', { ...opts, year: 'numeric' })}`
+  return `${monday.toLocaleDateString('fr-FR', opts)} - ${sunday.toLocaleDateString('fr-FR', { ...opts, year: 'numeric' })}`
 }
 
 // ─── Sortable Task Item ───────────────────────────────────────────────────────
@@ -154,11 +167,13 @@ function SortableTache({
   onStatusToggle,
   onDelete,
   onSaveNote,
+  canEdit,
 }: {
   tache: Tache
   onStatusToggle: (tache: Tache) => void
   onDelete: (tache: Tache) => void
   onSaveNote: (tache: Tache, note: string) => Promise<void>
+  canEdit: boolean
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tache.id })
   const [noteOpen, setNoteOpen] = useState(false)
@@ -189,13 +204,16 @@ function SortableTache({
     >
       <div className="p-3 md:p-4 flex items-center gap-3">
         {/* Drag handle */}
-        <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing text-secondary opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-          <GripVertical className="w-4 h-4" />
-        </div>
+        {canEdit && (
+          <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing text-secondary opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+            <GripVertical className="w-4 h-4" />
+          </div>
+        )}
 
         {/* Status toggle */}
         <button
           onClick={() => onStatusToggle(tache)}
+          disabled={!canEdit}
           className={`flex-shrink-0 transition-colors ${cfg.color}`}
           title={`Statut : ${cfg.label} (cliquer pour changer)`}
         >
@@ -216,7 +234,7 @@ function SortableTache({
         </div>
 
         {/* Note avancement (visible si en_cours) */}
-        {tache.status === 'en_cours' && (
+        {canEdit && tache.status === 'en_cours' && (
           <button
             onClick={() => { setNoteOpen(v => !v); setNoteVal(tache.progress_note ?? '') }}
             className={`opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-xs px-2 py-1 rounded-lg border ${noteOpen ? 'bg-accent/10 border-accent/40 text-accent' : 'border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
@@ -227,12 +245,14 @@ function SortableTache({
         )}
 
         {/* Delete */}
-        <button
-          onClick={() => onDelete(tache)}
-          className="opacity-0 group-hover:opacity-100 transition-opacity text-secondary hover:text-red-500 flex-shrink-0"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => onDelete(tache)}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-secondary hover:text-red-500 flex-shrink-0"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Note d'avancement inline */}
@@ -311,7 +331,6 @@ function WeeklyPlanningView({
   })
 
   const todayStr = todayParis()
-  const dayNames = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 
   const byDay = pointages.reduce<Record<string, Pointage[]>>((acc, p) => {
     acc[p.date] = [...(acc[p.date] ?? []), p]
@@ -332,13 +351,327 @@ function WeeklyPlanningView({
     if (chantier.recurrence_duration_h) recLabel += ` · ${fmtHours(chantier.recurrence_duration_h)}/passage`
   }
 
+  // ── Vue mobile : liste journalière style Apple Calendar ──────────────────────
+  const MobileDayView = () => {
+    const dateStr = getLocalDateStr(selectedDate)
+    const dayPts = byDay[dateStr] ?? []
+    const dayPls = byDayPlannings[dateStr] ?? []
+
+    type CalEvent = { key: string; startMin: number; endMin: number; type: 'pointage' | 'planning'; data: Pointage | ChantierPlanning }
+
+    const events: CalEvent[] = []
+    for (const p of dayPts) {
+      const [h, m] = (p.start_time ?? '00:00').split(':').map(Number)
+      const startMin = h * 60 + m
+      const endMin = startMin + Math.round(p.hours * 60)
+      events.push({ key: `pt-${p.id}`, startMin, endMin, type: 'pointage', data: p })
+    }
+    for (const pl of dayPls) {
+      const [h, m] = (pl.start_time ?? '00:00').split(':').map(Number)
+      const startMin = h * 60 + m
+      let endMin = startMin + 60
+      if (pl.end_time) {
+        const [eh, em] = pl.end_time.split(':').map(Number)
+        endMin = eh * 60 + em
+      }
+      events.push({ key: `pl-${pl.id}`, startMin, endMin, type: 'planning', data: pl })
+    }
+    events.sort((a, b) => a.startMin - b.startMin)
+
+    const fmtMin = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`
+
+    if (events.length === 0) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <Calendar className="w-10 h-10 text-secondary/30 mb-3" />
+          <p className="text-sm font-semibold text-secondary">Aucun créneau ce jour</p>
+          <p className="text-xs text-secondary/60 mt-1">Utilisez le bouton Planifier pour ajouter</p>
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-2 py-2">
+        {events.map(ev => {
+          if (ev.type === 'pointage') {
+            const p = ev.data as Pointage
+            const col = USER_COLORS[getUserColorIdx(getPointageKey(p))]
+            return (
+              <div key={ev.key} className={`flex gap-3 rounded-xl border px-3 py-2.5 ${col.bg} ${col.border}`}>
+                <div className="flex flex-col items-center justify-start pt-0.5 min-w-[44px]">
+                  <span className={`text-[11px] font-bold tabular-nums ${col.text}`}>{fmtMin(ev.startMin)}</span>
+                  <div className="w-px flex-1 my-1 rounded" style={{ background: 'currentColor', minHeight: 12, opacity: 0.3 }} />
+                  <span className={`text-[10px] tabular-nums opacity-70 ${col.text}`}>{fmtMin(ev.endMin)}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className={`text-xs font-bold ${col.text}`}>{p.user_name}</span>
+                    <span className={`text-[10px] opacity-70 ${col.text}`}>{fmtHours(p.hours)}</span>
+                  </div>
+                  {p.tache_title && <p className={`text-[11px] mt-0.5 opacity-80 ${col.text}`}>{p.tache_title}</p>}
+                  {p.description && <p className={`text-[11px] mt-0.5 opacity-60 ${col.text} truncate`}>{p.description}</p>}
+                </div>
+                <div className="flex-shrink-0 self-start">
+                  <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${col.bg} ${col.text} border ${col.border}`}>Pointé</span>
+                </div>
+              </div>
+            )
+          } else {
+            const pl = ev.data as ChantierPlanning
+            const eq = equipes.find(e => e.id === pl.equipe_id)
+            const color = eq?.color ?? '#6366f1'
+            return (
+              <div key={ev.key} className="flex gap-3 rounded-xl border px-3 py-2.5 group/plm relative" style={{ backgroundColor: `${color}12`, borderColor: `${color}40` }}>
+                <div className="flex flex-col items-center justify-start pt-0.5 min-w-[44px]">
+                  <span className="text-[11px] font-bold tabular-nums" style={{ color }}>{fmtMin(ev.startMin)}</span>
+                  <div className="w-px flex-1 my-1 rounded" style={{ background: color, minHeight: 12, opacity: 0.3 }} />
+                  <span className="text-[10px] tabular-nums opacity-60" style={{ color }}>{fmtMin(ev.endMin)}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs font-bold" style={{ color }}>{pl.label}</span>
+                    <span className="text-[10px] opacity-70" style={{ color }}>{pl.team_size} pers.</span>
+                  </div>
+                  {pl.notes && <p className="text-[11px] mt-0.5 opacity-70 whitespace-pre-wrap" style={{ color }}>{pl.notes}</p>}
+                </div>
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full text-white" style={{ backgroundColor: color }}>Prévu</span>
+                  <button
+                    onClick={() => onDeletePlanning(pl.id)}
+                    className="opacity-0 group-hover/plm:opacity-100 transition-opacity text-red-400 hover:text-red-600"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )
+          }
+        })}
+      </div>
+    )
+  }
+
+  // ── Vue desktop : grille avec pistes séparées prévu / pointé ──────────────────
+  const DesktopGridView = () => (
+    <div className="overflow-x-auto">
+      <div style={{ minWidth: days.length === 1 ? '100%' : 700 }}>
+        {/* En-têtes colonnes */}
+        <div className="flex mb-1 ml-14">
+          {days.map((day, i) => {
+            const dateStr = getLocalDateStr(day)
+            const isToday = dateStr === todayStr
+            const dayPts = byDay[dateStr] ?? []
+            const dayPls = byDayPlannings[dateStr] ?? []
+            const pointedH = dayPts.reduce((s, p) => s + p.hours, 0)
+            const plannedH = dayPls.reduce((s, pl) => {
+              if (!pl.start_time || !pl.end_time) return s
+              const [sh, sm] = pl.start_time.split(':').map(Number)
+              const [eh, em] = pl.end_time.split(':').map(Number)
+              return s + ((eh + em / 60) - (sh + sm / 60))
+            }, 0)
+            return (
+              <div key={i} className={`flex-1 py-2 rounded-t-lg ${isToday ? 'bg-accent/10' : ''}`}>
+                <p className={`text-xs font-semibold uppercase tracking-wider text-center ${isToday ? 'text-accent' : 'text-secondary'}`}>
+                  {day.toLocaleDateString('fr-FR', { weekday: 'short' })}
+                </p>
+                <div className="flex justify-center mt-1 mb-1">
+                  <div className={`w-7 h-7 flex items-center justify-center rounded-full text-sm font-bold ${isToday ? 'bg-accent text-white' : 'text-primary'}`}>
+                    {day.getDate()}
+                  </div>
+                </div>
+                <div className="flex text-[9px] font-semibold uppercase tracking-wider">
+                  <span className="flex-1 text-center text-indigo-500 opacity-80">Prévu</span>
+                  <span className="flex-1 text-center text-emerald-600 dark:text-emerald-400 opacity-80">Pointé</span>
+                </div>
+                {(pointedH > 0 || plannedH > 0) && (
+                  <div className="flex justify-center gap-2 mt-0.5">
+                    {plannedH > 0 && <span className="text-[9px] text-indigo-500 font-mono">{fmtHours(plannedH)}</span>}
+                    {pointedH > 0 && <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-mono">{fmtHours(pointedH)}</span>}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Grille */}
+        <div className="flex border border-[var(--elevation-border)] rounded-b-lg overflow-hidden">
+          {/* Axe horaire */}
+          <div className="w-14 flex-shrink-0 border-r border-[var(--elevation-border)] bg-[var(--elevation-1)]">
+            {timeLabels.map((label, i) => (
+              <div
+                key={i}
+                style={{ height: ROW_H }}
+                className="flex items-start justify-end pr-2 pt-1 border-b border-[var(--elevation-border)]/50 last:border-0"
+              >
+                <span className="text-[10px] text-secondary font-mono">{label}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Colonnes jour */}
+          {days.map((day, di) => {
+            const dateStr = getLocalDateStr(day)
+            const isToday = dateStr === todayStr
+            const dayPts = byDay[dateStr] ?? []
+            const withTime = dayPts.filter(p => p.start_time)
+            const noTime = dayPts.filter(p => !p.start_time)
+            const dayPlannings = byDayPlannings[dateStr] ?? []
+            const planningsWithTime = dayPlannings.filter(p => p.start_time)
+            const planningsNoTime = dayPlannings.filter(p => !p.start_time)
+
+            return (
+              <div
+                key={di}
+                className={`flex-1 relative border-r border-[var(--elevation-border)] last:border-0 ${isToday ? 'bg-accent/5' : ''}`}
+                style={{ height: TOTAL_H }}
+              >
+                {/* Lignes horaires */}
+                {timeLabels.map((_, i) => (
+                  <div
+                    key={i}
+                    className="absolute left-0 right-0 border-b border-[var(--elevation-border)]/30"
+                    style={{ top: i * ROW_H, height: ROW_H }}
+                  />
+                ))}
+
+                {/* Séparateur vertical central des deux pistes */}
+                <div className="absolute top-0 bottom-0 border-r border-dashed border-[var(--elevation-border)]/60" style={{ left: '50%' }} />
+
+                {/* Heure courante */}
+                {isToday && (() => {
+                  const now = new Date()
+                  const fraction = (now.getHours() + now.getMinutes() / 60 - CAL_START_H) / CAL_HOURS
+                  if (fraction < 0 || fraction > 1) return null
+                  return (
+                    <div className="absolute left-0 right-0 z-20 flex items-center pointer-events-none" style={{ top: fraction * TOTAL_H }}>
+                      <div className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />
+                      <div className="flex-1 h-0.5 bg-red-400" />
+                    </div>
+                  )
+                })()}
+
+                {/* PISTE GAUCHE : plannings prévus */}
+                {planningsWithTime.map(pl => {
+                  if (!pl.start_time) return null
+                  const [h, m] = pl.start_time.split(':').map(Number)
+                  const startH = h + m / 60
+                  const topPx = Math.max(0, (startH - CAL_START_H) * ROW_H)
+                  const endH = pl.end_time ? (() => { const [eh, em] = pl.end_time!.split(':').map(Number); return eh + em / 60 })() : startH + 1
+                  const heightPx = Math.max((endH - startH) * ROW_H, 24)
+                  const eq = equipes.find(e => e.id === pl.equipe_id)
+                  const color = eq?.color ?? '#6366f1'
+                  return (
+                    <div
+                      key={`pl-${pl.id}`}
+                      className="absolute rounded-md p-1 z-10 overflow-hidden group/pl cursor-default flex flex-col"
+                      style={{ top: topPx, height: heightPx, left: 1, width: 'calc(50% - 3px)', backgroundColor: `${color}20`, border: `1.5px dashed ${color}` }}
+                      title={`Prévu · ${pl.label} · ${pl.team_size} pers.${pl.notes ? ` · ${pl.notes}` : ''}`}
+                    >
+                      <p className="text-[9px] font-bold leading-tight truncate" style={{ color }}>{pl.label}</p>
+                      <p className="text-[8px] leading-tight opacity-70 truncate" style={{ color }}>{pl.start_time.slice(0, 5)}{pl.end_time ? `→${pl.end_time.slice(0, 5)}` : ''}</p>
+                      <button onClick={() => onDeletePlanning(pl.id)} className="absolute top-0.5 right-0.5 opacity-0 group-hover/pl:opacity-100 transition-opacity text-red-500 hover:text-red-600 bg-white/80 dark:bg-black/50 rounded p-0.5">
+                        <X className="w-2 h-2" />
+                      </button>
+                    </div>
+                  )
+                })}
+
+                {/* PISTE DROITE : pointages */}
+                {withTime.map(p => {
+                  if (!p.start_time) return null
+                  const [h, m] = p.start_time.split(':').map(Number)
+                  const startH = h + m / 60
+                  const topPx = Math.max(0, (startH - CAL_START_H) * ROW_H)
+                  const heightPx = Math.max(p.hours * ROW_H, 24)
+                  const col = USER_COLORS[getUserColorIdx(getPointageKey(p))]
+                  return (
+                    <div
+                      key={p.id}
+                      className={`absolute rounded-md p-1 border z-10 overflow-hidden ${col.bg} ${col.border}`}
+                      style={{ top: topPx, height: heightPx, right: 1, width: 'calc(50% - 3px)' }}
+                      title={`${p.user_name} · ${fmtHours(p.hours)}${p.tache_title ? ` · ${p.tache_title}` : ''}`}
+                    >
+                      <p className={`text-[9px] font-bold leading-tight truncate ${col.text}`}>{p.user_name}</p>
+                      <p className={`text-[8px] leading-tight opacity-80 truncate ${col.text}`}>{p.start_time.slice(0, 5)} · {fmtHours(p.hours)}</p>
+                    </div>
+                  )
+                })}
+
+                {/* Pointages sans heure — bande supérieure droite */}
+                {noTime.length > 0 && (
+                  <div className="absolute top-1 z-10 flex flex-col gap-0.5" style={{ right: 1, width: 'calc(50% - 3px)' }}>
+                    {noTime.map(p => {
+                      const col = USER_COLORS[getUserColorIdx(getPointageKey(p))]
+                      return (
+                        <div key={p.id} className={`rounded px-1 py-0.5 text-[8px] font-semibold truncate border ${col.bg} ${col.border} ${col.text}`}>
+                          {p.user_name} {fmtHours(p.hours)}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Plannings sans heure — bande inférieure gauche */}
+                {planningsNoTime.length > 0 && (
+                  <div className="absolute bottom-1 z-10 flex flex-col gap-0.5" style={{ left: 1, width: 'calc(50% - 3px)' }}>
+                    {planningsNoTime.map(pl => {
+                      const eq = equipes.find(e => e.id === pl.equipe_id)
+                      const color = eq?.color ?? '#6366f1'
+                      return (
+                        <div key={`pl-${pl.id}`} className="rounded px-1 py-0.5 flex items-center gap-1 group/pl relative" style={{ backgroundColor: `${color}20`, border: `1px dashed ${color}` }}>
+                          <span className="text-[8px] font-semibold truncate flex-1" style={{ color }}>{pl.label}</span>
+                          <button onClick={() => onDeletePlanning(pl.id)} className="opacity-0 group-hover/pl:opacity-100 transition-opacity text-red-500 hover:text-red-600">
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Légende + totaux */}
+        {(() => {
+          const weekPointedH = days.reduce((sum, day) => sum + (byDay[getLocalDateStr(day)] ?? []).reduce((s, p) => s + p.hours, 0), 0)
+          const weekPlannedH = days.reduce((sum, day) => sum + (byDayPlannings[getLocalDateStr(day)] ?? []).reduce((s, pl) => {
+            if (!pl.start_time || !pl.end_time) return s
+            const [sh, sm] = pl.start_time.split(':').map(Number)
+            const [eh, em] = pl.end_time.split(':').map(Number)
+            return s + ((eh + em / 60) - (sh + sm / 60))
+          }, 0), 0)
+          return (
+            <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-secondary">
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-0.5 bg-red-400 inline-block rounded" /> Heure actuelle
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-2.5 rounded-sm border border-dashed border-indigo-400 bg-indigo-400/15 inline-block" /> Prévu (gauche)
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-2.5 rounded-sm border border-emerald-400/50 bg-emerald-400/20 inline-block" /> Pointé (droite)
+              </span>
+              <span className="ml-auto flex items-center gap-3 font-semibold text-primary">
+                {weekPlannedH > 0 && <span className="text-indigo-500">Prévu : {fmtHours(weekPlannedH)}</span>}
+                {weekPointedH > 0 && <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><Clock className="w-3.5 h-3.5" /> Pointé : {fmtHours(weekPointedH)}</span>}
+              </span>
+            </div>
+          )
+        })()}
+      </div>
+    </div>
+  )
+
   return (
     <div className="space-y-4">
       {recLabel && (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-accent/10 border border-accent/20">
           <RefreshCw className="w-4 h-4 text-accent flex-shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-primary">Récurrence : {recLabel}</p>
+            <p className="text-sm font-semibold text-primary">Récurrence : {recLabel}</p>
             {chantier.recurrence_notes && (
               <p className="text-xs text-secondary mt-1 whitespace-pre-wrap">{chantier.recurrence_notes}</p>
             )}
@@ -347,6 +680,7 @@ function WeeklyPlanningView({
       )}
 
       <div className="card p-4">
+        {/* Barre de navigation */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
           <div className="flex items-center justify-between sm:justify-start w-full sm:w-auto gap-2">
             <button
@@ -356,16 +690,16 @@ function WeeklyPlanningView({
               <ChevronLeft className="w-4 h-4" />
             </button>
             <div className="text-center flex-1 sm:flex-none sm:min-w-[140px]">
-              <p className="text-sm font-bold text-primary">
+              <p className="text-sm font-bold text-primary capitalize">
                 {effectiveView === 'jour'
-                  ? selectedDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short' })
+                  ? selectedDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
                   : fmtWeekLabel(weekStart)}
               </p>
               <button
                 onClick={() => setSelectedDate(dateFromYmd(todayParis()))}
                 className="text-xs text-accent hover:underline mt-0.5"
               >
-                Aujourd'hui
+                Aujourd&apos;hui
               </button>
             </div>
             <button
@@ -375,11 +709,13 @@ function WeeklyPlanningView({
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
-          
+
           <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-2">
             <div className="flex bg-base/50 p-1 rounded-lg border border-[var(--elevation-border)]">
-               <button onClick={() => setViewMode('jour')} className={`px-3 py-1.5 text-xs rounded font-medium ${effectiveView === 'jour' ? 'bg-[var(--elevation-2)] shadow-sm text-primary' : 'text-secondary hover:text-primary'}`}>Jour</button>
-               <button onClick={() => setViewMode('semaine')} className={`px-3 py-1.5 text-xs rounded font-medium ${effectiveView === 'semaine' ? 'bg-[var(--elevation-2)] shadow-sm text-primary' : 'text-secondary hover:text-primary'}`}><span className="hidden sm:inline">Semaine</span><span className="sm:hidden">Sem.</span></button>
+              <button onClick={() => setViewMode('jour')} className={`px-3 py-1.5 text-xs rounded font-medium transition-colors ${effectiveView === 'jour' ? 'bg-[var(--elevation-2)] shadow-sm text-primary' : 'text-secondary hover:text-primary'}`}>Jour</button>
+              <button onClick={() => setViewMode('semaine')} className={`px-3 py-1.5 text-xs rounded font-medium transition-colors ${effectiveView === 'semaine' ? 'bg-[var(--elevation-2)] shadow-sm text-primary' : 'text-secondary hover:text-primary'}`}>
+                <span className="hidden sm:inline">Semaine</span><span className="sm:hidden">Sem.</span>
+              </button>
             </div>
             <button
               onClick={() => setShowAddForm(v => !v)}
@@ -390,6 +726,7 @@ function WeeklyPlanningView({
           </div>
         </div>
 
+        {/* Formulaire ajout */}
         {showAddForm && (
           <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 space-y-3">
             <p className="text-sm font-semibold text-primary">Nouveau créneau planifié</p>
@@ -404,7 +741,7 @@ function WeeklyPlanningView({
                   const eq = equipes.find(eq => eq.id === e.target.value)
                   setAddForm(f => ({...f, equipeId: e.target.value, memberId: '', label: eq ? eq.name : f.label, teamSize: eq ? eq.membres.length || 1 : f.teamSize}))
                 }}>
-                  <option value="">— Aucune équipe —</option>
+                  <option value="">&mdash; Aucune équipe &mdash;</option>
                   {equipes.map(eq => <option key={eq.id} value={eq.id}>{eq.name} ({eq.membres.length} pers.)</option>)}
                 </select>
               </div>
@@ -415,7 +752,7 @@ function WeeklyPlanningView({
                     const m = individualMembers.find(m => m.id === e.target.value)
                     setAddForm(f => ({...f, memberId: e.target.value, equipeId: '', label: m ? [m.prenom, m.name].filter(Boolean).join(' ') : f.label, teamSize: 1}))
                   }}>
-                    <option value="">— Aucun membre —</option>
+                    <option value="">&mdash; Aucun membre &mdash;</option>
                     {individualMembers.map(m => {
                       const fullName = [m.prenom, m.name].filter(Boolean).join(' ') || m.name
                       return <option key={m.id} value={m.id}>{fullName}{m.role_label ? ` · ${m.role_label}` : ''}{m.taux_horaire != null ? ` · ${m.taux_horaire}€/h` : ''}</option>
@@ -440,7 +777,6 @@ function WeeklyPlanningView({
                 <input type="time" className="input w-full text-sm" value={addForm.endTime} onChange={e => setAddForm(f => ({...f, endTime: e.target.value}))} />
               </div>
             </div>
-            {/* Durée calculée */}
             {addForm.startTime && addForm.endTime && (() => {
               const [sh, sm] = addForm.startTime.split(':').map(Number)
               const [eh, em] = addForm.endTime.split(':').map(Number)
@@ -456,9 +792,7 @@ function WeeklyPlanningView({
               <label className="text-xs font-semibold text-secondary block mb-1">Notes</label>
               <input className="input w-full text-sm" placeholder="Consignes, accès, matériel..." value={addForm.notes} onChange={e => setAddForm(f => ({...f, notes: e.target.value}))} />
             </div>
-            {addError && (
-              <p className="text-xs text-red-500 px-1">{addError}</p>
-            )}
+            {addError && <p className="text-xs text-red-500 px-1">{addError}</p>}
             <div className="flex gap-2 justify-end">
               <button onClick={() => { setShowAddForm(false); setAddError(null) }} className="text-xs text-secondary hover:text-primary px-3 py-1.5">Annuler</button>
               <button
@@ -484,215 +818,23 @@ function WeeklyPlanningView({
           </div>
         )}
 
-        <div className="overflow-x-auto">
-          <div style={{ minWidth: days.length === 1 ? '100%' : 700 }}>
-            {/* Day headers */}
-            <div className="flex mb-1 ml-14">
-              {days.map((day, i) => {
-                const dateStr = getLocalDateStr(day)
-                const isToday = dateStr === todayStr
-                const dayTotal = (byDay[dateStr] ?? []).reduce((s, p) => s + p.hours, 0)
-                return (
-                  <div key={i} className={`flex-1 text-center py-2 rounded-t-lg ${isToday ? 'bg-accent/10' : ''}`}>
-                    <p className={`text-xs font-semibold uppercase tracking-wider ${isToday ? 'text-accent' : 'text-secondary'}`}>
-                      {day.toLocaleDateString('fr-FR', { weekday: 'short' })}
-                    </p>
-                    <div className="flex justify-center mt-1 mb-0.5">
-                      <div className={`w-7 h-7 flex items-center justify-center rounded-full text-sm font-bold ${isToday ? 'bg-accent text-white' : 'text-primary'}`}>
-                        {day.getDate()}
-                      </div>
-                    </div>
-                    {dayTotal > 0 && (
-                      <p className="text-xs text-secondary">{dayTotal}h</p>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+        {/* Vue mobile (liste) ou desktop (grille) */}
+        {effectiveView === 'jour' && isMobile ? <MobileDayView /> : <DesktopGridView />}
 
-            {/* Grid */}
-            <div className="flex border border-[var(--elevation-border)] rounded-b-lg overflow-hidden">
-              {/* Time labels */}
-              <div className="w-14 flex-shrink-0 border-r border-[var(--elevation-border)] bg-[var(--elevation-1)]">
-                {timeLabels.map((label, i) => (
-                  <div
-                    key={i}
-                    style={{ height: ROW_H }}
-                    className="flex items-start justify-end pr-2 pt-1 border-b border-[var(--elevation-border)]/50 last:border-0"
-                  >
-                    <span className="text-[10px] text-secondary font-mono">{label}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Day columns */}
-              {days.map((day, di) => {
-                const dateStr = getLocalDateStr(day)
-                const isToday = dateStr === todayStr
-                const dayPts = byDay[dateStr] ?? []
-                const withTime = dayPts.filter(p => p.start_time)
-                const noTime = dayPts.filter(p => !p.start_time)
-
-                const dayPlannings = byDayPlannings[dateStr] ?? []
-                const planningsWithTime = dayPlannings.filter(p => p.start_time)
-                const planningsNoTime = dayPlannings.filter(p => !p.start_time)
-
-                return (
-                  <div
-                    key={di}
-                    className={`flex-1 relative border-r border-[var(--elevation-border)] last:border-0 ${isToday ? 'bg-accent/5' : ''}`}
-                    style={{ height: TOTAL_H }}
-                  >
-                    {timeLabels.map((_, i) => (
-                      <div
-                        key={i}
-                        className="absolute left-0 right-0 border-b border-[var(--elevation-border)]/30"
-                        style={{ top: i * ROW_H, height: ROW_H }}
-                      />
-                    ))}
-
-                    {isToday && (() => {
-                      const now = new Date()
-                      const fraction = (now.getHours() + now.getMinutes() / 60 - CAL_START_H) / CAL_HOURS
-                      if (fraction < 0 || fraction > 1) return null
-                      return (
-                        <div className="absolute left-0 right-0 z-20 flex items-center" style={{ top: fraction * TOTAL_H }}>
-                          <div className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />
-                          <div className="flex-1 h-0.5 bg-red-400" />
-                        </div>
-                      )
-                    })()}
-
-                    {withTime.map(p => {
-                      if (!p.start_time) return null
-                      const [h, m] = p.start_time.split(':').map(Number)
-                      const startH = h + m / 60
-                      const topPx = Math.max(0, (startH - CAL_START_H) * ROW_H)
-                      const heightPx = Math.max(p.hours * ROW_H, 26)
-                      const col = USER_COLORS[getUserColorIdx(getPointageKey(p))]
-                      return (
-                        <div
-                          key={p.id}
-                          className={`absolute left-0.5 right-0.5 rounded sm:rounded-lg p-0.5 sm:px-1.5 sm:py-1 border z-10 overflow-hidden ${col.bg} ${col.border}`}
-                          style={{ top: topPx, height: heightPx }}
-                          title={`${p.user_name} · ${fmtHours(p.hours)}${p.tache_title ? ` · ${p.tache_title}` : ''}`}
-                        >
-                          <p className={`text-[9px] sm:text-[10px] font-bold leading-tight truncate ${col.text}`}>{p.user_name}</p>
-                          <p className={`text-[8px] sm:text-[10px] leading-tight opacity-80 truncate ${col.text}`}>{p.start_time.slice(0, 5)} · {fmtHours(p.hours)}</p>
-                        </div>
-                      )
-                    })}
-
-                    {noTime.length > 0 && (
-                      <div className="absolute top-1 left-0.5 right-0.5 z-10 flex flex-col gap-0.5">
-                        {noTime.map(p => {
-                          const col = USER_COLORS[getUserColorIdx(getPointageKey(p))]
-                          return (
-                            <div
-                              key={p.id}
-                              className={`rounded px-1 py-0.5 text-[9px] font-semibold truncate border ${col.bg} ${col.border} ${col.text}`}
-                            >
-                              {p.user_name} {fmtHours(p.hours)}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-
-                    {planningsWithTime.map(pl => {
-                      if (!pl.start_time) return null
-                      const [h, m] = pl.start_time.split(':').map(Number)
-                      const startH = h + m / 60
-                      const topPx = Math.max(0, (startH - CAL_START_H) * ROW_H)
-                      const endH = pl.end_time ? (() => { const [eh, em] = pl.end_time!.split(':').map(Number); return eh + em / 60 })() : startH + pl.team_size * 0.5
-                      const heightPx = Math.max((endH - startH) * ROW_H, 26)
-                      const eq = equipes.find(e => e.id === pl.equipe_id)
-                      const bgColor = eq ? `${eq.color}25` : '#6366f125'
-                      const borderColor = eq ? eq.color : '#6366f1'
-                      return (
-                        <div
-                          key={`pl-${pl.id}`}
-                          className="absolute left-0.5 right-0.5 rounded sm:rounded-lg p-0.5 sm:p-1.5 z-5 overflow-hidden group/pl cursor-default flex flex-col"
-                          style={{ top: topPx, height: heightPx, backgroundColor: bgColor, border: `1.5px dashed ${borderColor}` }}
-                          title={`PRÉVU · ${pl.label} · ${pl.team_size} pers.${pl.notes ? ` · ${pl.notes}` : ''}`}
-                        >
-                          <p className="text-[8px] sm:text-[9px] font-bold leading-tight truncate flex items-center gap-1" style={{ color: borderColor }}>
-                            <span className="text-[7px] sm:text-[8px] font-bold uppercase tracking-widest px-1 py-0.5 rounded-[3px]" style={{ backgroundColor: borderColor, color: 'white' }}>Prévu</span>
-                            {pl.label}
-                          </p>
-                          <p className="text-[8px] sm:text-[9px] leading-tight opacity-70 truncate mt-0.5" style={{ color: borderColor }}>{pl.team_size} pers. · {pl.start_time.slice(0, 5)}{pl.end_time ? `→${pl.end_time.slice(0, 5)}` : ''}</p>
-                          {pl.notes && <p className="text-[8px] sm:text-[9px] leading-tight opacity-80 mt-1 whitespace-pre-wrap break-words overflow-y-auto" style={{ color: borderColor }}>{pl.notes}</p>}
-                          <button onClick={() => onDeletePlanning(pl.id)} className="absolute top-1 right-1 opacity-0 group-hover/pl:opacity-100 transition-opacity text-red-500 hover:text-red-600 bg-[#fff9] rounded p-0.5"><X className="w-2.5 h-2.5" /></button>
-                        </div>
-                      )
-                    })}
-
-                    {planningsNoTime.length > 0 && (
-                      <div className="absolute bottom-1 left-0.5 right-0.5 flex flex-col gap-0.5">
-                        {planningsNoTime.map(pl => {
-                          const eq = equipes.find(e => e.id === pl.equipe_id)
-                          const borderColor = eq ? eq.color : '#6366f1'
-                          return (
-                            <div key={`pl-${pl.id}`} className="rounded px-1 p-0.5 flex items-center gap-1 group/pl relative" style={{ backgroundColor: `${borderColor}20`, border: `1px dashed ${borderColor}` }}>
-                              <span className="text-[9px] font-semibold truncate flex-1 flex items-center gap-1" style={{ color: borderColor }}>
-                                <span className="text-[8px] font-bold uppercase tracking-widest px-1 py-0.5 rounded-[3px]" style={{ backgroundColor: borderColor, color: 'white' }}>Prévu</span>
-                                {pl.label}
-                              </span>
-                              <button onClick={() => onDeletePlanning(pl.id)} className="opacity-0 group-hover/pl:opacity-100 transition-opacity text-red-500 hover:text-red-600 mr-0.5"><X className="w-2.5 h-2.5" /></button>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-
-            {(() => {
-              const weekPointedH = days.reduce((sum, day) => {
-                const dayStr = getLocalDateStr(day)
-                return sum + (byDay[dayStr] ?? []).reduce((s, p) => s + p.hours, 0)
-              }, 0)
-              const weekPlannedH = days.reduce((sum, day) => {
-                const dayStr = getLocalDateStr(day)
-                return sum + (byDayPlannings[dayStr] ?? []).reduce((s, pl) => {
-                  if (!pl.start_time || !pl.end_time) return s
-                  const [sh, sm] = pl.start_time.split(':').map(Number)
-                  const [eh, em] = pl.end_time.split(':').map(Number)
-                  return s + ((eh + em / 60) - (sh + sm / 60))
-                }, 0)
-              }, 0)
-              return (
-                <div className="flex items-center gap-4 mt-3 text-xs text-secondary">
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-red-400 inline-block" /> Heure actuelle</span>
-                  <span className="flex items-center gap-1"><span className="text-[8px] font-bold uppercase tracking-widest px-1 py-0.5 rounded-[3px] bg-indigo-500 text-white">Prévu</span> Planification</span>
-                  <span className="opacity-60">Pointages sans heure : haut de colonne</span>
-                  <span className="ml-auto flex items-center gap-3 font-semibold text-primary">
-                    {weekPointedH > 0 && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-accent" /> Pointé : <span className="text-accent">{fmtHours(weekPointedH)}</span></span>}
-                    {weekPlannedH > 0 && <span className="flex items-center gap-1 opacity-70">Prévu : {fmtHours(weekPlannedH)}</span>}
-                  </span>
-                </div>
-              )
-            })()}
-          </div>
-        </div>
-
-        {/* Liste des planifications de la semaine avec consignes */}
-        {(() => {
+        {/* Liste planifications avec notes — sous la grille desktop */}
+        {effectiveView !== 'jour' && (() => {
           const weekPlannings = plannings.filter(pl => {
-            const d = pl.planned_date
             const start = getLocalDateStr(days[0])
             const end = getLocalDateStr(days[days.length - 1])
-            return d >= start && d <= end
+            return pl.planned_date >= start && pl.planned_date <= end
           })
           if (weekPlannings.length === 0) return null
           return (
-            <div className="mt-2 space-y-2">
+            <div className="mt-4 space-y-2 border-t border-[var(--elevation-border)] pt-4">
               <p className="text-xs font-semibold text-secondary uppercase tracking-wider">Planifications de la semaine</p>
               {weekPlannings.map(pl => {
                 const eq = equipes.find(e => e.id === pl.equipe_id)
-                const borderColor = eq ? eq.color : '#6366f1'
+                const borderColor = eq?.color ?? '#6366f1'
                 const dayLabel = new Date(pl.planned_date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'short' })
                 return (
                   <div key={pl.id} className="flex gap-3 p-3 rounded-xl border" style={{ borderColor: `${borderColor}40`, backgroundColor: `${borderColor}08` }}>
@@ -704,9 +846,7 @@ function WeeklyPlanningView({
                         <span className="text-xs font-semibold text-primary">{pl.label}</span>
                         <span className="text-xs text-secondary">{pl.team_size} pers.</span>
                       </div>
-                      {pl.notes && (
-                        <p className="text-xs text-secondary mt-1 whitespace-pre-wrap">{pl.notes}</p>
-                      )}
+                      {pl.notes && <p className="text-xs text-secondary mt-1 whitespace-pre-wrap">{pl.notes}</p>}
                     </div>
                     <button onClick={() => onDeletePlanning(pl.id)} className="text-secondary hover:text-red-500 transition-colors flex-shrink-0">
                       <X className="w-3.5 h-3.5" />
@@ -741,12 +881,14 @@ function EquipesTab({
   chantierEquipes: initialChantierEquipes,
   linkedQuoteId,
   orgMembers,
+  canEditRates,
 }: {
   chantierId: string
   allEquipes: Equipe[]
   chantierEquipes: Equipe[]
   linkedQuoteId?: string | null
   orgMembers: TeamMember[]
+  canEditRates: boolean
 }) {
   const [allEquipes, setAllEquipes] = useState(initialAllEquipes)
   const [assignedIds, setAssignedIds] = useState<Set<string>>(
@@ -846,7 +988,7 @@ function EquipesTab({
   const handleAddMembre = async (equipeId: string) => {
     const form = memberForms[equipeId]
     if (!form?.name.trim()) return
-    const taux = form.taux ? parseFloat(form.taux) : null
+    const taux = canEditRates && form.taux ? parseFloat(form.taux) : null
     const profileId = form.profileId ?? null
     const { membreId, error } = await addEquipeMembre(equipeId, { name: form.name.trim(), roleLabel: form.role.trim() || null, tauxHoraire: taux, profileId })
     if (!error && membreId) {
@@ -859,6 +1001,7 @@ function EquipesTab({
   }
 
   const handleSaveMembreTaux = async (equipeId: string, membreId: string) => {
+    if (!canEditRates) return
     const raw = editingMembreTaux[membreId]
     const taux = raw ? parseFloat(raw) : null
     await updateEquipeMembreTaux(membreId, taux)
@@ -1034,9 +1177,9 @@ function EquipesTab({
                       <p className="text-sm font-semibold text-primary truncate flex items-center gap-1.5">
                         {m.name}
                         {m.profile_id ? (
-                          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500" title="Lié à un compte — taux appliqué aux pointages">Lié</span>
+                          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500" title="Lié à un compte - taux appliqué aux pointages">Lié</span>
                         ) : (
-                          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500" title="Externe — pas de pointage relié">Externe</span>
+                          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500" title="Externe - pas de pointage relié">Externe</span>
                         )}
                       </p>
                       {m.role_label && <p className="text-xs text-secondary">{m.role_label}</p>}
@@ -1064,7 +1207,7 @@ function EquipesTab({
                       )}
                     </div>
                     {/* Taux horaire inline */}
-                    {editingMembreTaux[m.id] !== undefined ? (
+                    {canEditRates && editingMembreTaux[m.id] !== undefined ? (
                       <div className="flex items-center gap-1 flex-shrink-0">
                         <input
                           type="number"
@@ -1084,7 +1227,7 @@ function EquipesTab({
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                    ) : (
+                    ) : canEditRates ? (
                       <button
                         onClick={() => setEditingMembreTaux(prev => ({ ...prev, [m.id]: m.taux_horaire != null ? String(m.taux_horaire) : '' }))}
                         className="flex items-center gap-1 text-xs text-secondary hover:text-primary transition-colors flex-shrink-0 px-2 py-1 rounded-lg hover:bg-[var(--elevation-1)]"
@@ -1096,7 +1239,7 @@ function EquipesTab({
                           <><Euro className="w-3 h-3 opacity-40" /><span className="opacity-40">€/h</span></>
                         )}
                       </button>
-                    )}
+                    ) : null}
                     <button onClick={() => handleRemoveMembre(equipe.id, m.id)} className="text-secondary hover:text-red-500 transition-colors flex-shrink-0">
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -1114,7 +1257,7 @@ function EquipesTab({
                             setMemberForms(prev => ({ ...prev, [equipe.id]: {
                               name: member.full_name ?? member.email,
                               role: member.job_title ?? '',
-                              taux: member.labor_cost_per_hour != null ? String(member.labor_cost_per_hour) : '',
+                              taux: canEditRates && member.labor_cost_per_hour != null ? String(member.labor_cost_per_hour) : '',
                               profileId: member.user_id,
                             } }))
                             e.target.value = ''
@@ -1127,7 +1270,7 @@ function EquipesTab({
                           .filter(m => !equipe.membres.some(em => em.profile_id === m.user_id))
                           .map(m => (
                             <option key={m.user_id} value={m.user_id}>
-                              {m.full_name ?? m.email}{m.job_title ? ` — ${m.job_title}` : ''}
+                              {m.full_name ?? m.email}{m.job_title ? ` - ${m.job_title}` : ''}
                             </option>
                           ))}
                       </select>
@@ -1149,23 +1292,25 @@ function EquipesTab({
                       onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, role: e.target.value } }))}
                       onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
                     />
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      className="input w-20 text-sm"
-                      placeholder="€/h"
-                      value={mForm.taux ?? ''}
-                      onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, taux: e.target.value } }))}
-                      onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
-                    />
+                    {canEditRates && (
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className="input w-20 text-sm"
+                        placeholder="€/h"
+                        value={mForm.taux ?? ''}
+                        onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, taux: e.target.value } }))}
+                        onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
+                      />
+                    )}
                     <button onClick={() => handleAddMembre(equipe.id)} disabled={!mForm.name.trim()} className="btn-primary px-3 flex items-center gap-1">
                       <UserPlus className="w-3.5 h-3.5" />
                     </button>
                   </div>
                   {mForm.profileId && (
                     <p className="text-xs text-emerald-500 flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" /> Lié au compte — son taux sera utilisé pour ses pointages
+                      <CheckCircle2 className="w-3 h-3" /> Lié au compte - son taux sera utilisé pour ses pointages
                       <button
                         type="button"
                         onClick={() => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, profileId: null } }))}
@@ -1242,7 +1387,7 @@ function MemberHoursReports({
     <div className="card overflow-hidden">
       <div className="p-4 border-b border-[var(--elevation-border)] flex items-center gap-2">
         <Download className="w-4 h-4 text-accent" />
-        <p className="font-bold text-primary text-sm">Rapports d&apos;heures — par membre</p>
+        <p className="font-bold text-primary text-sm">Rapports d&apos;heures - par membre</p>
       </div>
       <div className="divide-y divide-[var(--elevation-border)]">
         {members.map(m => (
@@ -1297,6 +1442,10 @@ export default function ChantierDetailClient({
   invoiceStubs = [],
   orgSector = null,
   materials = [],
+  situationsSummary = null,
+  canCreateSituation = false,
+  canCreateSolde = false,
+  permissions,
 }: {
   chantier: ChantierDetail
   initialTaches: Tache[]
@@ -1316,6 +1465,10 @@ export default function ChantierDetailClient({
   invoiceStubs?: import('@/lib/data/queries/invoices').InvoiceStub[]
   orgSector?: string | null
   materials?: import('@/lib/data/queries/catalog').CatalogMaterial[]
+  situationsSummary?: SituationsSummary | null
+  canCreateSituation?: boolean
+  canCreateSolde?: boolean
+  permissions: ChantierPermissions
 }) {
   const router = useRouter()
 
@@ -1326,10 +1479,31 @@ export default function ChantierDetailClient({
   const [notes, setNotes] = useState(initialNotes)
   const [plannings, setPlannings] = useState(initialPlannings)
   const [tab, setTab] = useState<Tab>('taches')
+  const {
+    canEditChantier,
+    canManageTeam,
+    canPointage,
+    canManagePointages,
+    canViewExpenses,
+    canCreateExpenses,
+    canEditExpenses,
+    canDeleteExpenses,
+    canEditRates,
+  } = permissions
 
   useEffect(() => {
     setPlannings(initialPlannings)
   }, [initialPlannings])
+
+  useEffect(() => {
+    if (tab === 'rentabilite' && !canViewExpenses && !canCreateExpenses) setTab('taches')
+    if (tab === 'equipes' && !canManageTeam) setTab('taches')
+    if (tab === 'planning' && !canEditChantier) setTab('taches')
+    if (tab === 'jalons' && !canEditChantier) setTab('taches')
+    if (tab === 'photos' && !canEditChantier) setTab('taches')
+    if (tab === 'notes' && !canEditChantier) setTab('taches')
+    if (tab === 'pointages' && !canPointage && !canManagePointages) setTab('taches')
+  }, [tab, canViewExpenses, canManageTeam, canEditChantier, canPointage, canManagePointages])
 
   // Tâches
   const [newTacheTitle, setNewTacheTitle] = useState('')
@@ -1344,6 +1518,11 @@ export default function ChantierDetailClient({
   const [ptDesc, setPtDesc] = useState('')
   const [ptTacheId, setPtTacheId] = useState('')
   const [ptLoading, setPtLoading] = useState(false)
+  const [ptMode, setPtMode] = useState<'me' | 'team'>('me')
+  const [ptEquipeId, setPtEquipeId] = useState(initialChantierEquipes[0]?.id ?? '')
+  const [ptPresentMemberIds, setPtPresentMemberIds] = useState<Set<string>>(
+    () => new Set(initialChantierEquipes[0]?.membres.map(m => m.id) ?? []),
+  )
 
   // Notes
   const [noteContent, setNoteContent] = useState('')
@@ -1365,7 +1544,7 @@ export default function ChantierDetailClient({
   const [photosEmailError, setPhotosEmailError] = useState<string | null>(null)
   const [photosEmailRecipient, setPhotosEmailRecipient] = useState('')
 
-  // Contact référent — édition inline
+  // Contact référent - édition inline
   const [editContact, setEditContact] = useState(false)
   const [contactName, setContactName] = useState(chantier.contact_name ?? '')
   const [contactEmail, setContactEmail] = useState(chantier.contact_email ?? '')
@@ -1373,7 +1552,7 @@ export default function ChantierDetailClient({
   const [contactSaving, setContactSaving] = useState(false)
   const [contactError, setContactError] = useState<string | null>(null)
 
-  // Dates — édition inline
+  // Dates - édition inline
   const [editDates, setEditDates] = useState(false)
   const [startDate, setStartDate] = useState(chantier.start_date ?? '')
   const [estimatedEndDate, setEstimatedEndDate] = useState(chantier.estimated_end_date ?? '')
@@ -1392,6 +1571,7 @@ export default function ChantierDetailClient({
   const linkedQuote = linkableQuotes.find(q => q.id === linkedQuoteId) ?? null
 
   const handleSaveQuoteLink = async () => {
+    if (!canEditChantier) return
     setQuoteLinkSaving(true)
     const { error } = await updateChantier(chantier.id, { quoteId: quoteLinkValue || null })
     if (error) { alert(error); setQuoteLinkSaving(false); return }
@@ -1401,6 +1581,7 @@ export default function ChantierDetailClient({
   }
 
   const handleSaveContact = async () => {
+    if (!canEditChantier) return
     setContactSaving(true)
     setContactError(null)
     const { error } = await updateChantier(chantier.id, {
@@ -1414,6 +1595,7 @@ export default function ChantierDetailClient({
   }
 
   const handleSaveDates = async () => {
+    if (!canEditChantier) return
     setDatesSaving(true)
     setDatesError(null)
     const { error } = await updateChantier(chantier.id, {
@@ -1437,6 +1619,7 @@ export default function ChantierDetailClient({
   const [emailRecipient, setEmailRecipient] = useState<string | null>(null)
 
   const handleSendReportEmail = async () => {
+    if (!canEditChantier) return
     setEmailStatus('sending')
     setEmailError(null)
     const { error, recipient } = await sendChantierReportEmail(chantier.id, {
@@ -1453,11 +1636,7 @@ export default function ChantierDetailClient({
     }
   }
 
-  // Situation
-  const [showSituationModal, setShowSituationModal] = useState(false)
-  const [situationRate, setSituationRate] = useState(50)
-  const [situationLoading, setSituationLoading] = useState(false)
-  const [situationError, setSituationError] = useState<string | null>(null)
+  // Situation — géré par SituationsSection
 
   // Task suggestions
   type TaskSuggestion = { _id: string; title: string; editing: boolean }
@@ -1488,6 +1667,7 @@ export default function ChantierDetailClient({
     n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
   const totalHours = pointages.reduce((s, p) => s + p.hours, 0)
+  const selectedPointageEquipe = initialChantierEquipes.find(e => e.id === ptEquipeId) ?? null
 
   // Compteurs dérivés du state vivant (pas du snapshot chantier initial)
   const tachesCount = taches.length
@@ -1498,6 +1678,7 @@ export default function ChantierDetailClient({
 
   const handleAddTache = async (e: React.SyntheticEvent) => {
     e.preventDefault()
+    if (!canEditChantier) return
     if (!newTacheTitle.trim()) return
     setTacheLoading(true)
     const titleToAdd = newTacheTitle.trim()
@@ -1525,23 +1706,27 @@ export default function ChantierDetailClient({
   }
 
   const handleStatusToggle = async (tache: Tache) => {
+    if (!canEditChantier) return
     const nextStatus = STATUS_CYCLE[tache.status]
     setTaches(prev => prev.map(t => t.id === tache.id ? { ...t, status: nextStatus } : t))
     await updateTache(tache.id, chantier.id, { status: nextStatus })
   }
 
   const handleDeleteTache = async (tache: Tache) => {
+    if (!canEditChantier) return
     if (!confirm(`Supprimer la tâche "${tache.title}" ?`)) return
     setTaches(prev => prev.filter(t => t.id !== tache.id))
     await deleteTache(tache.id, chantier.id)
   }
 
   const handleSaveTacheNote = async (tache: Tache, note: string) => {
+    if (!canEditChantier) return
     setTaches(prev => prev.map(t => t.id === tache.id ? { ...t, progress_note: note || null } : t))
     await updateTache(tache.id, chantier.id, { progressNote: note || null })
   }
 
   const handleDragEnd = async (event: DragEndEvent) => {
+    if (!canEditChantier) return
     const { active, over } = event
     if (!over || active.id === over.id) return
 
@@ -1555,6 +1740,7 @@ export default function ChantierDetailClient({
   // ── Task suggestions ──
 
   const handleSuggestTasks = async () => {
+    if (!canEditChantier) return
     if (!linkedQuoteId) return
     setSuggestTasksLoading(true)
     setSuggestTasksError(null)
@@ -1592,6 +1778,7 @@ export default function ChantierDetailClient({
   }
 
   const handleValidateSuggestion = async (id: string) => {
+    if (!canEditChantier) return
     if (validatingSuggId || validateAllLoading) return
     const sugg = taskSuggestions.find(s => s._id === id)
     if (!sugg || !sugg.title.trim()) return
@@ -1614,6 +1801,7 @@ export default function ChantierDetailClient({
   }
 
   const handleValidateAllSuggestions = async () => {
+    if (!canEditChantier) return
     if (validateAllLoading) return
     setValidateAllLoading(true)
     const remaining = taskSuggestions.filter(s => s.title.trim())
@@ -1639,6 +1827,7 @@ export default function ChantierDetailClient({
   // ── Plannings ──
 
   const handleAddPlanning = async (data: { plannedDate: string; startTime: string; endTime: string; label: string; equipeId: string | null; memberId: string | null; teamSize: number; notes: string }): Promise<string | null> => {
+    if (!canEditChantier) return 'Action non autorisée.'
     const { planningId, error } = await createChantierPlanning(chantier.id, {
       plannedDate: data.plannedDate,
       startTime: data.startTime || null,
@@ -1663,12 +1852,17 @@ export default function ChantierDetailClient({
         team_size: data.teamSize,
         notes: data.notes || null,
         created_at: new Date().toISOString(),
+        route_id: null,
+        route_order: null,
+        duration_min: null,
+        travel_from_prev_min: null,
       }])
     }
     return null
   }
 
   const handleDeletePlanning = async (planningId: string) => {
+    if (!canEditChantier) return
     setPlannings(prev => prev.filter(p => p.id !== planningId))
     await deleteChantierPlanning(planningId, chantier.id)
   }
@@ -1677,50 +1871,90 @@ export default function ChantierDetailClient({
 
   const handleAddPointage = async (e: React.SyntheticEvent) => {
     e.preventDefault()
+    if (ptMode === 'team' && !canManagePointages) return
+    if (ptMode !== 'team' && !canPointage) return
     const h = parseInt(ptHoursInt) || 0
     const m = parseInt(ptMinutes) || 0
     const hours = h + m / 60
     if (!ptDate || hours <= 0) return
+    if (ptMode === 'team' && ptPresentMemberIds.size === 0) return
 
-    // Optimistic: ajouter immédiatement à l'état local
-    const tempId = crypto.randomUUID()
-    const tempPointage: Pointage = {
-      id: tempId,
-      chantier_id: chantier.id,
-      tache_id: ptTacheId || null,
-      user_id: 'temp',
-      member_id: null,
-      date: ptDate,
-      hours,
-      description: ptDesc || null,
-      created_at: new Date().toISOString(),
-      start_time: ptStartTime || null,
-      user_name: 'Moi',
-      tache_title: taches.find(t => t.id === ptTacheId)?.title ?? null,
-    }
-    setPointages(prev => [tempPointage, ...prev])
     const savedDate = ptDate
     const savedHours = ptHoursInt
     const savedMinutes = ptMinutes
     const savedDesc = ptDesc
     const savedStartTime = ptStartTime
     const savedTacheId = ptTacheId
+    const savedMode = ptMode
+    const savedMembers = selectedPointageEquipe?.membres.filter(m => ptPresentMemberIds.has(m.id)) ?? []
+    const tacheTitle = taches.find(t => t.id === savedTacheId)?.title ?? null
+
+    const tempPointages: Pointage[] = savedMode === 'team'
+      ? savedMembers.map(member => ({
+          id: crypto.randomUUID(),
+          chantier_id: chantier.id,
+          tache_id: savedTacheId || null,
+          user_id: null,
+          member_id: member.id,
+          date: savedDate,
+          hours,
+          description: savedDesc || null,
+          created_at: new Date().toISOString(),
+          start_time: savedStartTime || null,
+          user_name: [member.prenom, member.name].filter(Boolean).join(' ') || member.name,
+          tache_title: tacheTitle,
+        }))
+      : [{
+          id: crypto.randomUUID(),
+          chantier_id: chantier.id,
+          tache_id: savedTacheId || null,
+          user_id: 'temp',
+          member_id: null,
+          date: savedDate,
+          hours,
+          description: savedDesc || null,
+          created_at: new Date().toISOString(),
+          start_time: savedStartTime || null,
+          user_name: 'Moi',
+          tache_title: tacheTitle,
+        }]
+
+    setPointages(prev => [...tempPointages, ...prev])
+
     setPtHoursInt('')
     setPtMinutes('0')
     setPtDesc('')
     setPtStartTime('')
 
     setPtLoading(true)
-    const { error } = await createPointage(chantier.id, {
-      date: savedDate,
-      hours,
-      tacheId: savedTacheId || null,
-      description: savedDesc || null,
-      start_time: savedStartTime || null,
-    })
+    let error: string | null = null
+    if (savedMode === 'team') {
+      for (const member of savedMembers) {
+        const result = await createMemberPointageAdmin(chantier.id, member.id, {
+          date: savedDate,
+          hours,
+          description: savedDesc || null,
+          start_time: savedStartTime || null,
+        })
+        if (result.error) {
+          error = result.error
+          break
+        }
+      }
+    } else {
+      const result = await createPointage(chantier.id, {
+        date: savedDate,
+        hours,
+        tacheId: savedTacheId || null,
+        description: savedDesc || null,
+        start_time: savedStartTime || null,
+      })
+      error = result.error
+    }
     setPtLoading(false)
     if (error) {
-      setPointages(prev => prev.filter(p => p.id !== tempId))
+      const tempIds = new Set(tempPointages.map(p => p.id))
+      setPointages(prev => prev.filter(p => !tempIds.has(p.id)))
       setPtHoursInt(savedHours)
       setPtMinutes(savedMinutes)
       setPtDesc(savedDesc)
@@ -1729,6 +1963,7 @@ export default function ChantierDetailClient({
   }
 
   const handleDeletePointage = async (p: Pointage) => {
+    if (!canManagePointages) return
     setPointages(prev => prev.filter(pt => pt.id !== p.id))
     await deletePointage(p.id, chantier.id)
   }
@@ -1737,6 +1972,7 @@ export default function ChantierDetailClient({
 
   const handleAddNote = async (e: React.SyntheticEvent) => {
     e.preventDefault()
+    if (!canEditChantier) return
     const contentToSave = noteContent.trim()
     if (!contentToSave) return
 
@@ -1755,6 +1991,7 @@ export default function ChantierDetailClient({
   }
 
   const handleDeleteNote = async (note: ChantierNote) => {
+    if (!canEditChantier) return
     setNotes(prev => prev.filter(n => n.id !== note.id))
     await deleteChantierNote(note.id, chantier.id)
   }
@@ -1762,6 +1999,7 @@ export default function ChantierDetailClient({
   // ── Photos ──
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canEditChantier) return
     const file = e.target.files?.[0]
     if (!file) return
 
@@ -1793,24 +2031,12 @@ export default function ChantierDetailClient({
   }
 
   const handleDeletePhoto = async (photo: ChantierPhoto) => {
+    if (!canEditChantier) return
     if (!confirm('Supprimer cette photo ?')) return
     setPhotos(prev => prev.filter(p => p.id !== photo.id))
     await deleteChantierPhoto(photo.id, chantier.id)
   }
 
-  // ── Situation ──
-
-  const handleGenerateSituation = async () => {
-    setSituationLoading(true)
-    setSituationError(null)
-    const { invoiceId, error } = await generateSituationInvoice(chantier.id, situationRate)
-    setSituationLoading(false)
-    if (error) return setSituationError(error)
-    setShowSituationModal(false)
-    if (!invoiceId) return
-    const params = new URLSearchParams({ id: invoiceId, returnTo: `/chantiers/${chantier.id}` })
-    router.push(`/finances/invoice-editor?${params}`)
-  }
 
   const statusCfg = CHANTIER_STATUS_CONFIG[chantier.status as keyof typeof CHANTIER_STATUS_CONFIG]
     ?? { label: chantier.status, color: 'bg-secondary/20 text-secondary' }
@@ -1819,20 +2045,20 @@ export default function ChantierDetailClient({
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: 'taches',      label: 'Tâches',      count: taches.length },
-    { id: 'jalons',      label: 'Jalons'       },
-    { id: 'planning',    label: 'Planning'     },
-    { id: 'pointages',   label: 'Pointages',   count: pointages.length },
-    { id: 'photos',      label: 'Photos',      count: photos.length },
-    { id: 'notes',       label: 'Journal',     count: notes.length },
-    { id: 'equipes',     label: 'Équipes'      },
-    { id: 'rentabilite', label: 'Rentabilité'  },
+    ...(canEditChantier ? [{ id: 'jalons' as const, label: 'Jalons' }] : []),
+    ...(canEditChantier ? [{ id: 'planning' as const, label: 'Planning' }] : []),
+    ...(canPointage || canManagePointages ? [{ id: 'pointages' as const, label: 'Pointages', count: pointages.length }] : []),
+    ...(canEditChantier ? [{ id: 'photos' as const, label: 'Photos', count: photos.length }] : []),
+    ...(canEditChantier ? [{ id: 'notes' as const, label: 'Journal', count: notes.length }] : []),
+    ...(canManageTeam ? [{ id: 'equipes' as const, label: 'Équipes' }] : []),
+    ...((canViewExpenses || canCreateExpenses) ? [{ id: 'rentabilite' as const, label: canViewExpenses ? 'Rentabilité' : 'Mes dépenses' }] : []),
   ]
 
   return (
     <div className="page-container space-y-6" style={{ maxWidth: '72rem' }}>
       {/* Back + planning global */}
       <div className="flex items-center justify-between">
-        <button onClick={() => router.back()} className="flex items-center gap-2 text-sm text-secondary hover:text-primary transition-colors">
+        <button onClick={() => router.replace('/chantiers')} className="flex items-center gap-2 text-sm text-secondary hover:text-primary transition-colors">
           <ArrowLeft className="w-4 h-4" /> Retour aux chantiers
         </button>
         <Link
@@ -1895,13 +2121,15 @@ export default function ChantierDetailClient({
                     </a>
                   )}
                 </div>
-                <button
-                  onClick={() => setEditContact(true)}
-                  className="p-1 text-secondary hover:text-primary transition-colors flex-shrink-0"
-                  title={contactName || contactEmail || contactPhone ? 'Modifier le contact' : 'Ajouter un contact référent'}
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
+                {canEditChantier && (
+                  <button
+                    onClick={() => setEditContact(true)}
+                    className="p-1 text-secondary hover:text-primary transition-colors flex-shrink-0"
+                    title={contactName || contactEmail || contactPhone ? 'Modifier le contact' : 'Ajouter un contact référent'}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             ) : (
               <div className="flex flex-col gap-2 mt-1 p-3 rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)]">
@@ -1961,15 +2189,17 @@ export default function ChantierDetailClient({
                       <span className="font-mono text-xs">{linkedQuote.number ?? '/'}</span>
                       {linkedQuote.title && <span className="text-secondary">· {linkedQuote.title}</span>}
                     </Link>
-                    <button
-                      onClick={() => { setQuoteLinkValue(linkedQuote.id); setEditQuoteLink(true) }}
-                      className="p-1 text-secondary hover:text-primary transition-colors flex-shrink-0"
-                      title="Changer le devis lié"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
+                    {canEditChantier && (
+                      <button
+                        onClick={() => { setQuoteLinkValue(linkedQuote.id); setEditQuoteLink(true) }}
+                        className="p-1 text-secondary hover:text-primary transition-colors flex-shrink-0"
+                        title="Changer le devis lié"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </>
-                ) : (
+                ) : canEditChantier ? (
                   <button
                     onClick={() => { setQuoteLinkValue(''); setEditQuoteLink(true) }}
                     className="text-sm text-secondary hover:text-accent transition-colors flex items-center gap-1.5"
@@ -1977,7 +2207,7 @@ export default function ChantierDetailClient({
                     <FileText className="w-3.5 h-3.5" />
                     Lier un devis
                   </button>
-                )}
+                ) : null}
               </div>
             ) : (
               <div className="flex flex-col gap-2 mt-1 p-3 rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)]">
@@ -2025,13 +2255,15 @@ export default function ChantierDetailClient({
                   <ChevronRight className="w-3 h-3" />
                   <span>{fmtDate(estimatedEndDate || null)}</span>
                 </div>
-                <button
-                  onClick={() => setEditDates(true)}
-                  className="p-1 text-secondary hover:text-primary transition-colors flex-shrink-0"
-                  title="Modifier les dates"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
+                {canEditChantier && (
+                  <button
+                    onClick={() => setEditDates(true)}
+                    className="p-1 text-secondary hover:text-primary transition-colors flex-shrink-0"
+                    title="Modifier les dates"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             ) : (
               <div className="flex flex-col gap-2 p-3 rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)]">
@@ -2072,32 +2304,28 @@ export default function ChantierDetailClient({
             </div>
             {/* Actions */}
             <div className="flex gap-2 flex-wrap mt-1">
-              {chantier.quote_id && (
-                <button
-                  onClick={() => setShowSituationModal(true)}
+              {canEditChantier && (
+                <Link
+                  href={`/finances/invoice-editor?chantier=${chantier.id}&returnTo=${encodeURIComponent(`/chantiers/${chantier.id}`)}`}
                   className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
                 >
-                  <TrendingUp className="w-3.5 h-3.5" /> Situation de travaux
-                </button>
+                  <Euro className="w-3.5 h-3.5" /> Créer une facture
+                </Link>
               )}
-              <Link
-                href={`/finances/invoice-editor?chantier=${chantier.id}&returnTo=${encodeURIComponent(`/chantiers/${chantier.id}`)}`}
-                className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
-              >
-                <Euro className="w-3.5 h-3.5" /> Créer une facture
-              </Link>
               <button
                 onClick={() => setShowPdfPanel(v => !v)}
                 className={`btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5 ${showPdfPanel ? 'ring-2 ring-accent/40' : ''}`}
               >
                 <Download className="w-3.5 h-3.5" /> Rapport PDF
               </button>
-              <button
-                onClick={() => setShowAIAssistant(true)}
-                className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
-              >
-                <Sparkles className="w-3.5 h-3.5" /> Assistant IA
-              </button>
+              {canEditChantier && (
+                <button
+                  onClick={() => setShowAIAssistant(true)}
+                  className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> Assistant IA
+                </button>
+              )}
             </div>
 
             {/* Panneau PDF période */}
@@ -2185,7 +2413,23 @@ export default function ChantierDetailClient({
         </div>
       </div>
 
-      {/* Tabs — select sur mobile, onglets sur desktop */}
+      {/* ── Section situations de travaux ── */}
+      {situationsSummary && chantier.quote_id && (
+        <div className="card p-5 space-y-4">
+          <h3 className="text-sm font-bold text-primary uppercase tracking-wider flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-accent" /> Situations de travaux
+          </h3>
+          <SituationsSection
+            chantierId={chantier.id}
+            summary={situationsSummary}
+            canCreateSituation={canCreateSituation}
+            canCreateSolde={canCreateSolde}
+            returnTo={`/chantiers/${chantier.id}`}
+          />
+        </div>
+      )}
+
+      {/* Tabs - select sur mobile, onglets sur desktop */}
       <div>
         {/* Mobile : select */}
         <div className="sm:hidden">
@@ -2228,27 +2472,29 @@ export default function ChantierDetailClient({
       {tab === 'taches' && (
         <div className="space-y-4">
           {/* Add form */}
-          <form onSubmit={handleAddTache} className="card p-4 flex flex-col sm:flex-row gap-3">
-            <input
-              className="input flex-1"
-              placeholder="Ajouter une tâche..."
-              value={newTacheTitle}
-              onChange={e => setNewTacheTitle(e.target.value)}
-              required
-            />
-            <input
-              type="date"
-              className="input sm:w-40"
-              value={newTacheDue}
-              onChange={e => setNewTacheDue(e.target.value)}
-            />
-            <button type="submit" disabled={tacheLoading} className="btn-primary flex items-center gap-2 whitespace-nowrap">
-              <Plus className="w-4 h-4" /> Ajouter
-            </button>
-          </form>
+          {canEditChantier && (
+            <form onSubmit={handleAddTache} className="card p-4 flex flex-col sm:flex-row gap-3">
+              <input
+                className="input flex-1"
+                placeholder="Ajouter une tâche..."
+                value={newTacheTitle}
+                onChange={e => setNewTacheTitle(e.target.value)}
+                required
+              />
+              <input
+                type="date"
+                className="input sm:w-40"
+                value={newTacheDue}
+                onChange={e => setNewTacheDue(e.target.value)}
+              />
+              <button type="submit" disabled={tacheLoading} className="btn-primary flex items-center gap-2 whitespace-nowrap">
+                <Plus className="w-4 h-4" /> Ajouter
+              </button>
+            </form>
+          )}
 
           {/* Actions rapides: IA + Bibliothèque */}
-          {suggestTasksLoading ? (
+          {canEditChantier && (suggestTasksLoading ? (
             <div className="flex items-center gap-2 text-sm text-violet-500 dark:text-violet-400 px-1">
               <Loader2 className="w-4 h-4 animate-spin" />
               Génération en cours...
@@ -2275,10 +2521,10 @@ export default function ChantierDetailClient({
               )}
               {suggestTasksError && <p className="text-sm text-red-500">{suggestTasksError}</p>}
             </div>
-          )}
+          ))}
 
           {/* Bibliothèque de tâches réutilisables */}
-          {showTaskLibrary && !showTaskSuggestions && (
+          {canEditChantier && showTaskLibrary && !showTaskSuggestions && (
             <div className="card p-4 space-y-3 border-accent/20">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-bold text-primary flex items-center gap-2">
@@ -2312,7 +2558,7 @@ export default function ChantierDetailClient({
             </div>
           )}
 
-          {showTaskSuggestions && taskSuggestions.length > 0 && (
+          {canEditChantier && showTaskSuggestions && taskSuggestions.length > 0 && (
             <div className="card p-4 space-y-3 border-violet-400/30 dark:border-violet-500/30 bg-violet-500/5 dark:bg-violet-500/10">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-bold text-primary flex items-center gap-2">
@@ -2396,6 +2642,7 @@ export default function ChantierDetailClient({
                     onStatusToggle={handleStatusToggle}
                     onDelete={handleDeleteTache}
                     onSaveNote={handleSaveTacheNote}
+                    canEdit={canEditChantier}
                   />
                 ))}
               </div>
@@ -2430,9 +2677,107 @@ export default function ChantierDetailClient({
           </div>
 
           {/* Add form */}
+          {(canPointage || canManagePointages) && (
           <form onSubmit={handleAddPointage} className="card p-4 space-y-3">
             <p className="text-sm font-semibold text-primary">Ajouter un pointage</p>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPtMode('me')}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  ptMode === 'me'
+                    ? 'border-accent bg-accent/10 text-primary'
+                    : 'border-[var(--elevation-border)] text-secondary hover:text-primary'
+                }`}
+              >
+                <User className="h-3.5 w-3.5" />
+                Moi
+              </button>
+              {canManagePointages && initialChantierEquipes.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setPtMode('team')}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    ptMode === 'team'
+                      ? 'border-accent bg-accent/10 text-primary'
+                      : 'border-[var(--elevation-border)] text-secondary hover:text-primary'
+                  }`}
+                >
+                  <Users className="h-3.5 w-3.5" />
+                  Équipe
+                </button>
+              )}
+            </div>
+
+            {ptMode === 'team' && (
+              <div className="rounded-xl border border-[var(--elevation-border)] bg-base/40 p-3 space-y-3 dark:bg-white/[0.03]">
+                <div>
+                  <label className="text-xs text-secondary font-semibold mb-1 block">Équipe concernée</label>
+                  <select
+                    className="input w-full max-w-sm"
+                    value={ptEquipeId}
+                    onChange={e => {
+                      const equipeId = e.target.value
+                      const equipe = initialChantierEquipes.find(eq => eq.id === equipeId)
+                      setPtEquipeId(equipeId)
+                      setPtPresentMemberIds(new Set(equipe?.membres.map(m => m.id) ?? []))
+                    }}
+                  >
+                    {initialChantierEquipes.map(eq => (
+                      <option key={eq.id} value={eq.id}>
+                        {eq.name} ({eq.membres.length} pers.)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedPointageEquipe && (
+                  <div>
+                    <p className="text-xs text-secondary font-semibold mb-2">Présents à pointer</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedPointageEquipe.membres.map(member => {
+                        const checked = ptPresentMemberIds.has(member.id)
+                        const fullName = [member.prenom, member.name].filter(Boolean).join(' ') || member.name
+                        return (
+                          <label
+                            key={member.id}
+                            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs transition-colors ${
+                              checked
+                                ? 'border-accent bg-accent/10 text-primary'
+                                : 'border-[var(--elevation-border)] text-secondary hover:text-primary'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="sr-only"
+                              checked={checked}
+                              onChange={() => {
+                                setPtPresentMemberIds(prev => {
+                                  const next = new Set(prev)
+                                  if (next.has(member.id)) next.delete(member.id)
+                                  else next.add(member.id)
+                                  return next
+                                })
+                              }}
+                            />
+                            {fullName}
+                            {canEditRates && member.taux_horaire != null && (
+                              <span className="text-secondary/70">· {member.taux_horaire} €/h</span>
+                            )}
+                          </label>
+                        )
+                      })}
+                    </div>
+                    <p className="mt-2 text-xs text-secondary">
+                      Un pointage sera créé pour chaque personne cochée. La rentabilité chantier utilisera ensuite son taux horaire.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Ligne 1 : Date · Heure début · Durée */}
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <div>
                 <label className="text-xs text-secondary font-semibold mb-1 block">Date</label>
                 <input type="date" className="input w-full" value={ptDate} onChange={e => setPtDate(e.target.value)} required />
@@ -2441,15 +2786,18 @@ export default function ChantierDetailClient({
                 <label className="text-xs text-secondary font-semibold mb-1 block">Heure de début</label>
                 <input type="time" className="input w-full" value={ptStartTime} onChange={e => setPtStartTime(e.target.value)} />
               </div>
-              <div>
+              <div className="col-span-2 md:col-span-1">
                 <label className="text-xs text-secondary font-semibold mb-1 block">Durée</label>
-                <div className="flex items-center gap-1.5">
-                  <input type="number" min="0" max="23" placeholder="7" className="input w-20 text-center" value={ptHoursInt} onChange={e => setPtHoursInt(e.target.value)} required />
-                  <span className="text-sm font-bold text-secondary">h</span>
-                  <input type="number" min="0" max="59" step="5" placeholder="30" className="input w-20 text-center" value={ptMinutes} onChange={e => setPtMinutes(e.target.value)} />
-                  <span className="text-sm font-bold text-secondary">min</span>
+                <div className="flex items-center gap-2">
+                  <input type="number" min="0" max="23" placeholder="7" className="input flex-1 min-w-0 text-center" value={ptHoursInt} onChange={e => setPtHoursInt(e.target.value)} required />
+                  <span className="text-sm font-bold text-secondary flex-shrink-0">h</span>
+                  <input type="number" min="0" max="59" step="5" placeholder="30" className="input flex-1 min-w-0 text-center" value={ptMinutes} onChange={e => setPtMinutes(e.target.value)} />
+                  <span className="text-sm font-bold text-secondary flex-shrink-0">min</span>
                 </div>
               </div>
+            </div>
+            {/* Ligne 2 : Tâche · Description */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-secondary font-semibold mb-1 block">Tâche (optionnel)</label>
                 <select className="input w-full" value={ptTacheId} onChange={e => setPtTacheId(e.target.value)}>
@@ -2462,14 +2810,16 @@ export default function ChantierDetailClient({
                 <input className="input w-full" placeholder="Optionnel..." value={ptDesc} onChange={e => setPtDesc(e.target.value)} />
               </div>
             </div>
-            <button type="submit" disabled={ptLoading} className="btn-primary flex items-center gap-2">
+            <button type="submit" disabled={ptLoading || (ptMode === 'team' && ptPresentMemberIds.size === 0)} className="btn-primary flex items-center gap-2">
               <Plus className="w-4 h-4" /> {ptLoading ? 'Enregistrement...' : 'Enregistrer'}
             </button>
           </form>
+          )}
 
           {/* Table pointages */}
           <div className="card overflow-hidden">
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[500px]">
               <thead>
                 <tr className="border-b border-[var(--elevation-border)] text-xs text-secondary uppercase tracking-wider">
                   <th className="text-left px-4 py-3 font-semibold">Date</th>
@@ -2478,7 +2828,7 @@ export default function ChantierDetailClient({
                   <th className="text-right px-4 py-3 font-semibold">Heures</th>
                   <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Tâche</th>
                   <th className="text-left px-4 py-3 font-semibold hidden lg:table-cell">Description</th>
-                  <th className="px-4 py-3" />
+                  {canManagePointages && <th className="px-4 py-3" />}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
@@ -2493,19 +2843,22 @@ export default function ChantierDetailClient({
                     <td className="px-4 py-3 text-right font-semibold text-primary">{fmtHours(p.hours)}</td>
                     <td className="px-4 py-3 text-sm text-secondary hidden md:table-cell">{p.tache_title ?? '/'}</td>
                     <td className="px-4 py-3 text-sm text-secondary hidden lg:table-cell truncate max-w-xs">{p.description ?? '/'}</td>
-                    <td className="px-4 py-3">
-                      <button onClick={() => handleDeletePointage(p)} className="text-secondary hover:text-red-500 transition-colors">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </td>
+                    {canManagePointages && (
+                      <td className="px-4 py-3">
+                        <button onClick={() => handleDeletePointage(p)} className="text-secondary hover:text-red-500 transition-colors">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {/* Rapports PDF par membre */}
-          {pointages.length > 0 && (
+          {canManagePointages && pointages.length > 0 && (
             <MemberHoursReports pointages={pointages} individualMembers={initialIndividualMembers} />
           )}
         </div>
@@ -2831,6 +3184,13 @@ export default function ChantierDetailClient({
           materials={materials}
           invoiceStubs={invoiceStubs}
           targetMarginPct={chantier.target_margin_pct ?? 30}
+          permissions={{
+            canCreateExpenses,
+            canEditExpenses,
+            canDeleteExpenses,
+            canEditRates,
+            canEditChantier,
+          }}
         />
       )}
 
@@ -2843,66 +3203,15 @@ export default function ChantierDetailClient({
             chantierEquipes={initialChantierEquipes}
             linkedQuoteId={linkedQuoteId}
             orgMembers={orgMembers}
+            canEditRates={canEditRates}
           />
           <IndividualMembersSection
             chantierId={chantier.id}
             initialMembers={initialIndividualMembers}
             orgMembers={orgMembers}
             orgPhantomMembers={orgPhantomMembers}
+            canEditRates={canEditRates}
           />
-        </div>
-      )}
-
-      {/* ── Modal Situation de travaux ── */}
-      {showSituationModal && (
-        <div className="modal-overlay">
-          <div className="modal-panel space-y-5 sm:max-w-md">
-            <h2 className="text-lg font-bold text-primary flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-accent" /> Situation de travaux
-            </h2>
-
-            <div>
-              <p className="text-sm text-secondary mb-3">
-                Facturation partielle basée sur l'avancement du chantier. Le montant sera calculé sur le devis lié, avec déduction des acomptes déjà versés.
-              </p>
-              <label className="text-xs font-semibold text-secondary block mb-2">Avancement (%)</label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range" min={1} max={100} step={5}
-                  value={situationRate}
-                  onChange={e => setSituationRate(parseInt(e.target.value))}
-                  className="flex-1"
-                />
-                <span className="text-xl font-extrabold text-accent w-16 text-right">{situationRate}%</span>
-              </div>
-              <div className="flex gap-2 mt-3">
-                {[25, 50, 75, 100].map(v => (
-                  <button
-                    key={v}
-                    onClick={() => setSituationRate(v)}
-                    className={`flex-1 py-1.5 rounded-lg text-sm font-bold border transition-colors ${situationRate === v ? 'bg-accent text-black border-accent' : 'border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
-                  >
-                    {v}%
-                  </button>
-                ))}
-              </div>
-              <div className="mt-4 p-3 card">
-                <p className="text-xs text-secondary">Montant de la situation</p>
-                <p className="text-xl font-extrabold text-primary mt-0.5">
-                  {((chantier.budget_ht * situationRate) / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })} HT
-                </p>
-              </div>
-            </div>
-
-            {situationError && <p className="text-sm text-red-500">{situationError}</p>}
-
-            <div className="flex gap-3">
-              <button onClick={() => setShowSituationModal(false)} className="btn-secondary flex-1">Annuler</button>
-              <button onClick={handleGenerateSituation} disabled={situationLoading} className="btn-primary flex-1">
-                {situationLoading ? 'Génération...' : 'Générer la facture'}
-              </button>
-            </div>
-          </div>
         </div>
       )}
 

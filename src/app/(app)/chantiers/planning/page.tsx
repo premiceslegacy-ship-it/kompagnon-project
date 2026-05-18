@@ -1,6 +1,10 @@
-import { getAllPlannings, getChantiers } from '@/lib/data/queries/chantiers'
+import { getAllPlannings, getChantiers, getEquipes } from '@/lib/data/queries/chantiers'
+import { getOrgIndividualMembers } from '@/lib/data/queries/members'
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
+import { getOrganization } from '@/lib/data/queries/organization'
+import { getAllTourneeRoutes } from '@/lib/data/mutations/planning'
 import PlanningGlobalClient from './PlanningGlobalClient'
 
 async function computeIcalToken(orgId: string): Promise<string> {
@@ -12,11 +16,16 @@ async function computeIcalToken(orgId: string): Promise<string> {
 }
 
 export default async function PlanningGlobalPage() {
-  const [plannings, chantiers, modules, orgId] = await Promise.all([
+  const [plannings, chantiers, equipes, individualMembers, modules, orgId, canManage, organization, routeDepartures] = await Promise.all([
     getAllPlannings(),
     getChantiers(),
+    getEquipes(),
+    getOrgIndividualMembers(),
     getOrganizationModules(),
     getCurrentOrganizationId(),
+    hasPermission('chantiers.planning'),
+    getOrganization(),
+    getAllTourneeRoutes(),
   ])
 
   const icalToken = orgId ? await computeIcalToken(orgId) : null
@@ -25,9 +34,16 @@ export default async function PlanningGlobalPage() {
     <PlanningGlobalClient
       initialPlannings={plannings}
       chantiers={chantiers}
+      equipes={equipes}
+      individualMembers={individualMembers}
       planningAiEnabled={modules.planning_ai}
       orgId={orgId}
       icalToken={icalToken}
+      canManage={canManage}
+      orgDepartureAddress={organization?.departure_address ?? null}
+      orgDeparturePostalCode={organization?.departure_postal_code ?? null}
+      orgDepartureCity={organization?.departure_city ?? null}
+      routeDepartures={routeDepartures}
     />
   )
 }

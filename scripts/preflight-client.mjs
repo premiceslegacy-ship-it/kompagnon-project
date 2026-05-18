@@ -8,6 +8,7 @@ const root = process.cwd()
 const workerName = process.argv[2]
 const flags = new Set(process.argv.slice(3))
 const withOpenNextBuild = flags.has('--with-open-next-build')
+const strictEnv = flags.has('--strict-env') || process.env.CI === 'true' || process.env.NODE_ENV === 'production'
 
 const requiredFiles = [
   'package.json',
@@ -83,6 +84,7 @@ const env = {
 
 console.log('Atelier client preflight')
 console.log('========================')
+if (strictEnv) console.log('INFO mode strict env actif: secrets prod manquants = erreur')
 
 check(Boolean(workerName), 'worker name fourni', 'worker name manquant: npm run preflight:client -- atelier-nom', failures, warnings)
 if (workerName) {
@@ -95,7 +97,7 @@ for (const file of requiredFiles) {
 
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
 check(pkg.scripts?.deploy?.includes('run-production-deploy.sh'), 'script deploy utilise run-production-deploy.sh', 'script deploy inattendu', failures, warnings)
-check(pkg.scripts?.preview?.includes('--dangerouslyUseUnsupportedNextVersion'), 'script preview documente le contournement Next 14/OpenNext', 'script preview sans flag OpenNext Next 14', failures, warnings)
+check(!pkg.scripts?.preview?.includes('--dangerouslyUseUnsupportedNextVersion'), 'script preview utilise une combinaison Next/OpenNext supportée', 'script preview contient encore --dangerouslyUseUnsupportedNextVersion', failures, warnings)
 
 const migrations = listMigrations()
 const versions = migrations.map((name) => name.slice(0, 3))
@@ -111,11 +113,20 @@ const missingInDoc = migrations.filter((name) => !deploymentDoc.includes(name))
 check(missingInDoc.length === 0, 'DEPLOIEMENT_CLIENT.md liste toutes les migrations', `migrations absentes de DEPLOIEMENT_CLIENT.md: ${missingInDoc.join(', ')}`, failures, warnings, true)
 
 for (const key of requiredWorkerEnv) {
-  check(Boolean(env[key]), `${key} disponible localement`, `${key} absent localement (à vérifier dans Cloudflare Worker)`, failures, warnings, true)
+  check(Boolean(env[key]), `${key} disponible localement`, `${key} absent localement (à vérifier dans Cloudflare Worker)`, failures, warnings, !strictEnv)
 }
 
+check(
+  !env.RATE_LIMIT_SECRET || env.RATE_LIMIT_SECRET !== env.SUPABASE_SERVICE_ROLE_KEY,
+  'RATE_LIMIT_SECRET distinct de SUPABASE_SERVICE_ROLE_KEY',
+  'RATE_LIMIT_SECRET ne doit pas réutiliser SUPABASE_SERVICE_ROLE_KEY',
+  failures,
+  warnings,
+  !strictEnv,
+)
+
 if (withOpenNextBuild) {
-  const ok = run('node_modules/.bin/opennextjs-cloudflare', ['build', '--dangerouslyUseUnsupportedNextVersion'])
+  const ok = run('node_modules/.bin/opennextjs-cloudflare', ['build'])
   check(ok, 'build OpenNext Cloudflare OK', 'build OpenNext Cloudflare en échec', failures, warnings)
 } else {
   console.log('INFO build OpenNext ignoré (ajouter --with-open-next-build pour le lancer)')

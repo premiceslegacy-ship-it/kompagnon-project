@@ -1,4 +1,4 @@
-// Types + utilitaires récurrentes — importables côté client ET serveur (pas de next/headers)
+// Types + utilitaires récurrentes - importables côté client ET serveur (pas de next/headers)
 
 export type RecurringFrequency = 'weekly' | 'monthly' | 'quarterly' | 'custom'
 

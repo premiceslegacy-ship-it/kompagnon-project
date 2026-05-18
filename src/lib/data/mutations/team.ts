@@ -4,13 +4,13 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { hasPermission } from '@/lib/data/queries/membership'
+import { canManageLaborRates, hasPermission } from '@/lib/data/queries/membership'
 import { sendEmail } from '@/lib/email'
 import { buildInviteEmail } from '@/lib/email/templates'
 
 /**
  * Change le rôle d'un membre de l'équipe.
- * Réservé aux owners et admins — vérifié côté serveur.
+ * Réservé aux owners et admins - vérifié côté serveur.
  */
 export async function updateMemberRole(membershipId: string, newRoleId: string): Promise<{ error: string | null }> {
   const supabase = await createClient()
@@ -21,18 +21,7 @@ export async function updateMemberRole(membershipId: string, newRoleId: string):
   if (!user) return { error: 'Non authentifié.' }
 
   // Vérifier que l'appelant est owner ou admin
-  const { data: callerMembership } = await supabase
-    .from('memberships')
-    .select('roles ( slug )')
-    .eq('user_id', user.id)
-    .eq('organization_id', orgId)
-    .eq('is_active', true)
-    .single()
-
-  const callerSlug = (callerMembership as any)?.roles?.slug ?? ''
-  if (!['owner', 'admin'].includes(callerSlug)) {
-    return { error: 'Action réservée aux administrateurs.' }
-  }
+  if (!(await canManageLaborRates())) return { error: 'Action réservée aux administrateurs.' }
 
   // Vérifier que le membership cible appartient bien à l'org
   const { data: target } = await supabase

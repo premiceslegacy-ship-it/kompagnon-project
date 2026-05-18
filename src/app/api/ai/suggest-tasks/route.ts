@@ -93,7 +93,7 @@ Réponds UNIQUEMENT avec un tableau JSON, rien d'autre.`,
     try {
       result = JSON.parse(extractJson(raw))
     } catch {
-      console.error('[ai/suggest-tasks] JSON parse error, raw:', raw.slice(0, 300))
+      console.error('[ai/suggest-tasks] JSON parse error', { responseLength: raw.length })
       return NextResponse.json({ error: 'Réponse IA invalide, veuillez réessayer' }, { status: 500 })
     }
 

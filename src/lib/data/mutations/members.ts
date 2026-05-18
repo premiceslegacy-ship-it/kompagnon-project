@@ -6,7 +6,7 @@ import { pdf } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { hasPermission } from '@/lib/data/queries/membership'
+import { canManageLaborRates, hasPermission } from '@/lib/data/queries/membership'
 import { sendEmail } from '@/lib/email'
 import {
   buildMemberSpaceInviteEmail,
@@ -31,11 +31,42 @@ export async function createIndividualMember(input: {
   attachToChantierId?: string | null    // si fourni et pas d'équipe, attacher directement au chantier
   sendInvite?: boolean
 }): Promise<Result & { id?: string }> {
-  if (!(await hasPermission('chantiers.edit'))) return { error: 'Permission refusée.' }
+  if (!(await hasPermission('chantiers.manage_team'))) return { error: 'Permission refusée.' }
+  if (input.tauxHoraire !== undefined && input.tauxHoraire !== null && !(await canManageLaborRates())) {
+    return { error: 'Action réservée aux administrateurs.' }
+  }
 
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
+  if (input.attachToChantierId) {
+    const { data: chantier } = await supabase
+      .from('chantiers')
+      .select('id')
+      .eq('id', input.attachToChantierId)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
+  }
+  if (input.equipeId) {
+    const { data: equipe } = await supabase
+      .from('chantier_equipes')
+      .select('id')
+      .eq('id', input.equipeId)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (!equipe) return { error: 'Équipe introuvable ou non autorisée.' }
+  }
+  if (input.linkToProfileId) {
+    const { data: membership } = await supabase
+      .from('memberships')
+      .select('id')
+      .eq('user_id', input.linkToProfileId)
+      .eq('organization_id', orgId)
+      .eq('is_active', true)
+      .maybeSingle()
+    if (!membership) return { error: 'Compte utilisateur introuvable ou non autorisé.' }
+  }
 
   const trimmedName = input.name.trim()
   if (!trimmedName) return { error: 'Le nom est requis.' }
@@ -69,7 +100,7 @@ export async function createIndividualMember(input: {
   }
 
   if (input.sendInvite && email) {
-    await sendMemberSpaceInvite(inserted.id)
+    await sendMemberSpaceInviteUnchecked(inserted.id)
   }
 
   if (input.attachToChantierId) revalidatePath(`/chantiers/${input.attachToChantierId}`)
@@ -89,11 +120,33 @@ export async function updateIndividualMember(
     linkToProfileId?: string | null
   },
 ): Promise<Result> {
-  if (!(await hasPermission('chantiers.edit'))) return { error: 'Permission refusée.' }
+  if (!(await hasPermission('chantiers.manage_team'))) return { error: 'Permission refusée.' }
+  if (patch.tauxHoraire !== undefined && !(await canManageLaborRates())) {
+    return { error: 'Action réservée aux administrateurs.' }
+  }
 
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
+  if (patch.equipeId) {
+    const { data: equipe } = await supabase
+      .from('chantier_equipes')
+      .select('id')
+      .eq('id', patch.equipeId)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (!equipe) return { error: 'Équipe introuvable ou non autorisée.' }
+  }
+  if (patch.linkToProfileId) {
+    const { data: membership } = await supabase
+      .from('memberships')
+      .select('id')
+      .eq('user_id', patch.linkToProfileId)
+      .eq('organization_id', orgId)
+      .eq('is_active', true)
+      .maybeSingle()
+    if (!membership) return { error: 'Compte utilisateur introuvable ou non autorisé.' }
+  }
 
   const update: Record<string, unknown> = {}
   if (patch.prenom !== undefined)          update.prenom         = patch.prenom?.trim() || null
@@ -120,7 +173,7 @@ export async function updateIndividualMember(
 }
 
 export async function deleteIndividualMember(memberId: string): Promise<Result> {
-  if (!(await hasPermission('chantiers.edit'))) return { error: 'Permission refusée.' }
+  if (!(await hasPermission('chantiers.manage_team'))) return { error: 'Permission refusée.' }
 
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
@@ -144,8 +197,16 @@ export async function deleteIndividualMember(memberId: string): Promise<Result> 
 // ─── 2. Liaison membre ↔ chantier ────────────────────────────────────────────
 
 export async function attachMemberToChantier(memberId: string, chantierId: string): Promise<Result> {
-  if (!(await hasPermission('chantiers.edit'))) return { error: 'Permission refusée.' }
+  if (!(await hasPermission('chantiers.manage_team'))) return { error: 'Permission refusée.' }
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  const [{ data: chantier }, { data: member }] = await Promise.all([
+    supabase.from('chantiers').select('id').eq('id', chantierId).eq('organization_id', orgId).maybeSingle(),
+    supabase.from('chantier_equipe_membres').select('id').eq('id', memberId).eq('organization_id', orgId).maybeSingle(),
+  ])
+  if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
+  if (!member) return { error: 'Membre introuvable ou non autorisé.' }
 
   const { error } = await supabase
     .from('chantier_individual_members')
@@ -161,8 +222,16 @@ export async function attachMemberToChantier(memberId: string, chantierId: strin
 }
 
 export async function detachMemberFromChantier(memberId: string, chantierId: string): Promise<Result> {
-  if (!(await hasPermission('chantiers.edit'))) return { error: 'Permission refusée.' }
+  if (!(await hasPermission('chantiers.manage_team'))) return { error: 'Permission refusée.' }
   const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+  const [{ data: chantier }, { data: member }] = await Promise.all([
+    supabase.from('chantiers').select('id').eq('id', chantierId).eq('organization_id', orgId).maybeSingle(),
+    supabase.from('chantier_equipe_membres').select('id').eq('id', memberId).eq('organization_id', orgId).maybeSingle(),
+  ])
+  if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
+  if (!member) return { error: 'Membre introuvable ou non autorisé.' }
 
   const { error } = await supabase
     .from('chantier_individual_members')
@@ -188,7 +257,7 @@ export async function requestMemberSpaceAccess(email: string): Promise<Result> {
 
   const admin = createAdminClient()
 
-  // Recherche du membre par email (toutes orgs confondues — un membre = une org en pratique)
+  // Recherche du membre par email (toutes orgs confondues - un membre = une org en pratique)
   const { data: members } = await admin
     .from('chantier_equipe_membres')
     .select('id, organization_id')
@@ -202,11 +271,30 @@ export async function requestMemberSpaceAccess(email: string): Promise<Result> {
     console.warn('[requestMemberSpaceAccess] email partagé par plusieurs membres')
   }
 
-  return await sendMemberSpaceInvite(members[0].id)
+  return await sendMemberSpaceInviteUnchecked(members[0].id)
 }
 
 /** Envoie le magic link à un membre donné (utilisé à la création + à la demande). */
 export async function sendMemberSpaceInvite(memberId: string): Promise<Result> {
+  if (!(await hasPermission('chantiers.manage_team'))) return { error: 'Permission refusée.' }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+
+  const { data: member } = await supabase
+    .from('chantier_equipe_membres')
+    .select('id')
+    .eq('id', memberId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+
+  if (!member) return { error: 'Membre introuvable ou non autorisé.' }
+
+  return sendMemberSpaceInviteUnchecked(memberId)
+}
+
+async function sendMemberSpaceInviteUnchecked(memberId: string): Promise<Result> {
   const admin = createAdminClient()
 
   const { data: member } = await admin
@@ -345,7 +433,7 @@ export async function sendMemberHoursReport(
   // Sinon (admin app), on vérifie la permission classique
   if (!opts?.useAdmin) {
     if (!(await hasPermission('chantiers.expenses.view'))) {
-      // Réutilise une permission existante du domaine chantier — à adapter si besoin
+      // Réutilise une permission existante du domaine chantier - à adapter si besoin
       return { error: 'Permission refusée.' }
     }
   }

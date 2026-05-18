@@ -22,6 +22,7 @@ import { updatePublicFormSettings } from '@/lib/data/mutations/quote-requests';
 import { saveWhatsAppConfig, deleteWhatsAppConfig } from '@/lib/data/mutations/whatsapp';
 import { createOrganizationExport } from '@/lib/data/mutations/organization-exports'
 import { requestAccountDeletion, cancelAccountDeletion } from '@/lib/data/mutations/account-deletion';
+import SignaturePad from '@/components/SignaturePad';
 import { upsertEmailTemplate, resetEmailTemplate } from '@/lib/data/mutations/email-templates';
 import type { EmailTemplate, EmailTemplateSlug } from '@/lib/data/queries/emailTemplates';
 import type { WhatsAppConfig } from '@/lib/data/mutations/whatsapp';
@@ -93,14 +94,70 @@ type Props = {
     canRemoveMembers: boolean;
     canEditRoles: boolean;
     canEditOrg: boolean;
+    initialTab: string;
 };
 
-export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg }: Props) {
+function PermissionCategoryAccordion({
+    category,
+    perms,
+    enabledCount,
+    localPerms,
+    selectedRoleId,
+    onToggle,
+}: {
+    category: string
+    perms: { key: string; label: string; category: string; position: number }[]
+    enabledCount: number
+    localPerms: Record<string, Record<string, boolean>>
+    selectedRoleId: string
+    onToggle: (roleId: string, key: string) => void
+}) {
+    const [open, setOpen] = useState(false)
+    return (
+        <div className="rounded-2xl border border-[var(--elevation-border)] overflow-hidden">
+            <button
+                onClick={() => setOpen(v => !v)}
+                className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-[var(--elevation-1)] transition-colors"
+            >
+                <div className="flex items-center gap-3">
+                    <span className="font-semibold text-primary text-sm">{categoryLabel(category)}</span>
+                    <span className="text-xs text-secondary bg-[var(--elevation-1)] border border-[var(--elevation-border)] rounded-full px-2 py-0.5">
+                        {enabledCount} / {perms.length}
+                    </span>
+                </div>
+                <ChevronDown className={`w-4 h-4 text-secondary transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+            </button>
+            {open && (
+                <div className="px-5 pb-4 pt-1 border-t border-[var(--elevation-border)] bg-[var(--elevation-1)]/40">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-3">
+                        {perms.map(perm => {
+                            const enabled = localPerms[selectedRoleId]?.[perm.key] ?? false
+                            return (
+                                <button
+                                    key={perm.key}
+                                    onClick={() => onToggle(selectedRoleId, perm.key)}
+                                    className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm text-left transition-all ${enabled ? 'bg-accent/10 border-accent/30 text-primary' : 'bg-base dark:bg-white/5 border-[var(--elevation-border)] text-secondary'}`}
+                                >
+                                    <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all ${enabled ? 'bg-accent' : 'bg-surface dark:bg-white/10 border border-[var(--elevation-border)]'}`}>
+                                        {enabled && <Check className="w-3 h-3 text-white" />}
+                                    </div>
+                                    {permissionLabel(perm.key, perm.label)}
+                                </button>
+                            )
+                        })}
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
+export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab }: Props) {
     const router = useRouter()
     const webhookUrl = supabaseUrl
         ? `${supabaseUrl}/functions/v1/whatsapp-webhook`
         : 'https://[ref].supabase.co/functions/v1/whatsapp-webhook'
-    const [activeTab, setActiveTab] = useState('profil');
+    const [activeTab, setActiveTab] = useState(initialTab);
     const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
     const [inviteEmail, setInviteEmail] = useState('');
     const [inviteRoleId, setInviteRoleId] = useState(roles[0]?.id ?? '');
@@ -160,6 +217,9 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         email: organization?.email ?? '',
         phone: organization?.phone ?? '',
         business_activity: initialBusinessSelection.activity.id as BusinessActivityId,
+        departure_address: organization?.departure_address ?? '',
+        departure_postal_code: organization?.departure_postal_code ?? '',
+        departure_city: organization?.departure_city ?? '',
     });
 
     const [legalDetails, setLegalDetails] = useState({
@@ -169,6 +229,12 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         rcs_ville: organization?.rcs_ville ?? '',
         insurance_info: organization?.insurance_info ?? '',
         certifications: organization?.certifications ?? '',
+    });
+
+    const [signatureDetails, setSignatureDetails] = useState({
+        signatory_name: organization?.signatory_name ?? '',
+        signatory_role: organization?.signatory_role ?? '',
+        signature_image: organization?.signature_image ?? null as string | null,
     });
 
     const [decennale, setDecennale] = useState({
@@ -199,8 +265,8 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
     const [autoReminder, setAutoReminder] = useState({
         enabled: organization?.auto_reminder_enabled ?? false,
-        invoiceDays: organization?.invoice_reminder_days ?? [2, 7],
-        quoteDays: organization?.quote_reminder_days ?? [3, 7, 10],
+        invoiceDays: organization?.invoice_reminder_days ?? [3, 7],
+        quoteDays: organization?.quote_reminder_days ?? [2, 7, 10],
         reminderHour: organization?.reminder_hour_utc ?? 8,
         defaultQuoteValidityDays: organization?.default_quote_validity_days ?? 30,
     });
@@ -226,7 +292,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     // ─── Signature email + CGV + délai relance ───────────────────────────────
     const [emailSignature, setEmailSignature] = useState(organization?.email_signature ?? '')
     const [cgvText, setCgvText] = useState(organization?.cgv_text ?? '')
-    const [reminderFirstDelay, setReminderFirstDelay] = useState(organization?.reminder_first_delay_days ?? 2)
+    const [reminderFirstDelay, setReminderFirstDelay] = useState(Math.max(3, organization?.reminder_first_delay_days ?? 3))
     const [signatureSaveStatus, setSignatureSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
     // ─── Templates emails ─────────────────────────────────────────────────────
@@ -510,7 +576,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         startTransition(async () => {
             const result = await updateOrganization({
                 auto_reminder_enabled: autoReminder.enabled,
-                invoice_reminder_days: autoReminder.invoiceDays.filter(d => d > 0),
+                invoice_reminder_days: autoReminder.invoiceDays.filter(d => d > 0).map((d, i) => i === 0 ? Math.max(3, d) : d),
                 quote_reminder_days: autoReminder.quoteDays.filter(d => d > 0),
                 reminder_hour_utc: autoReminder.reminderHour,
                 default_quote_validity_days: autoReminder.defaultQuoteValidityDays,
@@ -638,6 +704,12 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 recovery_indemnity_text: paymentDetails.recovery_indemnity_text || null,
                 is_vat_subject: vatConfig.is_vat_subject,
                 default_vat_rate: vatConfig.is_vat_subject ? vatConfig.default_vat_rate : 0,
+                signatory_name: signatureDetails.signatory_name.trim() || null,
+                signatory_role: signatureDetails.signatory_role.trim() || null,
+                signature_image: signatureDetails.signature_image,
+                departure_address: companyDetails.departure_address.trim() || null,
+                departure_postal_code: companyDetails.departure_postal_code.trim() || null,
+                departure_city: companyDetails.departure_city.trim() || null,
             });
             if (result.error) {
                 const fieldErrors = result.fieldErrors ?? {};
@@ -817,6 +889,13 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         }
 
         if (activeTab === 'entreprise') {
+            if (!canEditOrg) {
+                return (
+                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8">
+                        <p className="text-secondary text-sm">Vous n&apos;avez pas la permission de modifier les informations entreprise.</p>
+                    </div>
+                )
+            }
             return (
                 <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -950,6 +1029,19 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 <OrgFieldError field="email" />
                             </div>
                             <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Téléphone</label><input type="tel" value={companyDetails.phone} onChange={e => setCompanyDetails({ ...companyDetails, phone: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
+                            <div className="space-y-2 md:col-span-2 pt-2">
+                                <label className="text-sm font-semibold text-secondary">Adresse de départ des tournées</label>
+                                <p className="text-xs text-secondary">Point de départ par défaut pour les feuilles de route (dépôt, atelier…). Peut être surchargé par tournée directement depuis le planning.</p>
+                                <input type="text" placeholder="Ex : 15 avenue de l'Atelier" value={companyDetails.departure_address} onChange={e => setCompanyDetails({ ...companyDetails, departure_address: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-secondary">Code postal (départ)</label>
+                                <input type="text" inputMode="numeric" placeholder="Ex : 69007" value={companyDetails.departure_postal_code} onChange={e => setCompanyDetails({ ...companyDetails, departure_postal_code: formatPostalCodeInput(e.target.value) })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-secondary">Ville (départ)</label>
+                                <input type="text" placeholder="Ex : Lyon" value={companyDetails.departure_city} onChange={e => setCompanyDetails({ ...companyDetails, departure_city: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
+                            </div>
                         </div>
                     </div>
                     <div className="h-px w-full bg-[var(--elevation-border)]"></div>
@@ -963,6 +1055,42 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Ville du tribunal de commerce</label><input type="text" placeholder="Ex : Paris" value={legalDetails.rcs_ville} onChange={e => setLegalDetails({ ...legalDetails, rcs_ville: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                             <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Assurance professionnelle</label><input type="text" placeholder="Ex : AXA Pro n° 123456" value={legalDetails.insurance_info} onChange={e => setLegalDetails({ ...legalDetails, insurance_info: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                             <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Certifications / Qualifications</label><input type="text" placeholder="Ex : RGE Qualibat 7711, Qualifélec…" value={legalDetails.certifications} onChange={e => setLegalDetails({ ...legalDetails, certifications: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
+                        </div>
+                    </div>
+                    <div className="h-px w-full bg-[var(--elevation-border)]"></div>
+                    {/* ── Signataire des contrats ── */}
+                    <div>
+                        <h2 className="text-2xl font-bold text-primary mb-2">Signature des contrats</h2>
+                        <p className="text-sm text-secondary mb-6">Ces informations seront automatiquement apposées sur les contrats que vous émettez (votre partie en tant que signataire).</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-secondary">Nom du signataire</label>
+                                <input
+                                    type="text"
+                                    placeholder="Ex : Jean Dupont"
+                                    value={signatureDetails.signatory_name}
+                                    onChange={e => setSignatureDetails({ ...signatureDetails, signatory_name: e.target.value })}
+                                    className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-secondary">Qualité / Fonction</label>
+                                <input
+                                    type="text"
+                                    placeholder="Ex : Gérant, Président, Directeur…"
+                                    value={signatureDetails.signatory_role}
+                                    onChange={e => setSignatureDetails({ ...signatureDetails, signatory_role: e.target.value })}
+                                    className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
+                                />
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-semibold text-secondary">Signature manuscrite</label>
+                            <SignaturePad
+                                value={signatureDetails.signature_image}
+                                onChange={(dataUrl) => setSignatureDetails({ ...signatureDetails, signature_image: dataUrl })}
+                                hint="Cette signature sera apposée automatiquement sur les contrats."
+                            />
                         </div>
                     </div>
                     <div className="h-px w-full bg-[var(--elevation-border)]"></div>
@@ -1038,8 +1166,8 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                     />
                                     {decennale.date_fin && (() => {
                                         const daysLeft = Math.ceil((new Date(decennale.date_fin).getTime() - Date.now()) / 86400000)
-                                        if (daysLeft < 0) return <p className="text-xs text-red-500 font-semibold">Assurance expirée depuis {Math.abs(daysLeft)} jour{Math.abs(daysLeft) > 1 ? 's' : ''} — renouvelez-la d&apos;urgence.</p>
-                                        if (daysLeft <= 60) return <p className="text-xs text-orange-500 font-semibold">Expire dans {daysLeft} jour{daysLeft > 1 ? 's' : ''} — pensez au renouvellement.</p>
+                                        if (daysLeft < 0) return <p className="text-xs text-red-500 font-semibold">Assurance expirée depuis {Math.abs(daysLeft)} jour{Math.abs(daysLeft) > 1 ? 's' : ''} - renouvelez-la d&apos;urgence.</p>
+                                        if (daysLeft <= 60) return <p className="text-xs text-orange-500 font-semibold">Expire dans {daysLeft} jour{daysLeft > 1 ? 's' : ''} - pensez au renouvellement.</p>
                                         return <p className="text-xs text-green-600 font-semibold">Valide encore {daysLeft} jours.</p>
                                     })()}
                                 </div>
@@ -1395,33 +1523,23 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                         Le Dirigeant a accès à toutes les fonctionnalités. Ses permissions ne peuvent pas être modifiées.
                                     </div>
                                 ) : (
-                                    <div className="space-y-6">
-                                        {Object.entries(grouped).map(([category, perms]) => (
-                                            <div key={category}>
-                                                <h3 className="text-xs font-bold uppercase tracking-widest text-secondary mb-3">
-                                                    {categoryLabel(category)}
-                                                </h3>
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                                    {perms.map(perm => {
-                                                        const enabled = localPerms[selectedRoleId]?.[perm.key] ?? false
-                                                        return (
-                                                            <button
-                                                                key={perm.key}
-                                                                onClick={() => togglePerm(selectedRoleId, perm.key)}
-                                                                className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm text-left transition-all ${enabled ? 'bg-accent/10 border-accent/30 text-primary' : 'bg-base dark:bg-white/5 border-[var(--elevation-border)] text-secondary'}`}
-                                                            >
-                                                                <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all ${enabled ? 'bg-accent' : 'bg-surface dark:bg-white/10 border border-[var(--elevation-border)]'}`}>
-                                                                    {enabled && <Check className="w-3 h-3 text-white" />}
-                                                                </div>
-                                                                {permissionLabel(perm.key, perm.label)}
-                                                            </button>
-                                                        )
-                                                    })}
-                                                </div>
-                                            </div>
-                                        ))}
+                                    <div className="space-y-2">
+                                        {Object.entries(grouped).map(([category, perms]) => {
+                                            const enabledCount = perms.filter(p => localPerms[selectedRoleId]?.[p.key]).length
+                                            return (
+                                                <PermissionCategoryAccordion
+                                                    key={category}
+                                                    category={category}
+                                                    perms={perms}
+                                                    enabledCount={enabledCount}
+                                                    localPerms={localPerms}
+                                                    selectedRoleId={selectedRoleId}
+                                                    onToggle={togglePerm}
+                                                />
+                                            )
+                                        })}
 
-                                        <div className="flex items-center gap-3 pt-2">
+                                        <div className="flex items-center gap-3 pt-4">
                                             <button
                                                 onClick={handleSavePermissions}
                                                 disabled={permSaveStatus === 'saving'}
@@ -1446,7 +1564,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             return (
                 <div className="space-y-6">
 
-                {/* Relances automatiques — en premier */}
+                {/* Relances automatiques - en premier */}
                 <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-6">
                     <div className="flex items-start justify-between gap-6">
                         <div>
@@ -1486,14 +1604,14 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             <div className="space-y-3">
                                 <div>
                                     <p className="text-sm font-semibold text-primary">Relances factures impayées</p>
-                                    <p className="text-xs text-secondary mt-0.5">Jours après l&apos;échéance de la facture (J+X).</p>
+                                    <p className="text-xs text-secondary mt-0.5">Jours après l&apos;envoi de la facture (J+X). Première relance au plus tôt à J+3.</p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
                                     {autoReminder.invoiceDays.map((day, i) => (
                                         <div key={i} className="flex items-center gap-1.5 bg-base dark:bg-white/5 border border-[var(--elevation-border)] rounded-xl px-3 py-2">
                                             <span className="text-xs text-secondary font-medium">J+</span>
                                             <input type="number" min={1} max={365} value={day}
-                                                onChange={e => { const v = parseInt(e.target.value) || 1; setAutoReminder(a => ({ ...a, invoiceDays: a.invoiceDays.map((d, j) => j === i ? v : d) })) }}
+                                                onChange={e => { const raw = parseInt(e.target.value) || 1; const v = i === 0 ? Math.max(3, raw) : raw; setAutoReminder(a => ({ ...a, invoiceDays: a.invoiceDays.map((d, j) => j === i ? v : d) })) }}
                                                 className="w-12 text-center bg-transparent text-primary font-bold text-sm outline-none" />
                                             {autoReminder.invoiceDays.length > 1 && (
                                                 <button onClick={() => setAutoReminder(a => ({ ...a, invoiceDays: a.invoiceDays.filter((_, j) => j !== i) }))} className="text-secondary hover:text-red-500 transition-colors ml-1"><X className="w-3 h-3" /></button>
@@ -1549,7 +1667,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 </div>
                             </div>
                             <p className="text-xs text-secondary bg-base dark:bg-white/5 rounded-xl px-4 py-3">
-                                Les emails de relance sont rédigés automatiquement. Les clients sans adresse email sont ignorés.
+                                Les emails de relance sont rédigés automatiquement. Les clients sans adresse email sont ignorés. Marquez une facture comme payée dès réception du règlement pour bloquer les relances suivantes.
                             </p>
                         </div>
                     )}
@@ -1671,7 +1789,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         <label className="text-sm font-semibold text-secondary">Conditions Générales de Vente (CGV)</label>
                         <textarea
                             rows={6}
-                            placeholder="Article 1 — Objet&#10;Les présentes conditions générales de vente régissent..."
+                            placeholder="Article 1 - Objet&#10;Les présentes conditions générales de vente régissent..."
                             value={cgvText}
                             onChange={e => setCgvText(e.target.value)}
                             className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all resize-none font-mono text-sm"
@@ -1681,12 +1799,12 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     <div className="space-y-2">
                         <label className="text-sm font-semibold text-secondary">Délai avant première relance (jours)</label>
                         <input
-                            type="number" min={1} max={90}
+                            type="number" min={3} max={90}
                             value={reminderFirstDelay}
-                            onChange={e => setReminderFirstDelay(Math.max(1, parseInt(e.target.value) || 1))}
+                            onChange={e => setReminderFirstDelay(Math.max(3, parseInt(e.target.value) || 3))}
                             className="w-24 px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums"
                         />
-                        <p className="text-xs text-secondary">Nombre de jours après l&apos;échéance avant d&apos;envoyer la première relance.</p>
+                        <p className="text-xs text-secondary">Nombre de jours après l&apos;envoi avant d&apos;envoyer la première relance facture. Minimum 3 jours.</p>
                     </div>
                     <div className="flex justify-end">
                         <button onClick={handleSaveSignatureAndCGV} disabled={isPending || signatureSaveStatus === 'saving'}
@@ -2345,7 +2463,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             </div>
                         ) : isOwner ? (
                             <div className="rounded-2xl border border-[var(--elevation-border)] p-5 space-y-4">
-                                <p className="text-sm font-semibold text-primary">Fermeture en self-service — 3 étapes</p>
+                                <p className="text-sm font-semibold text-primary">Fermeture en self-service - 3 étapes</p>
 
                                 <div className={`rounded-xl border p-4 space-y-2 transition-all ${deletionStep >= 1 ? 'border-green-400 bg-green-50 dark:bg-green-950/20' : 'border-[var(--elevation-border)]'}`}>
                                     <div className="flex items-center gap-2">
@@ -2540,12 +2658,12 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 </div>
                                 <div>
                                     <p className="text-sm font-semibold text-primary">Utiliser le numéro bot Atelier (recommandé)</p>
-                                    <p className="text-xs text-secondary">L&apos;agent répond depuis le numéro WhatsApp mutualisé Atelier — aucune configuration Meta requise de votre côté.</p>
+                                    <p className="text-xs text-secondary">L&apos;agent répond depuis le numéro WhatsApp mutualisé Atelier - aucune configuration Meta requise de votre côté.</p>
                                 </div>
                             </button>
                         </div>
 
-                        {/* Mode propre WABA — affiché seulement si pas mutualisé */}
+                        {/* Mode propre WABA - affiché seulement si pas mutualisé */}
                         {!waUseSharedWaba && (
                             <div className="space-y-4">
                                 {/* URL webhook */}
@@ -2581,7 +2699,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                             </div>
                                         </div>
 
-                                        {/* Étape 2 — Phone Number ID */}
+                                        {/* Étape 2 - Phone Number ID */}
                                         <div className="px-4 py-4 flex gap-3">
                                             <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
                                                 <span className="text-xs font-bold text-black">2</span>
@@ -2599,7 +2717,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                             </div>
                                         </div>
 
-                                        {/* Étape 3 — Token permanent */}
+                                        {/* Étape 3 - Token permanent */}
                                         <div className="px-4 py-4 flex gap-3">
                                             <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
                                                 <span className="text-xs font-bold text-black">3</span>
@@ -2608,7 +2726,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                                 <p className="font-semibold text-primary text-sm">Token d&apos;accès <span className="text-red-500 font-normal text-xs">→ choisissez PERMANENT, pas temporaire</span></p>
                                                 <p className="text-xs text-secondary">Dans votre app Meta → <strong className="text-primary">WhatsApp → Configuration de l&apos;API</strong> → <strong className="text-primary">Générer un token d&apos;accès</strong>. Choisissez impérativement <strong className="text-primary">Token permanent</strong> (valide à vie). Le token temporaire expire en 24h et l&apos;agent s&apos;arrêtera.</p>
                                                 <div className="bg-amber-500/8 border border-amber-500/20 rounded-lg px-3 py-2 text-xs text-secondary">
-                                                    ⚠ Si le token commence par <code className="text-primary">EAAG</code> et fait moins de 200 caractères, c&apos;est un token temporaire — ne l&apos;utilisez pas.
+                                                    ⚠ Si le token commence par <code className="text-primary">EAAG</code> et fait moins de 200 caractères, c&apos;est un token temporaire - ne l&apos;utilisez pas.
                                                 </div>
                                                 <input
                                                     type="password"
@@ -2620,7 +2738,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                             </div>
                                         </div>
 
-                                        {/* Étape 4 — Webhook */}
+                                        {/* Étape 4 - Webhook */}
                                         <div className="px-4 py-4 flex gap-3">
                                             <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
                                                 <span className="text-xs font-bold text-black">4</span>
@@ -2637,7 +2755,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                                         </div>
                                                     </div>
                                                     <div className="bg-base rounded-lg px-3 py-2 border border-[var(--elevation-border)]">
-                                                        <p className="text-xs text-secondary/60 mb-1.5">Verify Token (généré automatiquement — copiez-le dans Meta)</p>
+                                                        <p className="text-xs text-secondary/60 mb-1.5">Verify Token (généré automatiquement - copiez-le dans Meta)</p>
                                                         <div className="flex items-center gap-2">
                                                             <input
                                                                 type="text"
@@ -2659,14 +2777,14 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                             </div>
                                         </div>
 
-                                        {/* Avancé — WABA ID */}
+                                        {/* Avancé - WABA ID */}
                                         <div className="px-4 py-3">
                                             <button
                                                 onClick={() => setWaShowAdvanced(v => !v)}
                                                 className="text-xs text-secondary hover:text-accent transition-colors flex items-center gap-1"
                                             >
                                                 <ChevronDown className={`w-3.5 h-3.5 transition-transform ${waShowAdvanced ? 'rotate-180' : ''}`} />
-                                                Paramètres avancés (WABA ID — optionnel)
+                                                Paramètres avancés (WABA ID - optionnel)
                                             </button>
                                             {waShowAdvanced && (
                                                 <div className="mt-3">
@@ -2677,7 +2795,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                                         placeholder="WhatsApp Business Account ID"
                                                         className="w-full px-3 py-2 rounded-lg bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:border-accent font-mono"
                                                     />
-                                                    <p className="text-xs text-secondary/60 mt-1">Optionnel — visible dans Meta Business Suite sous votre compte WABA.</p>
+                                                    <p className="text-xs text-secondary/60 mt-1">Optionnel - visible dans Meta Business Suite sous votre compte WABA.</p>
                                                 </div>
                                             )}
                                         </div>
@@ -2686,7 +2804,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             </div>
                         )}
 
-                        {/* Numéro bot Atelier — affiché uniquement en mode mutualisé */}
+                        {/* Numéro bot Atelier - affiché uniquement en mode mutualisé */}
                         {waUseSharedWaba && sharedWabaDisplayNumber && (
                             <div className="bg-green-500/8 border border-green-500/20 rounded-xl px-4 py-4 space-y-2">
                                 <p className="text-xs font-semibold text-secondary uppercase tracking-wider">Numéro de votre assistant WhatsApp</p>
@@ -2859,7 +2977,9 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             <div className="flex flex-col lg:flex-row gap-8">
                 <div className="w-full lg:w-64 flex-shrink-0 space-y-2">
                     <button onClick={() => setActiveTab('profil')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'profil' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><User className="w-5 h-5" />Mon Profil</button>
-                    <button onClick={() => setActiveTab('entreprise')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'entreprise' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Building2 className="w-5 h-5" />Entreprise</button>
+                    {canEditOrg && (
+                        <button onClick={() => setActiveTab('entreprise')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'entreprise' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Building2 className="w-5 h-5" />Entreprise</button>
+                    )}
                     <button onClick={() => setActiveTab('equipe')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'equipe' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Users className="w-5 h-5" />Équipe</button>
                     {canEditRoles && (
                         <button onClick={() => setActiveTab('roles')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'roles' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><KeyRound className="w-5 h-5" />Rôles &amp; permissions</button>

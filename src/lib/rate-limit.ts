@@ -17,6 +17,15 @@ export type RateLimitResult = {
 }
 
 function getRateLimitSalt(): string {
+  if (process.env.NODE_ENV === 'production') {
+    const secret = process.env.RATE_LIMIT_SECRET
+    if (!secret) throw new Error('RATE_LIMIT_SECRET is required in production.')
+    if (secret === process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      throw new Error('RATE_LIMIT_SECRET must be distinct from SUPABASE_SERVICE_ROLE_KEY.')
+    }
+    return secret
+  }
+
   return process.env.RATE_LIMIT_SECRET
     || process.env.CRON_SECRET
     || process.env.SUPABASE_SERVICE_ROLE_KEY

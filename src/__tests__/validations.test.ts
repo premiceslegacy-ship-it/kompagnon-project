@@ -2,6 +2,17 @@ import { describe, it, expect } from 'vitest'
 import { CreateInvoiceSchema, UpdateInvoiceSchema, SaveInvoiceItemsSchema, GenerateDepositSchema } from '@/lib/validations/invoices'
 import { CreateClientInlineSchema } from '@/lib/validations/clients'
 import { CreateQuoteSchema, UpdateQuoteSchema, UpsertQuoteItemSchema } from '@/lib/validations/quotes'
+import {
+  formatBicInput,
+  formatIbanInput,
+  formatSiretInput,
+  formatVatNumberInput,
+  normalizeBic,
+  normalizeCommercialCourt,
+  normalizeFrenchIban,
+  normalizeFrenchVatNumber,
+  normalizeSiret,
+} from '@/lib/validations/organization'
 
 // ─── Invoice schemas ──────────────────────────────────────────────────────────
 
@@ -210,5 +221,56 @@ describe('UpsertQuoteItemSchema', () => {
   it('rejects unknown type', () => {
     const result = UpsertQuoteItemSchema.safeParse({ ...validItem, type: 'unknown' })
     expect(result.success).toBe(false)
+  })
+})
+
+// ─── Organization formatters and validators ──────────────────────────────────
+
+describe('organization formatting helpers', () => {
+  it('formats and validates a SIRET', () => {
+    expect(formatSiretInput('12345678900012')).toBe('123 456 789 00012')
+    const result = normalizeSiret('12345678900012')
+    expect(result.error).toBeUndefined()
+    expect(result.value).toBe('123 456 789 00012')
+    expect(result.siren).toBe('123 456 789')
+  })
+
+  it('rejects a short SIRET', () => {
+    expect(normalizeSiret('123456789').error).toBe('Le SIRET doit contenir exactement 14 chiffres.')
+  })
+
+  it('formats and validates a French VAT number', () => {
+    expect(formatVatNumberInput('fr12123456789')).toBe('FR12 123 456 789')
+    const result = normalizeFrenchVatNumber('fr12123456789')
+    expect(result.error).toBeUndefined()
+    expect(result.value).toBe('FR12 123 456 789')
+  })
+
+  it('formats and validates a French IBAN', () => {
+    const iban = 'FR7630006000011234567890189'
+    expect(formatIbanInput(iban)).toBe('FR76 3000 6000 0112 3456 7890 189')
+    const result = normalizeFrenchIban(iban)
+    expect(result.error).toBeUndefined()
+    expect(result.value).toBe('FR76 3000 6000 0112 3456 7890 189')
+  })
+
+  it('accepts a non-French IBAN', () => {
+    const result = normalizeFrenchIban('DE89370400440532013000')
+    expect(result.error).toBeUndefined()
+    expect(result.value).toBe('DE89 3704 0044 0532 0130 00')
+  })
+
+  it('rejects a malformed IBAN', () => {
+    expect(normalizeFrenchIban('FR7630006').error).toBe('Un IBAN doit contenir entre 15 et 34 caractères hors espaces selon le pays.')
+  })
+
+  it('formats and validates a BIC', () => {
+    expect(formatBicInput('bnpafrppxxx')).toBe('BNPAFRPPXXX')
+    expect(normalizeBic('bnpafrppxxx').error).toBeUndefined()
+  })
+
+  it('normalizes a commercial court city', () => {
+    expect(normalizeCommercialCourt('Paris')).toBe('Tribunal de commerce de Paris')
+    expect(normalizeCommercialCourt('Tribunal de commerce de Lyon')).toBe('Tribunal de commerce de Lyon')
   })
 })

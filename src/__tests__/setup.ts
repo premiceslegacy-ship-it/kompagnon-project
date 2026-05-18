@@ -1,4 +1,4 @@
-// Global test setup — mock Next.js server-only modules
+// Global test setup - mock Next.js server-only modules
 import { vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))

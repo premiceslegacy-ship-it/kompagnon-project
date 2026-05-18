@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 import type { EmailTemplateSlug } from '@/lib/data/queries/emailTemplates'
 
 export async function upsertEmailTemplate(input: {
@@ -10,6 +11,8 @@ export async function upsertEmailTemplate(input: {
   subject: string
   body_text: string
 }): Promise<{ error: string | null }> {
+  if (!(await hasPermission('settings.edit_emails'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
@@ -37,6 +40,8 @@ export async function upsertEmailTemplate(input: {
 }
 
 export async function resetEmailTemplate(slug: EmailTemplateSlug): Promise<{ error: string | null }> {
+  if (!(await hasPermission('settings.edit_emails'))) return { error: 'Action non autorisée.' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }

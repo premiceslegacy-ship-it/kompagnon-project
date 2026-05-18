@@ -2,11 +2,13 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import {
-  X, Mic, MicOff, FileText, Bot, Loader2, Upload,
+  X, Mic, MicOff, FileText, Loader2, Upload,
   ChevronRight, ChevronLeft, Plus, CheckCircle2, AlertCircle, RotateCcw, ImageIcon,
 } from 'lucide-react'
 import type { AIQuoteResult, AIQuoteSection, AIQuoteItem } from '@/app/api/ai/analyze-quote/route'
-import { AI_NAME } from '@/lib/brand'
+import { AI_ASSISTANTS } from '@/lib/brand'
+
+const SARAH = AI_ASSISTANTS.sarah
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -184,12 +186,12 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--elevation-border)]">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm">
-              <Bot className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm text-white text-xs font-bold">
+              S
             </div>
             <div>
-              <h2 className="text-base font-bold text-primary leading-none">{AI_NAME}</h2>
-              <p className="text-xs text-secondary mt-0.5">Génération assistée de devis</p>
+              <h2 className="text-base font-bold text-primary leading-none">{SARAH.name} <span className="font-normal text-secondary text-sm">, {SARAH.role}</span></h2>
+              <p className="text-xs text-secondary mt-0.5">Devis assiste par IA</p>
             </div>
           </div>
           <button
@@ -230,7 +232,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
               {/* Voice mode */}
               {mode === 'voice' && (
                 <>
-                  <p className="text-xs text-secondary">Décrivez les travaux à voix haute. L'IA structurera automatiquement votre devis.</p>
+                  <p className="text-xs text-secondary">Décrivez les travaux à voix haute. Sarah structure votre devis automatiquement.</p>
                   <div className="flex flex-col items-center gap-4 py-6">
                     <button
                       onClick={isRecording ? stopRecording : startRecording}
@@ -243,7 +245,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                       {isRecording ? <MicOff className="w-8 h-8 text-white" /> : <Mic className="w-8 h-8 text-white" />}
                     </button>
                     <p className="text-sm text-secondary">
-                      {isRecording ? 'En cours d\'enregistrement... (cliquez pour arrêter)' : isTranscribing ? 'Transcription en cours...' : 'Cliquez pour parler'}
+                      {isRecording ? 'Enregistrement en cours... (cliquez pour arrêter)' : isTranscribing ? 'Sarah écoute...' : 'Cliquez pour parler'}
                     </p>
                   </div>
                   {isTranscribing && (
@@ -264,7 +266,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
               {/* Text mode */}
               {mode === 'text' && (
                 <>
-                  <p className="text-xs text-secondary">Décrivez librement les travaux à réaliser.</p>
+                  <p className="text-xs text-secondary">Décrivez librement les travaux. Sarah s'occupe de la structure.</p>
                   <textarea
                     value={text}
                     onChange={e => setText(e.target.value)}
@@ -278,7 +280,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
               {/* PDF / Image mode */}
               {mode === 'pdf' && (
                 <>
-                  <p className="text-xs text-secondary">Importez un PDF ou une image (photo, plan scanné). L'IA extraira les postes directement.</p>
+                  <p className="text-xs text-secondary">Importez un PDF ou une image (photo, plan scanné). Sarah extrait les postes directement.</p>
                   {!file ? (
                     <div
                       className="border-2 border-dashed border-[var(--elevation-border)] rounded-xl py-10 flex flex-col items-center gap-3 text-secondary hover:border-violet-400/50 hover:bg-violet-500/5 transition-all cursor-pointer"
@@ -330,7 +332,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                         </button>
                       </div>
                       <div>
-                        <label className="text-xs text-secondary font-medium mb-1.5 block">Précisions pour l'IA <span className="text-secondary/50 font-normal">(optionnel)</span></label>
+                        <label className="text-xs text-secondary font-medium mb-1.5 block">Précisions pour Sarah <span className="text-secondary/50 font-normal">(optionnel)</span></label>
                         <textarea
                           value={pdfDescription}
                           onChange={e => setPdfDescription(e.target.value)}
@@ -439,9 +441,9 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-sm font-semibold hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               {isAnalyzing ? (
-                <><Loader2 className="w-4 h-4 animate-spin" />Analyse en cours...</>
+                <><Loader2 className="w-4 h-4 animate-spin" />Sarah analyse...</>
               ) : (
-                <><Bot className="w-4 h-4" />Analyser avec l'IA</>
+                <>Confier à Sarah</>
               )}
             </button>
           ) : (

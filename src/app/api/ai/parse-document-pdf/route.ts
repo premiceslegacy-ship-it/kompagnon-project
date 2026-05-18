@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
         if (!Array.isArray(rows)) throw new Error('not an array')
         return { rows }
       } catch {
-        console.error('[ai/parse-document-pdf] JSON parse error:', raw.slice(0, 300))
+        console.error('[ai/parse-document-pdf] JSON parse error', { responseLength: raw.length })
         return { error: 'parse_error' }
       }
     } catch (err: any) {

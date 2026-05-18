@@ -11,7 +11,7 @@ type Props = {
 export function LegalFooter({
   tone = 'light',
   className,
-  caption = `© ${new Date().getFullYear()} ${APP_SIGNATURE}. Tous droits reserves.`,
+  caption = `© ${new Date().getFullYear()} ${APP_SIGNATURE}. Tous droits réservés.`,
 }: Props) {
   const textClassName = tone === 'dark' ? 'text-white/20' : 'text-secondary'
 

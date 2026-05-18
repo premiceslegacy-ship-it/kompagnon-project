@@ -8,13 +8,27 @@
 #     --resend-from contact@client.fr \
 #     --app-url https://client.fr
 #
-# Les clés partagées Atelier (OPENROUTER, MISTRAL, SHARED_WABA_*) sont lues
+# Clé OpenRouter :
+#   Par défaut : clé Atelier partagée lue depuis .env.local (OPENROUTER_API_KEY)
+#   Clé propre au client : passer --openrouter-key sk-or-xxx
+#     La clé Atelier est ignorée, celle du client est injectée à la place.
+#     Utile quand le client gère sa propre conso IA (compte openrouter.ai perso).
+#
+# Les autres clés partagées Atelier (MISTRAL, SHARED_WABA_*) sont lues
 # depuis .env.local — elles sont identiques pour tous les clients.
 # Les clés par client (RESEND, APP_URL) se passent en argument pour ne pas
 # avoir à modifier .env.local entre chaque déploiement.
 #
-# Exemple :
+# Exemples :
+#   # Clé Atelier partagée (défaut)
 #   ./scripts/deploy-edge-functions.sh pyxnmohknxmbpbcuvudg \
+#     --resend-key re_AbCdEf \
+#     --resend-from contact@weber-tolerie.fr \
+#     --app-url https://atelier-weber.workers.dev
+#
+#   # Clé propre au client (il gère sa conso OpenRouter)
+#   ./scripts/deploy-edge-functions.sh pyxnmohknxmbpbcuvudg \
+#     --openrouter-key sk-or-clientxxx \
 #     --resend-key re_AbCdEf \
 #     --resend-from contact@weber-tolerie.fr \
 #     --app-url https://atelier-weber.workers.dev
@@ -34,12 +48,14 @@ shift || true
 RESEND_KEY=""
 RESEND_FROM=""
 APP_URL=""
+OPENROUTER_KEY_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --resend-key)   RESEND_KEY="$2";  shift 2 ;;
-    --resend-from)  RESEND_FROM="$2"; shift 2 ;;
-    --app-url)      APP_URL="$2";     shift 2 ;;
+    --resend-key)      RESEND_KEY="$2";              shift 2 ;;
+    --resend-from)     RESEND_FROM="$2";             shift 2 ;;
+    --app-url)         APP_URL="$2";                 shift 2 ;;
+    --openrouter-key)  OPENROUTER_KEY_OVERRIDE="$2"; shift 2 ;;
     *) echo "⚠️  Argument inconnu : $1" ; shift ;;
   esac
 done
@@ -53,6 +69,8 @@ if [ -z "$PROJECT_REF" ]; then
   echo "          --resend-key re_xxx \\"
   echo "          --resend-from contact@client.fr \\"
   echo "          --app-url https://client.fr"
+  echo ""
+  echo "Option : --openrouter-key sk-or-xxx  (si le client gère sa propre clé IA)"
   exit 1
 fi
 
@@ -63,13 +81,25 @@ fi
 
 # ─── Clés Atelier partagées (depuis .env.local) ───────────────────────────────
 
-OPENROUTER_KEY=$(grep '^OPENROUTER_API_KEY=' .env.local | cut -d '=' -f2- | tr -d '"')
 MISTRAL_KEY=$(grep '^MISTRAL_API_KEY=' .env.local | cut -d '=' -f2- | tr -d '"')
 SHARED_WABA_PHONE_NUMBER_ID=$(grep '^SHARED_WABA_PHONE_NUMBER_ID=' .env.local | cut -d '=' -f2- | tr -d '"')
 SHARED_WABA_ACCESS_TOKEN=$(grep '^SHARED_WABA_ACCESS_TOKEN=' .env.local | cut -d '=' -f2- | tr -d '"')
 
+# ─── Résolution de la clé OpenRouter ─────────────────────────────────────────
+# Priorité : --openrouter-key (clé client) > .env.local (clé Atelier partagée)
+
+if [ -n "$OPENROUTER_KEY_OVERRIDE" ]; then
+  OPENROUTER_KEY="$OPENROUTER_KEY_OVERRIDE"
+  OPENROUTER_SOURCE="clé propre au client (--openrouter-key)"
+else
+  OPENROUTER_KEY=$(grep '^OPENROUTER_API_KEY=' .env.local | cut -d '=' -f2- | tr -d '"')
+  OPENROUTER_SOURCE="clé Atelier partagée (.env.local)"
+fi
+
 if [ -z "$OPENROUTER_KEY" ]; then
-  echo "❌  OPENROUTER_API_KEY manquant dans .env.local"
+  echo "❌  Clé OpenRouter manquante."
+  echo "    Soit renseigner OPENROUTER_API_KEY dans .env.local (clé Atelier),"
+  echo "    soit passer --openrouter-key sk-or-xxx (clé propre au client)."
   exit 1
 fi
 
@@ -82,6 +112,7 @@ fi
 
 echo ""
 echo "🚀  Déploiement Edge Functions → projet Supabase : $PROJECT_REF"
+echo "    OpenRouter : $OPENROUTER_SOURCE"
 echo "────────────────────────────────────────────────────────────────"
 
 # ─── 1. Deploy whatsapp-webhook ───────────────────────────────────────────────

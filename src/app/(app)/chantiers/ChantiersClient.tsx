@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   HardHat, Plus, X, Search, MapPin, Calendar,
   MoreVertical, Trash2, CheckCircle, PauseCircle, XCircle, PlayCircle,
-  RefreshCw, Copy, Clock,
+  RefreshCw, Copy, Clock, Users,
 } from 'lucide-react'
 import type { Chantier, ChantierStats } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
@@ -616,6 +616,12 @@ export default function ChantiersClient({
           >
             <Clock className="w-4 h-4" /> Heures pointées
           </Link>
+          <Link
+            href="/chantiers/equipes"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 bg-base transition-all shadow-sm whitespace-nowrap"
+          >
+            <Users className="w-4 h-4" /> Équipes & Intervenants
+          </Link>
           {canCreate && (
             <button
               onClick={() => setShowCreate(true)}
@@ -666,8 +672,8 @@ export default function ChantiersClient({
           <p className="text-secondary text-sm mt-1">Créez votre premier chantier ou modifiez les filtres</p>
         </div>
       ) : (
-        <div className="card">
-          <table className="w-full text-sm">
+        <div className="card overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
             <thead>
               <tr className="border-b border-[var(--elevation-border)] text-xs text-secondary uppercase tracking-wider">
                 <th className="text-left px-4 py-3 font-semibold">Chantier / Client</th>

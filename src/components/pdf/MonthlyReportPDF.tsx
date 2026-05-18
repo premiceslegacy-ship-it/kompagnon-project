@@ -13,12 +13,19 @@ export type ReportInvoice = {
   total_ht: number
   total_tva: number
   total_ttc: number
+  total_paid: number
   currency: string
   issue_date: string | null
   due_date: string | null
+  paid_at: string | null
   created_at: string
   client_name: string | null
   items_internal_total: number
+  payments: Array<{
+    id: string
+    amount: number
+    payment_date: string | null
+  }>
 }
 
 export type ReportQuote = {
@@ -58,7 +65,7 @@ function fmtDate(d: string | null): string {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  draft: 'Brouillon', sent: 'Envoyée', paid: 'Payée', cancelled: 'Annulée',
+  draft: 'Brouillon', sent: 'Envoyée', partial: 'Partielle', paid: 'Payée', cancelled: 'Annulée',
 }
 const QUOTE_STATUS_LABELS: Record<string, string> = {
   draft: 'Brouillon', sent: 'Envoyé', viewed: 'Consulté',
@@ -73,17 +80,35 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
   const currency = invoices[0]?.currency ?? quotes[0]?.currency ?? 'EUR'
 
   // ── Agrégats factures ─────────────────────────────────────────────────────
-  const sentPaid = invoices.filter(inv => ['sent', 'paid'].includes(inv.status))
+  const invoicesIssuedInMonth = invoices.filter(inv => inv.issue_date?.startsWith(month))
+  const sentPaid = invoicesIssuedInMonth.filter(inv => ['sent', 'partial', 'paid'].includes(inv.status))
   const caHt = sentPaid.reduce((s, inv) => s + inv.total_ht, 0)
-  const encaisseHt = invoices.filter(inv => inv.status === 'paid').reduce((s, inv) => s + inv.total_ht, 0)
-  const encaisseTtc = invoices.filter(inv => inv.status === 'paid').reduce((s, inv) => s + inv.total_ttc, 0)
-  const resteHt = invoices.filter(inv => inv.status === 'sent').reduce((s, inv) => s + inv.total_ht, 0)
-  const totalInternalCost = invoices.reduce((s, inv) => s + inv.items_internal_total, 0)
+  const paidTtcTotal = (inv: ReportInvoice) => inv.status === 'paid' ? inv.total_ttc : inv.status === 'partial' ? inv.total_paid : 0
+  const paidTtcInMonth = (inv: ReportInvoice) => {
+    const fromPayments = inv.payments
+      .filter(payment => payment.payment_date?.startsWith(month))
+      .reduce((s, payment) => s + payment.amount, 0)
+
+    if (fromPayments > 0) return fromPayments
+    if (inv.status === 'paid' && inv.paid_at?.startsWith(month)) return inv.total_ttc
+    return 0
+  }
+  const htFromTtc = (inv: ReportInvoice, amountTtc: number) =>
+    inv.total_ttc > 0 ? Math.min(inv.total_ht, inv.total_ht * (amountTtc / inv.total_ttc)) : 0
+  const tvaFromTtc = (inv: ReportInvoice, amountTtc: number) =>
+    inv.total_ttc > 0 ? Math.min(inv.total_tva, inv.total_tva * (amountTtc / inv.total_ttc)) : 0
+  const remainingHt = (inv: ReportInvoice) => inv.status === 'sent' ? inv.total_ht : inv.status === 'partial' ? Math.max(0, inv.total_ht - htFromTtc(inv, paidTtcTotal(inv))) : 0
+  const encaisseHt = invoices.reduce((s, inv) => s + htFromTtc(inv, paidTtcInMonth(inv)), 0)
+  const encaisseTtc = invoices.reduce((s, inv) => s + paidTtcInMonth(inv), 0)
+  const resteHt = invoicesIssuedInMonth.reduce((s, inv) => s + remainingHt(inv), 0)
+  const totalInternalCost = invoicesIssuedInMonth.reduce((s, inv) => s + inv.items_internal_total, 0)
   const margeHt = caHt - totalInternalCost
   const margePct = caHt > 0 ? Math.round((margeHt / caHt) * 100) : 0
 
-  // TVA collectée par taux
-  const tvaTotale = sentPaid.reduce((s, inv) => s + inv.total_tva, 0)
+  // TVA collectée = part de TVA comprise dans les encaissements du mois.
+  const tvaTotale = isVatSubject
+    ? invoices.reduce((s, inv) => s + tvaFromTtc(inv, paidTtcInMonth(inv)), 0)
+    : 0
 
   // ── Agrégats devis ────────────────────────────────────────────────────────
   const qEmis = quotes.length
@@ -102,7 +127,7 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
     reportTitle: { fontFamily: DS.font.heading, fontWeight: 800, fontSize: DS.size.xxxl, color: DS.color.black },
     reportSubtitle: { fontSize: DS.size.sm, color: DS.color.secondary, marginTop: 4 },
     sectionTitle: { fontFamily: DS.font.heading, fontWeight: 700, fontSize: DS.size.sm, color: DS.color.black, marginBottom: DS.space.sm, marginTop: DS.space.xl, textTransform: 'uppercase' as const, letterSpacing: 1 },
-    // KPI : pas de gap natif fiable — on utilise marginRight sur chaque box sauf le dernier
+    // KPI : pas de gap natif fiable - on utilise marginRight sur chaque box sauf le dernier
     kpiRow: { flexDirection: 'row' as const, marginBottom: DS.space.md },
     kpiBox: { flex: 1, backgroundColor: DS.color.surface, borderRadius: 6, padding: DS.space.md, marginRight: DS.space.sm },
     kpiBoxLast: { flex: 1, backgroundColor: DS.color.surface, borderRadius: 6, padding: DS.space.md },
@@ -168,7 +193,7 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
     ({ width: w, paddingRight: 4, alignItems: align === 'right' ? 'flex-end' as const : align === 'center' ? 'center' as const : 'flex-start' as const })
 
   return (
-    <Document title={`Rapport ${fmtMonth(month)} — ${organization.name}`} author={organization.name} creator={APP_NAME} language="fr-FR">
+    <Document title={`Rapport ${fmtMonth(month)} - ${organization.name}`} author={organization.name} creator={APP_NAME} language="fr-FR">
       <Page size="A4" style={S.page}>
 
         {/* ── En-tête ── */}
@@ -186,20 +211,20 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={S.reportTitle}>{fmtMonth(month)}</Text>
-            <Text style={S.reportSubtitle}>Rapport mensuel — généré le {fmtDate(new Date().toISOString())}</Text>
+            <Text style={S.reportSubtitle}>Rapport mensuel - généré le {fmtDate(new Date().toISOString())}</Text>
           </View>
         </View>
 
         {/* ── KPI Factures ── */}
         <Text style={S.sectionTitle}>Synthèse facturation</Text>
         {(() => {
-          const sentPaidCount = invoices.filter(i => ['sent', 'paid'].includes(i.status)).length
-          const sentCount = invoices.filter(i => i.status === 'sent').length
+          const sentPaidCount = invoicesIssuedInMonth.filter(i => ['sent', 'partial', 'paid'].includes(i.status)).length
+          const sentCount = invoicesIssuedInMonth.filter(i => i.status === 'sent' || i.status === 'partial').length
           const hasMargin = totalInternalCost > 0
           return (
             <View style={S.kpiRow}>
               <View style={S.accentBox}>
-                <Text style={S.kpiLabel}>CA émis HT</Text>
+                <Text style={S.kpiLabel}>Montant facturé HT</Text>
                 <Text style={S.accentValue}>{fmt(caHt, currency)}</Text>
                 <Text style={[S.kpiSub, { color: DS.color.black }]}>{sentPaidCount} facture{sentPaidCount > 1 ? 's' : ''}</Text>
               </View>
@@ -229,11 +254,11 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
           <View style={S.vatBox}>
             <Text style={[S.kpiLabel, { marginBottom: 6 }]}>TVA collectée</Text>
             <Text style={[S.kpiValue, { fontSize: DS.size.lg }]}>{fmt(tvaTotale, currency)}</Text>
-            <Text style={S.kpiSub}>Sur {fmt(caHt, currency)} HT facturé</Text>
+            <Text style={S.kpiSub}>Calculée sur {fmt(encaisseTtc, currency)} TTC encaissé</Text>
           </View>
         ) : (
           <View style={S.vatBox}>
-            <Text style={S.vatExempt}>TVA non applicable — Art. 293B du CGI (franchise en base)</Text>
+            <Text style={S.vatExempt}>TVA non applicable - Art. 293B du CGI (franchise en base)</Text>
           </View>
         )}
 
@@ -375,7 +400,7 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
 
         {/* ── Footer ── */}
         <View style={S.footer} fixed>
-          <Text style={S.footerText}>{organization.name} — Rapport {fmtMonth(month)} — {APP_NAME}</Text>
+          <Text style={S.footerText}>{organization.name} - Rapport {fmtMonth(month)} - {APP_NAME}</Text>
         </View>
         <Text style={S.pageNumber} render={({ pageNumber, totalPages }) => totalPages > 1 ? `${pageNumber} / ${totalPages}` : ''} fixed />
 

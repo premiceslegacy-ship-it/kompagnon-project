@@ -7,47 +7,47 @@ export const BTP_UNIT_GROUPS: UnitGroup[] = [
   {
     label: 'Quantité',
     options: [
-      { value: 'u', label: 'u — unité' },
-      { value: 'pce', label: 'pce — pièce' },
+      { value: 'u', label: 'u - unité' },
+      { value: 'pce', label: 'pce - pièce' },
       { value: 'lot', label: 'lot' },
-      { value: 'ens', label: 'ens — ensemble' },
+      { value: 'ens', label: 'ens - ensemble' },
     ],
   },
   {
     label: 'Longueur',
     options: [
-      { value: 'ml', label: 'ml — mètre linéaire' },
-      { value: 'm', label: 'm — mètre' },
-      { value: 'cm', label: 'cm — centimètre' },
+      { value: 'ml', label: 'ml - mètre linéaire' },
+      { value: 'm', label: 'm - mètre' },
+      { value: 'cm', label: 'cm - centimètre' },
     ],
   },
   {
     label: 'Surface',
     options: [
-      { value: 'm²', label: 'm² — mètre carré' },
-      { value: 'dm²', label: 'dm² — décimètre carré' },
+      { value: 'm²', label: 'm² - mètre carré' },
+      { value: 'dm²', label: 'dm² - décimètre carré' },
     ],
   },
   {
     label: 'Volume',
     options: [
-      { value: 'm³', label: 'm³ — mètre cube' },
-      { value: 'L', label: 'L — litre' },
+      { value: 'm³', label: 'm³ - mètre cube' },
+      { value: 'L', label: 'L - litre' },
     ],
   },
   {
     label: 'Poids',
     options: [
-      { value: 'kg', label: 'kg — kilogramme' },
-      { value: 't', label: 't — tonne' },
+      { value: 'kg', label: 'kg - kilogramme' },
+      { value: 't', label: 't - tonne' },
     ],
   },
   {
     label: 'Temps',
     options: [
-      { value: 'h', label: 'h — heure' },
-      { value: 'j', label: 'j — jour' },
-      { value: 'sem', label: 'sem — semaine' },
+      { value: 'h', label: 'h - heure' },
+      { value: 'j', label: 'j - jour' },
+      { value: 'sem', label: 'sem - semaine' },
       { value: 'mois', label: 'mois' },
     ],
   },

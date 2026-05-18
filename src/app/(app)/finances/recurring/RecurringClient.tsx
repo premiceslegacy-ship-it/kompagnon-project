@@ -541,7 +541,7 @@ export default function RecurringClient({
                 </div>
                 <p className="text-xs text-amber-600 flex items-center gap-1 pt-1 border-t border-amber-200 dark:border-amber-500/20 mt-2">
                   <EyeOff className="w-3 h-3 shrink-0" />
-                  Ligne interne — coût de revient, non visible sur la facture client
+                  Ligne interne - coût de revient, non visible sur la facture client
                 </p>
               </div>
             </div>
@@ -596,7 +596,7 @@ export default function RecurringClient({
                   </div>
                   <p className="text-xs text-purple-600 flex items-center gap-1 pt-1 border-t border-purple-200 dark:border-purple-500/20 mt-2">
                     <EyeOff className="w-3 h-3 shrink-0" />
-                    Ligne interne — coût de revient, non visible sur la facture client
+                    Ligne interne - coût de revient, non visible sur la facture client
                   </p>
                 </div>
               )}
@@ -859,7 +859,7 @@ export default function RecurringClient({
                       onChange={e => setFormAutoSendDelay(e.target.value === '' ? null : Number(e.target.value))}
                       className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50"
                     >
-                      <option value="">Désactivé — validation manuelle requise</option>
+                      <option value="">Désactivé - validation manuelle requise</option>
                       <option value="1">1 jour après création du brouillon</option>
                       <option value="2">2 jours après création du brouillon</option>
                       <option value="3">3 jours après création du brouillon</option>
@@ -905,7 +905,7 @@ export default function RecurringClient({
 	                        <button
 	                          type="button"
 	                          onClick={() => updateFormItem(item.id, 'is_internal', !item.is_internal)}
-	                          title={item.is_internal ? 'Ligne interne — coût de revient, non visible sur la facture client (cliquer pour rendre visible)' : 'Rendre interne (coût non facturé au client, visible seulement dans votre marge)'}
+	                          title={item.is_internal ? 'Ligne interne - coût de revient, non visible sur la facture client (cliquer pour rendre visible)' : 'Rendre interne (coût non facturé au client, visible seulement dans votre marge)'}
 	                          className={`p-1.5 rounded-lg transition-colors mt-2 ${isEquipment ? 'text-purple-600 bg-purple-500/10' : item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-secondary/30 hover:text-secondary'}`}
 	                        >
 	                          <EyeOff className="w-4 h-4" />

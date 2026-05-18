@@ -160,7 +160,7 @@ export default function MemberHoursReportPDF({
               <Text style={S.orgAddress}>
                 {[organization.address_line1, [organization.postal_code, organization.city].filter(Boolean).join(' ')]
                   .filter(Boolean)
-                  .join(' — ')}
+                  .join(' - ')}
               </Text>
             )}
           </View>
@@ -252,7 +252,7 @@ export default function MemberHoursReportPDF({
         </View>
 
         <Text style={S.footer} fixed>
-          Rapport généré par {organization.name} — Document à conserver pour vos archives.
+          Rapport généré par {organization.name} - Document à conserver pour vos archives.
         </Text>
       </Page>
     </Document>

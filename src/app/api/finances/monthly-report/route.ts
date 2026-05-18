@@ -7,11 +7,14 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
 import MonthlyReportPDF, { type MonthlyReportData, type ReportInvoice, type ReportQuote } from '@/components/pdf/MonthlyReportPDF'
+import { assertSafeExternalFetchUrl } from '@/lib/security'
 
 async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null
+  const safeUrl = assertSafeExternalFetchUrl(url)
+  if (!safeUrl) return null
   try {
-    const res = await fetch(url)
+    const res = await fetch(safeUrl)
     if (!res.ok) return null
     const buf = await res.arrayBuffer()
     const ct = res.headers.get('content-type') ?? 'image/png'
@@ -54,16 +57,50 @@ export async function GET(req: Request) {
   const { data: rawInvoices } = await admin
     .from('invoices')
     .select(`
-      id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, currency,
-      issue_date, due_date, created_at,
+      id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
+      issue_date, due_date, paid_at, created_at,
       client:clients(company_name, contact_name, first_name, last_name, email),
-      items:invoice_items(unit_price, quantity, is_internal)
+      items:invoice_items(unit_price, quantity, is_internal),
+      payments:payments(id, amount, payment_date)
     `)
     .eq('organization_id', orgId)
+    .eq('is_archived', false)
     .neq('status', 'cancelled')
-    .gte('created_at', monthStart)
-    .lt('created_at', monthEnd)
-    .order('created_at', { ascending: true })
+    .gte('issue_date', monthStart)
+    .lt('issue_date', monthEnd)
+    .order('issue_date', { ascending: true })
+
+  // Factures encaissées sur le mois, même si elles ont été émises avant.
+  const { data: rawPayments } = await admin
+    .from('payments')
+    .select(`
+      id, amount, payment_date,
+      invoice:invoices!inner(
+        id, number, title, status, invoice_type, is_archived, total_ht, total_tva, total_ttc, total_paid, currency,
+        issue_date, due_date, paid_at, created_at,
+        client:clients(company_name, contact_name, first_name, last_name, email),
+        items:invoice_items(unit_price, quantity, is_internal)
+      )
+    `)
+    .eq('organization_id', orgId)
+    .gte('payment_date', monthStart)
+    .lt('payment_date', monthEnd)
+
+  // Compatibilité avec les factures marquées payées avant l'historique détaillé des paiements.
+  const { data: rawPaidInvoices } = await admin
+    .from('invoices')
+    .select(`
+      id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
+      issue_date, due_date, paid_at, created_at,
+      client:clients(company_name, contact_name, first_name, last_name, email),
+      items:invoice_items(unit_price, quantity, is_internal),
+      payments:payments(id, amount, payment_date)
+    `)
+    .eq('organization_id', orgId)
+    .eq('is_archived', false)
+    .eq('status', 'paid')
+    .gte('paid_at', monthStart)
+    .lt('paid_at', monthEnd)
 
   // ── Charger devis du mois ─────────────────────────────────────────────────
   const { data: rawQuotes } = await admin
@@ -73,6 +110,7 @@ export async function GET(req: Request) {
       client:clients(company_name, contact_name, first_name, last_name, email)
     `)
     .eq('organization_id', orgId)
+    .eq('is_archived', false)
     .gte('created_at', monthStart)
     .lt('created_at', monthEnd)
     .order('created_at', { ascending: true })
@@ -83,7 +121,7 @@ export async function GET(req: Request) {
     return client.company_name ?? ([client.first_name, client.last_name].filter(Boolean).join(' ') || client.contact_name || client.email || null)
   }
 
-  const invoices: ReportInvoice[] = (rawInvoices ?? []).map((inv: any) => {
+  function normalizeInvoice(inv: any): ReportInvoice {
     const c = Array.isArray(inv.client) ? inv.client[0] : inv.client
     const items = (Array.isArray(inv.items) ? inv.items : []) as Array<{ unit_price: number; quantity: number; is_internal: boolean }>
     const internalTotal = items.filter(i => i.is_internal).reduce((s, i) => s + i.unit_price * i.quantity, 0)
@@ -96,14 +134,45 @@ export async function GET(req: Request) {
       total_ht: inv.total_ht ?? 0,
       total_tva: inv.total_tva ?? 0,
       total_ttc: inv.total_ttc ?? 0,
+      total_paid: inv.total_paid ?? 0,
       currency: inv.currency ?? 'EUR',
       issue_date: inv.issue_date,
       due_date: inv.due_date,
+      paid_at: inv.paid_at,
       created_at: inv.created_at,
       client_name: clientName(c),
       items_internal_total: internalTotal,
+      payments: (Array.isArray(inv.payments) ? inv.payments : []).map((p: any) => ({
+        id: p.id,
+        amount: p.amount ?? 0,
+        payment_date: p.payment_date,
+      })),
     }
+  }
+
+  const invoiceMap = new Map<string, ReportInvoice>()
+  ;(rawInvoices ?? []).forEach((inv: any) => {
+    invoiceMap.set(inv.id, normalizeInvoice(inv))
   })
+  ;(rawPaidInvoices ?? []).forEach((inv: any) => {
+    if (!invoiceMap.has(inv.id)) invoiceMap.set(inv.id, normalizeInvoice(inv))
+  })
+  ;(rawPayments ?? []).forEach((payment: any) => {
+    const inv = Array.isArray(payment.invoice) ? payment.invoice[0] : payment.invoice
+    if (!inv || inv.status === 'cancelled' || inv.is_archived) return
+
+    const normalized = invoiceMap.get(inv.id) ?? normalizeInvoice(inv)
+    if (!normalized.payments.some(p => p.id === payment.id)) {
+      normalized.payments.push({
+        id: payment.id,
+        amount: payment.amount ?? 0,
+        payment_date: payment.payment_date,
+      })
+    }
+    invoiceMap.set(inv.id, normalized)
+  })
+  const invoices = Array.from(invoiceMap.values())
+    .sort((a, b) => (a.issue_date ?? a.created_at).localeCompare(b.issue_date ?? b.created_at))
 
   const quotes: ReportQuote[] = (rawQuotes ?? []).map((q: any) => {
     const c = Array.isArray(q.client) ? q.client[0] : q.client

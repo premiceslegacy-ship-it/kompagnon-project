@@ -1,8 +1,11 @@
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
-import { Bot, Send, Loader2, X, Sparkles, ChevronDown } from 'lucide-react'
+import { Send, Loader2, X, Sparkles, ChevronDown } from 'lucide-react'
 import { cleanMarkdown } from '@/lib/utils'
+import { AI_ASSISTANTS } from '@/lib/brand'
+
+const MARCO = AI_ASSISTANTS.marco
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,7 +30,7 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
     {
       id: 'welcome',
       role: 'assistant',
-      content: `Bonjour ! Je suis votre assistant pour le chantier **${chantierTitle}**.\n\nJe connais les tâches, les pointages, les dépenses et la rentabilité en temps réel. Je peux aussi ajouter des heures, enregistrer une dépense, créer une note ou mettre à jour le statut d'une tâche.\n\nComment puis-je vous aider ?`,
+      content: `Salut ! C'est Marco, je suis sur le chantier **${chantierTitle}**.\n\nJe suis au courant de tout : tâches, pointages, rentabilité, budget. Tu veux pointer des heures, ajouter une note, voir où on en est ? Je suis là.\n\nDis-moi ce qu'il te faut.`,
     },
   ])
   const [input, setInput] = useState('')
@@ -104,10 +107,10 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
 
   // Suggestions rapides
   const QUICK = [
-    'Où en est la rentabilité ?',
-    'Ajoute 4h de travail aujourd\'hui',
+    'On en est où sur la rentabilité ?',
+    'Pointe 4h pour moi aujourd\'hui',
     'Quelles tâches sont en cours ?',
-    'Quel est le budget restant ?',
+    'Il reste combien sur le budget ?',
   ]
 
   return (
@@ -121,11 +124,11 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--elevation-border)]">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm">
-              <Bot className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm text-white text-xs font-bold">
+              M
             </div>
             <div>
-              <p className="text-sm font-semibold text-primary">Assistant Chantier</p>
+              <p className="text-sm font-semibold text-primary">{MARCO.name} <span className="font-normal text-secondary">, {MARCO.role}</span></p>
               <p className="text-xs text-secondary truncate max-w-[200px]">{chantierTitle}</p>
             </div>
           </div>
@@ -142,8 +145,8 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
           {messages.map(msg => (
             <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               {msg.role === 'assistant' && (
-                <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center mr-2 mt-0.5 shrink-0">
-                  <Bot className="w-3 h-3 text-white" />
+                <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center mr-2 mt-0.5 shrink-0 text-white text-[10px] font-bold">
+                  M
                 </div>
               )}
               <div className={`max-w-[82%] ${msg.role === 'user'
@@ -165,8 +168,8 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
 
           {loading && (
             <div className="flex justify-start">
-              <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center mr-2 mt-0.5 shrink-0">
-                <Bot className="w-3 h-3 text-white" />
+              <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center mr-2 mt-0.5 shrink-0 text-white text-[10px] font-bold">
+                M
               </div>
               <div className="bg-[var(--elevation-border)] rounded-2xl rounded-tl-sm px-3.5 py-3">
                 <Loader2 className="w-4 h-4 animate-spin text-accent" />

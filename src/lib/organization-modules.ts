@@ -1,56 +1,31 @@
-export const ORGANIZATION_MODULE_KEYS = [
-  'whatsapp_agent',
-  'voice_input',
-  'planning_ai',
-  'quote_ai',
-  'document_ai',
-  'catalog_ai',
-] as const
+import {
+  getModulesForTier,
+  PRODUCT_MODULE_KEYS,
+  type ProductModuleKey,
+} from '@/lib/quota-catalog'
 
-export type OrganizationModuleKey = typeof ORGANIZATION_MODULE_KEYS[number]
+export const ORGANIZATION_MODULE_KEYS = PRODUCT_MODULE_KEYS
+
+export type OrganizationModuleKey = ProductModuleKey
 
 export type OrganizationModules = Record<OrganizationModuleKey, boolean>
 
 export type BusinessProfile = 'btp' | 'cleaning' | 'industry'
 
-// Modules activés par défaut selon le profil métier.
-// L'override individuel dans organization_modules prend toujours le dessus.
+// Les profils metier gardent le comportement historique: si aucune config n'existe,
+// l'instance reste utilisable avec les modules IA principaux actifs.
 export const DEFAULT_MODULES_BY_PROFILE: Record<BusinessProfile, OrganizationModules> = {
-  btp: {
-    whatsapp_agent: true,
-    voice_input:    true,
-    planning_ai:    true,
-    quote_ai:       true,
-    document_ai:    true,
-    catalog_ai:     true,
-  },
-  cleaning: {
-    whatsapp_agent: true,
-    voice_input:    true,
-    planning_ai:    true,
-    quote_ai:       true,
-    document_ai:    true,
-    catalog_ai:     true,
-  },
-  industry: {
-    whatsapp_agent: true,
-    voice_input:    true,
-    planning_ai:    true,
-    quote_ai:       true,
-    document_ai:    true,
-    catalog_ai:     true,
-  },
+  btp: getModulesForTier('expert'),
+  cleaning: getModulesForTier('expert'),
+  industry: getModulesForTier('expert'),
 }
 
-// Fallback si aucun profil connu
-export const DEFAULT_ORGANIZATION_MODULES: OrganizationModules = {
-  whatsapp_agent: true,
-  voice_input:    true,
-  planning_ai:    true,
-  quote_ai:       true,
-  document_ai:    true,
-  catalog_ai:     true,
-}
+export const DEFAULT_ORGANIZATION_MODULES: OrganizationModules = getModulesForTier('expert')
+
+export const MODULES_SETUP_ONLY: OrganizationModules = getModulesForTier('setup_only')
+export const MODULES_STARTER: OrganizationModules = getModulesForTier('starter')
+export const MODULES_PRO: OrganizationModules = getModulesForTier('pro')
+export const MODULES_EXPERT: OrganizationModules = getModulesForTier('expert')
 
 export function getDefaultModulesForProfile(profile: string | null | undefined): OrganizationModules {
   if (profile && profile in DEFAULT_MODULES_BY_PROFILE) {
@@ -64,14 +39,11 @@ export function normalizeOrganizationModules(input: unknown, profile?: string | 
   const defaults = getDefaultModulesForProfile(profile)
 
   return ORGANIZATION_MODULE_KEYS.reduce<OrganizationModules>((acc, key) => {
-    // Override explicite en DB (true/false) → prioritaire
     if (key in source) {
       acc[key] = source[key] === true
     } else {
-      // Pas de valeur en DB → on tombe sur le default du profil
       acc[key] = defaults[key]
     }
     return acc
   }, { ...defaults })
 }
-

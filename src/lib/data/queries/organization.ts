@@ -65,7 +65,7 @@ export type Organization = {
   public_form_catalog_item_ids: Array<{ id: string; item_type: 'material' | 'labor' | 'prestation' }> | null
   public_form_custom_mode_enabled: boolean
   public_form_notification_email: string | null
-  // Suppression de compte RGPD (optionnel — champ ajouté par migration 060)
+  // Suppression de compte RGPD (optionnel - champ ajouté par migration 060)
   deletion_requested_at?: string | null
   deletion_scheduled_at?: string | null
   // Email & documents (migration 061)
@@ -79,6 +79,14 @@ export type Organization = {
   default_hourly_rate?: number | null
   // Rapport mensuel auto aux membres individuels (migration 073)
   auto_send_member_reports?: boolean | null
+  // Signataire par défaut pour les contrats (migration 084)
+  signatory_name?: string | null
+  signatory_role?: string | null
+  signature_image?: string | null
+  // Point de départ des tournées (migration 098)
+  departure_address?: string | null
+  departure_postal_code?: string | null
+  departure_city?: string | null
 }
 
 export const getOrganization = cache(async (): Promise<Organization | null> => {
@@ -88,7 +96,7 @@ export const getOrganization = cache(async (): Promise<Organization | null> => {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('organizations')
-    .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, email_from_name, email_from_address, forme_juridique, capital_social, rcs, rcs_ville, insurance_info, certifications, primary_color, payment_terms_days, late_penalty_rate, court_competent, iban, bic, bank_name, recovery_indemnity_text, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, sector, business_profile, business_activity_id, label_set, unit_set, default_categories, starter_presets, is_vat_subject, default_vat_rate, public_form_enabled, public_form_welcome_message, public_form_catalog_item_ids, public_form_custom_mode_enabled, public_form_notification_email, deletion_requested_at, deletion_scheduled_at, email_signature, cgv_text, reminder_first_delay_days, decennale_enabled, decennale_assureur, decennale_police, decennale_couverture, decennale_date_debut, decennale_date_fin, default_quote_validity_days, default_labor_cost_per_hour, default_hourly_rate, auto_send_member_reports')
+    .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, email_from_name, email_from_address, forme_juridique, capital_social, rcs, rcs_ville, insurance_info, certifications, primary_color, payment_terms_days, late_penalty_rate, court_competent, iban, bic, bank_name, recovery_indemnity_text, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, sector, business_profile, business_activity_id, label_set, unit_set, default_categories, starter_presets, is_vat_subject, default_vat_rate, public_form_enabled, public_form_welcome_message, public_form_catalog_item_ids, public_form_custom_mode_enabled, public_form_notification_email, deletion_requested_at, deletion_scheduled_at, email_signature, cgv_text, reminder_first_delay_days, decennale_enabled, decennale_assureur, decennale_police, decennale_couverture, decennale_date_debut, decennale_date_fin, default_quote_validity_days, default_labor_cost_per_hour, default_hourly_rate, auto_send_member_reports, signatory_name, signatory_role, signature_image, departure_address, departure_postal_code, departure_city')
     .eq('id', orgId)
     .single()
 

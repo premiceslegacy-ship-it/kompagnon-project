@@ -23,6 +23,8 @@ import {
     Inbox,
     Menu,
     X,
+    ClipboardSignature,
+    ChevronDown,
 } from 'lucide-react';
 import type { UserProfile } from '@/lib/data/queries/user';
 import { AI_NAME } from '@/lib/brand';
@@ -249,6 +251,95 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
     );
 };
 
+// Dropdown nav générique
+const NavDropdown = ({ label, icon, active, badge, children }: {
+    label: string
+    icon?: React.ReactNode
+    active: boolean
+    badge?: number
+    children: React.ReactNode
+}) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [mounted, setMounted] = useState(false);
+    const buttonRef = useRef<HTMLButtonElement>(null);
+    const [coords, setCoords] = useState({ top: 0, left: 0 });
+
+    useEffect(() => { setMounted(true); }, []);
+
+    const toggle = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!isOpen && buttonRef.current) {
+            const rect = buttonRef.current.getBoundingClientRect();
+            setCoords({ top: rect.bottom + window.scrollY, left: rect.left + window.scrollX });
+        }
+        setIsOpen(v => !v);
+    };
+
+    useEffect(() => {
+        const close = () => setIsOpen(false);
+        if (isOpen) {
+            document.addEventListener('click', close);
+            window.addEventListener('scroll', close, true);
+        }
+        return () => {
+            document.removeEventListener('click', close);
+            window.removeEventListener('scroll', close, true);
+        };
+    }, [isOpen]);
+
+    return (
+        <>
+            <button
+                ref={buttonRef}
+                onClick={toggle}
+                className={`relative text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap ${active ? 'text-primary' : 'text-secondary hover:text-primary'}`}
+            >
+                {icon}
+                {label}
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+                {(badge ?? 0) > 0 && (
+                    <span className="absolute -top-2 -right-3 min-w-[16px] h-4 rounded-full bg-red-500 text-white text-[9px] font-extrabold flex items-center justify-center px-1 leading-none">
+                        {(badge ?? 0) > 9 ? '9+' : badge}
+                    </span>
+                )}
+            </button>
+            {mounted && isOpen && typeof document !== 'undefined' && createPortal(
+                <div
+                    className="absolute w-52 menu-panel py-1.5 z-[9999] animate-in fade-in slide-in-from-top-2 duration-200"
+                    style={{ top: coords.top + 8, left: coords.left }}
+                    onClick={e => e.stopPropagation()}
+                >
+                    {children}
+                </div>,
+                document.body
+            )}
+        </>
+    );
+};
+
+const NavDropdownItem = ({ href, icon, label, badge, active, onClick }: {
+    href: string
+    icon: React.ReactNode
+    label: string
+    badge?: number
+    active: boolean
+    onClick: () => void
+}) => (
+    <Link
+        href={href}
+        onClick={onClick}
+        className={`flex items-center gap-3 px-4 py-2.5 text-sm font-semibold transition-colors ${active ? 'text-accent bg-accent/8' : 'text-primary hover:bg-base'}`}
+    >
+        <span className={active ? 'text-accent' : 'text-secondary'}>{icon}</span>
+        <span className="flex-1">{label}</span>
+        {(badge ?? 0) > 0 && (
+            <span className="min-w-[20px] h-5 rounded-full bg-red-500 text-white text-[10px] font-extrabold flex items-center justify-center px-1.5 leading-none">
+                {(badge ?? 0) > 9 ? '9+' : badge}
+            </span>
+        )}
+    </Link>
+);
+
 type NavItem = {
     href: string;
     label: string;
@@ -276,14 +367,12 @@ const MobileDrawer = ({
 
     useEffect(() => { setMounted(true); }, []);
 
-    // Fermer avec Escape
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
         if (isOpen) document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
     }, [isOpen, onClose]);
 
-    // Bloquer le scroll body quand ouvert
     useEffect(() => {
         if (isOpen) {
             document.body.style.overflow = 'hidden';
@@ -301,16 +390,13 @@ const MobileDrawer = ({
 
     return createPortal(
         <>
-            {/* Backdrop */}
             <div
                 className={`fixed inset-0 z-[9990] bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
                 onClick={onClose}
             />
-            {/* Drawer */}
             <div
                 className={`fixed top-0 left-0 h-full w-[280px] z-[9991] flex flex-col transition-transform duration-300 ease-out bg-surface dark:bg-[#141414] ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
             >
-                {/* Header drawer */}
                 <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--elevation-border)]">
                     <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0">
@@ -335,7 +421,6 @@ const MobileDrawer = ({
                     </button>
                 </div>
 
-                {/* Nav links */}
                 <nav className="flex-1 overflow-y-auto py-3">
                     {navItems.map((item) => (
                         <div key={item.href}>
@@ -370,7 +455,6 @@ const MobileDrawer = ({
                     ))}
                 </nav>
 
-                {/* Footer drawer */}
                 <div className="border-t border-[var(--elevation-border)] px-5 py-4 flex flex-col gap-1">
                     {total > 0 && (
                         <div className="mb-2 px-3 py-2.5 rounded-xl bg-accent/8 flex items-center gap-2">
@@ -399,31 +483,31 @@ const MobileDrawer = ({
     );
 };
 
-export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifications = { overdueInvoices: 0, expiringQuotes: 0 }, modules }: { profile: UserProfile | null; orgName?: string | null; logoUrl?: string | null; notifications?: NotificationsData; modules?: OrganizationModules }) => {
+export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifications = { overdueInvoices: 0, expiringQuotes: 0 }, modules, permissionKeys = [] }: { profile: UserProfile | null; orgName?: string | null; logoUrl?: string | null; notifications?: NotificationsData; modules?: OrganizationModules; permissionKeys?: string[] }) => {
     const pathname = usePathname() || '/dashboard';
-    const showAtelierAi = !!(modules?.quote_ai || modules?.document_ai || modules?.voice_input);
+    const showAtelierAi = !!(modules?.quote_ai || modules?.document_import_ai || modules?.voice_input);
     const [drawerOpen, setDrawerOpen] = useState(false);
+    const permissionSet = new Set(permissionKeys);
+    const canView = (key: string) => permissionSet.has('*') || permissionSet.has(key);
+
+    const facturationActive = pathname.startsWith('/finances') || pathname.startsWith('/contracts') || pathname.startsWith('/reminders');
+    const autreActive = pathname.startsWith('/requests');
+    const newRequests = notifications.newRequests ?? 0;
 
     const navItems: NavItem[] = [
-        {
+        ...(canView('dashboard.view') ? [{
             href: '/dashboard',
             label: 'Tableau de bord',
             icon: <LayoutDashboard className="w-4 h-4" />,
             active: pathname === '/dashboard',
-        },
-        {
+        }] : []),
+        ...(canView('clients.view') ? [{
             href: '/clients',
             label: 'Clients',
             icon: <UserCircle className="w-4 h-4" />,
             active: pathname.startsWith('/clients'),
-        },
-        {
-            href: '/finances',
-            label: 'Facturation',
-            icon: <FileText className="w-4 h-4" />,
-            active: pathname.startsWith('/finances'),
-        },
-        {
+        }] : []),
+        ...(canView('chantiers.view') ? [{
             href: '/chantiers',
             label: 'Chantiers',
             icon: <HardHat className="w-4 h-4" />,
@@ -436,89 +520,168 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                     active: pathname.startsWith('/chantiers/planning'),
                 },
             ],
-        },
-        {
-            href: '/catalog',
-            label: 'Catalogue',
-            icon: <Package className="w-4 h-4" />,
-            active: pathname.startsWith('/catalog'),
-        },
-        {
+        }] : []),
+        ...(canView('quotes.view') || canView('invoices.view') ? [{
+            href: '/finances',
+            label: 'Facturation',
+            icon: <FileText className="w-4 h-4" />,
+            active: pathname.startsWith('/finances'),
+        }] : []),
+        ...(canView('contracts.view') ? [{
+            href: '/contracts',
+            label: 'Contrats',
+            icon: <ClipboardSignature className="w-4 h-4" />,
+            active: pathname.startsWith('/contracts'),
+        }] : []),
+        ...(canView('reminders.view') ? [{
             href: '/reminders',
             label: 'Relances',
             icon: <MailWarning className="w-4 h-4" />,
             active: pathname.startsWith('/reminders'),
-        },
+        }] : []),
+        ...(canView('catalog.view') ? [{
+            href: '/catalog',
+            label: 'Catalogue',
+            icon: <Package className="w-4 h-4" />,
+            active: pathname.startsWith('/catalog'),
+        }] : []),
         ...(showAtelierAi ? [{
             href: '/atelier-ia',
             label: AI_NAME,
             icon: <Bot className="w-4 h-4" />,
             active: pathname.startsWith('/atelier-ia'),
         }] : []),
-        {
+        ...(canView('leads.view') ? [{
             href: '/requests',
             label: 'Demandes',
             icon: <Inbox className="w-4 h-4" />,
             active: pathname.startsWith('/requests'),
-            badge: notifications.newRequests ?? 0,
-        },
+            badge: newRequests,
+        }] : []),
     ];
 
     return (
         <>
-            <header className="flex items-center px-4 sm:px-6 py-3 border-b border-[var(--elevation-border)] backdrop-blur-glass sticky top-0 z-50 bg-base/40 dark:bg-black/20">
-                {/* Hamburger — mobile uniquement */}
+            <header className="flex items-center px-4 sm:px-6 py-3 header-glass sticky top-0 z-50">
+                {/* Hamburger — mobile + tablette (< lg) */}
                 <button
                     onClick={() => setDrawerOpen(true)}
-                    className="md:hidden w-10 h-10 flex items-center justify-center hover:scale-110 transition-all duration-300 ease-out mr-1"
+                    className="lg:hidden w-10 h-10 flex items-center justify-center hover:scale-110 transition-all duration-300 ease-out mr-1"
                     aria-label="Ouvrir le menu"
                 >
                     <Menu className="w-5 h-5 text-primary" />
                 </button>
 
-                {/* Nav centré — desktop */}
-                <nav className="hidden md:flex items-center justify-center md:gap-6 lg:gap-10 flex-1">
-                    {navItems.map((item) => (
-                        <div key={item.href} className="flex items-center gap-1">
-                            <Link
-                                href={item.href}
-                                className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap relative ${item.active ? 'text-primary' : 'text-secondary hover:text-primary'}`}
-                            >
-                                {item.icon}
-                                {item.label}
-                                {(item.badge ?? 0) > 0 && (
-                                    <span className="absolute -top-2 -right-3 min-w-[16px] h-4 rounded-full bg-red-500 text-white text-[9px] font-extrabold flex items-center justify-center px-1 leading-none">
-                                        {(item.badge ?? 0) > 9 ? '9+' : item.badge}
-                                    </span>
-                                )}
-                            </Link>
-                            {item.subLinks?.map((sub) => (
-                                <Link
-                                    key={sub.href}
-                                    href={sub.href}
-                                    title={sub.label}
-                                    className={`p-1 rounded transition-colors ${sub.active ? 'text-accent' : 'text-secondary hover:text-primary'}`}
-                                >
-                                    {sub.icon}
-                                </Link>
-                            ))}
-                        </div>
-                    ))}
+                {/* Nav centré — desktop uniquement (lg+) */}
+                <nav className="hidden lg:flex items-center justify-center gap-6 xl:gap-8 flex-1">
+                    {canView('dashboard.view') && <Link
+                        href="/dashboard"
+                        className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname === '/dashboard' ? 'text-primary' : 'text-secondary hover:text-primary'}`}
+                    >
+                        <LayoutDashboard className="w-4 h-4" />
+                        Tableau de bord
+                    </Link>}
+
+                    {canView('clients.view') && <Link
+                        href="/clients"
+                        className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/clients') ? 'text-primary' : 'text-secondary hover:text-primary'}`}
+                    >
+                        <UserCircle className="w-4 h-4" />
+                        Clients
+                    </Link>}
+
+                    {canView('chantiers.view') && <div className="flex items-center gap-1">
+                        <Link
+                            href="/chantiers"
+                            className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/chantiers') ? 'text-primary' : 'text-secondary hover:text-primary'}`}
+                        >
+                            <HardHat className="w-4 h-4" />
+                            Chantiers
+                        </Link>
+                        <Link
+                            href="/chantiers/planning"
+                            title="Planning global"
+                            className={`p-1 rounded transition-colors ${pathname.startsWith('/chantiers/planning') ? 'text-accent' : 'text-secondary hover:text-primary'}`}
+                        >
+                            <Calendar className="w-3.5 h-3.5" />
+                        </Link>
+                    </div>}
+
+                    {(canView('quotes.view') || canView('invoices.view') || canView('contracts.view') || canView('reminders.view')) && <NavDropdown
+                        label="Facturation"
+                        icon={<FileText className="w-4 h-4" />}
+                        active={facturationActive}
+                    >
+                        {(canView('quotes.view') || canView('invoices.view')) && <NavDropdownItem
+                            href="/finances"
+                            icon={<FileText className="w-4 h-4" />}
+                            label="Devis & Factures"
+                            active={pathname.startsWith('/finances')}
+                            onClick={() => {}}
+                        />}
+                        {canView('contracts.view') && <NavDropdownItem
+                            href="/contracts"
+                            icon={<ClipboardSignature className="w-4 h-4" />}
+                            label="Contrats"
+                            active={pathname.startsWith('/contracts')}
+                            onClick={() => {}}
+                        />}
+                        {canView('reminders.view') && <NavDropdownItem
+                            href="/reminders"
+                            icon={<MailWarning className="w-4 h-4" />}
+                            label="Relances"
+                            active={pathname.startsWith('/reminders')}
+                            onClick={() => {}}
+                        />}
+                    </NavDropdown>}
+
+                    {canView('catalog.view') && <Link
+                        href="/catalog"
+                        className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/catalog') ? 'text-primary' : 'text-secondary hover:text-primary'}`}
+                    >
+                        <Package className="w-4 h-4" />
+                        Catalogue
+                    </Link>}
+
+                    {showAtelierAi && (
+                        <Link
+                            href="/atelier-ia"
+                            className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/atelier-ia') ? 'text-primary' : 'text-secondary hover:text-primary'}`}
+                        >
+                            <Bot className="w-4 h-4" />
+                            {AI_NAME}
+                        </Link>
+                    )}
+
+                    {canView('leads.view') && <NavDropdown
+                        label="Autres"
+                        active={autreActive}
+                        badge={newRequests}
+                    >
+                        <NavDropdownItem
+                            href="/requests"
+                            icon={<Inbox className="w-4 h-4" />}
+                            label="Demandes"
+                            badge={newRequests}
+                            active={pathname.startsWith('/requests')}
+                            onClick={() => {}}
+                        />
+                    </NavDropdown>}
                 </nav>
 
-                {/* Spacer mobile — pousse les actions à droite */}
-                <div className="flex-1 md:hidden" />
+                {/* Spacer mobile + tablette */}
+                <div className="flex-1 lg:hidden" />
 
                 {/* Actions à droite */}
                 <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
                     <ThemeToggle />
-                    <Link
+                    {canView('settings.view') && <Link
                         href="/settings"
-                        className="hidden md:flex w-10 h-10 items-center justify-center hover:scale-110 transition-all duration-300 ease-out"
+                        className="hidden lg:flex w-10 h-10 items-center justify-center hover:scale-110 transition-all duration-300 ease-out"
                         title="Paramètres"
                     >
                         <Settings className="w-5 h-5 text-primary" />
-                    </Link>
+                    </Link>}
                     <NotificationBell notifications={notifications} />
                     <UserMenu profile={profile} />
                 </div>

@@ -438,7 +438,7 @@ export default function JalonsTab({ initialJalons, chantierId, budgetHt, taches 
         position: i,
       })
       if (jalonId && s.tasks?.length) {
-        // Créer les tâches si elles n'existent pas — on envoie juste le nom dans la mutation
+        // Créer les tâches si elles n'existent pas - on envoie juste le nom dans la mutation
         // (les tâches sont créées côté mutations/chantiers via createTache)
       }
     }
