@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useTransition, useRef } from 'react';
+import React, { useState, useTransition, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ActionMenu } from '@/components/shared';
 import {
-    Upload, Mail, Trash2, Plus, X, User, Building2, Users, Copy, Check, KeyRound, Save, Loader2, ImageIcon, Globe, Code2, ExternalLink, Inbox, Package, Layers, Wrench, ToggleLeft, ToggleRight, MessageSquare, RefreshCw, ShieldCheck, ChevronDown, Brain, Lock, RotateCcw, Edit3
+    Upload, Mail, Trash2, Plus, X, User, Building2, Users, Copy, Check, KeyRound, Save, Loader2, ImageIcon, Globe, Code2, ExternalLink, Inbox, Package, Layers, Wrench, ToggleLeft, ToggleRight, MessageSquare, RefreshCw, ShieldCheck, ChevronDown, Brain, Lock, RotateCcw, Edit3, ArrowUp
 } from 'lucide-react';
 import type { TeamMember } from '@/lib/data/queries/team';
 import type { OrgRole, AllPermissionsData, RoleWithPermissions } from '@/lib/data/queries/roles';
@@ -22,7 +22,8 @@ import { updatePublicFormSettings } from '@/lib/data/mutations/quote-requests';
 import { saveWhatsAppConfig, deleteWhatsAppConfig } from '@/lib/data/mutations/whatsapp';
 import { createOrganizationExport } from '@/lib/data/mutations/organization-exports'
 import { requestAccountDeletion, cancelAccountDeletion } from '@/lib/data/mutations/account-deletion';
-import SignaturePad from '@/components/SignaturePad';
+import SignaturePad from '@/components/SignaturePad'
+import ExportComptableModal from '@/components/ExportComptableModal';
 import { upsertEmailTemplate, resetEmailTemplate } from '@/lib/data/mutations/email-templates';
 import type { EmailTemplate, EmailTemplateSlug } from '@/lib/data/queries/emailTemplates';
 import type { WhatsAppConfig } from '@/lib/data/mutations/whatsapp';
@@ -158,6 +159,12 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         ? `${supabaseUrl}/functions/v1/whatsapp-webhook`
         : 'https://[ref].supabase.co/functions/v1/whatsapp-webhook'
     const [activeTab, setActiveTab] = useState(initialTab);
+    useEffect(() => {
+        const hash = window.location.hash.slice(1)
+        if (!hash) return
+        const el = document.getElementById(hash)
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, [activeTab])
     const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
     const [inviteEmail, setInviteEmail] = useState('');
     const [inviteRoleId, setInviteRoleId] = useState(roles[0]?.id ?? '');
@@ -166,6 +173,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     const [codeCopied, setCodeCopied] = useState(false);
     const [isPending, startTransition] = useTransition();
     const [orgSaveStatus, setOrgSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [orgIsDirty, setOrgIsDirty] = useState(false);
     const [orgFieldErrors, setOrgFieldErrors] = useState<OrganizationFieldErrors>({});
     const [orgErrorMessage, setOrgErrorMessage] = useState<string | null>(null);
     const [emailSaveStatus, setEmailSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -261,7 +269,29 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         default_vat_rate: organization?.default_vat_rate ?? 20,
     });
 
+    const [defaultLaborCost, setDefaultLaborCost] = useState<number | ''>(
+        organization?.default_labor_cost_per_hour ?? ''
+    );
 
+    function markOrgDirty() {
+        setOrgIsDirty(true);
+        setOrgSaveStatus('idle');
+    }
+
+    function makeOrgDirtySetter<T>(setter: React.Dispatch<React.SetStateAction<T>>): React.Dispatch<React.SetStateAction<T>> {
+        return (value) => {
+            markOrgDirty();
+            setter(value);
+        }
+    }
+
+    const setCompanyDetailsDirty = makeOrgDirtySetter(setCompanyDetails)
+    const setLegalDetailsDirty = makeOrgDirtySetter(setLegalDetails)
+    const setSignatureDetailsDirty = makeOrgDirtySetter(setSignatureDetails)
+    const setDecennaleDirty = makeOrgDirtySetter(setDecennale)
+    const setPaymentDetailsDirty = makeOrgDirtySetter(setPaymentDetails)
+    const setVatConfigDirty = makeOrgDirtySetter(setVatConfig)
+    const setDefaultLaborCostDirty = makeOrgDirtySetter(setDefaultLaborCost)
 
     const [autoReminder, setAutoReminder] = useState({
         enabled: organization?.auto_reminder_enabled ?? false,
@@ -288,6 +318,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     const [publicFormSaveStatus, setPublicFormSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [exportSaveStatus, setExportSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [exportFeedback, setExportFeedback] = useState<string | null>(null);
+    const [showExportComptableModal, setShowExportComptableModal] = useState(false);
 
     // ─── Signature email + CGV + délai relance ───────────────────────────────
     const [emailSignature, setEmailSignature] = useState(organization?.email_signature ?? '')
@@ -704,6 +735,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 recovery_indemnity_text: paymentDetails.recovery_indemnity_text || null,
                 is_vat_subject: vatConfig.is_vat_subject,
                 default_vat_rate: vatConfig.is_vat_subject ? vatConfig.default_vat_rate : 0,
+                default_labor_cost_per_hour: defaultLaborCost !== '' ? defaultLaborCost : null,
                 signatory_name: signatureDetails.signatory_name.trim() || null,
                 signatory_role: signatureDetails.signatory_role.trim() || null,
                 signature_image: signatureDetails.signature_image,
@@ -734,6 +766,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     court_competent: normalizedCourt ?? '',
                 }));
                 setOrgSaveStatus('saved');
+                setOrgIsDirty(false);
                 setTimeout(() => setOrgSaveStatus('idle'), 2000);
             }
         });
@@ -897,13 +930,16 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 )
             }
             return (
-                <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8">
+                <div id="identite" className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
                             <h2 className="text-2xl font-bold text-primary">Identité de l&#39;entreprise</h2>
                             <p className="text-sm text-secondary mt-1">Modifiez vos informations puis sauvegardez quand vous êtes prêt.</p>
                         </div>
-                        {renderOrganizationSaveButton('w-full sm:w-auto justify-center shrink-0')}
+                        <div className="flex flex-col sm:items-end gap-2">
+                            {orgIsDirty && <span className="text-xs font-semibold text-accent">Modifications non sauvegardées</span>}
+                            {renderOrganizationSaveButton('w-full sm:w-auto justify-center shrink-0')}
+                        </div>
                     </div>
                     {orgErrorMessage && (
                         <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-500">
@@ -940,17 +976,17 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div className="space-y-2">
                                     <label className="text-sm font-semibold text-secondary">Nom de l&#39;entreprise</label>
-                                    <input data-org-field="name" type="text" value={companyDetails.name} onChange={e => { setCompanyDetails({ ...companyDetails, name: e.target.value }); setOrgFieldError('name') }} className={orgInputClass('name')} />
+                                    <input data-org-field="name" type="text" value={companyDetails.name} onChange={e => { setCompanyDetailsDirty({ ...companyDetails, name: e.target.value }); setOrgFieldError('name') }} className={orgInputClass('name')} />
                                     <OrgFieldError field="name" />
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-sm font-semibold text-secondary">SIRET</label>
-                                    <input data-org-field="siret" type="text" inputMode="numeric" value={companyDetails.siret} onChange={e => { setCompanyDetails({ ...companyDetails, siret: formatSiretInput(e.target.value) }); setOrgFieldError('siret') }} className={`${orgInputClass('siret')} tabular-nums`} />
+                                    <input data-org-field="siret" type="text" inputMode="numeric" value={companyDetails.siret} onChange={e => { setCompanyDetailsDirty({ ...companyDetails, siret: formatSiretInput(e.target.value) }); setOrgFieldError('siret') }} className={`${orgInputClass('siret')} tabular-nums`} />
                                     <OrgFieldError field="siret" />
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-sm font-semibold text-secondary">TVA Intracommunautaire</label>
-                                    <input data-org-field="vat_number" type="text" value={companyDetails.tva} onChange={e => { setCompanyDetails({ ...companyDetails, tva: formatVatNumberInput(e.target.value) }); setOrgFieldError('vat_number') }} className={`${orgInputClass('vat_number')} tabular-nums`} disabled={!vatConfig.is_vat_subject} />
+                                    <input data-org-field="vat_number" type="text" value={companyDetails.tva} onChange={e => { setCompanyDetailsDirty({ ...companyDetails, tva: formatVatNumberInput(e.target.value) }); setOrgFieldError('vat_number') }} className={`${orgInputClass('vat_number')} tabular-nums`} disabled={!vatConfig.is_vat_subject} />
                                     <OrgFieldError field="vat_number" />
                                 </div>
                             </div>
@@ -989,7 +1025,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                                     <button
                                                         key={activity.id}
                                                         type="button"
-                                                        onClick={() => setCompanyDetails({ ...companyDetails, business_activity: activity.id })}
+                                                        onClick={() => setCompanyDetailsDirty({ ...companyDetails, business_activity: activity.id })}
                                                         className={`p-4 rounded-2xl border text-left transition-all ${
                                                             companyDetails.business_activity === activity.id
                                                                 ? 'border-accent bg-accent/10 text-primary'
@@ -1014,33 +1050,33 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         </div>
                     </div>
                     <div className="h-px w-full bg-[var(--elevation-border)]"></div>
-                    <div><h2 className="text-2xl font-bold text-primary mb-6">Coordonnées</h2>
+                    <div id="coordonnees"><h2 className="text-2xl font-bold text-primary mb-6">Coordonnées</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Adresse (rue, n°)</label><input type="text" placeholder="Ex : 12 rue de la Paix" value={companyDetails.address_line1} onChange={e => setCompanyDetails({ ...companyDetails, address_line1: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
+                            <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Adresse (rue, n°)</label><input type="text" placeholder="Ex : 12 rue de la Paix" value={companyDetails.address_line1} onChange={e => setCompanyDetailsDirty({ ...companyDetails, address_line1: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Code postal</label>
-                                <input data-org-field="postal_code" type="text" inputMode="numeric" placeholder="Ex : 69007" value={companyDetails.postal_code} onChange={e => { setCompanyDetails({ ...companyDetails, postal_code: formatPostalCodeInput(e.target.value) }); setOrgFieldError('postal_code') }} className={`${orgInputClass('postal_code')} tabular-nums`} />
+                                <input data-org-field="postal_code" type="text" inputMode="numeric" placeholder="Ex : 69007" value={companyDetails.postal_code} onChange={e => { setCompanyDetailsDirty({ ...companyDetails, postal_code: formatPostalCodeInput(e.target.value) }); setOrgFieldError('postal_code') }} className={`${orgInputClass('postal_code')} tabular-nums`} />
                                 <OrgFieldError field="postal_code" />
                             </div>
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Ville</label><input type="text" placeholder="Ex : Lyon" value={companyDetails.city} onChange={e => setCompanyDetails({ ...companyDetails, city: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
+                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Ville</label><input type="text" placeholder="Ex : Lyon" value={companyDetails.city} onChange={e => setCompanyDetailsDirty({ ...companyDetails, city: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Email de contact</label>
-                                <input data-org-field="email" type="email" value={companyDetails.email} onChange={e => { setCompanyDetails({ ...companyDetails, email: e.target.value }); setOrgFieldError('email') }} className={orgInputClass('email')} />
+                                <input data-org-field="email" type="email" value={companyDetails.email} onChange={e => { setCompanyDetailsDirty({ ...companyDetails, email: e.target.value }); setOrgFieldError('email') }} className={orgInputClass('email')} />
                                 <OrgFieldError field="email" />
                             </div>
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Téléphone</label><input type="tel" value={companyDetails.phone} onChange={e => setCompanyDetails({ ...companyDetails, phone: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
+                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Téléphone</label><input type="tel" value={companyDetails.phone} onChange={e => setCompanyDetailsDirty({ ...companyDetails, phone: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
                             <div className="space-y-2 md:col-span-2 pt-2">
                                 <label className="text-sm font-semibold text-secondary">Adresse de départ des tournées</label>
                                 <p className="text-xs text-secondary">Point de départ par défaut pour les feuilles de route (dépôt, atelier…). Peut être surchargé par tournée directement depuis le planning.</p>
-                                <input type="text" placeholder="Ex : 15 avenue de l'Atelier" value={companyDetails.departure_address} onChange={e => setCompanyDetails({ ...companyDetails, departure_address: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
+                                <input type="text" placeholder="Ex : 15 avenue de l'Atelier" value={companyDetails.departure_address} onChange={e => setCompanyDetailsDirty({ ...companyDetails, departure_address: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Code postal (départ)</label>
-                                <input type="text" inputMode="numeric" placeholder="Ex : 69007" value={companyDetails.departure_postal_code} onChange={e => setCompanyDetails({ ...companyDetails, departure_postal_code: formatPostalCodeInput(e.target.value) })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" />
+                                <input type="text" inputMode="numeric" placeholder="Ex : 69007" value={companyDetails.departure_postal_code} onChange={e => setCompanyDetailsDirty({ ...companyDetails, departure_postal_code: formatPostalCodeInput(e.target.value) })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Ville (départ)</label>
-                                <input type="text" placeholder="Ex : Lyon" value={companyDetails.departure_city} onChange={e => setCompanyDetails({ ...companyDetails, departure_city: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
+                                <input type="text" placeholder="Ex : Lyon" value={companyDetails.departure_city} onChange={e => setCompanyDetailsDirty({ ...companyDetails, departure_city: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
                             </div>
                         </div>
                     </div>
@@ -1049,17 +1085,17 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         <h2 className="text-2xl font-bold text-primary mb-2">Mentions légales</h2>
                         <p className="text-sm text-secondary mb-6">Ces informations apparaîtront en pied de page de vos devis et factures PDF.</p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Forme juridique</label><input type="text" placeholder="Ex : SAS, SARL, EI…" value={legalDetails.forme_juridique} onChange={e => setLegalDetails({ ...legalDetails, forme_juridique: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Capital social</label><input type="text" placeholder="Ex : 10 000 €" value={legalDetails.capital_social} onChange={e => setLegalDetails({ ...legalDetails, capital_social: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">N° RCS</label><input type="text" placeholder="Ex : 123 456 789" value={legalDetails.rcs} onChange={e => setLegalDetails({ ...legalDetails, rcs: formatSirenInput(e.target.value) })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Ville du tribunal de commerce</label><input type="text" placeholder="Ex : Paris" value={legalDetails.rcs_ville} onChange={e => setLegalDetails({ ...legalDetails, rcs_ville: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                            <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Assurance professionnelle</label><input type="text" placeholder="Ex : AXA Pro n° 123456" value={legalDetails.insurance_info} onChange={e => setLegalDetails({ ...legalDetails, insurance_info: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                            <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Certifications / Qualifications</label><input type="text" placeholder="Ex : RGE Qualibat 7711, Qualifélec…" value={legalDetails.certifications} onChange={e => setLegalDetails({ ...legalDetails, certifications: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
+                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Forme juridique</label><input type="text" placeholder="Ex : SAS, SARL, EI…" value={legalDetails.forme_juridique} onChange={e => setLegalDetailsDirty({ ...legalDetails, forme_juridique: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
+                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Capital social</label><input type="text" placeholder="Ex : 10 000 €" value={legalDetails.capital_social} onChange={e => setLegalDetailsDirty({ ...legalDetails, capital_social: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
+                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">N° RCS</label><input type="text" placeholder="Ex : 123 456 789" value={legalDetails.rcs} onChange={e => setLegalDetailsDirty({ ...legalDetails, rcs: formatSirenInput(e.target.value) })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
+                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Ville du tribunal de commerce</label><input type="text" placeholder="Ex : Paris" value={legalDetails.rcs_ville} onChange={e => setLegalDetailsDirty({ ...legalDetails, rcs_ville: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
+                            <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Assurance professionnelle</label><input type="text" placeholder="Ex : AXA Pro n° 123456" value={legalDetails.insurance_info} onChange={e => setLegalDetailsDirty({ ...legalDetails, insurance_info: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
+                            <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Certifications / Qualifications</label><input type="text" placeholder="Ex : RGE Qualibat 7711, Qualifélec…" value={legalDetails.certifications} onChange={e => setLegalDetailsDirty({ ...legalDetails, certifications: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                         </div>
                     </div>
                     <div className="h-px w-full bg-[var(--elevation-border)]"></div>
                     {/* ── Signataire des contrats ── */}
-                    <div>
+                    <div id="signature">
                         <h2 className="text-2xl font-bold text-primary mb-2">Signature des contrats</h2>
                         <p className="text-sm text-secondary mb-6">Ces informations seront automatiquement apposées sur les contrats que vous émettez (votre partie en tant que signataire).</p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -1069,7 +1105,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                     type="text"
                                     placeholder="Ex : Jean Dupont"
                                     value={signatureDetails.signatory_name}
-                                    onChange={e => setSignatureDetails({ ...signatureDetails, signatory_name: e.target.value })}
+                                    onChange={e => setSignatureDetailsDirty({ ...signatureDetails, signatory_name: e.target.value })}
                                     className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
                                 />
                             </div>
@@ -1079,7 +1115,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                     type="text"
                                     placeholder="Ex : Gérant, Président, Directeur…"
                                     value={signatureDetails.signatory_role}
-                                    onChange={e => setSignatureDetails({ ...signatureDetails, signatory_role: e.target.value })}
+                                    onChange={e => setSignatureDetailsDirty({ ...signatureDetails, signatory_role: e.target.value })}
                                     className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
                                 />
                             </div>
@@ -1088,7 +1124,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             <label className="text-sm font-semibold text-secondary">Signature manuscrite</label>
                             <SignaturePad
                                 value={signatureDetails.signature_image}
-                                onChange={(dataUrl) => setSignatureDetails({ ...signatureDetails, signature_image: dataUrl })}
+                                onChange={(dataUrl) => setSignatureDetailsDirty({ ...signatureDetails, signature_image: dataUrl })}
                                 hint="Cette signature sera apposée automatiquement sur les contrats."
                             />
                         </div>
@@ -1103,7 +1139,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             </div>
                             <button
                                 type="button"
-                                onClick={() => setDecennale(d => ({ ...d, enabled: !d.enabled }))}
+                                onClick={() => setDecennaleDirty(d => ({ ...d, enabled: !d.enabled }))}
                                 className="flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--elevation-border)] text-sm font-semibold transition-all hover:border-accent"
                             >
                                 {decennale.enabled
@@ -1123,7 +1159,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                         type="text"
                                         placeholder="Ex : AXA Pro, Allianz, SMABTP…"
                                         value={decennale.assureur}
-                                        onChange={e => setDecennale(d => ({ ...d, assureur: e.target.value }))}
+                                        onChange={e => setDecennaleDirty(d => ({ ...d, assureur: e.target.value }))}
                                         className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
                                     />
                                 </div>
@@ -1133,7 +1169,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                         type="text"
                                         placeholder="Ex : 12 345 678 90"
                                         value={decennale.police}
-                                        onChange={e => setDecennale(d => ({ ...d, police: e.target.value }))}
+                                        onChange={e => setDecennaleDirty(d => ({ ...d, police: e.target.value }))}
                                         className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums"
                                     />
                                 </div>
@@ -1143,7 +1179,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                         type="text"
                                         placeholder="Ex : France métropolitaine"
                                         value={decennale.couverture}
-                                        onChange={e => setDecennale(d => ({ ...d, couverture: e.target.value }))}
+                                        onChange={e => setDecennaleDirty(d => ({ ...d, couverture: e.target.value }))}
                                         className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
                                     />
                                 </div>
@@ -1152,7 +1188,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                     <input
                                         type="date"
                                         value={decennale.date_debut}
-                                        onChange={e => setDecennale(d => ({ ...d, date_debut: e.target.value }))}
+                                        onChange={e => setDecennaleDirty(d => ({ ...d, date_debut: e.target.value }))}
                                         className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
                                     />
                                 </div>
@@ -1161,7 +1197,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                     <input
                                         type="date"
                                         value={decennale.date_fin}
-                                        onChange={e => setDecennale(d => ({ ...d, date_fin: e.target.value }))}
+                                        onChange={e => setDecennaleDirty(d => ({ ...d, date_fin: e.target.value }))}
                                         className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
                                     />
                                     {decennale.date_fin && (() => {
@@ -1187,7 +1223,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                             type="radio"
                                             name="vat_subject"
                                             checked={vatConfig.is_vat_subject}
-                                            onChange={() => setVatConfig({ ...vatConfig, is_vat_subject: true })}
+                                            onChange={() => setVatConfigDirty({ ...vatConfig, is_vat_subject: true })}
                                             className="mt-1 accent-[var(--accent)]"
                                         />
                                         <div>
@@ -1200,7 +1236,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                             type="radio"
                                             name="vat_subject"
                                             checked={!vatConfig.is_vat_subject}
-                                            onChange={() => setVatConfig({ ...vatConfig, is_vat_subject: false })}
+                                            onChange={() => setVatConfigDirty({ ...vatConfig, is_vat_subject: false })}
                                             className="mt-1 accent-[var(--accent)]"
                                         />
                                         <div>
@@ -1215,7 +1251,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                     <label className="text-sm font-semibold text-secondary">Taux TVA par défaut (%)</label>
                                     <select
                                         value={vatConfig.default_vat_rate}
-                                        onChange={e => setVatConfig({ ...vatConfig, default_vat_rate: Number(e.target.value) })}
+                                        onChange={e => setVatConfigDirty({ ...vatConfig, default_vat_rate: Number(e.target.value) })}
                                         className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
                                     >
                                         {LEGAL_VAT_RATES.map(rate => (
@@ -1233,49 +1269,63 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         </div>
                     </div>
                     <div className="h-px w-full bg-[var(--elevation-border)]"></div>
-                    <div>
+                    <div id="paiement">
                         <h2 className="text-2xl font-bold text-primary mb-2">Paiement &amp; RIB</h2>
                         <p className="text-sm text-secondary mb-6">Ces informations apparaissent sur vos factures PDF. L&apos;IBAN est obligatoire pour permettre le virement bancaire.</p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-2 md:col-span-2">
                                 <label className="text-sm font-semibold text-secondary">IBAN</label>
-                                <input data-org-field="iban" type="text" placeholder="FR76 3000 6000 0112 3456 7890 189" value={paymentDetails.iban} onChange={e => { setPaymentDetails({ ...paymentDetails, iban: formatIbanInput(e.target.value) }); setOrgFieldError('iban') }} className={`${orgInputClass('iban')} font-mono tracking-wider`} />
+                                <input data-org-field="iban" type="text" placeholder="FR76 3000 6000 0112 3456 7890 189" value={paymentDetails.iban} onChange={e => { setPaymentDetailsDirty({ ...paymentDetails, iban: formatIbanInput(e.target.value) }); setOrgFieldError('iban') }} className={`${orgInputClass('iban')} font-mono tracking-wider`} />
                                 <OrgFieldError field="iban" />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">BIC / SWIFT</label>
-                                <input data-org-field="bic" type="text" placeholder="Ex : BNPAFRPPXXX" value={paymentDetails.bic} onChange={e => { setPaymentDetails({ ...paymentDetails, bic: formatBicInput(e.target.value) }); setOrgFieldError('bic') }} className={`${orgInputClass('bic')} font-mono tracking-wider uppercase`} />
+                                <input data-org-field="bic" type="text" placeholder="Ex : BNPAFRPPXXX" value={paymentDetails.bic} onChange={e => { setPaymentDetailsDirty({ ...paymentDetails, bic: formatBicInput(e.target.value) }); setOrgFieldError('bic') }} className={`${orgInputClass('bic')} font-mono tracking-wider uppercase`} />
                                 <OrgFieldError field="bic" />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Nom de la banque</label>
-                                <input type="text" placeholder="Ex : BNP Paribas" value={paymentDetails.bank_name} onChange={e => setPaymentDetails({ ...paymentDetails, bank_name: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
+                                <input type="text" placeholder="Ex : BNP Paribas" value={paymentDetails.bank_name} onChange={e => setPaymentDetailsDirty({ ...paymentDetails, bank_name: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Délai de paiement (jours)</label>
-                                <input data-org-field="payment_terms_days" type="number" min={0} max={90} value={paymentDetails.payment_terms_days} onChange={e => { setPaymentDetails({ ...paymentDetails, payment_terms_days: Number(e.target.value) }); setOrgFieldError('payment_terms_days') }} className={`${orgInputClass('payment_terms_days')} tabular-nums`} />
+                                <input data-org-field="payment_terms_days" type="number" min={0} max={90} value={paymentDetails.payment_terms_days} onChange={e => { setPaymentDetailsDirty({ ...paymentDetails, payment_terms_days: Number(e.target.value) }); setOrgFieldError('payment_terms_days') }} className={`${orgInputClass('payment_terms_days')} tabular-nums`} />
                                 <OrgFieldError field="payment_terms_days" />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Taux pénalités de retard (%)</label>
-                                <input data-org-field="late_penalty_rate" type="number" min={0} step={0.01} value={paymentDetails.late_penalty_rate} onChange={e => { setPaymentDetails({ ...paymentDetails, late_penalty_rate: Number(e.target.value) }); setOrgFieldError('late_penalty_rate') }} className={`${orgInputClass('late_penalty_rate')} tabular-nums`} />
+                                <input data-org-field="late_penalty_rate" type="number" min={0} step={0.01} value={paymentDetails.late_penalty_rate} onChange={e => { setPaymentDetailsDirty({ ...paymentDetails, late_penalty_rate: Number(e.target.value) }); setOrgFieldError('late_penalty_rate') }} className={`${orgInputClass('late_penalty_rate')} tabular-nums`} />
                                 <OrgFieldError field="late_penalty_rate" />
                                 <p className="text-xs text-secondary">Taux légal minimum = 3× le taux d&apos;intérêt légal. Souvent fixé à 10%.</p>
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-secondary">Tribunal compétent</label>
-                                <input data-org-field="court_competent" type="text" placeholder="Ex : Paris" value={paymentDetails.court_competent} onChange={e => setPaymentDetails({ ...paymentDetails, court_competent: e.target.value })} className={orgInputClass('court_competent')} />
+                                <input data-org-field="court_competent" type="text" placeholder="Ex : Paris" value={paymentDetails.court_competent} onChange={e => setPaymentDetailsDirty({ ...paymentDetails, court_competent: e.target.value })} className={orgInputClass('court_competent')} />
                                 <p className="text-xs text-secondary">Tapez juste la ville, Atelier enregistrera la mention complète.</p>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-secondary">Coût horaire MO par défaut (€/h)</label>
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step={0.5}
+                                    placeholder="Ex : 35"
+                                    value={defaultLaborCost}
+                                    onChange={e => setDefaultLaborCostDirty(e.target.value === '' ? '' : Number(e.target.value))}
+                                    className="input tabular-nums w-full"
+                                />
+                                <p className="text-xs text-secondary">Taux de fallback utilisé dans les rapports et la rentabilité si aucun taux n&apos;est défini sur le membre ou le membership.</p>
                             </div>
                             <div className="space-y-2 md:col-span-2">
                                 <label className="text-sm font-semibold text-secondary">Mention indemnité de recouvrement <span className="text-accent font-normal">(obligatoire)</span></label>
-                                <textarea rows={2} value={paymentDetails.recovery_indemnity_text} onChange={e => setPaymentDetails({ ...paymentDetails, recovery_indemnity_text: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all text-sm resize-none" />
+                                <textarea rows={2} value={paymentDetails.recovery_indemnity_text} onChange={e => setPaymentDetailsDirty({ ...paymentDetails, recovery_indemnity_text: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all text-sm resize-none" />
                                 <p className="text-xs text-secondary">Art. L441-10 du Code de commerce : indemnité forfaitaire de 40 € obligatoire entre professionnels.</p>
                             </div>
                         </div>
                     </div>
-                    <div className="pt-6 flex justify-end">
-                        {renderOrganizationSaveButton()}
+                    <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-end gap-3">
+                        {orgIsDirty && <span className="text-sm font-semibold text-secondary">Des modifications sont en attente.</span>}
+                        {renderOrganizationSaveButton('w-full sm:w-auto justify-center')}
                     </div>
                 </div>
             );
@@ -2310,6 +2360,60 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         </div>
                     </div>
 
+                    {/* ── Export comptable ──────────────────────────────────── */}
+                    <div className="rounded-3xl card p-8 space-y-6">
+                        <div>
+                            <h2 className="text-2xl font-bold text-primary mb-1">Export comptable</h2>
+                            <p className="text-sm text-secondary max-w-2xl">
+                                Exportez vos factures au format FEC (Fichier des Ecritures Comptables) pour votre comptable ou en cas de contrôle fiscal, ou en CSV simplifié pour Excel.
+                            </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-[var(--elevation-border)] bg-slate-50 dark:bg-white/5 p-5 space-y-4">
+                            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                                <div>
+                                    <p className="text-sm font-semibold text-primary">FEC et CSV comptable</p>
+                                    <p className="mt-2 text-sm leading-6 text-secondary max-w-3xl">
+                                        Générez un fichier FEC conforme (art. A. 47 A-1 LPF) ou un CSV Excel par période. Réservé aux rôles Administrateur et Propriétaire.
+                                    </p>
+                                </div>
+                                <div className="rounded-2xl border border-[var(--elevation-border)] bg-white dark:bg-black/40 px-4 py-3 min-w-[220px]">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-secondary">Accès</p>
+                                    <p className="mt-1 text-sm font-semibold text-primary">{isAdmin ? 'Autorisé' : 'Réservé à l\'administrateur'}</p>
+                                </div>
+                            </div>
+                            {isAdmin ? (
+                                <button
+                                    onClick={() => setShowExportComptableModal(true)}
+                                    className="px-6 py-3 rounded-full font-bold flex items-center gap-2 bg-accent text-black shadow-lg shadow-accent/20 hover:scale-105 transition-all"
+                                >
+                                    Exporter mes factures
+                                </button>
+                            ) : (
+                                <div className="rounded-2xl border border-[var(--elevation-border)] bg-white dark:bg-black/40 px-4 py-3 text-sm text-secondary">
+                                    Seul un administrateur peut générer un export comptable.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {showExportComptableModal && (
+                        <ExportComptableModal
+                            isVatSubject={organization?.is_vat_subject ?? false}
+                            isMicro={!(organization?.is_vat_subject ?? true) && !organization?.business_profile}
+                            tvaLabel={
+                                !organization?.is_vat_subject
+                                    ? 'Franchise TVA art. 293 B CGI'
+                                    : (organization?.tva_sur_debits
+                                        ? 'TVA sur débits'
+                                        : 'TVA sur encaissements')
+                            }
+                            nafCode={null}
+                            siren={organization?.siren ?? null}
+                            onClose={() => setShowExportComptableModal(false)}
+                        />
+                    )}
+
                     <div className="rounded-3xl card p-8 space-y-6">
                         <div>
                             <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">Fermeture de compte et suppression</h2>
@@ -2993,6 +3097,23 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 </div>
                 <div className="flex-1">{renderContent()}</div>
             </div>
+
+            {activeTab === 'entreprise' && (
+                <button
+                    type="button"
+                    onClick={() => {
+                        const el = document.getElementById('identite');
+                        if (!el) return;
+                        const top = el.getBoundingClientRect().top + window.scrollY - 100;
+                        window.scrollTo({ top, behavior: 'smooth' });
+                    }}
+                    aria-label="Aller au bouton Sauvegarder"
+                    className="fixed bottom-6 right-6 z-[9999] w-12 h-12 rounded-full bg-accent text-black shadow-2xl shadow-accent/30 flex items-center justify-center hover:scale-110 active:scale-95 transition-transform"
+                    title={orgIsDirty ? 'Modifications non sauvegardées' : 'Aller en haut pour sauvegarder'}
+                >
+                    <ArrowUp className="w-5 h-5" />
+                </button>
+            )}
         </main>
     );
 }

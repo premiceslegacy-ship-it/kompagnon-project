@@ -2,7 +2,8 @@
 
 import React, { useState, useTransition } from 'react'
 import { acceptQuoteByToken } from '@/lib/data/mutations/sign'
-import { CheckCircle2, Loader2, ShieldCheck, FileText, AlertTriangle } from 'lucide-react'
+import SignaturePad from '@/components/SignaturePad'
+import { CheckCircle2, Loader2, ShieldCheck, FileText, AlertTriangle, ExternalLink } from 'lucide-react'
 
 const fmt = (n: number, currency = 'EUR') =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: 2 }).format(n)
@@ -17,19 +18,24 @@ type Props = {
   orgName: string
   orgAddress: string | null
   clientName: string | null
+  quoteId: string
   alreadySigned: boolean
   signedAt: string | null
+  signatoryName: string | null
 }
 
 export default function SignClient({
   token, quoteNumber, quoteTitle, totalTtc, currency,
-  validUntil, orgName, orgAddress, clientName, alreadySigned, signedAt,
+  validUntil, orgName, orgAddress, clientName, quoteId, alreadySigned, signedAt, signatoryName: initialSignatoryName,
 }: Props) {
   const [isPending, startTransition] = useTransition()
   const [accepted, setAccepted] = useState(alreadySigned)
   const [acceptedAt, setAcceptedAt] = useState<string | null>(signedAt)
   const [error, setError] = useState<string | null>(null)
   const [confirmed, setConfirmed] = useState(false)
+  const [signatoryName, setSignatoryName] = useState(initialSignatoryName ?? '')
+  const [signatoryRole, setSignatoryRole] = useState('')
+  const [signatureImage, setSignatureImage] = useState<string | null>(null)
 
   const fmtDate = (iso: string) =>
     new Date(iso).toLocaleDateString('fr-FR', {
@@ -42,9 +48,17 @@ export default function SignClient({
     : null
 
   function handleAccept() {
-    if (!confirmed) return
+    setError(null)
+    if (!signatoryName.trim()) return setError('Veuillez renseigner votre nom complet.')
+    if (!signatureImage) return setError('Veuillez dessiner votre signature.')
+    if (!confirmed) return setError('Veuillez confirmer votre accord.')
     startTransition(async () => {
-      const res = await acceptQuoteByToken(token)
+      const res = await acceptQuoteByToken({
+        token,
+        signatoryName: signatoryName.trim(),
+        signatoryRole: signatoryRole.trim() || null,
+        signatureImage,
+      })
       if (res.error) {
         setError(res.error)
       } else {
@@ -135,10 +149,63 @@ export default function SignClient({
           <div className="flex items-start gap-3">
             <ShieldCheck className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
             <p className="text-sm text-gray-500 leading-relaxed">
-              En cliquant sur «&nbsp;J&apos;accepte ce devis&nbsp;», vous confirmez avoir lu et approuvé l&apos;ensemble
-              des conditions décrites dans ce devis. La date, l&apos;heure et votre adresse IP seront
+              En signant ce devis, vous confirmez avoir lu et approuvé l&apos;ensemble des conditions décrites
+              dans ce document. La date, l&apos;heure et votre adresse IP seront
               enregistrées comme preuve d&apos;accord.
             </p>
+          </div>
+
+          <a
+            href={`/api/pdf/quote/${quoteId}?token=${token}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-between gap-3 p-4 border border-gray-200 rounded-xl hover:border-gray-900 transition-colors group"
+          >
+            <div className="flex items-center gap-3">
+              <FileText className="w-5 h-5 text-gray-700" />
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Consulter le devis</p>
+                <p className="text-xs text-gray-500">Ouvre le PDF dans un nouvel onglet</p>
+              </div>
+            </div>
+            <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-gray-900" />
+          </a>
+
+          <div className="space-y-3 pt-2 border-t border-gray-100">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Votre nom complet</label>
+              <input
+                type="text"
+                value={signatoryName}
+                onChange={e => setSignatoryName(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl text-gray-900 focus:border-gray-900 focus:ring-1 focus:ring-gray-900 outline-none"
+                placeholder="Prénom et nom"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">
+                Fonction <span className="font-normal text-gray-400">(optionnel)</span>
+              </label>
+              <input
+                type="text"
+                value={signatoryRole}
+                onChange={e => setSignatoryRole(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl text-gray-900 focus:border-gray-900 focus:ring-1 focus:ring-gray-900 outline-none"
+                placeholder="Ex : Gérant, Responsable achats…"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Signature manuscrite</label>
+              <SignaturePad
+                value={signatureImage}
+                onChange={setSignatureImage}
+                width={Math.max(280, Math.min(480, typeof window !== 'undefined' ? window.innerWidth - 80 : 480))}
+                height={170}
+              />
+            </div>
           </div>
 
           {/* Checkbox confirmation */}
@@ -152,7 +219,7 @@ export default function SignClient({
               />
             </div>
             <span className="text-sm text-gray-700 leading-relaxed select-none">
-              J&apos;ai lu et j&apos;accepte les conditions de ce devis et souhaite le valider.
+              J&apos;ai lu et j&apos;accepte les conditions de ce devis. Ma signature vaut bon pour accord.
             </span>
           </label>
 
@@ -166,7 +233,7 @@ export default function SignClient({
           {/* CTA */}
           <button
             onClick={handleAccept}
-            disabled={!confirmed || isPending}
+            disabled={!confirmed || !signatureImage || !signatoryName.trim() || isPending}
             className="w-full py-4 rounded-2xl bg-gray-900 text-white font-bold text-base flex items-center justify-center gap-3 hover:bg-gray-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {isPending ? (

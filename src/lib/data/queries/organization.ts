@@ -58,6 +58,7 @@ export type Organization = {
   starter_presets: StarterPreset[] | null
   // TVA
   is_vat_subject: boolean
+  tva_sur_debits: boolean | null
   default_vat_rate: number | null
   // Formulaire public
   public_form_enabled: boolean
@@ -96,7 +97,7 @@ export const getOrganization = cache(async (): Promise<Organization | null> => {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('organizations')
-    .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, email_from_name, email_from_address, forme_juridique, capital_social, rcs, rcs_ville, insurance_info, certifications, primary_color, payment_terms_days, late_penalty_rate, court_competent, iban, bic, bank_name, recovery_indemnity_text, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, sector, business_profile, business_activity_id, label_set, unit_set, default_categories, starter_presets, is_vat_subject, default_vat_rate, public_form_enabled, public_form_welcome_message, public_form_catalog_item_ids, public_form_custom_mode_enabled, public_form_notification_email, deletion_requested_at, deletion_scheduled_at, email_signature, cgv_text, reminder_first_delay_days, decennale_enabled, decennale_assureur, decennale_police, decennale_couverture, decennale_date_debut, decennale_date_fin, default_quote_validity_days, default_labor_cost_per_hour, default_hourly_rate, auto_send_member_reports, signatory_name, signatory_role, signature_image, departure_address, departure_postal_code, departure_city')
+    .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, email_from_name, email_from_address, forme_juridique, capital_social, rcs, rcs_ville, insurance_info, certifications, primary_color, payment_terms_days, late_penalty_rate, court_competent, iban, bic, bank_name, recovery_indemnity_text, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, sector, business_profile, business_activity_id, label_set, unit_set, default_categories, starter_presets, is_vat_subject, tva_sur_debits, default_vat_rate, public_form_enabled, public_form_welcome_message, public_form_catalog_item_ids, public_form_custom_mode_enabled, public_form_notification_email, deletion_requested_at, deletion_scheduled_at, email_signature, cgv_text, reminder_first_delay_days, decennale_enabled, decennale_assureur, decennale_police, decennale_couverture, decennale_date_debut, decennale_date_fin, default_quote_validity_days, default_labor_cost_per_hour, default_hourly_rate, auto_send_member_reports, signatory_name, signatory_role, signature_image, departure_address, departure_postal_code, departure_city')
     .eq('id', orgId)
     .single()
 

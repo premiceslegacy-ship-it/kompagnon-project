@@ -31,14 +31,18 @@ export type LaborByMemberEntry = {
 
 export type ChantierProfitability = {
   budgetHt: number
+  budgetCostMaterial: number  // coût d'achat budgété (unit_cost_ht × qty) lignes material du devis
+  budgetCostLabor: number     // coût interne budgété (unit_cost_ht × qty) lignes labor du devis
+  budgetCostTotal: number     // budgetCostMaterial + budgetCostLabor
   revenueHt: number           // factures émises liées au devis
+  collectedRevenueHt: number  // part HT encaissée des factures liées
   costMaterial: number        // dépenses catégorie materiel
   costLabor: number           // somme des coûts par membre
   costSubcontract: number     // sous_traitance
   costOther: number           // location + transport + autre
   costTotal: number
-  marginEur: number           // revenueHt - costTotal
-  marginPct: number           // marginEur / revenueHt (0 si revenue = 0)
+  marginEur: number           // collectedRevenueHt - costTotal
+  marginPct: number           // marginEur / collectedRevenueHt (0 si encaissé = 0)
   hoursLogged: number
   expenses: ChantierExpense[]
   laborByMember: LaborByMemberEntry[]
@@ -70,7 +74,24 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
 
   if (!chantier) return null
 
-  // 2. Taux horaire org (fallback si membre sans taux défini)
+  // 2. Budgets de coûts réels depuis les lignes du devis (unit_cost_ht × quantity)
+  let budgetCostMaterial = 0
+  let budgetCostLabor = 0
+  if (chantier.quote_id) {
+    const { data: quoteItems } = await supabase
+      .from('quote_items')
+      .select('type, quantity, unit_cost_ht')
+      .eq('quote_id', chantier.quote_id)
+      .not('unit_cost_ht', 'is', null)
+    for (const item of quoteItems ?? []) {
+      const cost = (item.unit_cost_ht as number) * (item.quantity as number)
+      if (item.type === 'material') budgetCostMaterial += cost
+      else if (item.type === 'labor') budgetCostLabor += cost
+    }
+  }
+  const budgetCostTotal = budgetCostMaterial + budgetCostLabor
+
+  // 3. Taux horaire org (fallback si membre sans taux défini)
   const { data: org } = await supabase
     .from('organizations')
     .select('default_labor_cost_per_hour, default_hourly_rate')
@@ -83,17 +104,36 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   // 3. Heures par membre + taux individuels
   const { data: pointages } = await supabase
     .from('chantier_pointages')
-    .select('user_id, member_id, hours')
+    .select('user_id, member_id, hours, rate_snapshot')
     .eq('chantier_id', chantierId)
 
-  // Agréger heures par user_id (auth) ou member_id (fantôme)
-  const hoursByUser: Record<string, number> = {}   // clé = user_id
-  const hoursByMember: Record<string, number> = {} // clé = member_id
+  // Agréger heures et coût par user_id / member_id
+  // rate_snapshot prioritaire — fallback dynamique pour les anciens pointages
+  const hoursByUser: Record<string, number> = {}
+  const costByUser: Record<string, number> = {}
+  const hoursByMember: Record<string, number> = {}
+  const costByMember: Record<string, number> = {}
+
+  // Identifiants sans snapshot (besoin du taux dynamique)
+  const userIdsNoSnapshot = new Set<string>()
+  const memberIdsNoSnapshot = new Set<string>()
+
   for (const p of pointages ?? []) {
+    const hrs = p.hours ?? 0
     if (p.user_id) {
-      hoursByUser[p.user_id] = (hoursByUser[p.user_id] ?? 0) + (p.hours ?? 0)
+      hoursByUser[p.user_id] = (hoursByUser[p.user_id] ?? 0) + hrs
+      if (p.rate_snapshot != null) {
+        costByUser[p.user_id] = (costByUser[p.user_id] ?? 0) + hrs * p.rate_snapshot
+      } else {
+        userIdsNoSnapshot.add(p.user_id)
+      }
     } else if (p.member_id) {
-      hoursByMember[p.member_id] = (hoursByMember[p.member_id] ?? 0) + (p.hours ?? 0)
+      hoursByMember[p.member_id] = (hoursByMember[p.member_id] ?? 0) + hrs
+      if (p.rate_snapshot != null) {
+        costByMember[p.member_id] = (costByMember[p.member_id] ?? 0) + hrs * p.rate_snapshot
+      } else {
+        memberIdsNoSnapshot.add(p.member_id)
+      }
     }
   }
   const userIds   = Object.keys(hoursByUser)
@@ -145,34 +185,45 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   }
 
   // Entrées pour les users auth
+  // rate_snapshot couvre les pointages récents ; fallback dynamique pour les anciens
   const laborByMember: LaborByMemberEntry[] = Object.entries(hoursByUser).map(([uid, hrs]) => {
     const memberInfo = memberRateMap[uid]
-    // Priorité : taux membre équipe > taux membership > taux org
-    const rate: number | null = equipeTauxByUserId[uid] ?? memberInfo?.rate ?? orgFallback
+    const dynamicRate: number | null = equipeTauxByUserId[uid] ?? memberInfo?.rate ?? orgFallback
+    // Coût = snapshot accumulé + heures sans snapshot × taux dynamique actuel
+    const costFromSnapshot = costByUser[uid] ?? 0
+    const hrsNoSnapshot = userIdsNoSnapshot.has(uid)
+      ? (pointages ?? []).filter(p => p.user_id === uid && p.rate_snapshot == null).reduce((s, p) => s + (p.hours ?? 0), 0)
+      : 0
+    const cost = costFromSnapshot + (dynamicRate != null ? hrsNoSnapshot * dynamicRate : 0)
     return {
       user_id: uid,
       member_id: null,
       membership_id: memberInfo?.membership_id ?? '',
       full_name: nameMap[uid] ?? null,
       hours: hrs,
-      ratePerHour: rate,
-      cost: rate != null ? hrs * rate : 0,
+      ratePerHour: dynamicRate,
+      cost,
     }
   })
 
-  // Entrées pour les membres fantômes (taux depuis chantier_equipe_membres, sinon taux org)
+  // Entrées pour les membres fantômes
   for (const fm of (fantomeMembresRes.data ?? []) as Array<{ id: string; prenom: string | null; name: string; taux_horaire: number | null }>) {
     const hrs = hoursByMember[fm.id]
     if (!hrs) continue
-    const rate: number | null = fm.taux_horaire ?? orgFallback
+    const dynamicRate: number | null = fm.taux_horaire ?? orgFallback
+    const costFromSnapshot = costByMember[fm.id] ?? 0
+    const hrsNoSnapshot = memberIdsNoSnapshot.has(fm.id)
+      ? (pointages ?? []).filter(p => p.member_id === fm.id && p.rate_snapshot == null).reduce((s, p) => s + (p.hours ?? 0), 0)
+      : 0
+    const cost = costFromSnapshot + (dynamicRate != null ? hrsNoSnapshot * dynamicRate : 0)
     laborByMember.push({
       user_id: null,
       member_id: fm.id,
       membership_id: '',
       full_name: `${fm.prenom ?? ''} ${fm.name}`.trim(),
       hours: hrs,
-      ratePerHour: rate,
-      cost: rate != null ? hrs * rate : 0,
+      ratePerHour: dynamicRate,
+      cost,
     })
   }
 
@@ -224,15 +275,16 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   const costSubcontract = expenseList.filter(e => e.category === 'sous_traitance').reduce((s, e) => s + e.amount_ht, 0)
   const costOther       = expenseList.filter(e => ['location','transport','autre'].includes(e.category)).reduce((s, e) => s + e.amount_ht, 0)
 
-  // 5. CA facturé : factures liées au chantier (chantier_id direct OU via le devis lié), hors avoirs
+  // 5. CA facturé et encaissé : factures liées au chantier (chantier_id direct OU via le devis lié), hors avoirs
   let revenueHt = 0
+  let collectedRevenueHt = 0
   {
     const orFilters: string[] = [`chantier_id.eq.${chantierId}`]
     if (chantier.quote_id) orFilters.push(`quote_id.eq.${chantier.quote_id}`)
 
     const { data: invoices } = await supabase
       .from('invoices')
-      .select('id, total_ht, invoice_type')
+      .select('id, total_ht, total_ttc, total_paid, invoice_type, status')
       .or(orFilters.join(','))
       .eq('organization_id', orgId)
       .neq('status', 'cancelled')
@@ -247,16 +299,26 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
     // Si des situations/soldes existent, exclure les factures standard liées via quote_id
     // (elles ont été remplacées par le mode situations et ne doivent pas être doublonnées)
     const hasSituations = allValid.some((inv: any) => inv.invoice_type === 'situation' || inv.invoice_type === 'solde')
-    revenueHt = allValid
-      .filter((inv: any) => !hasSituations || inv.invoice_type !== 'standard')
-      .reduce((sum: number, inv: any) => sum + (inv.total_ht ?? 0), 0)
+    const revenueInvoices = allValid.filter((inv: any) => !hasSituations || inv.invoice_type !== 'standard')
+    revenueHt = revenueInvoices.reduce((sum: number, inv: any) => sum + (inv.total_ht ?? 0), 0)
+    collectedRevenueHt = revenueInvoices.reduce((sum: number, inv: any) => {
+      const totalHt = inv.total_ht ?? 0
+      const totalTtc = inv.total_ttc ?? 0
+      if (inv.status === 'paid') return sum + totalHt
+      if (inv.status === 'partial' && totalTtc > 0) return sum + ((inv.total_paid ?? 0) / totalTtc) * totalHt
+      return sum
+    }, 0)
   }
 
   // En mode "propres dépenses uniquement", on ne calcule pas les agrégats financiers globaux
   if (ownExpensesOnly) {
     return {
       budgetHt: 0,
+      budgetCostMaterial: 0,
+      budgetCostLabor: 0,
+      budgetCostTotal: 0,
       revenueHt: 0,
+      collectedRevenueHt: 0,
       costMaterial: 0,
       costLabor: 0,
       costSubcontract: 0,
@@ -272,12 +334,16 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   }
 
   const costTotal = costMaterial + costLabor + costSubcontract + costOther
-  const marginEur = revenueHt - costTotal
-  const marginPct = revenueHt > 0 ? marginEur / revenueHt : 0
+  const marginEur = collectedRevenueHt - costTotal
+  const marginPct = collectedRevenueHt > 0 ? marginEur / collectedRevenueHt : 0
 
   return {
     budgetHt: chantier.budget_ht ?? 0,
+    budgetCostMaterial,
+    budgetCostLabor,
+    budgetCostTotal,
     revenueHt,
+    collectedRevenueHt,
     costMaterial,
     costLabor,
     costSubcontract,

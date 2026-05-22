@@ -40,6 +40,14 @@ function fmtHours(h: number) {
   return mm === 0 ? `${hh}h` : `${hh}h${String(mm).padStart(2, '0')}`
 }
 
+function invoiceCollectedHt(inv: Pick<InvoiceStub, 'status' | 'total_ht' | 'total_ttc' | 'total_paid'>) {
+  const totalHt = inv.total_ht ?? 0
+  const totalTtc = inv.total_ttc ?? 0
+  if (inv.status === 'paid') return totalHt
+  if (inv.status === 'partial' && totalTtc > 0) return ((inv.total_paid ?? 0) / totalTtc) * totalHt
+  return 0
+}
+
 const CATEGORIES: { value: ChantierExpense['category']; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { value: 'materiel',       label: 'Matériel',         Icon: Package },
   { value: 'sous_traitance', label: 'Sous-traitance',   Icon: Building2 },
@@ -61,15 +69,15 @@ function catIcon(v: ChantierExpense['category']) {
 
 function recalc(prev: ChantierProfitability, newLaborByMember?: LaborByMemberEntry[]): ChantierProfitability {
   const members = newLaborByMember ?? prev.laborByMember
-  const { expenses, revenueHt } = prev
+  const { expenses, collectedRevenueHt } = prev
   const costMaterial    = expenses.filter(e => e.category === 'materiel').reduce((s, e) => s + e.amount_ht, 0)
   const costSubcontract = expenses.filter(e => e.category === 'sous_traitance').reduce((s, e) => s + e.amount_ht, 0)
   const costOther       = expenses.filter(e => ['location','transport','autre'].includes(e.category)).reduce((s, e) => s + e.amount_ht, 0)
   const costLabor       = members.reduce((s, e) => s + e.cost, 0)
   const hoursLogged     = members.reduce((s, e) => s + e.hours, 0)
   const costTotal       = costMaterial + costLabor + costSubcontract + costOther
-  const marginEur       = revenueHt - costTotal
-  const marginPct       = revenueHt > 0 ? marginEur / revenueHt : 0
+  const marginEur       = collectedRevenueHt - costTotal
+  const marginPct       = collectedRevenueHt > 0 ? marginEur / collectedRevenueHt : 0
   return { ...prev, laborByMember: members, costMaterial, costSubcontract, costOther, costLabor, hoursLogged, costTotal, marginEur, marginPct }
 }
 
@@ -702,7 +710,11 @@ export default function RentabiliteTab({
     const inv = invoiceStubs.find(i => i.id === linkingInvoiceId)
     if (inv) {
       setLinkedInvoices(prev => [...prev, { ...inv, chantier_id: chantierId }])
-      setProfitability(prev => recalc({ ...prev, revenueHt: prev.revenueHt + (inv.total_ht ?? 0) }))
+      setProfitability(prev => recalc({
+        ...prev,
+        revenueHt: prev.revenueHt + (inv.total_ht ?? 0),
+        collectedRevenueHt: prev.collectedRevenueHt + invoiceCollectedHt(inv),
+      }))
     }
     setShowLinkInvoice(false)
     setLinkingInvoiceId('')
@@ -716,7 +728,11 @@ export default function RentabiliteTab({
     if (error) { alert(error); return }
     const inv = linkedInvoices.find(i => i.id === invoiceId)
     setLinkedInvoices(prev => prev.filter(i => i.id !== invoiceId))
-    setProfitability(prev => recalc({ ...prev, revenueHt: prev.revenueHt - (inv?.total_ht ?? 0) }))
+    setProfitability(prev => recalc({
+      ...prev,
+      revenueHt: prev.revenueHt - (inv?.total_ht ?? 0),
+      collectedRevenueHt: prev.collectedRevenueHt - (inv ? invoiceCollectedHt(inv) : 0),
+    }))
   }
 
   // Labor rate inline edit state
@@ -726,8 +742,8 @@ export default function RentabiliteTab({
   const [rateError, setRateError] = useState<string | null>(null)
 
   const {
-    budgetHt,
-    revenueHt, costMaterial, costLabor, costSubcontract, costOther,
+    budgetHt, budgetCostMaterial, budgetCostLabor, budgetCostTotal,
+    revenueHt, collectedRevenueHt, costMaterial, costLabor, costSubcontract, costOther,
     costTotal, marginEur, marginPct, hoursLogged,
   } = profitability
 
@@ -870,6 +886,9 @@ export default function RentabiliteTab({
         <div className="card p-4 space-y-1.5 col-span-2 md:col-span-1">
           <p className="text-xs text-secondary font-semibold uppercase tracking-wider">Facturé HT</p>
           <p className="text-xl font-bold text-primary">{fmtMoney(revenueHt)}</p>
+          <p className="text-xs text-secondary">
+            Encaissé HT : <span className="font-semibold text-primary">{fmtMoney(collectedRevenueHt)}</span>
+          </p>
 
           {/* Liste des factures rattachées */}
           {linkedInvoices.length > 0 && (
@@ -879,6 +898,7 @@ export default function RentabiliteTab({
                   <span className="flex-1 truncate text-secondary">
                     {[inv.number, inv.title].filter(Boolean).join(' - ') || '(sans titre)'}
                     {inv.total_ht != null && <span className="ml-1 font-semibold text-primary">{fmtMoney(inv.total_ht)}</span>}
+                    {inv.status !== 'paid' && <span className="ml-1">({inv.status === 'partial' ? 'partiel' : 'non encaissé'})</span>}
                   </span>
                   {canEditChantier && (
                     <button
@@ -944,11 +964,11 @@ export default function RentabiliteTab({
         </div>
         <KpiCard label="Coût total HT" value={fmtMoney(costTotal)} sub={hoursLogged > 0 ? `${fmtHours(hoursLogged)} main-d'œuvre` : undefined} />
         <div className="card p-4">
-          <p className="text-xs text-secondary font-semibold uppercase tracking-wider mb-1">Marge brute</p>
+          <p className="text-xs text-secondary font-semibold uppercase tracking-wider mb-1">Marge encaissée</p>
           <p className="text-xl font-bold">
-            {revenueHt > 0 ? <MarginBadge pct={marginPct} /> : <span className="text-secondary">–</span>}
+            {collectedRevenueHt > 0 ? <MarginBadge pct={marginPct} /> : <span className="text-secondary">–</span>}
           </p>
-          {revenueHt > 0 && <p className="text-xs text-secondary mt-0.5">{fmtMoney(marginEur)}</p>}
+          <p className="text-xs text-secondary mt-0.5">{fmtMoney(marginEur)}</p>
         </div>
       </div>}
 
@@ -1239,10 +1259,57 @@ export default function RentabiliteTab({
         <CostRow label="Sous-traitance" value={costSubcontract} total={costTotal} color="bg-orange-500" icon={<Building2 className="w-3.5 h-3.5" />} />
         <CostRow label="Autres (location, transport…)" value={costOther} total={costTotal} color="bg-gray-400" icon={<Truck className="w-3.5 h-3.5" />} />
 
+        {/* Budget de coûts réels depuis le devis (unit_cost_ht × quantity) */}
+        {budgetCostTotal > 0 && (
+          <div className="pt-3 border-t border-[var(--elevation-border)] space-y-2">
+            <p className="text-xs font-semibold text-secondary uppercase tracking-wider">Coûts budgétés (devis)</p>
+            {budgetCostMaterial > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <span className="flex items-center gap-1.5 text-secondary"><Package className="w-3 h-3" />Matériel</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-secondary tabular-nums">{fmtMoney(budgetCostMaterial)}</span>
+                  {costMaterial > 0 && (
+                    <span className={`font-semibold tabular-nums ${costMaterial <= budgetCostMaterial ? 'text-green-500' : 'text-red-500'}`}>
+                      {costMaterial <= budgetCostMaterial ? '-' : '+'}{fmtMoney(Math.abs(costMaterial - budgetCostMaterial))}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            {budgetCostLabor > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <span className="flex items-center gap-1.5 text-secondary"><Hammer className="w-3 h-3" />Main-d'oeuvre</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-secondary tabular-nums">{fmtMoney(budgetCostLabor)}</span>
+                  {costLabor > 0 && (
+                    <span className={`font-semibold tabular-nums ${costLabor <= budgetCostLabor ? 'text-green-500' : 'text-red-500'}`}>
+                      {costLabor <= budgetCostLabor ? '-' : '+'}{fmtMoney(Math.abs(costLabor - budgetCostLabor))}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-between text-xs font-semibold pt-1 border-t border-[var(--elevation-border)]/50">
+              <span className="text-secondary">Total budgété</span>
+              <div className="flex items-center gap-2">
+                <span className="text-secondary tabular-nums">{fmtMoney(budgetCostTotal)}</span>
+                {revenueHt > 0 && (
+                  <span className="text-secondary">
+                    → marge devis{' '}
+                    <span className={`font-bold ${(revenueHt - budgetCostTotal) / revenueHt >= targetMarginPct / 100 ? 'text-green-500' : 'text-orange-500'}`}>
+                      {Math.round(((revenueHt - budgetCostTotal) / revenueHt) * 100)} %
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {costBudget > 0 && (
           <div className="pt-3 border-t border-[var(--elevation-border)]">
             <div className="flex justify-between text-xs text-secondary mb-1">
-              <span>Coûts / budget max ({targetMarginPct} % marge)</span>
+              <span>Coûts réels / budget max ({targetMarginPct} % marge)</span>
               <span className={budgetAlert ? 'text-red-500 font-semibold' : ''}>{fmtMoney(costTotal)} / {fmtMoney(costBudget)}</span>
             </div>
             <ProgressBar value={costTotal} max={costBudget} color={budgetAlert ? 'bg-red-500' : 'bg-accent'} />

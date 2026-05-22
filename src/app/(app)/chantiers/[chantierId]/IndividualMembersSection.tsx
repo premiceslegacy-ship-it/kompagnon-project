@@ -12,6 +12,7 @@ import {
   attachMemberToChantier,
   sendMemberSpaceInvite,
 } from '@/lib/data/mutations/members'
+import { updateMemberLaborRate } from '@/lib/data/mutations/team'
 
 type Mode = 'existing' | 'phantom' | 'new'
 
@@ -82,12 +83,25 @@ export default function IndividualMembersSection({
     }
     setEditSaving(true)
     setEditError(null)
+
+    const member = members.find(m => m.id === memberId)
+
+    // Pour les membres avec compte app, le taux est sur memberships — appel séparé
+    if (canEditRates && member?.profile_id) {
+      const linkedOrgMember = orgMembers.find(om => om.user_id === member.profile_id)
+      if (linkedOrgMember) {
+        const { error: rateErr } = await updateMemberLaborRate(linkedOrgMember.membership_id, taux)
+        if (rateErr) { setEditSaving(false); setEditError(rateErr); return }
+      }
+    }
+
     const { error: err } = await updateIndividualMember(memberId, {
       prenom: editPrenom.trim() || null,
       name: editName.trim(),
       email: editEmail.trim() || null,
       roleLabel: editRole.trim() || null,
-      ...(canEditRates && { tauxHoraire: taux }),
+      // Pour les membres sans compte, le taux est sur chantier_equipe_membres
+      ...(!member?.profile_id && canEditRates && { tauxHoraire: taux }),
     })
     setEditSaving(false)
     if (err) { setEditError(err); return }
@@ -413,15 +427,20 @@ export default function IndividualMembersSection({
                       onChange={e => setEditRole(e.target.value)}
                     />
                     {canEditRates && (
-                      <input
-                        className="input w-full text-sm"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="Taux horaire (€/h)"
-                        value={editTaux}
-                        onChange={e => setEditTaux(e.target.value)}
-                      />
+                      <div>
+                        <input
+                          className="input w-full text-sm"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="Taux horaire (€/h)"
+                          value={editTaux}
+                          onChange={e => setEditTaux(e.target.value)}
+                        />
+                        {m.profile_id && (
+                          <p className="text-[10px] text-secondary mt-1">Modifie le taux du compte lié</p>
+                        )}
+                      </div>
                     )}
                   </div>
                   {editError && <p className="text-xs text-red-500">{editError}</p>}

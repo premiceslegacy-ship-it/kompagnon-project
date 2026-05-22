@@ -4,15 +4,14 @@ import React, { useState, useMemo, useTransition } from 'react'
 import Link from 'next/link'
 import {
   ArrowLeft, Clock, Users, Calendar, Filter, FileDown,
-  PlusCircle, CheckCircle2, AlertCircle, Pencil, Trash2,
-  AlertTriangle, X, Check,
+  PlusCircle, CheckCircle2, AlertCircle,
+  X, Check,
 } from 'lucide-react'
 import type { GlobalPointage } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
 import {
   createMemberPointageAdmin,
   updatePointage,
-  deletePointage,
 } from '@/lib/data/mutations/chantiers'
 
 function getWeekStart(date: Date): Date {
@@ -312,6 +311,8 @@ type ReportEntry = {
   roleLabel?: string | null
 }
 
+const MONTH_NAMES = ['Janv.', 'Févr.', 'Mars', 'Avr.', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.']
+
 function MemberReportsPanel({
   pointages,
   individualMembers,
@@ -319,34 +320,64 @@ function MemberReportsPanel({
   pointages: GlobalPointage[]
   individualMembers: IndividualMember[]
 }) {
+  // Déduplication : un membre fantôme avec profile_id = user_id d'un membre app
+  // ne doit pas apparaître en double. On utilise member_profile_id du pointage directement.
   const members = useMemo<ReportEntry[]>(() => {
-    const seen = new Set<string>()
-    const result: ReportEntry[] = []
+    const byUserId   = new Map<string, ReportEntry>()
+    // member_id → member_profile_id (peut être null)
+    const memberProfileMap = new Map<string, string | null>()
+
     for (const p of pointages) {
-      if (p.member_id && !seen.has(p.member_id)) {
-        seen.add(p.member_id)
-        const info = individualMembers.find(m => m.id === p.member_id)
-        const fullName = info
-          ? ([info.prenom, info.name].filter(Boolean).join(' ') || info.name)
-          : p.user_name
-        result.push({ id: p.member_id, idType: 'member', fullName, roleLabel: info?.role_label })
-      } else if (p.user_id && !seen.has(p.user_id)) {
-        seen.add(p.user_id)
-        result.push({ id: p.user_id, idType: 'user', fullName: p.user_name })
+      if (p.user_id && !byUserId.has(p.user_id)) {
+        byUserId.set(p.user_id, { id: p.user_id, idType: 'user', fullName: p.user_name })
+      }
+      if (p.member_id && !memberProfileMap.has(p.member_id)) {
+        memberProfileMap.set(p.member_id, p.member_profile_id ?? null)
       }
     }
-    return result.sort((a, b) => a.fullName.localeCompare(b.fullName, 'fr'))
+
+    // Construire les entrées membres fantômes, en excluant ceux liés à un user déjà présent
+    const memberEntries: ReportEntry[] = []
+    for (const [memberId, profileId] of memberProfileMap) {
+      if (profileId && byUserId.has(profileId)) continue // doublon avec un user app
+      const p = pointages.find(pt => pt.member_id === memberId)!
+      const info = individualMembers.find(m => m.id === memberId)
+      const fullName = info
+        ? ([info.prenom, info.name].filter(Boolean).join(' ') || (info.name ?? p.user_name))
+        : p.user_name
+      memberEntries.push({ id: memberId, idType: 'member', fullName, roleLabel: info?.role_label })
+    }
+
+    return [...byUserId.values(), ...memberEntries]
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'fr'))
   }, [pointages, individualMembers])
 
-  const thisMonth = new Date().toISOString().slice(0, 7)
-  const [months, setMonths] = useState<Record<string, string>>({})
-  const getMonth = (id: string) => months[id] ?? thisMonth
+  const now = new Date()
+  const thisYear      = now.getFullYear()
+  const defaultYear   = thisYear
+  const defaultMonthIdx = now.getMonth() // 0-based, mois en cours
+  const yearOptions   = Array.from({ length: 5 }, (_, i) => thisYear - i)
+
+  const [modes,         setModes]         = useState<Record<string, 'month' | 'year'>>({})
+  const [monthIdxs,     setMonthIdxs]     = useState<Record<string, number>>({})
+  const [selectedYears, setSelectedYears] = useState<Record<string, number>>({})
+
+  const getMode     = (id: string) => modes[id]          ?? 'month'
+  const getMonthIdx = (id: string) => monthIdxs[id]      ?? defaultMonthIdx
+  const getYear     = (id: string) => selectedYears[id]  ?? defaultYear
 
   const handleDownload = (m: ReportEntry) => {
-    const month = getMonth(m.id)
-    const [y, mo] = month.split('-').map(Number)
-    const dateFrom = `${month}-01`
-    const dateTo = new Date(y, mo, 0).toISOString().slice(0, 10)
+    const mode = getMode(m.id)
+    const y    = getYear(m.id)
+    let dateFrom: string, dateTo: string
+    if (mode === 'year') {
+      dateFrom = `${y}-01-01`
+      dateTo   = `${y}-12-31`
+    } else {
+      const mo = getMonthIdx(m.id) + 1 // 1-based
+      dateFrom = `${y}-${String(mo).padStart(2, '0')}-01`
+      dateTo   = new Date(y, mo, 0).toISOString().slice(0, 10)
+    }
     const params = new URLSearchParams({ from: dateFrom, to: dateTo, download: '1', type: m.idType })
     window.open(`/api/pdf/member/${m.id}?${params.toString()}`, '_blank')
   }
@@ -361,7 +392,7 @@ function MemberReportsPanel({
       </div>
       <div className="divide-y divide-[var(--elevation-border)]">
         {members.map(m => (
-          <div key={m.id} className="flex items-center gap-3 p-3">
+          <div key={m.id} className="flex items-center gap-3 p-3 flex-wrap">
             <div className="w-8 h-8 rounded-full bg-accent/15 text-accent flex items-center justify-center font-bold text-sm flex-shrink-0">
               {(m.fullName?.[0] ?? '?').toUpperCase()}
             </div>
@@ -369,13 +400,33 @@ function MemberReportsPanel({
               <p className="font-semibold text-sm text-primary truncate">{m.fullName}</p>
               {m.roleLabel && <p className="text-xs text-secondary">{m.roleLabel}</p>}
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <input
-                type="month"
-                className="input text-xs px-1.5 py-1 h-7 w-32"
-                value={getMonth(m.id)}
-                onChange={e => setMonths(prev => ({ ...prev, [m.id]: e.target.value }))}
-              />
+            <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+              <select
+                className="input text-xs px-1.5 py-1 h-7 w-20"
+                value={getMode(m.id)}
+                onChange={e => setModes(prev => ({ ...prev, [m.id]: e.target.value as 'month' | 'year' }))}
+              >
+                <option value="month">Mois</option>
+                <option value="year">Année</option>
+              </select>
+              {getMode(m.id) === 'month' && (
+                <select
+                  className="input text-xs px-1.5 py-1 h-7 w-20"
+                  value={getMonthIdx(m.id)}
+                  onChange={e => setMonthIdxs(prev => ({ ...prev, [m.id]: Number(e.target.value) }))}
+                >
+                  {MONTH_NAMES.map((name, i) => (
+                    <option key={i} value={i}>{name}</option>
+                  ))}
+                </select>
+              )}
+              <select
+                className="input text-xs px-1.5 py-1 h-7 w-20"
+                value={getYear(m.id)}
+                onChange={e => setSelectedYears(prev => ({ ...prev, [m.id]: Number(e.target.value) }))}
+              >
+                {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
               <button
                 onClick={() => handleDownload(m)}
                 className="btn-secondary text-xs flex items-center gap-1.5 py-1 px-2.5"
@@ -406,17 +457,16 @@ export default function HeuresGlobalesClient({
   const today = new Date()
   const [period, setPeriod] = useState<Period>('week')
   const [weekStart, setWeekStart] = useState(() => getWeekStart(today))
-  const [selectedMonth, setSelectedMonth] = useState(() => today.toISOString().slice(0, 7))
+  const [selectedMonthIdx, setSelectedMonthIdx] = useState(() => today.getMonth())
+  const [selectedMonthYear, setSelectedMonthYear] = useState(() => today.getFullYear())
   const [customFrom, setCustomFrom] = useState(toLocalDateStr(getWeekStart(today)))
   const [customTo, setCustomTo] = useState(toLocalDateStr(today))
   const [selectedChantier, setSelectedChantier] = useState('')
   const [selectedUser, setSelectedUser] = useState('')
 
-  // Gestion edition/suppression
+  // Gestion edition
   const [editingPointage, setEditingPointage] = useState<GlobalPointage | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
-  const [deleteError, setDeleteError] = useState('')
-  const [isDeleting, startDeleteTransition] = useTransition()
+  const [, startDeleteTransition] = useTransition()
 
   // Seuil d'alerte : pointage > 12h sur une journée = potentiellement oublié de pointer la fin
   const HOURS_ALERT_THRESHOLD = 12
@@ -440,12 +490,14 @@ export default function HeuresGlobalesClient({
       return { fromStr: toLocalDateStr(weekStart), toStr: toLocalDateStr(end) }
     }
     if (period === 'month') {
-      const [y, m] = selectedMonth.split('-').map(Number)
+      const y = selectedMonthYear
+      const m = selectedMonthIdx + 1
+      const monthStr = `${y}-${String(m).padStart(2, '0')}`
       const last = new Date(y, m, 0)
-      return { fromStr: `${selectedMonth}-01`, toStr: toLocalDateStr(last) }
+      return { fromStr: `${monthStr}-01`, toStr: toLocalDateStr(last) }
     }
     return { fromStr: customFrom, toStr: customTo }
-  }, [period, weekStart, selectedMonth, customFrom, customTo])
+  }, [period, weekStart, selectedMonthIdx, selectedMonthYear, customFrom, customTo])
 
   const filtered = useMemo(() => {
     return initialPointages.filter(p => {
@@ -495,22 +547,8 @@ export default function HeuresGlobalesClient({
   const periodLabel = period === 'week'
     ? `Sem. du ${weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}`
     : period === 'month'
-    ? new Date(selectedMonth + '-01').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+    ? new Date(selectedMonthYear, selectedMonthIdx, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
     : `${customFrom} → ${customTo}`
-
-  const handleDelete = (p: GlobalPointage) => {
-    setDeletingId(p.id)
-    setDeleteError('')
-    startDeleteTransition(async () => {
-      const res = await deletePointage(p.id, p.chantier_id)
-      if (res.error) {
-        setDeleteError(res.error)
-        setDeletingId(null)
-      } else {
-        setDeletingId(null)
-      }
-    })
-  }
 
   return (
     <div className="page-container space-y-6" style={{ maxWidth: '72rem' }}>
@@ -565,12 +603,52 @@ export default function HeuresGlobalesClient({
         )}
 
         {period === 'month' && (
-          <input
-            type="month"
-            className="input w-48"
-            value={selectedMonth}
-            onChange={e => setSelectedMonth(e.target.value)}
-          />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                if (selectedMonthIdx === 0) { setSelectedMonthIdx(11); setSelectedMonthYear(y => y - 1) }
+                else setSelectedMonthIdx(i => i - 1)
+              }}
+              className="p-2 rounded-lg border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors"
+            >
+              ‹
+            </button>
+            <div className="flex items-center gap-1.5">
+              <select
+                className="input text-sm py-1 px-2"
+                value={selectedMonthIdx}
+                onChange={e => setSelectedMonthIdx(Number(e.target.value))}
+              >
+                {['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'].map((name, i) => (
+                  <option key={i} value={i}>{name}</option>
+                ))}
+              </select>
+              <select
+                className="input text-sm py-1 px-2"
+                value={selectedMonthYear}
+                onChange={e => setSelectedMonthYear(Number(e.target.value))}
+              >
+                {Array.from({ length: 5 }, (_, i) => today.getFullYear() - 3 + i).map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={() => {
+                if (selectedMonthIdx === 11) { setSelectedMonthIdx(0); setSelectedMonthYear(y => y + 1) }
+                else setSelectedMonthIdx(i => i + 1)
+              }}
+              className="p-2 rounded-lg border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors"
+            >
+              ›
+            </button>
+            <button
+              onClick={() => { setSelectedMonthIdx(today.getMonth()); setSelectedMonthYear(today.getFullYear()) }}
+              className="text-xs text-accent hover:underline"
+            >
+              Ce mois-ci
+            </button>
+          </div>
         )}
 
         {period === 'custom' && (
@@ -683,118 +761,91 @@ export default function HeuresGlobalesClient({
         <MemberReportsPanel pointages={initialPointages} individualMembers={individualMembers} />
       )}
 
-      {/* Détail ligne par ligne */}
-      {filtered.length > 0 && (
-        <div className="card overflow-hidden">
-          <div className="p-4 border-b border-[var(--elevation-border)] flex items-center justify-between gap-3">
-            <p className="font-bold text-primary text-sm">Détail des pointages</p>
-            {canManage && (
-              <span className="text-xs text-secondary">Cliquez sur une ligne pour modifier ou supprimer</span>
-            )}
-          </div>
-          {deleteError && (
-            <div className="px-4 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-800 text-sm text-red-600 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" /> {deleteError}
+      {/* Détail des pointages — regroupé par personne + chantier */}
+      {filtered.length > 0 && (() => {
+        // Regrouper par (personKey, chantier_id)
+        type GroupKey = string
+        type Group = {
+          personKey: string
+          user_name: string
+          member_id: string | null
+          chantier_id: string
+          chantier_title: string
+          hours: number
+          hasAlert: boolean
+        }
+        const groupMap = new Map<GroupKey, Group>()
+        for (const p of filtered) {
+          const pk = getPersonKey(p)
+          const key = `${pk}__${p.chantier_id}`
+          const existing = groupMap.get(key)
+          if (existing) {
+            existing.hours += p.hours
+            if (p.hours >= HOURS_ALERT_THRESHOLD) existing.hasAlert = true
+          } else {
+            groupMap.set(key, {
+              personKey: pk,
+              user_name: p.user_name,
+              member_id: p.member_id,
+              chantier_id: p.chantier_id,
+              chantier_title: p.chantier_title,
+              hours: p.hours,
+              hasAlert: p.hours >= HOURS_ALERT_THRESHOLD,
+            })
+          }
+        }
+        const groups = Array.from(groupMap.values()).sort((a, b) =>
+          a.user_name.localeCompare(b.user_name, 'fr') || a.chantier_title.localeCompare(b.chantier_title, 'fr')
+        )
+
+        return (
+          <div className="card overflow-hidden">
+            <div className="p-4 border-b border-[var(--elevation-border)] flex items-center justify-between gap-3">
+              <p className="font-bold text-primary text-sm">Détail des pointages</p>
             </div>
-          )}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--elevation-border)] bg-[var(--elevation-1)]">
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Date</th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Personne</th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Chantier</th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Tâche</th>
-                  <th className="text-right px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Heures</th>
-                  {canManage && (
-                    <th className="px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap w-20"></th>
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--elevation-border)]">
-                {filtered.map(p => {
-                  const isAlert = p.hours >= HOURS_ALERT_THRESHOLD
-                  const isBeingDeleted = deletingId === p.id
-                  return (
-                    <tr
-                      key={p.id}
-                      className={`transition-colors ${isBeingDeleted ? 'opacity-40' : ''} ${isAlert ? 'bg-amber-50/60 dark:bg-amber-950/20' : 'hover:bg-[var(--elevation-1)]'}`}
-                    >
-                      <td className="px-4 py-2.5 text-secondary whitespace-nowrap">
-                        {new Date(p.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' })}
-                      </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--elevation-border)] bg-[var(--elevation-1)]">
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Personne</th>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Chantier</th>
+                    <th className="text-right px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Heures</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--elevation-border)]">
+                  {groups.map(g => (
+                    <tr key={`${g.personKey}__${g.chantier_id}`} className="hover:bg-[var(--elevation-1)] transition-colors">
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0" style={{ backgroundColor: getUserColor(getPersonKey(p)) }}>
-                            {p.user_name[0]?.toUpperCase() ?? '?'}
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0" style={{ backgroundColor: getUserColor(g.personKey) }}>
+                            {g.user_name[0]?.toUpperCase() ?? '?'}
                           </div>
                           <span className="font-medium text-primary">
-                            {p.user_name}
-                            {p.member_id && <span className="ml-1 text-xs text-secondary">(ext.)</span>}
+                            {g.user_name}
+                            {g.member_id && <span className="ml-1 text-xs text-secondary">(ext.)</span>}
                           </span>
                         </div>
                       </td>
                       <td className="px-4 py-2.5">
-                        <Link href={`/chantiers/${p.chantier_id}`} className="text-primary hover:text-accent transition-colors">
-                          {p.chantier_title}
+                        <Link href={`/chantiers/${g.chantier_id}`} className="text-primary hover:text-accent transition-colors">
+                          {g.chantier_title}
                         </Link>
                       </td>
-                      <td className="px-4 py-2.5 text-secondary">{p.tache_title ?? <span className="opacity-40">—</span>}</td>
-                      <td className="px-4 py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {isAlert && (
-                            <span title="Pointage inhabituellement long — vérifier si la fin a bien été pointée">
-                              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                            </span>
-                          )}
-                          <span className={`font-bold ${isAlert ? 'text-amber-600 dark:text-amber-400' : 'text-primary'}`}>
-                            {fmtHours(p.hours)}
-                          </span>
-                        </div>
-                      </td>
-                      {canManage && (
-                        <td className="px-4 py-2.5">
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              onClick={() => setEditingPointage(p)}
-                              disabled={isBeingDeleted}
-                              title="Modifier"
-                              className="p-1.5 rounded-lg text-secondary hover:text-accent hover:bg-accent/10 transition-colors"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDelete(p)}
-                              disabled={isBeingDeleted}
-                              title="Supprimer"
-                              className="p-1.5 rounded-lg text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      )}
+                      <td className="px-4 py-2.5 text-right font-bold text-primary">{fmtHours(g.hours)}</td>
                     </tr>
-                  )
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-[var(--elevation-border)] bg-[var(--elevation-1)]">
-                  <td colSpan={canManage ? 4 : 4} className="px-4 py-2.5 text-xs font-semibold text-secondary uppercase tracking-wider">Total</td>
-                  <td className="px-4 py-2.5 text-right font-extrabold text-primary">{fmtHours(totalHours)}</td>
-                  {canManage && <td />}
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-          {canManage && filtered.some(p => p.hours >= HOURS_ALERT_THRESHOLD) && (
-            <div className="px-4 py-3 border-t border-[var(--elevation-border)] flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/20">
-              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              <span>Les lignes surlignées ont un pointage de 12h ou plus — probable oubli de dépointer. Vérifiez avec l'équipe et ajustez si nécessaire.</span>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-[var(--elevation-border)] bg-[var(--elevation-1)]">
+                    <td colSpan={2} className="px-4 py-2.5 text-xs font-semibold text-secondary uppercase tracking-wider">Total</td>
+                    <td className="px-4 py-2.5 text-right font-extrabold text-primary">{fmtHours(totalHours)}</td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )
+      })()}
 
       {/* Modal d'édition */}
       {editingPointage && (

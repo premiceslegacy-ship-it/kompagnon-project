@@ -789,7 +789,7 @@ export default function RecurringClient({
 
       {/* ── Modal création modèle ── */}
       {showForm && (
-        <div className="fixed inset-0 z-[100] flex items-end md:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[9995] flex items-end md:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="rounded-3xl bg-surface dark:bg-[#111] border border-[var(--elevation-border)] w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
             <div className="flex items-center justify-between p-8 pb-6 border-b border-[var(--elevation-border)]">
               <h2 className="text-xl font-bold text-primary">

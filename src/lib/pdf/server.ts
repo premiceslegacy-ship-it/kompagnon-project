@@ -33,7 +33,7 @@ async function getOrganizationForPdf(orgId: string) {
   const admin = createAdminClient()
   const { data } = await admin
     .from('organizations')
-    .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, email_from_name, email_from_address, forme_juridique, capital_social, rcs, rcs_ville, insurance_info, certifications, primary_color, payment_terms_days, late_penalty_rate, court_competent, iban, bic, bank_name, recovery_indemnity_text, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, sector, business_profile, business_activity_id, label_set, unit_set, default_categories, starter_presets, is_vat_subject, default_vat_rate, public_form_enabled, public_form_welcome_message, public_form_catalog_item_ids, public_form_custom_mode_enabled, public_form_notification_email, decennale_enabled, decennale_assureur, decennale_police, decennale_couverture, decennale_date_debut, decennale_date_fin, cgv_text')
+    .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, email_from_name, email_from_address, forme_juridique, capital_social, rcs, rcs_ville, insurance_info, certifications, primary_color, payment_terms_days, late_penalty_rate, court_competent, iban, bic, bank_name, recovery_indemnity_text, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, sector, business_profile, business_activity_id, label_set, unit_set, default_categories, starter_presets, is_vat_subject, tva_sur_debits, default_vat_rate, public_form_enabled, public_form_welcome_message, public_form_catalog_item_ids, public_form_custom_mode_enabled, public_form_notification_email, decennale_enabled, decennale_assureur, decennale_police, decennale_couverture, decennale_date_debut, decennale_date_fin, cgv_text, signatory_name, signatory_role, signature_image')
     .eq('id', orgId)
     .single()
 
@@ -51,6 +51,7 @@ export async function renderQuotePdfBufferById(quoteId: string, orgId: string): 
     .select(`
       id, number, title, status, total_ht, total_tva, total_ttc, currency,
       validity_days, valid_until, sent_at, signed_at, created_at,
+      client_signature_image, client_signatory_name, client_signatory_role,
       notes_client, payment_conditions, discount_rate, deposit_rate, aid_label, aid_amount,
       client_request_description, client_request_visible_on_pdf,
       client:clients(id, company_name, contact_name, email)

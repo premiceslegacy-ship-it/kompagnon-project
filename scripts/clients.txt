@@ -7,7 +7,6 @@
 #   atelier-dupont
 #
 # Ajouter une ligne à chaque nouveau client.
-# Le cockpit est aussi un Worker — l'inclure si tu veux le mettre à jour en même temps.
+# Ne pas inclure le cockpit ici : il a son Supabase opérateur et se déploie à part.
 
-orsayn-cockpit
 # atelier-weber      ← décommenter quand le client est déployé

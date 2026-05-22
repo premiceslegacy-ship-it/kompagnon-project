@@ -17,7 +17,7 @@ export default async function SignPage({ params }: { params: { token: string } }
     .select(`
       id, number, title, status, total_ttc, currency,
       valid_until, organization_id, client_id,
-      signed_at
+      signed_at, client_signatory_name
     `)
     .eq('signature_token', params.token)
     .single()
@@ -63,8 +63,10 @@ export default async function SignPage({ params }: { params: { token: string } }
       orgName={org?.name ?? ''}
       orgAddress={orgAddress}
       clientName={clientName}
+      quoteId={quote.id}
       alreadySigned={alreadySigned}
       signedAt={quote.signed_at}
+      signatoryName={quote.client_signatory_name ?? clientName}
     />
   )
 }

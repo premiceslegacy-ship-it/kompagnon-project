@@ -16,6 +16,7 @@ import {
   addMembreExistantToEquipe, retirerMembreDeEquipe, updateMembreInfos,
 } from '@/lib/data/mutations/chantiers'
 import { createIndividualMember, deleteIndividualMember, sendMemberSpaceInvite } from '@/lib/data/mutations/members'
+import { updateMemberLaborRate } from '@/lib/data/mutations/team'
 import MemberGoalsSettings from '@/app/(app)/settings/MemberGoalsSettings'
 import type { MemberGoal } from '@/lib/data/queries/member-goals'
 
@@ -143,6 +144,41 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
 
   // Ajout membre existant
   const [selectedExistant, setSelectedExistant] = useState('')
+
+  // Edition taux horaire membre app
+  const [editingAppMemberId, setEditingAppMemberId] = useState<string | null>(null)
+  const [editAppTaux, setEditAppTaux] = useState('')
+  const [editAppSaving, setEditAppSaving] = useState(false)
+  const [editAppError, setEditAppError] = useState<string | null>(null)
+  const [appMembersState, setAppMembersState] = useState<typeof appMembers>(appMembers)
+
+  const startEditAppMember = (m: (typeof appMembers)[number]) => {
+    setEditingAppMemberId(m.membership_id)
+    setEditAppTaux(m.labor_cost_per_hour != null ? String(m.labor_cost_per_hour) : '')
+    setEditAppError(null)
+  }
+
+  const cancelEditAppMember = () => {
+    setEditingAppMemberId(null)
+    setEditAppError(null)
+  }
+
+  const saveEditAppMember = async (membershipId: string) => {
+    const taux = editAppTaux ? parseFloat(editAppTaux.replace(',', '.')) : null
+    if (editAppTaux && (taux === null || isNaN(taux) || taux < 0)) {
+      setEditAppError('Taux invalide.')
+      return
+    }
+    setEditAppSaving(true)
+    setEditAppError(null)
+    const { error: err } = await updateMemberLaborRate(membershipId, taux)
+    setEditAppSaving(false)
+    if (err) { setEditAppError(err); return }
+    setAppMembersState(prev => prev.map(m =>
+      m.membership_id === membershipId ? { ...m, labor_cost_per_hour: taux } : m
+    ))
+    setEditingAppMemberId(null)
+  }
 
   const refresh = () => startTransition(() => router.refresh())
 
@@ -619,42 +655,79 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
         )}
       </section>
 
-      {/* Membres app (compte Supabase Auth) — lecture seule, info contextuelle */}
-      {appMembers.length > 0 && (
+      {/* Membres app (compte Supabase Auth) */}
+      {appMembersState.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-secondary">
-            Membres avec compte application ({appMembers.length})
+            Membres avec compte application ({appMembersState.length})
           </h2>
           <div className="card divide-y divide-[var(--elevation-border)] overflow-hidden">
-            {appMembers.map(m => (
-              <div key={m.membership_id} className="flex items-center gap-3 px-5 py-3">
-                <div className="w-8 h-8 rounded-full bg-emerald-500/15 flex items-center justify-center text-xs font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
-                  {(m.full_name ?? m.email)?.[0]?.toUpperCase() ?? '?'}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-primary truncate">{m.full_name ?? m.email}</p>
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
-                    <span className="text-xs text-secondary truncate">{m.email}</span>
-                    <span className="text-xs rounded-full bg-interactive px-2 py-0.5 text-secondary dark:bg-white/[0.06] shrink-0">{m.role_name}</span>
+            {appMembersState.map(m => {
+              const isEditing = editingAppMemberId === m.membership_id
+              return (
+                <div key={m.membership_id} className="flex items-center gap-3 px-5 py-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/15 flex items-center justify-center text-xs font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
+                    {(m.full_name ?? m.email)?.[0]?.toUpperCase() ?? '?'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-primary truncate">{m.full_name ?? m.email}</p>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                      <span className="text-xs text-secondary truncate">{m.email}</span>
+                      <span className="text-xs rounded-full bg-interactive px-2 py-0.5 text-secondary dark:bg-white/[0.06] shrink-0">{m.role_name}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1">
+                      <UserCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium whitespace-nowrap">Accès complet</span>
+                    </div>
+                    {canEditRates && (
+                      isEditing ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.5}
+                            autoFocus
+                            value={editAppTaux}
+                            onChange={e => setEditAppTaux(e.target.value)}
+                            placeholder="€/h"
+                            className="w-20 px-2 py-1 text-xs rounded border border-accent bg-base text-primary focus:outline-none"
+                          />
+                          <button
+                            onClick={() => saveEditAppMember(m.membership_id)}
+                            disabled={editAppSaving}
+                            className="p-1 rounded text-emerald-600 hover:bg-emerald-500/10"
+                          >
+                            {editAppSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                          </button>
+                          <button onClick={cancelEditAppMember} className="p-1 rounded text-secondary hover:bg-interactive">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                          {editAppError && <span className="text-xs text-red-500">{editAppError}</span>}
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => startEditAppMember(m)}
+                          className="flex items-center gap-1 rounded-md border border-[var(--elevation-border)] bg-base px-2 py-0.5 text-xs text-primary hover:border-accent hover:text-accent transition-colors"
+                          title="Modifier le taux horaire"
+                        >
+                          <Euro className="h-3 w-3" />
+                          {m.labor_cost_per_hour != null ? `${m.labor_cost_per_hour} €/h` : 'Taux'}
+                          <Pencil className="h-2.5 w-2.5 opacity-60" />
+                        </button>
+                      )
+                    )}
+                    {!canEditRates && m.labor_cost_per_hour != null && (
+                      <span className="flex items-center gap-1 rounded-md border border-[var(--elevation-border)] bg-interactive px-2 py-0.5 text-xs text-secondary dark:bg-white/[0.04]">
+                        <Euro className="h-3 w-3" />{m.labor_cost_per_hour} €/h
+                      </span>
+                    )}
                   </div>
                 </div>
-                <div className="flex flex-col sm:flex-row items-end sm:items-center gap-1 sm:gap-1.5 shrink-0">
-                  <div className="flex items-center gap-1">
-                    <UserCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium whitespace-nowrap">Accès complet</span>
-                  </div>
-                  {m.labor_cost_per_hour != null && (
-                    <span className="flex items-center gap-1 rounded-md border border-[var(--elevation-border)] bg-interactive px-2 py-0.5 text-xs text-secondary dark:bg-white/[0.04]">
-                      <Euro className="h-3 w-3" />{m.labor_cost_per_hour} €/h
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
-          <p className="text-xs text-secondary px-1">
-            Le taux horaire des membres avec compte se modifie en cliquant sur leur nom.
-          </p>
         </section>
       )}
 
@@ -664,7 +737,7 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
           <div className="rounded-2xl border border-[var(--elevation-border)] bg-surface p-6 dark:bg-white/[0.02]">
             <MemberGoalsSettings
               intervenants={initialSolo}
-              orgMembers={appMembers}
+              orgMembers={appMembersState}
               initialGoals={memberGoals}
               currentUserId={currentUserId}
             />

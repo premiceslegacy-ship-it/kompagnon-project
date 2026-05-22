@@ -80,17 +80,11 @@ export function fmtCurrency(amount: number, currency = 'EUR'): string {
 import path from 'path'
 import { Font, StyleSheet } from '@react-pdf/renderer'
 
-let fontsRegistered = false
-
 function fontPath(name: string): string {
-  // process.cwd() = racine du projet en dev et en prod Workers
   return path.join(process.cwd(), 'public', 'fonts', name)
 }
 
 export function registerFonts() {
-  if (fontsRegistered) return
-  fontsRegistered = true
-
   Font.register({
     family: 'Inter',
     fonts: [

@@ -25,6 +25,7 @@ export type MemberPointage = {
   hours: number
   start_time: string | null
   description: string | null
+  rate_snapshot: number | null
 }
 
 export type MemberPlanning = {
@@ -97,7 +98,7 @@ export async function getMemberPointages(
   let q = supabase
     .from('chantier_pointages')
     .select(`
-      id, chantier_id, tache_id, date, hours, start_time, description,
+      id, chantier_id, tache_id, date, hours, start_time, description, rate_snapshot,
       chantiers!inner ( title ),
       chantier_taches ( title )
     `)
@@ -124,6 +125,7 @@ export async function getMemberPointages(
     hours:          Number(r.hours),
     start_time:     r.start_time,
     description:    r.description,
+    rate_snapshot:  r.rate_snapshot != null ? Number(r.rate_snapshot) : null,
   })) as MemberPointage[]
 }
 

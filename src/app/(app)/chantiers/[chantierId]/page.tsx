@@ -97,7 +97,11 @@ export default async function ChantierDetailPage({
 
   const defaultProfitability = profitability ?? {
     budgetHt: chantier.budget_ht,
+    budgetCostMaterial: 0,
+    budgetCostLabor: 0,
+    budgetCostTotal: 0,
     revenueHt: 0,
+    collectedRevenueHt: 0,
     costMaterial: 0,
     costLabor: 0,
     costSubcontract: 0,

@@ -17,6 +17,7 @@ import {
 } from '@/lib/catalog-pricing'
 import type { ResolvedCatalogContext } from '@/lib/catalog-context'
 import { getCatalogLabelsForProfile } from '@/lib/catalog-ui'
+import type { Supplier } from '@/lib/data/queries/suppliers'
 
 const inputCls = 'w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all'
 
@@ -24,6 +25,7 @@ type Props = {
   material: CatalogMaterial
   categories: string[]
   catalogContext: ResolvedCatalogContext
+  suppliers?: Supplier[]
   onClose: () => void
   onSaved: (updated: CatalogMaterial) => void
 }
@@ -50,7 +52,7 @@ function buildVariantState(material: CatalogMaterial, schema: EditableDimensionS
   }))
 }
 
-export function EditMaterialModal({ material, categories, catalogContext, onClose, onSaved }: Props) {
+export function EditMaterialModal({ material, categories, catalogContext, suppliers = [], onClose, onSaved }: Props) {
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [newCatMode, setNewCatMode] = useState(false)
@@ -64,7 +66,7 @@ export function EditMaterialModal({ material, categories, catalogContext, onClos
   const [unit, setUnit] = useState(material.unit ?? 'u')
   const [category, setCategory] = useState(material.category ?? '')
   const [newCategory, setNewCategory] = useState('')
-  const [supplier, setSupplier] = useState(material.supplier ?? '')
+  const [supplierId, setSupplierId] = useState<string | null>(material.supplier_id ?? null)
   const [description, setDescription] = useState(material.description ?? '')
   const [purchasePrice, setPurchasePrice] = useState(String(material.purchase_price ?? ''))
   const [marginRate, setMarginRate] = useState(String(material.margin_rate ?? ''))
@@ -152,7 +154,8 @@ export function EditMaterialModal({ material, categories, catalogContext, onClos
         item_kind: material.item_kind,
         unit: unit || null,
         category: effectiveCategory || null,
-        supplier: supplier.trim() || null,
+        supplier_id: supplierId || null,
+        supplier: suppliers.find(s => s.id === supplierId)?.name?.trim() || null,
         description: description.trim() || null,
         purchase_price: parseFloat(purchasePrice) || null,
         margin_rate: parseFloat(marginRate) || null,
@@ -176,7 +179,8 @@ export function EditMaterialModal({ material, categories, catalogContext, onClos
           item_kind: material.item_kind,
           unit: unit || null,
           category: effectiveCategory || null,
-          supplier: supplier.trim() || null,
+          supplier_id: supplierId || null,
+          supplier: suppliers.find(s => s.id === supplierId)?.name?.trim() || null,
           description: description.trim() || null,
           purchase_price: parseFloat(purchasePrice) || null,
           margin_rate: parseFloat(marginRate) || null,
@@ -270,10 +274,15 @@ export function EditMaterialModal({ material, categories, catalogContext, onClos
             </div>
 
             {/* Fournisseur */}
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Fournisseur</label>
-              <input type="text" value={supplier} onChange={e => setSupplier(e.target.value)} className={inputCls} />
-            </div>
+            {suppliers.length > 0 && (
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-secondary">Fournisseur</label>
+                <select value={supplierId ?? ''} onChange={e => setSupplierId(e.target.value || null)} className={`${inputCls} appearance-none`}>
+                  <option value="">Aucun</option>
+                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
 
             {/* Description */}
             <div className="md:col-span-2 space-y-2">

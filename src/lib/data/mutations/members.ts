@@ -398,17 +398,38 @@ export async function createPointageAsMember(input: {
     return { error: 'Chantier introuvable.' }
   }
 
+  // Résoudre le taux horaire au moment de la saisie
+  const [orgRes, membreRes] = await Promise.all([
+    admin
+      .from('organizations')
+      .select('default_labor_cost_per_hour, default_hourly_rate')
+      .eq('id', input.organizationId)
+      .single(),
+    admin
+      .from('chantier_equipe_membres')
+      .select('taux_horaire')
+      .eq('id', input.memberId)
+      .single(),
+  ])
+  const orgFallback: number | null =
+    orgRes.data?.default_labor_cost_per_hour
+    ?? (orgRes.data?.default_hourly_rate ? orgRes.data.default_hourly_rate * 0.5 : null)
+  const rateSnapshot: number | null =
+    (membreRes.data?.taux_horaire != null ? membreRes.data.taux_horaire : null)
+    ?? orgFallback
+
   const { data: inserted, error } = await admin
     .from('chantier_pointages')
     .insert({
-      chantier_id:  input.chantierId,
-      tache_id:     input.tacheId ?? null,
-      member_id:    input.memberId,
-      user_id:      null,
-      date:         input.date,
-      hours:        input.hours,
-      start_time:   input.startTime ?? null,
-      description:  input.description ?? null,
+      chantier_id:   input.chantierId,
+      tache_id:      input.tacheId ?? null,
+      member_id:     input.memberId,
+      user_id:       null,
+      date:          input.date,
+      hours:         input.hours,
+      start_time:    input.startTime ?? null,
+      description:   input.description ?? null,
+      rate_snapshot: rateSnapshot,
     })
     .select('id')
     .single()

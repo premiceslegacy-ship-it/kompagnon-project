@@ -1,4 +1,8 @@
+'use client'
+
 import Link from 'next/link'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import type { LucideIcon } from 'lucide-react'
 import {
   ArrowRight,
@@ -10,10 +14,12 @@ import {
   Globe,
   PackageCheck,
   Sparkles,
+  Trophy,
   UserPlus,
   Users,
 } from 'lucide-react'
 import type { DashboardSetupReadiness } from '@/lib/data/queries/dashboard'
+import { dismissSetupChecklist } from './actions'
 
 type SetupItem = {
   title: string
@@ -71,15 +77,80 @@ function ChecklistItem({ item }: { item: SetupItem }) {
   )
 }
 
+function SetupCompleteCard({ organizationName, earnedPoints }: { organizationName: string; earnedPoints: number }) {
+  const [dismissed, setDismissed] = useState(false)
+  const router = useRouter()
+
+  if (dismissed) return null
+
+  function handleNav(href: string) {
+    setDismissed(true)
+    dismissSetupChecklist()
+    router.push(href)
+  }
+
+  return (
+    <section className="card overflow-hidden rounded-3xl border-accent/25 bg-white dark:bg-white/[0.04]">
+      <div className="relative p-5 sm:p-6 lg:p-7">
+        <div className="absolute inset-x-0 top-0 h-1 bg-accent" />
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-start gap-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-accent/30 bg-accent/10 text-accent shadow-lg shadow-accent/10">
+              <Trophy className="h-7 w-7" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-bold uppercase tracking-wider text-accent">Quête de lancement terminée</p>
+              <h2 className="mt-1 text-2xl font-extrabold tracking-tight text-primary sm:text-3xl">
+                {organizationName} est prêt à vendre
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-secondary sm:text-base">
+                Votre espace est configuré : identité, documents, paiement, signature, catalogue, client et premier devis.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:min-w-[260px]">
+            <div className="rounded-2xl border border-[var(--elevation-border)] bg-black/[0.04] p-3 dark:bg-white/[0.06]">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-secondary">Score</p>
+              <p className="mt-1 text-lg font-extrabold tabular-nums text-primary">{earnedPoints} pts</p>
+            </div>
+            <div className="rounded-2xl border border-accent/25 bg-accent/10 p-3">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-accent">Statut</p>
+              <p className="mt-1 text-lg font-extrabold text-primary">Prêt à vendre</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <button
+            onClick={() => handleNav(`/finances/quote-editor?returnTo=${encodeURIComponent('/dashboard')}`)}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-extrabold text-black shadow-lg shadow-accent/20 active:scale-[0.98] transition-transform"
+          >
+            Créer le prochain devis
+            <ArrowRight className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => { setDismissed(true); dismissSetupChecklist() }}
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--elevation-border)] bg-black/[0.04] px-5 py-3 text-sm font-bold text-primary hover:border-accent/40 hover:text-accent active:scale-[0.98] transition-transform dark:bg-white/[0.06]"
+          >
+            Continuer sur le dashboard
+            <Sparkles className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export default function SetupChecklist({ readiness }: { readiness: DashboardSetupReadiness | null }) {
   if (!readiness) return null
   const organizationName = readiness.organizationName?.trim() || 'votre entreprise'
 
   const requiredItems: SetupItem[] = [
     {
-      title: 'Finaliser l’identité',
-      description: 'Nom, email et activité métier pour adapter les libellés, unités et modèles.',
-      href: '/settings?tab=entreprise',
+      title: "Finaliser l'identité",
+      description: "Nom, email et activité métier pour adapter les libellés, unités et modèles.",
+      href: '/settings?tab=entreprise#identite',
       done: readiness.companyIdentityReady,
       reward: 120,
       tag: 'Mission 1',
@@ -87,8 +158,8 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
     },
     {
       title: 'Préparer les documents',
-      description: 'Adresse, SIRET et TVA pour générer des devis et factures prêts à envoyer.',
-      href: '/settings?tab=entreprise',
+      description: "SIRET (section Identité) + adresse complète (section Coordonnées) pour générer des devis et factures prêts à envoyer.",
+      href: '/settings?tab=entreprise#identite',
       done: readiness.documentDetailsReady,
       reward: 150,
       tag: 'Mission 2',
@@ -97,7 +168,7 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
     {
       title: 'Ajouter les infos de paiement',
       description: 'RIB et délais pour éviter de les ressaisir sur chaque facture.',
-      href: '/settings?tab=entreprise',
+      href: '/settings?tab=entreprise#paiement',
       done: readiness.paymentReady,
       reward: 120,
       tag: 'Mission 3',
@@ -106,7 +177,7 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
     {
       title: 'Signer les contrats',
       description: 'Nom, fonction et signature manuscrite pour automatiser la partie signataire.',
-      href: '/settings?tab=entreprise',
+      href: '/settings?tab=entreprise#signature',
       done: readiness.signatureReady,
       reward: 110,
       tag: 'Mission 4',
@@ -114,7 +185,7 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
     },
     {
       title: 'Vérifier le catalogue',
-      description: 'Vos prestations de départ servent de base aux devis et aux chiffrages IA.',
+      description: "Un catalogue de départ a été préparé selon votre activité. Ajustez les tarifs et les libellés pour qu'ils reflètent votre réalité.",
       href: '/catalog',
       done: readiness.catalogReady,
       metric: readiness.counts.catalogItems > 0 ? `${readiness.counts.catalogItems} élément${readiness.counts.catalogItems > 1 ? 's' : ''} prêt${readiness.counts.catalogItems > 1 ? 's' : ''}` : undefined,
@@ -146,7 +217,7 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
 
   const optionalItems: SetupItem[] = [
     {
-      title: 'Inviter l’équipe',
+      title: "Inviter l'équipe",
       description: 'Utile si plusieurs personnes suivent les chantiers, heures, clients ou relances.',
       href: '/settings?tab=equipe',
       done: readiness.teamReady,
@@ -182,7 +253,9 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
     : completedRequired >= 2 ? 'Base posée'
     : 'Démarrage'
 
-  if (completedRequired === requiredTotal) return null
+  if (completedRequired === requiredTotal) {
+    return <SetupCompleteCard organizationName={organizationName} earnedPoints={totalRequiredPoints} />
+  }
 
   return (
     <section className="card overflow-hidden rounded-3xl">
@@ -193,7 +266,7 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
               <p className="text-sm font-bold uppercase tracking-wider text-accent">Quête de lancement</p>
               <h2 className="mt-2 text-2xl font-bold tracking-tight text-primary">Monter {organizationName} en puissance</h2>
               <p className="mt-2 text-sm leading-relaxed text-secondary">
-                Chaque mission débloque un gain concret dans l’app. Les bonus restent facultatifs pour les entreprises qui en ont besoin.
+                Chaque mission débloque un gain concret dans l&#39;app. Les bonus restent facultatifs pour les entreprises qui en ont besoin.
               </p>
             </div>
             <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-accent/25 bg-accent/10">
@@ -221,7 +294,7 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
 
           {nextItem && (
             <Link href={nextItem.href} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-extrabold text-black shadow-lg shadow-accent/20 transition-all hover:scale-[1.01] active:scale-[0.99]">
-              Lancer : {nextItem.title.toLowerCase()}
+              {nextItem.title}
               <ArrowRight className="h-4 w-4" />
             </Link>
           )}

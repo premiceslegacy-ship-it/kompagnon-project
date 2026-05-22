@@ -9,6 +9,12 @@ import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
 import MonthlyReportPDF, { type MonthlyReportData, type ReportInvoice, type ReportQuote } from '@/components/pdf/MonthlyReportPDF'
 import { assertSafeExternalFetchUrl } from '@/lib/security'
 
+const REPORTABLE_INVOICE_STATUSES = ['sent', 'viewed', 'partial', 'paid', 'overdue'] as const
+
+function isReportableInvoiceStatus(status: string | null | undefined): boolean {
+  return REPORTABLE_INVOICE_STATUSES.includes(status as typeof REPORTABLE_INVOICE_STATUSES[number])
+}
+
 async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null
   const safeUrl = assertSafeExternalFetchUrl(url)
@@ -65,7 +71,7 @@ export async function GET(req: Request) {
     `)
     .eq('organization_id', orgId)
     .eq('is_archived', false)
-    .neq('status', 'cancelled')
+    .in('status', REPORTABLE_INVOICE_STATUSES)
     .gte('issue_date', monthStart)
     .lt('issue_date', monthEnd)
     .order('issue_date', { ascending: true })
@@ -159,7 +165,7 @@ export async function GET(req: Request) {
   })
   ;(rawPayments ?? []).forEach((payment: any) => {
     const inv = Array.isArray(payment.invoice) ? payment.invoice[0] : payment.invoice
-    if (!inv || inv.status === 'cancelled' || inv.is_archived) return
+    if (!inv || !isReportableInvoiceStatus(inv.status) || inv.is_archived) return
 
     const normalized = invoiceMap.get(inv.id) ?? normalizeInvoice(inv)
     if (!normalized.payments.some(p => p.id === payment.id)) {

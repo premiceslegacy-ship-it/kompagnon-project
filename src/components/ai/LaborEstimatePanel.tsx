@@ -219,7 +219,7 @@ export default function LaborEstimatePanel({ laborRates, quoteTitle, onInsert, o
   const hasContent = profiles.length > 0 || transportCost > 0
 
   return (
-    <div className="fixed inset-0 z-[100] flex justify-end">
+    <div className="fixed inset-0 z-[9995] flex justify-end">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-[440px] bg-surface dark:bg-[#111] dark:border-l dark:border-[var(--elevation-border)] h-full overflow-hidden flex flex-col shadow-2xl">
 
