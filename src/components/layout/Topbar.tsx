@@ -25,6 +25,7 @@ import {
     X,
     ClipboardSignature,
     ChevronDown,
+    BarChart2,
 } from 'lucide-react';
 import type { UserProfile } from '@/lib/data/queries/user';
 import { AI_NAME } from '@/lib/brand';
@@ -501,6 +502,12 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
             icon: <LayoutDashboard className="w-4 h-4" />,
             active: pathname === '/dashboard',
         }] : []),
+        ...(canView('dashboard.view_ca') || canView('*') ? [{
+            href: '/rapports',
+            label: 'Rapports',
+            icon: <BarChart2 className="w-4 h-4" />,
+            active: pathname.startsWith('/rapports'),
+        }] : []),
         ...(canView('clients.view') ? [{
             href: '/clients',
             label: 'Clients',
@@ -580,6 +587,14 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                     >
                         <LayoutDashboard className="w-4 h-4" />
                         Tableau de bord
+                    </Link>}
+
+                    {(canView('dashboard.view_ca') || canView('*')) && <Link
+                        href="/rapports"
+                        className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/rapports') ? 'text-primary' : 'text-secondary hover:text-primary'}`}
+                    >
+                        <BarChart2 className="w-4 h-4" />
+                        Rapports
                     </Link>}
 
                     {canView('clients.view') && <Link

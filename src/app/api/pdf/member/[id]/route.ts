@@ -74,22 +74,46 @@ export async function GET(
       created_at: '',
     }
 
+    // Chercher aussi un éventuel member_id fantôme lié à ce user dans cette org
+    const { data: linkedMemberRow } = await admin
+      .from('chantier_equipe_membres')
+      .select('id')
+      .eq('profile_id', params.id)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+
+    const linkedMemberId = linkedMemberRow?.id ?? null
+
+    const selectClause = `
+      id, chantier_id, tache_id, date, hours, start_time, description, rate_snapshot,
+      chantiers!inner ( title ),
+      chantier_taches ( title )
+    `
+
     // Pointages via user_id
-    let q = admin
+    let qUser = admin
       .from('chantier_pointages')
-      .select(`
-        id, chantier_id, tache_id, date, hours, start_time, description,
-        chantiers!inner ( title ),
-        chantier_taches ( title )
-      `)
+      .select(selectClause)
       .eq('user_id', params.id)
       .order('date', { ascending: false })
+    if (dateFrom) qUser = qUser.gte('date', dateFrom)
+    if (dateTo)   qUser = qUser.lte('date', dateTo)
 
-    if (dateFrom) q = q.gte('date', dateFrom)
-    if (dateTo)   q = q.lte('date', dateTo)
+    // Pointages via member_id lié (si existe)
+    const rowsUser = (await qUser).data ?? []
+    let rowsMember: any[] = []
+    if (linkedMemberId) {
+      let qMember = admin
+        .from('chantier_pointages')
+        .select(selectClause)
+        .eq('member_id', linkedMemberId)
+        .order('date', { ascending: false })
+      if (dateFrom) qMember = qMember.gte('date', dateFrom)
+      if (dateTo)   qMember = qMember.lte('date', dateTo)
+      rowsMember = (await qMember).data ?? []
+    }
 
-    const { data: rows } = await q
-    pointages = (rows ?? []).map((r: any) => ({
+    const mapRow = (r: any): MemberPointage => ({
       id:             r.id,
       chantier_id:    r.chantier_id,
       chantier_title: r.chantiers?.title ?? '',
@@ -99,7 +123,12 @@ export async function GET(
       hours:          Number(r.hours),
       start_time:     r.start_time,
       description:    r.description,
-    }))
+      rate_snapshot:  r.rate_snapshot != null ? Number(r.rate_snapshot) : null,
+    })
+
+    pointages = [...rowsUser, ...rowsMember]
+      .map(mapRow)
+      .sort((a, b) => b.date.localeCompare(a.date))
   } else {
     // Membre fantôme : chercher dans chantier_equipe_membres par id
     const { data: memberRow } = await admin
@@ -117,7 +146,7 @@ export async function GET(
     let q = admin
       .from('chantier_pointages')
       .select(`
-        id, chantier_id, tache_id, date, hours, start_time, description,
+        id, chantier_id, tache_id, date, hours, start_time, description, rate_snapshot,
         chantiers!inner ( title ),
         chantier_taches ( title )
       `)
@@ -138,6 +167,7 @@ export async function GET(
       hours:          Number(r.hours),
       start_time:     r.start_time,
       description:    r.description,
+      rate_snapshot:  r.rate_snapshot != null ? Number(r.rate_snapshot) : null,
     }))
   }
 
@@ -153,6 +183,7 @@ export async function GET(
         periodFrom: dateFrom,
         periodTo: dateTo,
         totalHours,
+        isAppMember: idType === 'user',
       }) as any,
     )
   } catch (e) {
@@ -161,7 +192,9 @@ export async function GET(
   }
 
   const memberSlug = [member.prenom, member.name].filter(Boolean).join('-').toLowerCase().replace(/[^a-z0-9-]/gi, '-')
-  const fileName = `rapport-heures-${memberSlug}-${dateFrom}-${dateTo}.pdf`
+  const isAnnual = dateFrom.endsWith('-01-01') && dateTo.endsWith('-12-31') && dateFrom.slice(0, 4) === dateTo.slice(0, 4)
+  const periodSlug = isAnnual ? dateFrom.slice(0, 4) : `${dateFrom}-${dateTo}`
+  const fileName = `rapport-heures-${memberSlug}-${periodSlug}.pdf`
 
   return new NextResponse(stream as unknown as ReadableStream, {
     headers: {

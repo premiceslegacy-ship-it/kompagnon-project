@@ -65,7 +65,7 @@ function fmtDate(d: string | null): string {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  draft: 'Brouillon', sent: 'Envoyée', partial: 'Partielle', paid: 'Payée', cancelled: 'Annulée',
+  draft: 'Brouillon', sent: 'Envoyée', viewed: 'Vue', partial: 'Partielle', paid: 'Payée', overdue: 'En retard', cancelled: 'Annulée', refunded: 'Remboursée',
 }
 const QUOTE_STATUS_LABELS: Record<string, string> = {
   draft: 'Brouillon', sent: 'Envoyé', viewed: 'Consulté',
@@ -78,10 +78,12 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
   const { organization, invoices, quotes, month } = data
   const isVatSubject = organization.is_vat_subject
   const currency = invoices[0]?.currency ?? quotes[0]?.currency ?? 'EUR'
+  const invoiceIssuedStatuses = ['sent', 'viewed', 'partial', 'paid', 'overdue']
+  const invoiceWaitingStatuses = ['sent', 'viewed', 'partial', 'overdue']
 
   // ── Agrégats factures ─────────────────────────────────────────────────────
   const invoicesIssuedInMonth = invoices.filter(inv => inv.issue_date?.startsWith(month))
-  const sentPaid = invoicesIssuedInMonth.filter(inv => ['sent', 'partial', 'paid'].includes(inv.status))
+  const sentPaid = invoicesIssuedInMonth.filter(inv => invoiceIssuedStatuses.includes(inv.status))
   const caHt = sentPaid.reduce((s, inv) => s + inv.total_ht, 0)
   const paidTtcTotal = (inv: ReportInvoice) => inv.status === 'paid' ? inv.total_ttc : inv.status === 'partial' ? inv.total_paid : 0
   const paidTtcInMonth = (inv: ReportInvoice) => {
@@ -97,7 +99,7 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
     inv.total_ttc > 0 ? Math.min(inv.total_ht, inv.total_ht * (amountTtc / inv.total_ttc)) : 0
   const tvaFromTtc = (inv: ReportInvoice, amountTtc: number) =>
     inv.total_ttc > 0 ? Math.min(inv.total_tva, inv.total_tva * (amountTtc / inv.total_ttc)) : 0
-  const remainingHt = (inv: ReportInvoice) => inv.status === 'sent' ? inv.total_ht : inv.status === 'partial' ? Math.max(0, inv.total_ht - htFromTtc(inv, paidTtcTotal(inv))) : 0
+  const remainingHt = (inv: ReportInvoice) => ['sent', 'viewed', 'overdue'].includes(inv.status) ? inv.total_ht : inv.status === 'partial' ? Math.max(0, inv.total_ht - htFromTtc(inv, paidTtcTotal(inv))) : 0
   const encaisseHt = invoices.reduce((s, inv) => s + htFromTtc(inv, paidTtcInMonth(inv)), 0)
   const encaisseTtc = invoices.reduce((s, inv) => s + paidTtcInMonth(inv), 0)
   const resteHt = invoicesIssuedInMonth.reduce((s, inv) => s + remainingHt(inv), 0)
@@ -218,8 +220,8 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
         {/* ── KPI Factures ── */}
         <Text style={S.sectionTitle}>Synthèse facturation</Text>
         {(() => {
-          const sentPaidCount = invoicesIssuedInMonth.filter(i => ['sent', 'partial', 'paid'].includes(i.status)).length
-          const sentCount = invoicesIssuedInMonth.filter(i => i.status === 'sent' || i.status === 'partial').length
+          const sentPaidCount = invoicesIssuedInMonth.filter(i => invoiceIssuedStatuses.includes(i.status)).length
+          const sentCount = invoicesIssuedInMonth.filter(i => invoiceWaitingStatuses.includes(i.status)).length
           const hasMargin = totalInternalCost > 0
           return (
             <View style={S.kpiRow}>

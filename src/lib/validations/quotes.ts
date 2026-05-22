@@ -34,6 +34,7 @@ export const UpsertQuoteItemSchema = z.object({
   quantity: z.number().positive(),
   unit: z.string().max(50).nullable().optional(),
   unit_price: z.number().min(0),
+  unit_cost_ht: z.number().min(0).nullable().optional(),
   vat_rate: z.number().min(0).max(100).optional(),
   position: z.number().int().min(0),
   length_m: z.number().nullable().optional(),

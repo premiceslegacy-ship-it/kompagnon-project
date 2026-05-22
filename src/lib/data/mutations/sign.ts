@@ -17,13 +17,34 @@ export type AcceptQuoteResult = {
   signedAt: string | null
 }
 
+export type AcceptQuoteInput = {
+  token: string
+  signatoryName: string
+  signatoryRole?: string | null
+  signatureImage: string
+}
+
+function cleanText(value: string | null | undefined): string | null {
+  const text = value?.trim()
+  return text ? text : null
+}
+
 /**
  * Enregistre l'acceptation d'un devis via son token de signature public.
  * - Pas d'auth requise (page publique client)
  * - Envoie 2 emails : confirmation client + notification professionnel
  */
-export async function acceptQuoteByToken(token: string): Promise<AcceptQuoteResult> {
+export async function acceptQuoteByToken(input: AcceptQuoteInput): Promise<AcceptQuoteResult> {
   const admin = createAdminClient()
+  const token = input.token?.trim()
+  const signatoryName = input.signatoryName?.trim() ?? ''
+  const signatoryRole = cleanText(input.signatoryRole)
+  const signatureImage = input.signatureImage?.trim() ?? ''
+
+  if (!signatoryName) return { error: 'Veuillez renseigner votre nom complet.', quoteNumber: null, quoteTitle: null, orgName: null, signedAt: null }
+  if (!signatureImage || !signatureImage.startsWith('data:image/')) {
+    return { error: 'Signature manquante.', quoteNumber: null, quoteTitle: null, orgName: null, signedAt: null }
+  }
 
   // 1. Charger le devis par token
   const { data: quote, error: fetchErr } = await admin
@@ -66,6 +87,9 @@ export async function acceptQuoteByToken(token: string): Promise<AcceptQuoteResu
       signed_at: signedAt.toISOString(),
       signed_ip: ip,
       signed_user_agent: userAgent,
+      client_signatory_name: signatoryName,
+      client_signatory_role: signatoryRole,
+      client_signature_image: signatureImage,
     })
     .eq('id', quote.id)
 

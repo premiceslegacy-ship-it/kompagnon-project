@@ -19,6 +19,10 @@
 # Les clés par client (RESEND, APP_URL) se passent en argument pour ne pas
 # avoir à modifier .env.local entre chaque déploiement.
 #
+# B2Brouter n'est pas déployé ici : l'intégration e-facturation tourne côté
+# app Next/Cloudflare Worker et se configure avec les variables B2BROUTER_*
+# dans Cloudflare Workers.
+#
 # Exemples :
 #   # Clé Atelier partagée (défaut)
 #   ./scripts/deploy-edge-functions.sh pyxnmohknxmbpbcuvudg \

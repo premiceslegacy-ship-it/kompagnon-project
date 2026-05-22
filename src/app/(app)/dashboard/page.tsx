@@ -195,7 +195,7 @@ export default async function DashboardPage({
     getChantierStats(),
     getOrganizationModules(),
     getTodayPlanningDigest(),
-    getDashboardSetupReadiness(),
+    roleSlug === 'owner' ? getDashboardSetupReadiness() : Promise.resolve(null),
   ])
 
   return (

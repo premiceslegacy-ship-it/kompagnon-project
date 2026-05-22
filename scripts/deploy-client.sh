@@ -69,4 +69,6 @@ echo "👉 Penser à injecter les variables dans Cloudflare Dashboard si c'est u
 echo "   dash.cloudflare.com → Workers & Pages → $WORKER_NAME → Settings → Variables and Secrets"
 echo "   Variables Supabase attendues : SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY"
 echo "   Secrets uniques par client      : CRON_SECRET, MEMBER_SESSION_SECRET, RATE_LIMIT_SECRET"
+echo "   Cockpit                         : OPERATOR_INGEST_URL, OPERATOR_INGEST_SECRET, OPERATOR_CONFIG_SYNC_SECRET"
+echo "   B2Brouter si activé             : B2BROUTER_ENV, B2BROUTER_API_VERSION, B2BROUTER_API_KEY, B2BROUTER_ACCOUNT_ID"
 echo "   → Voir DEPLOIEMENT_CLIENT.md §3 pour la liste complète"

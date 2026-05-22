@@ -128,6 +128,7 @@ type LocalItem = {
   quantity: number
   unit: string
   unit_price: number
+  unit_cost_ht: number | null
   vat_rate: number
   type: 'material' | 'labor' | 'custom'
   material_id: string | null
@@ -223,6 +224,7 @@ function itemToLocal(i: QuoteItem): LocalItem {
     quantity: i.quantity,
     unit: i.unit ?? 'u',
     unit_price: i.unit_price,
+    unit_cost_ht: i.unit_cost_ht ?? null,
     length_m: i.length_m ?? null,
     width_m: i.width_m ?? null,
     height_m: i.height_m ?? null,
@@ -530,7 +532,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const desc = `${equipmentLabel}\n\nAmortissement : ${equipmentPurchase} € / ${equipmentUses} usages`
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === equipmentTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null }] }
         : s
     ))
     setShowEquipment(false)
@@ -559,7 +561,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const desc = `Carburant - trajet ${transportKm} km`
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === transportTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL }] }
         : s
     ))
     setShowTransport(false)
@@ -808,7 +810,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     deletedItemKeys.current.delete(key)
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: false, transport_km: null, transport_conso: null, transport_prix_l: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: false, transport_km: null, transport_conso: null, transport_prix_l: null }] }
         : s
     ))
     const sectionId = await ensureSectionSaved(sectionTempId, qId)
@@ -907,7 +909,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       const sectionId = resolvePersistedSectionId(sec)
       if (!item?.id || sectionId === undefined) return
       if (deletedSectionTempIds.current.has(sectionTempId) || deletedItemKeys.current.has(key) || deletedItemIds.current.has(item.id)) return
-      await upsertQuoteItem({ id: item.id, quote_id: qId, section_id: sectionId, type: item.type, material_id: item.material_id, labor_rate_id: item.labor_rate_id, description: item.description, quantity: item.quantity, unit: item.unit, unit_price: item.unit_price, vat_rate: item.vat_rate, position: item.position, length_m: item.length_m, width_m: item.width_m, height_m: item.height_m, dim_quantity: item.dim_quantity, is_internal: item.is_internal })
+      await upsertQuoteItem({ id: item.id, quote_id: qId, section_id: sectionId, type: item.type, material_id: item.material_id, labor_rate_id: item.labor_rate_id, description: item.description, quantity: item.quantity, unit: item.unit, unit_price: item.unit_price, unit_cost_ht: item.unit_cost_ht, vat_rate: item.vat_rate, position: item.position, length_m: item.length_m, width_m: item.width_m, height_m: item.height_m, dim_quantity: item.dim_quantity, is_internal: item.is_internal })
       if (deletedItemIds.current.has(item.id)) {
         await deleteQuoteItemOrReport(item.id, qId)
         return
@@ -984,12 +986,16 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const pos = sec.items.length + 1
     const tempId = `item_${Date.now()}`
     deletedItemKeys.current.delete(`${catalogTarget}_${tempId}`)
+    const unitCostHt = isMat
+      ? (m.purchase_price ?? null)
+      : (l.cost_rate ?? null)
     const newItem: LocalItem = {
       _tempId: tempId, id: null,
       description: isMat ? m.name : l.designation,
       quantity: pricing?.quantity ?? 1,
       unit: pricing?.unit ?? entry.unit ?? (isMat ? 'u' : 'h'),
-      unit_price: pricing?.unitPrice ?? (isMat ? getCatalogSaleUnitPrice(m) : getInternalResourceUnitCost(l)),
+      unit_price: pricing?.unitPrice ?? (isMat ? getCatalogSaleUnitPrice(m) : (l.rate ?? getInternalResourceUnitCost(l))),
+      unit_cost_ht: unitCostHt,
       vat_rate: defaultVatRate,
       type,
       material_id: isMat ? m.id : null,
@@ -1016,6 +1022,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       labor_rate_id: newItem.labor_rate_id,
       description: newItem.description,
       quantity: newItem.quantity, unit: newItem.unit, unit_price: newItem.unit_price,
+      unit_cost_ht: newItem.unit_cost_ht ?? undefined,
       vat_rate: newItem.vat_rate, position: pos,
       length_m: newItem.length_m,
       width_m: newItem.width_m,
@@ -1051,6 +1058,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           quantity: item.quantity,
           unit: item.unit,
           unit_price: item.unit_price,
+          unit_cost_ht: item.unit_cost_ht,
           vat_rate: item.vat_rate,
           position: item.position,
           length_m: item.length_m,
@@ -1178,6 +1186,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           height_m: aiItem.height_m ?? null,
           dimension_pricing_mode: aiItem.dimension_pricing_mode ?? null,
           dim_quantity: aiItem.dim_quantity ?? 1,
+          unit_cost_ht: null,
           is_estimated: aiItem.is_estimated ?? false,
           is_internal: isInternal,
           transport_km: null, transport_conso: null, transport_prix_l: null,
@@ -1253,6 +1262,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         _tempId: tempId, id: null,
         description: item.designation,
         quantity: item.quantity, unit: item.unit, unit_price: item.unit_price,
+        unit_cost_ht: null,
         vat_rate: defaultVatRate, type: 'labor',
         material_id: null, labor_rate_id: item.labor_rate_id,
         position: itemPos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
@@ -1301,6 +1311,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         description: prestation.name,
         quantity: 1, unit: prestation.unit,
         unit_price: prestation.base_price_ht,
+        unit_cost_ht: null,
         vat_rate: defaultVatRate,
         type: 'custom', material_id: null, labor_rate_id: null,
         position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
@@ -1365,6 +1376,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           labor_rate_id: pItem.labor_rate_id,
           position: i + 1,
           length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
+          unit_cost_ht: pItem.unit_cost_ht ?? null,
           is_estimated: false,
           is_internal: pItem.is_internal || isTransport,
           transport_km: isTransport ? estimatedKm : null,
@@ -1605,7 +1617,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           {modules.quote_ai && (
             <button
               onClick={() => setMoaPanelOpen(true)}
-              className="px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-violet-500/30 text-violet-600 dark:text-violet-400 font-semibold flex items-center gap-2 hover:bg-violet-500/10 transition-all whitespace-nowrap"
+              className="px-4 py-2.5 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-600 dark:text-violet-400 font-semibold flex items-center gap-2 hover:bg-violet-500/25 hover:border-violet-500 hover:text-violet-500 dark:hover:text-violet-300 transition-all whitespace-nowrap"
             >
               <Wrench className="w-4 h-4" />
               <span className="hidden md:inline">Estimer les ressources internes</span>
@@ -1624,7 +1636,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           {quoteId ? (
             <button
               onClick={handlePreviewPdf}
-              className="px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:bg-base transition-all whitespace-nowrap"
+              className="px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:bg-base hover:border-[var(--elevation-border-strong,_theme(colors.neutral.400))] hover:text-accent transition-all whitespace-nowrap"
             >
               <FileDown className="w-4 h-4" /><span className="hidden sm:inline">Aperçu PDF</span>
             </button>
@@ -1694,7 +1706,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                   className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums"
                 />
               </div>
-              {allQuotes.length > 0 && (
+              {allQuotes.filter(q => q.client_id === clientId && q.id !== quoteId).length > 0 && (
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-secondary">Devis de référence (avenant)</label>
                   <select
@@ -1708,10 +1720,10 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                   >
                     <option value="">Aucun (devis original)</option>
                     {allQuotes
-                      .filter(q => q.id !== quoteId)
+                      .filter(q => q.client_id === clientId && q.id !== quoteId)
                       .map(q => (
                         <option key={q.id} value={q.id}>
-                          {q.number ? `${q.number} — ` : ''}{q.title ?? 'Sans titre'}{q.client_name ? ` (${q.client_name})` : ''}
+                          {q.number ? `${q.number} — ` : ''}{q.title ?? 'Sans titre'}
                         </option>
                       ))}
                   </select>
@@ -1913,7 +1925,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                 <button
                   onClick={handleAddSection}
                   disabled={isPending}
-                  className="flex items-center gap-2 text-sm font-bold text-accent hover:text-accent/80 px-5 py-2.5 rounded-full border border-accent/20 bg-accent/5 transition-colors disabled:opacity-60"
+                  className="flex items-center gap-2 text-sm font-bold text-accent hover:text-accent hover:bg-accent/15 hover:border-accent/40 px-5 py-2.5 rounded-full border border-accent/20 bg-accent/5 transition-colors disabled:opacity-60"
                 >
                   <Plus className="w-4 h-4" />Ajouter une section
                 </button>
@@ -2046,6 +2058,17 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                             <div className="h-9 flex items-center px-2 bg-base/60 border border-[var(--elevation-border)]/60 rounded-lg">
                               <span className={`font-bold tabular-nums text-sm w-full text-right ${isEquipment ? 'text-purple-700 dark:text-purple-300' : 'text-primary'}`}>{fmt(item.quantity * item.unit_price)}</span>
                             </div>
+                            {item.unit_cost_ht != null && item.unit_price > 0 && !item.is_internal && (() => {
+                              const totalCost = item.quantity * item.unit_cost_ht
+                              const totalSale = item.quantity * item.unit_price
+                              const margin = totalSale - totalCost
+                              const marginPct = Math.round((margin / totalSale) * 100)
+                              return (
+                                <span className={`text-[10px] tabular-nums text-right font-semibold ${margin >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                  {marginPct} % · {fmt(margin)}
+                                </span>
+                              )
+                            })()}
                           </div>
                         </div>
 
@@ -2247,22 +2270,24 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             </div>
           ))}
 
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleAddSection}
-              disabled={isPending}
-              className="flex-1 py-4 border-2 border-dashed border-[var(--elevation-border)] rounded-2xl text-secondary font-bold hover:border-accent/50 hover:text-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 disabled:opacity-60"
-            >
-              <Plus className="w-5 h-5" />Ajouter une section
-            </button>
-            <button
-              onClick={() => { setPrestationSearch(''); setPrestationOpen(true) }}
-              disabled={isPending}
-              className="py-4 px-6 border-2 border-dashed border-[var(--elevation-border)] rounded-2xl text-secondary font-bold hover:border-accent/50 hover:text-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 disabled:opacity-60 whitespace-nowrap"
-            >
-              <Layers className="w-5 h-5" />Prestation type
-            </button>
-          </div>
+          {sections.length > 0 && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleAddSection}
+                disabled={isPending}
+                className="flex-1 py-4 border-2 border-dashed border-[var(--elevation-border)] rounded-2xl text-secondary font-bold hover:border-accent/50 hover:text-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <Plus className="w-5 h-5" />Ajouter une section
+              </button>
+              <button
+                onClick={() => { setPrestationSearch(''); setPrestationOpen(true) }}
+                disabled={isPending}
+                className="py-4 px-6 border-2 border-dashed border-[var(--elevation-border)] rounded-2xl text-secondary font-bold hover:border-accent/50 hover:text-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 disabled:opacity-60 whitespace-nowrap"
+              >
+                <Layers className="w-5 h-5" />Prestation type
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

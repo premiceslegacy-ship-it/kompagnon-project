@@ -17,6 +17,9 @@ export type Quote = {
   valid_until: string | null
   sent_at: string | null
   signed_at: string | null
+  client_signature_image?: string | null
+  client_signatory_name?: string | null
+  client_signatory_role?: string | null
   created_at: string
   client: {
     id: string
@@ -100,6 +103,7 @@ export async function getQuotesForLinking(): Promise<QuoteStub[]> {
     .eq('is_archived', false)
     .not('status', 'in', '("refused","cancelled","expired")')
     .order('created_at', { ascending: false })
+    .limit(200)
 
   if (error) { console.error('[getQuotesForLinking]', error); return [] }
 
@@ -134,7 +138,9 @@ export async function getQuotes(): Promise<Quote[]> {
     .from('quotes')
     .select(`
       id, number, title, status, total_ht, total_ttc, currency,
-      validity_days, valid_until, sent_at, signed_at, created_at,
+      validity_days, valid_until, sent_at, signed_at,
+      client_signature_image, client_signatory_name, client_signatory_role,
+      created_at,
       client:clients(id, company_name, contact_name, email)
     `)
     .eq('organization_id', orgId)
@@ -158,7 +164,9 @@ export async function getClientQuotes(clientId: string): Promise<Quote[]> {
     .from('quotes')
     .select(`
       id, number, title, status, total_ht, total_ttc, currency,
-      validity_days, valid_until, sent_at, signed_at, created_at,
+      validity_days, valid_until, sent_at, signed_at,
+      client_signature_image, client_signatory_name, client_signatory_role,
+      created_at,
       client:clients(id, company_name, contact_name, email)
     `)
     .eq('organization_id', orgId)
@@ -183,7 +191,9 @@ export async function getAcceptedQuotesWithItems(): Promise<QuoteWithItems[]> {
     .from('quotes')
     .select(`
       id, number, title, status, total_ht, total_ttc, currency,
-      validity_days, valid_until, sent_at, created_at,
+      validity_days, valid_until, sent_at, signed_at,
+      client_signature_image, client_signatory_name, client_signatory_role,
+      created_at,
       client:clients(id, company_name, contact_name, email)
     `)
     .eq('organization_id', orgId)
@@ -240,7 +250,9 @@ export async function getQuoteById(id: string): Promise<QuoteWithItems | null> {
     .from('quotes')
     .select(`
       id, number, title, status, total_ht, total_ttc, currency,
-      validity_days, valid_until, sent_at, created_at,
+      validity_days, valid_until, sent_at, signed_at,
+      client_signature_image, client_signatory_name, client_signatory_role,
+      created_at,
       notes_client, payment_conditions, discount_rate, deposit_rate,
       aid_label, aid_amount,
       client_request_description, client_request_visible_on_pdf,

@@ -97,7 +97,8 @@ export type GlobalPointage = {
   chantier_title: string
   user_id: string | null
   member_id: string | null
-  user_name: string          // nom affiché (user ou membre fantôme)
+  member_profile_id: string | null  // profile_id du membre fantôme si lié à un user app
+  user_name: string
   date: string
   hours: number
   description: string | null
@@ -181,6 +182,7 @@ export async function getChantiers(): Promise<Chantier[]> {
     .eq('organization_id', orgId)
     .eq('is_archived', false)
     .order('created_at', { ascending: false })
+    .limit(200)
 
   if (error) {
     console.error('[getChantiers]', error)
@@ -379,7 +381,7 @@ export async function getAllPointagesGlobal(opts?: { from?: string; to?: string 
     .select(`
       id, chantier_id, user_id, member_id, date, hours, description,
       profile:profiles(full_name),
-      membre:chantier_equipe_membres(prenom, name),
+      membre:chantier_equipe_membres(prenom, name, profile_id),
       tache:chantier_taches(title),
       chantier:chantiers!inner(title, organization_id)
     `)
@@ -406,6 +408,7 @@ export async function getAllPointagesGlobal(opts?: { from?: string; to?: string 
       chantier_title: p.chantier?.title ?? '-',
       user_id: p.user_id ?? null,
       member_id: p.member_id ?? null,
+      member_profile_id: p.membre?.profile_id ?? null,
       user_name: p.profile?.full_name ?? membreName ?? 'Inconnu',
       date: p.date,
       hours: p.hours,

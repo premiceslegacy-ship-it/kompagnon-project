@@ -176,7 +176,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="fixed inset-0 z-[110] flex">
+    <div className="fixed inset-0 z-[9995] flex">
       {/* Backdrop */}
       <div className="flex-1 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
 

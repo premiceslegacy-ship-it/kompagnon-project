@@ -4,7 +4,7 @@ import type { Organization } from '@/lib/data/queries/organization'
 import type { QuoteWithItems } from '@/lib/data/queries/quotes'
 import type { Client } from '@/lib/data/queries/clients'
 import { APP_NAME } from '@/lib/brand'
-import { registerFonts, makePageStyles, DS, splitItemDescription, formatDimDetail } from '@/lib/pdf/pdf-design-system'
+import { registerFonts, makePageStyles, DS, splitItemDescription, formatDimDetail, pdfText } from '@/lib/pdf/pdf-design-system'
 
 registerFonts()
 
@@ -87,6 +87,7 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
   const validUntil = quote.valid_until
     ? quote.valid_until
     : addDays(quote.created_at, quote.validity_days ?? 30)
+  const hasClientSignature = Boolean(quote.signed_at && quote.client_signature_image)
 
   const orgStreet = organization.address_line1 ?? null
   const orgPostalCity = [organization.postal_code, organization.city].filter(Boolean).join(' ') || null
@@ -351,8 +352,41 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
                 </>
               )}
             </View>
-            <View style={S.signatureBox}>
-              <Text style={S.signatureLabel}>Bon pour accord, date et signature</Text>
+            <View style={hasClientSignature ? [S.signatureBox, { minHeight: 118, justifyContent: 'flex-start' }] : S.signatureBox}>
+              {hasClientSignature ? (
+                <>
+                  <Text style={{
+                    fontFamily: DS.font.heading,
+                    fontWeight: 800,
+                    fontSize: DS.size.xxs,
+                    color: DS.color.black,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.7,
+                    marginBottom: DS.space.xs,
+                  }}>
+                    Bon pour accord
+                  </Text>
+                  <Text style={{ fontSize: DS.size.xxs, color: DS.color.secondary, marginBottom: 2 }}>
+                    Nom : <Text style={{ color: DS.color.black, fontFamily: DS.font.heading, fontWeight: 700 }}>{pdfText(quote.client_signatory_name ?? '')}</Text>
+                  </Text>
+                  {quote.client_signatory_role && (
+                    <Text style={{ fontSize: DS.size.xxs, color: DS.color.secondary, marginBottom: 2 }}>
+                      Qualité : <Text style={{ color: DS.color.black, fontFamily: DS.font.heading, fontWeight: 700 }}>{pdfText(quote.client_signatory_role)}</Text>
+                    </Text>
+                  )}
+                  <Text style={{ fontSize: DS.size.xxs, color: DS.color.secondary, marginBottom: 4 }}>
+                    Date : <Text style={{ color: DS.color.black, fontFamily: DS.font.heading, fontWeight: 700 }}>{quote.signed_at ? fmtDate(quote.signed_at) : ''}</Text>
+                  </Text>
+                  {quote.client_signature_image ? (
+                    <Image
+                      src={quote.client_signature_image}
+                      style={{ width: 130, height: 46, objectFit: 'contain', alignSelf: 'center', marginTop: 2 }}
+                    />
+                  ) : null}
+                </>
+              ) : (
+                <Text style={S.signatureLabel}>Bon pour accord, date et signature</Text>
+              )}
             </View>
           </View>
 

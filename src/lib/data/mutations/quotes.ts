@@ -337,6 +337,7 @@ export async function upsertQuoteItem(item: {
   quantity: number
   unit?: string | null
   unit_price: number
+  unit_cost_ht?: number | null
   vat_rate?: number
   position: number
   length_m?: number | null

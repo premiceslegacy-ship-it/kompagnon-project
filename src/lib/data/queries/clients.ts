@@ -34,33 +34,39 @@ export async function getClients(): Promise<Client[]> {
 
   const supabase = await createClient()
 
-  // On ne ramène que les factures payées et non archivées pour calculer total_revenue —
-  // le filtre est appliqué côté Postgres (PostgREST resource embedding avec filter).
-  const { data, error } = await supabase
-    .from('clients')
-    .select(`
-      id, organization_id, type, company_name, contact_name, first_name, last_name,
-      email, phone, siret, address_line1, city, postal_code, status, source,
-      payment_terms_days, created_at,
-      paid_invoices:invoices!client_id(total_ttc)
-    `)
-    .eq('organization_id', orgId)
-    .eq('is_archived', false)
-    .eq('paid_invoices.status', 'paid')
-    .eq('paid_invoices.is_archived', false)
-    .order('created_at', { ascending: false })
+  const [{ data, error }, { data: revenueRows }] = await Promise.all([
+    supabase
+      .from('clients')
+      .select(`
+        id, organization_id, type, company_name, contact_name, first_name, last_name,
+        email, phone, siret, address_line1, city, postal_code, status, source,
+        payment_terms_days, created_at
+      `)
+      .eq('organization_id', orgId)
+      .eq('is_archived', false)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('invoices')
+      .select('client_id, total_ttc')
+      .eq('organization_id', orgId)
+      .eq('status', 'paid')
+      .eq('is_archived', false),
+  ])
 
   if (error) {
     console.error('[getClients]', error)
     return []
   }
 
-  return (data ?? []).map((c: any) => {
-    const paidInvoices: Array<{ total_ttc: number }> = c.paid_invoices ?? []
-    const total_revenue = paidInvoices.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0)
-    const { paid_invoices: _inv, ...rest } = c
-    return { ...rest, total_revenue } as Client
-  })
+  const revenueByClient: Record<string, number> = {}
+  for (const inv of revenueRows ?? []) {
+    if (inv.client_id) revenueByClient[inv.client_id] = (revenueByClient[inv.client_id] ?? 0) + (inv.total_ttc ?? 0)
+  }
+
+  return (data ?? []).map((c: any) => ({
+    ...c,
+    total_revenue: revenueByClient[c.id] ?? 0,
+  } as Client))
 }
 
 /**

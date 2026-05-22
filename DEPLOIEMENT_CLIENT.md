@@ -80,25 +80,29 @@ CRON_SECRET : [laisser vide = Claude génère]
 Clé OpenRouter : Atelier (défaut) / Client (fournir sk-or-xxx)
   → Atelier : clé partagée depuis .env.local, Atelier porte le coût IA
   → Client : le client crée son compte openrouter.ai et fournit sa clé — il paye directement
+Mode facturation IA cockpit : orsayn_shared / client_owned
+  → orsayn_shared : coût IA soustrait de la marge dans le cockpit
+  → client_owned : conso visible pour pricing, mais coût non porté par Orsayn
 WhatsApp activé : oui / non
   → Mode mutualisé Twilio (recommandé) : rien à fournir côté client — routing via webhook central Orsayn
   → Mode propre WABA : Phone Number ID + Access Token Meta/Graph-compatible, permanent
-Offre souscrite : [setup_only | starter | pro | expert | expert_b2b]
+Offre souscrite : [setup_only | starter | pro | expert]
   → Détermine modules + quota_config dans organization_modules au déploiement (étape C8)
   → setup_only : tous les modules IA à false — l'app tourne sans IA
   → starter : 39€/mois — IA web principale, WhatsApp à 0
   → pro : 89€/mois — + whatsapp_agent (120 msg/mois, 10 min vocal)
   → expert : 149€/mois — IA illimitée + 500 msg WhatsApp, 40 min vocal, 30 msgs proactifs, OCR WA
-  → expert_b2b : tout Expert + B2Brouter activé
+  → facturation électronique gérée séparément par le cockpit
 Overflow mode : block (défaut) | upgrade_prompt | charge
   → block : fonctionnalité coupée en fin de quota jusqu'au 1er du mois
   → upgrade_prompt : la fonc continue, email upgrade envoyé, bascule block si non-upgrade 48h
   → charge : usage supplémentaire facturé (+0,50€/tranche 50 msg WA)
 Essai IA offert : oui (30 jours Expert) / non
   → Si oui : active tous les modules Expert + note trial_ends_at = today + 30j dans operator_client_subscriptions
-B2Brouter : export-only (défaut) / activé
-  → export-only : Atelier génère PDF + XML Factur-X, dépôt manuel — aucun surcoût
-  → activé : transmission automatique via B2Brouter — facturation annuelle séparée (250€-900€/an selon volume)
+Facturation électronique : off | export_only (défaut) | b2brouter
+  → export_only : Atelier génère PDF + XML Factur-X, envoi PDF/mail normal jusqu'au 31/08/2027 — aucun surcoût
+  → b2brouter : réception UI 2026 côté app client + transmission automatique via B2Brouter — facturation annuelle séparée (250€-900€/an selon volume)
+  → mode actuel Orsayn : eDocExchange. Le compte entreprise est créé/configuré dans l'UI B2Brouter, le cockpit stocke l'account_id et pousse la config.
 ```
 
 ---
@@ -206,17 +210,18 @@ Après avoir peuplé `company_memory`, je configure `organization_modules.module
 | `starter` | IA web principale, WhatsApp à `0`, quotas starter |
 | `pro` | Starter + `whatsapp_agent`, quotas Pro |
 | `expert` | Tous modules, quotas Expert |
-| `expert_b2b` | Tout Expert + B2Brouter activé côté cockpit |
+
+La facturation électronique est configurée séparément dans le cockpit après le tier : `off`, `export_only` ou `b2brouter`.
 
 Si "Essai IA offert : oui" :
 1. Activer tous les modules Expert côté instance cliente (config-sync)
 2. Écrire dans `operator_client_subscriptions` : `trial_tier = 'expert'`, `trial_ends_at = now() + 30 days`, `trial_converted = false`
-3. Insérer un event dans `operator_commercial_events` : `event_type = 'trial_start'`, `sent_by = 'operator_manual'`
+3. Insérer un event dans `operator_client_events` : `event_type = 'trial_started'`, `event_category = 'trial'`
 4. Envoyer l'email `trial-start` via Resend cockpit au contact client
 
 À l'expiration (géré automatiquement par le cron `trial-expiry-check`) : modules IA désactivés via config-sync + `trial_ends_at = null` remis à null + email `trial-expired` envoyé.
 
-Le cockpit Orsayn reste la source de vérité pour modifier tier, modules et quotas après déploiement. Le bouton "Appliquer tier" pousse la configuration vers `https://<app-client>/api/operator/config-sync` avec signature HMAC.
+Le cockpit Orsayn reste la source de vérité pour modifier tier, modules, quotas et configuration e-facturation après déploiement. Le bouton "Appliquer tier" pousse la configuration vers `https://<app-client>/api/operator/config-sync` avec signature HMAC.
 
 ---
 
@@ -325,6 +330,12 @@ Le cockpit Orsayn reste la source de vérité pour modifier tier, modules et quo
 096_member_goals_membership.sql            ← Étend member_goals pour accepter membership_id (membres org sans fiche intervenant)
 097_situations_de_travaux.sql              ← Module situations de travaux : colonnes invoices + table invoice_situations + RPC generateSituation
 098_tournee_departure_address.sql          ← Point de départ tournée : organizations.departure_* + table tournee_routes
+099_quote_invoice_items_unit_cost.sql      ← Coût interne unitaire sur lignes devis/facture (unit_cost_ht) — jamais affiché au client, alimente la marge ligne par ligne
+100_org_annual_objectives.sql             ← Objectifs annuels organisation : CA HT, marge €/%, chantiers, heures, clients — table org_annual_objectives
+101_org_tva_sur_debits.sql                ← TVA sur débits vs encaissements : organizations.tva_sur_debits BOOLEAN — impacte les rapports et l'export FEC
+102_pointage_rate_snapshot.sql            ← Snapshot taux horaire au moment du pointage : chantier_pointages.rate_snapshot — fige le taux au moment de la saisie
+103_organization_einvoicing_config.sql    ← Config locale e-facturation sync cockpit : off/export_only/b2brouter, sandbox/prod, account id, annuaire
+104_quote_client_signature.sql            ← Signature manuscrite du client sur devis : nom, fonction, image dans le PDF signé
 ```
 
 Note historique :
@@ -394,6 +405,11 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `096_member_goals_membership.sql`
 - `097_situations_de_travaux.sql`
 - `098_tournee_departure_address.sql`
+- `099_quote_invoice_items_unit_cost.sql`
+- `100_org_annual_objectives.sql`
+- `101_org_tva_sur_debits.sql`
+- `102_pointage_rate_snapshot.sql`
+- `103_organization_einvoicing_config.sql`
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`
@@ -503,6 +519,37 @@ Effets de ces migrations :
   - nouvelle table `tournee_routes` — métadonnées par tournée (date, point de départ spécifique, timestamps)
   - **obligatoire avant d'utiliser** : le champ "Adresse de départ" dans Settings et la saisie d'un point de départ par tournée dans le module Planning → Tournées
 
+- `099` :
+  - `quote_items.unit_cost_ht NUMERIC DEFAULT NULL` — coût interne unitaire HT sur chaque ligne de devis
+  - `invoice_items.unit_cost_ht NUMERIC DEFAULT NULL` — idem sur factures, copié depuis la ligne de devis lors de la conversion
+  - alimenté automatiquement depuis le catalogue (`purchase_price` matériaux, `cost_rate` MO, `unit_cost_ht` prestations types)
+  - jamais transmis au client (invisible sur les PDFs) — sert à calculer la marge ligne par ligne dans la rentabilité chantier
+  - **NOTICE :** migration additive, aucun effet de bord. Les lignes existantes restent `NULL` (fallback sur le taux org/membre au calcul).
+
+- `100` :
+  - nouvelle table `org_annual_objectives` — objectifs annuels par organisation et par année : `revenue_ht_target`, `margin_eur_target`, `margin_pct_target`, `chantiers_count_target`, `hours_target`, `clients_count_target`, plus champs custom JSON
+  - RLS via `organization_id` — lecture/écriture owner uniquement
+  - **obligatoire avant d'utiliser** : la section Objectifs annuels dans le dashboard et les rapports
+
+- `101` :
+  - `organizations.tva_sur_debits BOOLEAN NOT NULL DEFAULT false` — active la TVA sur les débits (vs sur les encaissements par défaut)
+  - impacte le calcul de la TVA collectée dans les rapports mensuels et l'export FEC : en mode débits, la TVA est imputée à la date de facturation ; en mode encaissements, à la date du paiement
+  - configurable dans Settings → Organisation → TVA
+  - **NOTICE :** migration additive. Tous les clients existants restent en mode encaissements (`false`) jusqu'à modification manuelle.
+
+- `102` :
+  - `chantier_pointages.rate_snapshot NUMERIC(8,2) DEFAULT NULL` — snapshot du taux horaire (€/h) figé au moment de la saisie du pointage
+  - permet à la rentabilité chantier d'utiliser le taux historique même si le taux org/membre a changé depuis
+  - `NULL` sur les pointages antérieurs à cette migration : le calcul de rentabilité tombe en fallback sur le taux actuel du membre ou de l'org
+  - **NOTICE :** migration additive. Les pointages futurs seront automatiquement snapshotés.
+
+- `103` :
+  - nouvelle table `organization_einvoicing_config` — copie locale de la configuration e-facturation pilotée par le cockpit
+  - modes supportés : `off`, `export_only`, `b2brouter`
+  - `export_only` prépare/télécharge le Factur-X sans transmission PA par Atelier
+  - `b2brouter` active la réception UI 2026 et prépare l'orchestration B2Brouter via `b2brouter_account_id`
+  - **NOTICE :** migration additive. Le défaut est `off`; appliquer une offre depuis `/orsayn` pour pousser la config réelle.
+
 Impact déploiement :
 - `059` : appliquer sur tous les clients existants avec WhatsApp avant de redéployer l'Edge Function — sans ça, le webhook ne peut pas lire `authorized_contacts` ni `use_shared_waba`
 - `067` + `068` : appliquer avant d'utiliser l'onglet Rentabilité, l'assistant IA chantier, les photos rapport et les nouveaux outils WhatsApp — sans ça les inserts sur `chantier_expenses` et `chantier_photos` échoueront
@@ -518,6 +565,7 @@ Impact déploiement :
 - `057` vide les embeddings existants : déclencher le cron `/api/cron/embeddings` après migration pour re-générer
 - ajouter les 3 variables opérateur dans Cloudflare Workers pour activer la sync vers le cockpit (voir §3)
 - `083` : obligatoire avant le nouveau cockpit quotas ; après push, appliquer un tier depuis `/orsayn` pour peupler `organization_modules.quota_config`
+- `103` : obligatoire avant que le cockpit puisse pousser `einvoicing_config` vers une instance client ; après push, utiliser `/orsayn` → Facturation électronique → mode `off` / `export_only` / `b2brouter`
 - après migration, vérifier rapidement dans l'app :
   - Settings → activité métier bien sélectionnée
   - Catalogue → création/édition produit/service OK
@@ -607,9 +655,42 @@ OPERATOR_INGEST_URL=https://orsayn-cockpit.mbebourasam.workers.dev/api/operator/
 OPERATOR_INGEST_SECRET=...             ← secret HMAC partagé (identique sur toutes les instances + cockpit)
 OPERATOR_CONFIG_SYNC_SECRET=...        ← optionnel ; si absent, /api/operator/config-sync utilise OPERATOR_INGEST_SECRET
 # OPERATOR_SOURCE_INSTANCE=nom-client ← optionnel : si absent, utilise le host de NEXT_PUBLIC_APP_URL (ex: atelier-weber.workers.dev). Renommable dans le cockpit après.
+
+# B2Brouter — uniquement si einvoicing_config.mode = b2brouter
+B2BROUTER_ENV=sandbox                   ← sandbox | production
+B2BROUTER_API_VERSION=2026-03-02        ← version minimum DGFiP
+B2BROUTER_API_KEY=...                   ← secret API B2Brouter eDocExchange
+B2BROUTER_ACCOUNT_ID=...                ← account id B2Brouter du compte client (sandbox/prod distincts)
+B2BROUTER_WEBHOOK_SECRET=...            ← signing secret webhook B2Brouter, quand les webhooks seront activés
 ```
 
-> **Note :** les variables `OPERATOR_*` sont optionnelles. Sans `OPERATOR_INGEST_URL/SECRET`, les appels IA fonctionnent normalement mais les coûts ne remontent pas au cockpit (`operator_sync_status = 'skipped'` dans `usage_logs`). Sans secret de config sync, le cockpit garde la configuration client en `skipped` et il faut peupler `organization_modules` manuellement.
+> **Note :** les variables `OPERATOR_*` sont optionnelles. Sans `OPERATOR_INGEST_URL/SECRET`, les appels IA fonctionnent normalement mais les coûts ne remontent pas au cockpit (`operator_sync_status = 'skipped'` dans `usage_logs`). Sans secret de config sync, le cockpit garde la configuration client en `skipped` et il faut peupler `organization_modules` / `organization_einvoicing_config` manuellement.
+
+#### Variables cockpit à mettre sur chaque Worker client
+
+Pour qu'un client remonte ses consos IA au cockpit et reçoive les configs poussées depuis `/orsayn`, il suffit de mettre ces variables sur son Worker :
+
+| Variable | Obligatoire | Valeur |
+|---|---:|---|
+| `OPERATOR_INGEST_URL` | Oui pour la remontée conso | `https://<cockpit>/api/operator/ingest` |
+| `OPERATOR_INGEST_SECRET` | Oui pour la remontée conso | Ton secret HMAC partagé |
+| `OPERATOR_CONFIG_SYNC_SECRET` | Recommandé | Même valeur que `OPERATOR_INGEST_SECRET` en V1 |
+| `OPERATOR_SOURCE_INSTANCE` | Optionnel | Nom court stable du client, sinon fallback sur `NEXT_PUBLIC_APP_URL` |
+
+Tu peux garder le même `OPERATOR_INGEST_SECRET` HMAC pour tous les clients : c'est le modèle V1 le plus simple. Il doit être identique côté cockpit et côté clients. Trade-off connu : si ce secret fuit sur une instance, il faut le faire tourner partout. Plus tard, on pourra passer à un secret par client si tu veux isoler davantage.
+
+Ne mets jamais ces variables cockpit opérateur sur un Worker client :
+
+```env
+OPERATOR_MODE=true
+OPERATOR_SUPABASE_URL=...
+OPERATOR_SUPABASE_SERVICE_ROLE_KEY=...
+OPERATOR_ALLOWED_EMAILS=...
+```
+
+Elles sont réservées au Worker `orsayn-cockpit`.
+
+> **Note B2Brouter :** en `export_only`, ne pas renseigner les variables `B2BROUTER_*`. En `b2brouter`, le compte est créé/configuré dans l'UI B2Brouter (eDocExchange), puis `B2BROUTER_ACCOUNT_ID` est reporté dans Cloudflare et dans le cockpit. Les environnements sandbox et production ont des clés et account ids distincts.
 
 **Note :** les variables `NEXT_PUBLIC_LEGAL_*` et `NEXT_PUBLIC_*EMAIL` servent aux pages publiques `privacy`, `terms`, `legal`
 et devront être reprises telles quelles sur la future landing pour garder un wording cohérent.
@@ -668,8 +749,8 @@ Les variables texte (`SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, mentions légales, e
 
 | Type | Variables |
 |------|-----------|
-| **Secret** | `OPERATOR_INGEST_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET`; `SHARED_WABA_ACCESS_TOKEN` seulement en mode Meta/Graph-compatible |
-| **Text** | `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_USD_TO_EUR_RATE`, `SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `AI_RATE_LIMIT_PER_HOUR`, `PUBLIC_FORM_RATE_LIMIT_PER_HOUR`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE`, `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER`; `SHARED_WABA_PHONE_NUMBER_ID` seulement en mode Meta/Graph-compatible; et toutes les `NEXT_PUBLIC_LEGAL_*` |
+| **Secret** | `OPERATOR_INGEST_SECRET`, `OPERATOR_CONFIG_SYNC_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET`; `B2BROUTER_API_KEY` et `B2BROUTER_WEBHOOK_SECRET` seulement en mode B2Brouter ; `SHARED_WABA_ACCESS_TOKEN` seulement en mode Meta/Graph-compatible |
+| **Text** | `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_USD_TO_EUR_RATE`, `SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `AI_RATE_LIMIT_PER_HOUR`, `PUBLIC_FORM_RATE_LIMIT_PER_HOUR`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE`, `B2BROUTER_ENV`, `B2BROUTER_API_VERSION`, `B2BROUTER_ACCOUNT_ID`, `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER`; `SHARED_WABA_PHONE_NUMBER_ID` seulement en mode Meta/Graph-compatible; et toutes les `NEXT_PUBLIC_LEGAL_*` |
 
 **Mapping Edge Functions Supabase :** l'app Worker utilise `RESEND_FROM_ADDRESS` et `NEXT_PUBLIC_APP_URL`; la fonction Supabase `whatsapp-webhook` reçoit les mêmes valeurs sous `RESEND_FROM_EMAIL` et `APP_URL` via `scripts/deploy-edge-functions.sh`. En mode Twilio mutualisé, le webhook entrant public reste centralisé côté Orsayn.
 
@@ -899,6 +980,13 @@ Impact support appareils :
 - [ ] **Objectifs membres** : Chantier → Équipe → fiche membre → onglet Objectifs → créer un objectif mensuel → vérifier sauvegarde
 - [ ] **Situations de travaux** : Finances → sélectionner un devis signé → onglet Situations → créer situation 1 à 30% → vérifier `situation_number`, `cumulative_pct`, `retention_amount` en DB
 - [ ] **Adresse de départ tournée** : Settings → Organisation → renseigner l'adresse de départ → Planning → Tournées → vérifier que le point de départ est pré-rempli
+- [ ] **Rapports** : Menu → Rapports → vérifier rapport mensuel (CA HT/TTC, encaissé, TVA, bénéfice estimé), rapport annuel (courbes), top clients, top chantiers
+- [ ] **Export FEC** : Rapports → Export → sélectionner une période → télécharger le FEC → vérifier format DGFiP (colonnes JournalCode, EcritureDate, Debit, Credit…)
+- [ ] **Export CSV comptable** : même parcours → CSV → ouvrir dans tableur → colonnes normalisées présentes
+- [ ] **Objectifs annuels** : Settings → Objectifs → saisir CA cible → Dashboard → vérifier barre de progression visible
+- [ ] **TVA sur débits** : Settings → Organisation → activer "TVA sur débits" → vérifier que le rapport mensuel impute la TVA à la date de facturation
+- [ ] **Coût unitaire catalogue** : créer un article avec prix d'achat → générer un devis avec cet article → vérifier que `unit_cost_ht` est renseigné sur la ligne (via Supabase ou onglet Rentabilité si visible)
+- [ ] **Factures reçues** *(si `einvoicing_config.mode = 'b2brouter'`)* : Finances → Factures reçues → vérifier réception/statuts (reçue / à payer / payée)
 
 ### Checklist onboarding WhatsApp client (mode mutualisé)
 
@@ -1021,6 +1109,7 @@ Ce mode n'utilise pas le numéro Twilio mutualisé Atelier.
 ## ─── COCKPIT ORSAYN (déploiement unique, une seule fois) ────────────────────────
 
 > Le cockpit est **ton** tableau de bord privé. Il tourne sur un déploiement Cloudflare Workers séparé, connecté à son propre projet Supabase. Il n'a rien à voir avec les instances clientes.
+> Si le cockpit est déjà déployé, ne recrée pas de projet : applique seulement les nouvelles migrations opérateur sur le Supabase du cockpit, puis redéploie le Worker cockpit.
 
 ### Ce qu'il faut faire une fois
 
@@ -1029,17 +1118,30 @@ Ce mode n'utilise pas le numéro Twilio mutualisé Atelier.
 - Appliquer `supabase/operator-migrations/001_operator_usage.sql`
 - Puis appliquer `supabase/operator-migrations/002_operator_client_settings.sql`
 - Puis appliquer `supabase/operator-migrations/003_operator_subscriptions_quotas.sql`
-- Puis appliquer `supabase/operator-migrations/004_operator_commercial_events.sql`
+- Puis appliquer `supabase/operator-migrations/004_operator_einvoicing_config.sql`
+- Puis appliquer `supabase/operator-migrations/005_operator_cockpit_actions.sql`
 - Récupérer l'URL et la service role key
+
+**Pour un cockpit déjà existant :**
+- Ne pas appliquer ces migrations sur le Supabase d'un client.
+- Appliquer uniquement les nouvelles migrations manquantes sur le Supabase opérateur du cockpit.
+- Pour la release actuelle, appliquer au minimum `supabase/operator-migrations/005_operator_cockpit_actions.sql`.
 
 **T-O2 — Déployer le cockpit sur Cloudflare Workers**
 - Même repo GitHub, nouveau projet Cloudflare Workers (ex: `atelier-orsayn`)
 - Même `wrangler.jsonc` que les instances clientes : seule la variable d'environnement change
+- Déploiement dédié :
+
+```bash
+./scripts/deploy-cockpit.sh orsayn-cockpit
+```
+
 - Variables d'environnement spécifiques au cockpit :
 
 ```env
 OPERATOR_MODE=true
 OPERATOR_INGEST_SECRET=...                   ← même secret que sur les instances clientes
+OPERATOR_CONFIG_SYNC_SECRET=...              ← recommandé : même valeur que OPERATOR_INGEST_SECRET en V1
 OPERATOR_ALLOWED_EMAILS=mbebourasam@gmail.com
 OPERATOR_SUPABASE_URL=https://<operateur-ref>.supabase.co
 OPERATOR_SUPABASE_SERVICE_ROLE_KEY=eyJ...    ← service role du Supabase opérateur
@@ -1054,6 +1156,7 @@ NEXT_PUBLIC_APP_URL=https://orsayn-cockpit.mbebourasam.workers.dev
 ```
 
 > **Important :** ne pas mettre `OPERATOR_MODE=true` sur les instances clientes — ça activerait l'endpoint d'ingestion et la page cockpit chez le client.
+> **Important :** ne pas mettre `orsayn-cockpit` dans `scripts/clients.txt`. `deploy-all-clients.sh` ne doit déployer que les Workers clients.
 
 **T-O3 — URL cockpit**
 - URL native Cloudflare Workers : `https://orsayn-cockpit.mbebourasam.workers.dev` (pas de domaine custom à configurer)
@@ -1066,13 +1169,18 @@ Connexion avec le compte Supabase opérateur dont l'email est dans `OPERATOR_ALL
 
 ### Checklist cockpit
 
-- [ ] `001_operator_usage.sql` + `002_operator_client_settings.sql` + `003_operator_subscriptions_quotas.sql` + `004_operator_commercial_events.sql` appliqués sur le Supabase opérateur
-- [ ] Tables opérateur créées : `operator_clients`, `operator_usage_events`, `operator_whatsapp_cost_snapshots`, `operator_client_settings`, `operator_client_subscriptions`, `operator_client_quotas`, `operator_quota_usage_events`, `operator_commercial_events`
+- [ ] `001_operator_usage.sql` + `002_operator_client_settings.sql` + `003_operator_subscriptions_quotas.sql` + `004_operator_einvoicing_config.sql` + `005_operator_cockpit_actions.sql` appliqués sur le Supabase opérateur
+- [ ] Tables opérateur créées : `operator_clients`, `operator_usage_events`, `operator_whatsapp_cost_snapshots`, `operator_client_settings`, `operator_client_subscriptions`, `operator_client_quotas`, `operator_quota_usage_events`, `operator_client_events`, `operator_commercial_events`
+- [ ] Colonnes e-facturation présentes sur `operator_client_subscriptions` : `einvoicing_mode`, `einvoicing_environment`, `b2brouter_account_id`, `einvoicing_annuaire_status`
+- [ ] Colonne essai présente : `operator_client_subscriptions.trial_converted`
+- [ ] Colonne pricing IA présente : `operator_client_subscriptions.ai_billing_mode`
 - [ ] Variables d'env cockpit injectées dans Cloudflare Workers (y compris `RESEND_API_KEY` + `RESEND_FROM_ADDRESS` pour les emails commerciaux)
 - [ ] Page `/orsayn` accessible (renvoie 404 sinon → `OPERATOR_MODE` non reconnu)
 - [ ] Envoyer un appel IA de test depuis une instance cliente → vérifier que l'event apparaît dans le cockpit
 - [ ] Renseigner un `monthly_fee_ht` dans le cockpit → vérifier le calcul de marge
+- [ ] Choisir un mode e-facturation dans le cockpit → vérifier `organization_einvoicing_config` côté instance client après config-sync
 - [ ] Activer un essai 30j Expert sur un client test → vérifier `trial_tier` + `trial_ends_at` dans `operator_client_subscriptions`
+- [ ] Vérifier le journal cockpit : une ligne `trial_started` doit apparaître dans `operator_client_events`
 - [ ] Cron trial-expiry configuré sur cron-job.org (voir §Crons cockpit ci-dessous) → laisser expirer l'essai test → vérifier désactivation modules + email `trial-expired`
 
 ### Crons cockpit — essais et relances commerciales
@@ -1111,7 +1219,8 @@ Un client peut avoir B2Brouter, un autre non. Un client peut utiliser ta clé Op
 
 | Niveau | Sert à quoi | Exemples | Où ça vit |
 |--------|-------------|----------|-----------|
-| **Flags produit** | Afficher/autoriser une fonctionnalité | `quote_ai`, `planning_ai`, `document_import_ai`, `catalog_ai`, `whatsapp_agent`, futur `facturation_b2brouter` | Table `organization_modules`, pilotée depuis Cockpit Orsayn |
+| **Flags produit** | Afficher/autoriser une fonctionnalité | `quote_ai`, `planning_ai`, `document_import_ai`, `catalog_ai`, `whatsapp_agent` | Table `organization_modules`, pilotée depuis Cockpit Orsayn |
+| **Configuration orchestrée** | Appliquer un mode produit hors IA | `einvoicing_config.mode`, `einvoicing_config.provider`, `einvoicing_config.environment` | Cockpit Orsayn puis copie locale `organization_einvoicing_config` |
 | **Secrets infra** | Donner accès à un provider externe | `OPENROUTER_API_KEY`, `B2BROUTER_API_KEY`, `RESEND_API_KEY` | Variables/secrets du Worker client ou Edge Function |
 | **Paramètres métier** | Adapter l'usage client | tarifs, SIREN, IBAN, modules, numéros WhatsApp autorisés | Base Supabase client + cockpit |
 
@@ -1129,7 +1238,7 @@ Chaque nouveau client est livré en V1 core :
 - B2Brouter désactivé par défaut
 - WhatsApp désactivé tant que le module n'est pas activé
 
-Le mode `export_only` est inclus comme socle conformité : PDF + XML/Factur-X téléchargeable, dépôt manuel par l'artisan sur sa PA.
+Le mode `export_only` est inclus comme socle conformité : PDF + XML/Factur-X téléchargeable, avec envoi PDF/email normal tant que l'obligation d'émission n'est pas active. L'app ne marque pas une facture comme déposée sur une PA tant que ce flux n'est pas réellement connecté.
 
 ### Upgrades activables après livraison
 
@@ -1149,7 +1258,7 @@ Activation :
    - `B2BROUTER_API_KEY`
    - `B2BROUTER_ACCOUNT_ID`
    - `B2BROUTER_WEBHOOK_SECRET`
-3. Activer le flag produit, futur `facturation_b2brouter`
+3. Passer `einvoicing_config.mode` à `b2brouter` dans le cockpit, renseigner environnement, modèle `edoc_exchange`, `account_id` et statut annuaire
 4. Tester une facture sandbox ou pilote
 5. Passer prod quand le client est prêt
 
@@ -1257,24 +1366,25 @@ Créer du code spécifique client uniquement si la fonctionnalité a vocation à
 - [ ] Renseigner IBAN/BIC dans Settings → Paiement & RIB
 - [ ] Renseigner SIREN sur chaque fiche client
 - [ ] Vérifier téléchargement PDF + XML/Factur-X
-- [ ] Afficher statut "À déposer manuellement" si nécessaire
+- [ ] Conserver l'envoi normal PDF/email tant que l'émission obligatoire n'est pas active
 
 ### Checklist upgrade B2Brouter
 
 - [ ] Ouvrir compte sandbox B2Brouter
 - [ ] Récupérer `B2BROUTER_API_KEY` + `B2BROUTER_ACCOUNT_ID`
 - [ ] Injecter les secrets dans le Worker client
-- [ ] Activer `facturation_b2brouter` quand le module est implémenté
-- [ ] Tester émission sandbox avant passage prod
+- [ ] Configurer `einvoicing_config.mode = 'b2brouter'` dans le cockpit
+- [ ] Tester réception sandbox 2026, puis émission sandbox avant passage prod quand le flux émission est activé
 
 ### Checklist de dev (non bloquant avant 2026)
 
-- [ ] `src/lib/facturx/generator.ts` — génération Factur-X EN 16931
+- [ ] Validation du Factur-X EN 16931 Comfort existant dans le flux réel
 - [ ] SIREN dans fiche client (UI + PDF)
 - [ ] Type opération + TVA débits dans éditeur facture
-- [ ] `POST /api/webhooks/pa-reception` → `received_invoices`
-- [ ] UI factures reçues dans Finances
-- [ ] Émission via API B2Brouter
+- [ ] App client : réception 2026 uniquement si `einvoicing_config.mode = 'b2brouter'`
+- [ ] `POST /api/webhooks/b2brouter-reception` → stockage factures reçues
+- [ ] App client : UI factures reçues dans Finances
+- [ ] Émission via API B2Brouter pour l'échéance 2027
 
 ---
 
@@ -1300,6 +1410,8 @@ Deux modes disponibles, choisissables client par client au moment du déploiemen
 
 1 clé OpenRouter Atelier et 1 clé Mistral Atelier injectées dans les Edge Functions et Workers depuis `.env.local`. Tu portes le coût IA et tu le répercutes dans l'abonnement mensuel.
 
+Dans le cockpit : `ai_billing_mode = 'orsayn_shared'`.
+
 Avantage : zéro gestion côté client. Inconvénient : si la clé est compromise, tous les clients sont touchés.
 
 Déploiement Edge Function :
@@ -1314,6 +1426,8 @@ Déploiement Worker Cloudflare : injecter `OPENROUTER_API_KEY` et `MISTRAL_API_K
 **Mode B — Clé propre au client**
 
 Le client crée son compte sur [openrouter.ai](https://openrouter.ai), génère une clé API, et te la fournit dans le protocole de session. Il paye directement OpenRouter — tu n'es plus revendeur IA pour ce client. Risque isolé, facturation simplifiée.
+
+Dans le cockpit : `ai_billing_mode = 'client_owned'`. La consommation reste visible pour le pricing, mais elle n'est pas soustraite de la marge Orsayn.
 
 Pour Mistral, deux choix :
 - par défaut : garder `MISTRAL_API_KEY` Orsayn, même si OpenRouter est côté client
@@ -1375,7 +1489,7 @@ GROUP BY organization_id, feature;
 
 ### Marges selon le tier facturation électronique
 
-Trois situations possibles — le tier est piloté par le flag `facturation_b2brouter` dans `organization_modules`.
+Trois situations possibles — le mode est piloté par `einvoicing_config.mode` dans le cockpit, puis copié localement dans `organization_einvoicing_config`.
 
 #### Tier 1 — Sans facturation électronique (ou export only inclus dans l'abonnement)
 
@@ -1392,7 +1506,7 @@ Export only ne coûte rien de plus : c'est du code qui génère un XML. Tu peux 
 
 Même coût que Tier 1 — zéro surcoût B2Brouter. Marge identique. Utile si tu veux afficher un prix légèrement supérieur pour "pack conformité 2026" sans rien débourser de plus.
 
-#### Tier 3 — B2Brouter intégré (`facturation_b2brouter: true`)
+#### Tier 3 — B2Brouter intégré (`einvoicing_config.mode = 'b2brouter'`)
 
 B2Brouter est facturé annuellement en prestation séparée du MRR — il ne rentre pas dans les marges mensuelles. Coût Atelier type M0 : 15€/mois (180€/an) + activation 150€ an 1. Refacturé client : 250€/an + activation 200€.
 
@@ -1498,6 +1612,7 @@ La majorité des artisans BTP (1-5 personnes) émet 10-50 factures/mois et reço
 | `TWILIO_WHATSAPP_FROM` | Sender WhatsApp Twilio (`whatsapp:+33...`) | **Oui, mais cockpit/routeur Orsayn uniquement** |
 | `OPERATOR_INGEST_URL` | URL du cockpit Orsayn | **Oui** (même URL partout) |
 | `OPERATOR_INGEST_SECRET` | `openssl rand -hex 32` (généré une fois) | **Oui** (même secret partout) |
+| `OPERATOR_CONFIG_SYNC_SECRET` | Secret HMAC pour `/api/operator/config-sync`; en V1 utiliser la même valeur que `OPERATOR_INGEST_SECRET` | **Oui** (même secret partout recommandé) |
 | `OPERATOR_SOURCE_INSTANCE` | Nom court du client (ex: `weber-demo`) — **optionnel**, fallback sur le host de `NEXT_PUBLIC_APP_URL` | Non (unique par client) |
 
 ---
@@ -1524,11 +1639,16 @@ Quand tu pousses un bugfix ou une nouvelle feature sur GitHub, tu veux que tous 
 ./scripts/deploy-all-clients.sh
 ```
 
-Le registre `scripts/clients.txt` contient un worker-name par ligne. Exemple :
+Le registre `scripts/clients.txt` contient un worker-name client par ligne. Exemple :
 ```
-orsayn-cockpit
 atelier-weber
 atelier-dupont
+```
+
+Le cockpit se met à jour séparément :
+
+```bash
+./scripts/deploy-cockpit.sh orsayn-cockpit
 ```
 
 Ordre recommandé pour une release avec migration SQL :
@@ -1537,7 +1657,7 @@ Ordre recommandé pour une release avec migration SQL :
 
 > **Note :** les déploiements sont séquentiels (pas en parallèle). Pour ~10 clients, compter 3-4 min au total (build unique partagé entre tous les déploiements).
 
-> **Périmètre de `deploy-all-clients.sh` :** couvre uniquement l'app Next.js principale. Le Worker relances (`workers/auto-reminder`) et les Edge Functions Supabase doivent être redéployés séparément si leur code a changé (voir §5 et §6).
+> **Périmètre de `deploy-all-clients.sh` :** couvre uniquement les apps Next.js clientes. Le cockpit, le Worker relances (`workers/auto-reminder`) et les Edge Functions Supabase doivent être redéployés séparément si leur code a changé (voir §Cockpit, §5 et §6).
 
 ### Mise à jour Edge Function
 

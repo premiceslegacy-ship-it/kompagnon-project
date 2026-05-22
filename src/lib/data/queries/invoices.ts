@@ -284,8 +284,113 @@ export type InvoiceStub = {
   title: string | null
   status: InvoiceStatus
   total_ht: number | null
+  total_ttc: number | null
+  total_paid: number | null
   chantier_id: string | null
   issue_date: string | null
+}
+
+// ─── Export comptable ──────────────────────────────────────────────────────────
+
+export type InvoiceForExport = {
+  id: string
+  number: string | null
+  invoice_type: string
+  issue_date: string | null
+  paid_at: string | null
+  total_ht: number
+  total_tva: number
+  total_ttc: number
+  total_paid: number
+  status: string
+  chantier_id: string | null
+  client: {
+    id: string
+    company_name: string | null
+    contact_name: string | null
+    first_name: string | null
+    last_name: string | null
+    siret: string | null
+  } | null
+  items: Array<{
+    unit_price: number
+    quantity: number
+    vat_rate: number
+  }>
+  pa_message_id: string | null
+  chantier_title: string | null
+}
+
+const EXPORTABLE_INVOICE_STATUSES = ['sent', 'viewed', 'partial', 'paid', 'overdue'] as const
+
+export async function getInvoicesForExport(
+  from: string,
+  to: string,
+): Promise<InvoiceForExport[]> {
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return []
+
+  const { data, error } = await supabase
+    .from('invoices')
+    .select(`
+      id, number, invoice_type, issue_date, paid_at,
+      total_ht, total_tva, total_ttc, total_paid, status, chantier_id,
+      client:clients(id, company_name, contact_name, first_name, last_name, siret),
+      items:invoice_items(unit_price, quantity, vat_rate)
+    `)
+    .eq('organization_id', orgId)
+    .eq('is_archived', false)
+    .in('status', EXPORTABLE_INVOICE_STATUSES)
+    .gte('issue_date', from)
+    .lte('issue_date', to)
+    .order('issue_date', { ascending: true })
+
+  if (error) {
+    console.error('[getInvoicesForExport]', error)
+    return []
+  }
+
+  // Récupérer les pa_message_id depuis pa_status_events
+  const invoiceIds = (data ?? []).map(i => i.id)
+  let paMessageIds: Record<string, string> = {}
+  if (invoiceIds.length > 0) {
+    const { data: paEvents } = await supabase
+      .from('pa_status_events')
+      .select('invoice_id, pa_message_id')
+      .in('invoice_id', invoiceIds)
+      .not('pa_message_id', 'is', null)
+    for (const ev of paEvents ?? []) {
+      if (ev.invoice_id && ev.pa_message_id) {
+        paMessageIds[ev.invoice_id] = ev.pa_message_id
+      }
+    }
+  }
+
+  // Récupérer les titres de chantiers
+  const chantierIds = [...new Set((data ?? []).map(i => i.chantier_id).filter(Boolean))]
+  let chantierTitles: Record<string, string> = {}
+  if (chantierIds.length > 0) {
+    const { data: chantiers } = await supabase
+      .from('chantiers')
+      .select('id, title')
+      .in('id', chantierIds)
+    for (const c of chantiers ?? []) {
+      if (c.id) chantierTitles[c.id] = c.title ?? ''
+    }
+  }
+
+  return (data ?? []).map(inv => ({
+    ...inv,
+    total_ht: inv.total_ht ?? 0,
+    total_tva: inv.total_tva ?? 0,
+    total_ttc: inv.total_ttc ?? 0,
+    total_paid: inv.total_paid ?? 0,
+    pa_message_id: paMessageIds[inv.id] ?? null,
+    chantier_title: inv.chantier_id ? (chantierTitles[inv.chantier_id] ?? null) : null,
+    client: Array.isArray(inv.client) ? (inv.client[0] ?? null) : inv.client,
+    items: Array.isArray(inv.items) ? inv.items : [],
+  })) as InvoiceForExport[]
 }
 
 export async function getInvoiceStubs(): Promise<InvoiceStub[]> {
@@ -295,7 +400,7 @@ export async function getInvoiceStubs(): Promise<InvoiceStub[]> {
 
   const { data, error } = await supabase
     .from('invoices')
-    .select('id, number, title, status, total_ht, chantier_id, issue_date')
+    .select('id, number, title, status, total_ht, total_ttc, total_paid, chantier_id, issue_date')
     .eq('organization_id', orgId)
     .eq('is_archived', false)
     .neq('status', 'cancelled')

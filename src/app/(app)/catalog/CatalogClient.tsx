@@ -354,6 +354,7 @@ const initLaborState: CreateLaborRateState = { error: null, success: false }
 function NewLaborRateModal({ isOpen, onClose, categories, catalogContext }: { isOpen: boolean; onClose: () => void; categories: string[]; catalogContext: ResolvedCatalogContext }) {
   const [state, formAction] = useFormState(createLaborRate, initLaborState)
   const [costRate, setCostRate] = useState('')
+  const [clientRate, setClientRate] = useState('')
   const [newCatMode, setNewCatMode] = useState(false)
   const [unit, setUnit] = useState(catalogContext.unitSetsByKind.laborRate[0] ?? 'h')
   const [resourceType, setResourceType] = useState(catalogContext.resourceTypeOptions[0]?.value ?? 'human')
@@ -390,7 +391,6 @@ function NewLaborRateModal({ isOpen, onClose, categories, catalogContext }: { is
 
         <form action={formAction} className="space-y-6">
           <input type="hidden" name="unit" value={unit} />
-          <input type="hidden" name="rate" value={costRate} />
           {isEquipment && (
             <>
               <input type="hidden" name="purchase_price" value={equipmentPurchase} />
@@ -445,6 +445,21 @@ function NewLaborRateModal({ isOpen, onClose, categories, catalogContext }: { is
                   readOnly={isEquipment}
                   onChange={e => setCostRate(e.target.value)} className={`${inputCls} pr-14 ${isEquipment ? 'text-purple-500 font-semibold' : ''}`} />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-secondary text-sm">{isEquipment ? '€/usage' : '€/u'}</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-secondary">
+                Prix client HT
+                {costRate && clientRate && parseFloat(costRate) > 0 && parseFloat(clientRate) > 0 && (
+                  <span className={`ml-2 text-xs font-bold ${parseFloat(clientRate) >= parseFloat(costRate) ? 'text-green-500' : 'text-red-500'}`}>
+                    {Math.round(((parseFloat(clientRate) - parseFloat(costRate)) / parseFloat(clientRate)) * 100)} % marge
+                  </span>
+                )}
+              </label>
+              <div className="relative">
+                <input name="rate" type="number" step="0.01" placeholder="0.00" value={clientRate}
+                  onChange={e => setClientRate(e.target.value)} className={`${inputCls} pr-10`} />
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-secondary text-sm">€/u</span>
               </div>
             </div>
             {isEquipment && (
@@ -1455,6 +1470,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
   const [isImportPrestationsOpen, setIsImportPrestationsOpen] = useState(false)
   const [isImportSuppliersOpen, setIsImportSuppliersOpen] = useState(false)
   const [isNewSupplierOpen, setIsNewSupplierOpen] = useState(false)
+  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
   const [editingPrestation, setEditingPrestation] = useState<PrestationType | null>(null)
   const [editingMaterial, setEditingMaterial] = useState<CatalogMaterial | null>(null)
   const [isAIPanelOpen, setIsAIPanelOpen] = useState(false)
@@ -1588,9 +1604,6 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
       const num = parseFloat(trimmed)
       if (isNaN(num)) return
       updates[field] = num
-      if (field === 'cost_rate') {
-        updates.rate = num
-      }
     }
 
     setLaborRates(prev => prev.map(l => l.id === item.id ? { ...l, ...updates } : l))
@@ -1752,6 +1765,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
           material={editingMaterial}
           categories={editingMaterial.item_kind === 'service' ? serviceCategories : materialCategories}
           catalogContext={catalogContext}
+          suppliers={suppliers}
           onClose={() => setEditingMaterial(null)}
           onSaved={handleMaterialSaved}
         />
@@ -1809,6 +1823,16 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
         onClose={() => setIsNewSupplierOpen(false)}
         onSaved={() => router.refresh()}
       />
+      {editingSupplier && (
+        <EditSupplierModal
+          supplier={editingSupplier}
+          onClose={() => setEditingSupplier(null)}
+          onSaved={(updated) => {
+            setSuppliers(prev => prev.map(s => s.id === updated.id ? updated : s))
+            setEditingSupplier(null)
+          }}
+        />
+      )}
       {/* Bouton flottant IA + panneau */}
       {catalogAIEnabled && (
         <>
@@ -1968,13 +1992,16 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                     <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden lg:table-cell">Fournisseur</th>
                   )}
                   <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">
-                    {activeTab === 'materials' || activeTab === 'services' ? "Coût HT" : profileLabels.resourceCostLabel}
+                    {activeTab === 'materials' || activeTab === 'services' ? "Coût HT" : "Coût interne"}
                   </th>
                   {(activeTab === 'materials' || activeTab === 'services') && (
                     <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Marge (%)</th>
                   )}
                   {(activeTab === 'materials' || activeTab === 'services') && (
                     <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Prix de vente HT</th>
+                  )}
+                  {activeTab === 'labor' && (
+                    <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Prix client HT</th>
                   )}
                   <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
                 </tr>
@@ -2095,6 +2122,16 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                           <InlineNumber id={item.id} field="cost_rate" value={item.cost_rate} onSave={v => saveLaborField(item, 'cost_rate', v)} />
                         </td>
                         <td className="px-3 md:px-6 py-3 md:py-4 text-right">
+                          <div className="flex flex-col items-end gap-0.5">
+                            <InlineNumber id={item.id} field="rate" value={item.rate} onSave={v => saveLaborField(item, 'rate', v)} />
+                            {item.cost_rate != null && item.rate != null && item.rate > 0 && (
+                              <span className={`text-[10px] font-semibold tabular-nums ${item.rate >= item.cost_rate ? 'text-green-500' : 'text-red-500'}`}>
+                                {item.cost_rate > 0 ? `${Math.round(((item.rate - item.cost_rate) / item.rate) * 100)} %` : ''}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 md:px-6 py-3 md:py-4 text-right">
                           <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                             <ActionMenu actions={[
                               { label: 'Supprimer', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => handleDeleteLabor(item.id) },
@@ -2105,7 +2142,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                     ))
                 ) : (
                   <tr>
-                    <td colSpan={activeTab === 'labor' ? 7 : 8} className="px-6 py-20 text-center">
+                    <td colSpan={activeTab === 'labor' ? 8 : 8} className="px-6 py-20 text-center">
                       <div className="flex flex-col items-center gap-4">
                         <Package className="w-10 h-10 text-secondary opacity-20" />
                         <div>
@@ -2263,6 +2300,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                       <td className="px-6 py-4 text-right">
                         <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                           <ActionMenu actions={[
+                            { label: 'Modifier', icon: <Pencil className="w-4 h-4" />, onClick: () => setEditingSupplier(supplier) },
                             { label: 'Supprimer', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => {
                               startTransition(async () => {
                                 await deleteSupplier(supplier.id)
@@ -2666,6 +2704,106 @@ function NewSupplierModal({ isOpen, onClose, onSaved }: { isOpen: boolean; onClo
             <button type="button" onClick={onClose} className="px-6 py-2.5 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
             <button type="submit" disabled={saving} className="px-8 py-2.5 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 flex items-center gap-2">
               {saving && <Loader2 className="w-4 h-4 animate-spin" />}Créer
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── EditSupplierModal ────────────────────────────────────────────────────────
+
+function EditSupplierModal({ supplier, onClose, onSaved }: { supplier: Supplier; onClose: () => void; onSaved: (updated: Supplier) => void }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const inputCls = 'w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all text-sm'
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const fd = new FormData(e.currentTarget)
+    setSaving(true)
+    setError(null)
+    const result = await updateSupplier(supplier.id, {
+      name: fd.get('name') as string,
+      contact_name: fd.get('contact_name') as string || null,
+      email: fd.get('email') as string || null,
+      phone: fd.get('phone') as string || null,
+      address: fd.get('address') as string || null,
+      siret: fd.get('siret') as string || null,
+      payment_terms: fd.get('payment_terms') as string || null,
+      notes: fd.get('notes') as string || null,
+    })
+    setSaving(false)
+    if (result.error) { setError(result.error) } else {
+      onSaved({
+        ...supplier,
+        name: (fd.get('name') as string).trim(),
+        contact_name: (fd.get('contact_name') as string) || null,
+        email: (fd.get('email') as string) || null,
+        phone: (fd.get('phone') as string) || null,
+        address: (fd.get('address') as string) || null,
+        siret: (fd.get('siret') as string) || null,
+        payment_terms: (fd.get('payment_terms') as string) || null,
+        notes: (fd.get('notes') as string) || null,
+      })
+    }
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-panel flex flex-col gap-6 sm:max-w-lg">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold text-primary">Modifier le fournisseur</h2>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div>
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Nom *</label>
+            <input name="name" type="text" required defaultValue={supplier.name} className={inputCls} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Contact</label>
+              <input name="contact_name" type="text" defaultValue={supplier.contact_name ?? ''} className={inputCls} />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Téléphone</label>
+              <input name="phone" type="text" defaultValue={supplier.phone ?? ''} className={inputCls} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Email</label>
+            <input name="email" type="email" defaultValue={supplier.email ?? ''} className={inputCls} />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Adresse</label>
+            <input name="address" type="text" defaultValue={supplier.address ?? ''} className={inputCls} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">SIRET</label>
+              <input name="siret" type="text" defaultValue={supplier.siret ?? ''} className={inputCls} />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Conditions paiement</label>
+              <input name="payment_terms" type="text" defaultValue={supplier.payment_terms ?? ''} className={inputCls} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5 block">Notes</label>
+            <textarea name="notes" rows={2} defaultValue={supplier.notes ?? ''} className={`${inputCls} resize-none`} />
+          </div>
+          {error && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-600 dark:text-red-400">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />{error}
+            </div>
+          )}
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={onClose} className="px-6 py-2.5 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
+            <button type="submit" disabled={saving} className="px-8 py-2.5 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 flex items-center gap-2">
+              {saving && <Loader2 className="w-4 h-4 animate-spin" />}Enregistrer
             </button>
           </div>
         </form>

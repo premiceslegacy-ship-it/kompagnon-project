@@ -455,6 +455,55 @@ export async function deleteTache(tacheId: string, chantierId: string): Promise<
 
 // ─── Pointages ───────────────────────────────────────────────────────────────
 
+/**
+ * Résout le taux horaire effectif au moment de la saisie pour un pointage.
+ * Ordre : taux_horaire sur chantier_equipe_membres > labor_cost_per_hour sur memberships > default org.
+ * Retourne null si aucun taux configuré nulle part (le pointage sera stocké sans coût).
+ */
+async function resolvePointageRate(
+  supabase: Awaited<ReturnType<typeof import('@/lib/supabase/server').createClient>>,
+  orgId: string,
+  userId: string | null,
+  memberId: string | null,
+): Promise<number | null> {
+  const [orgRes, membershipRes, membreRes] = await Promise.all([
+    supabase
+      .from('organizations')
+      .select('default_labor_cost_per_hour, default_hourly_rate')
+      .eq('id', orgId)
+      .single(),
+    userId
+      ? supabase
+          .from('memberships')
+          .select('labor_cost_per_hour')
+          .eq('organization_id', orgId)
+          .eq('user_id', userId)
+          .single()
+      : Promise.resolve({ data: null }),
+    memberId
+      ? supabase
+          .from('chantier_equipe_membres')
+          .select('taux_horaire')
+          .eq('id', memberId)
+          .single()
+      : Promise.resolve({ data: null }),
+  ])
+
+  const orgFallback: number | null =
+    orgRes.data?.default_labor_cost_per_hour
+    ?? (orgRes.data?.default_hourly_rate ? orgRes.data.default_hourly_rate * 0.5 : null)
+
+  if (memberId) {
+    const taux = (membreRes.data as any)?.taux_horaire
+    return taux != null ? taux : orgFallback
+  }
+  if (userId) {
+    const rate = (membershipRes.data as any)?.labor_cost_per_hour
+    return rate != null ? rate : orgFallback
+  }
+  return orgFallback
+}
+
 export async function createPointage(
   chantierId: string,
   data: {
@@ -483,6 +532,8 @@ export async function createPointage(
     return { error: 'Le nombre d\'heures doit être compris entre 0.5 et 24.' }
   }
 
+  const rateSnapshot = await resolvePointageRate(supabase, orgId, user.id, null)
+
   const { error } = await supabase.from('chantier_pointages').insert({
     chantier_id: chantierId,
     user_id: user.id,
@@ -491,6 +542,7 @@ export async function createPointage(
     tache_id: data.tacheId || null,
     description: data.description || null,
     start_time: data.start_time ?? null,
+    rate_snapshot: rateSnapshot,
   })
 
   if (error) {
@@ -533,6 +585,8 @@ export async function createMemberPointageAdmin(
     return { error: 'Le nombre d\'heures doit être compris entre 0.5 et 24.' }
   }
 
+  const rateSnapshot = await resolvePointageRate(supabase, orgId, null, memberId)
+
   const { error } = await supabase.from('chantier_pointages').insert({
     chantier_id: chantierId,
     member_id: memberId,
@@ -540,6 +594,7 @@ export async function createMemberPointageAdmin(
     hours: data.hours,
     description: data.description ?? null,
     start_time: data.start_time ?? null,
+    rate_snapshot: rateSnapshot,
   })
 
   if (error) {

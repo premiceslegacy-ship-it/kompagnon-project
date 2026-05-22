@@ -270,7 +270,7 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, quot
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[9995] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <form onSubmit={handleSubmit} className="card w-full max-w-5xl max-h-[92vh] overflow-y-auto p-6">
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>
@@ -518,7 +518,7 @@ function TemplateModal({ templates, canDelete, onClose, onSaved }: {
   }
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[9995] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="card w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6">
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>

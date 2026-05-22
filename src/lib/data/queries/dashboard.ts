@@ -388,7 +388,8 @@ export async function getDashboardSetupReadiness(): Promise<DashboardSetupReadin
       .select(`
         name, email, business_activity_id, address_line1, postal_code, city,
         siret, vat_number, is_vat_subject, iban, bic, payment_terms_days,
-        signatory_name, signatory_role, signature_image, public_form_enabled
+        signatory_name, signatory_role, signature_image, public_form_enabled,
+        setup_checklist_dismissed
       `)
       .eq('id', orgId)
       .single(),
@@ -428,6 +429,8 @@ export async function getDashboardSetupReadiness(): Promise<DashboardSetupReadin
     console.error('[getDashboardSetupReadiness]', orgError)
     return null
   }
+
+  if (org.setup_checklist_dismissed) return null
 
   const catalogItems = (prestationCount ?? 0) + (materialsCount ?? 0) + (laborCount ?? 0)
   const isVatSubject = org.is_vat_subject !== false

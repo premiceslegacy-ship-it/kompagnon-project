@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server'
 import { renderToStream } from '@react-pdf/renderer'
 import React from 'react'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { getQuoteById } from '@/lib/data/queries/quotes'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import QuotePDF from '@/components/pdf/QuotePDF'
 import type { Client } from '@/lib/data/queries/clients'
 import { assertSafeExternalFetchUrl } from '@/lib/security'
+import { renderQuotePdfBufferById } from '@/lib/pdf/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +32,36 @@ export async function GET(
   req: Request,
   { params }: { params: { id: string } },
 ) {
+  const url = new URL(req.url)
+  const token = url.searchParams.get('token')
+  const download = url.searchParams.get('download') === '1'
+
+  // Mode public : accès depuis la page de signature du devis via token.
+  if (token) {
+    const admin = createAdminClient()
+    const { data: quote } = await admin
+      .from('quotes')
+      .select('organization_id, signature_token, number')
+      .eq('id', params.id)
+      .eq('signature_token', token)
+      .single()
+
+    if (!quote) return new NextResponse('Lien invalide', { status: 404 })
+
+    const pdf = await renderQuotePdfBufferById(params.id, quote.organization_id)
+    if (!pdf) return new NextResponse('Devis introuvable', { status: 404 })
+
+    return new NextResponse(pdf.buffer, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Cache-Control': 'no-store, max-age=0',
+        'Content-Disposition': download
+          ? `attachment; filename="${pdf.fileName}"`
+          : `inline; filename="${pdf.fileName}"`,
+      },
+    })
+  }
+
   // 1. Auth check
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -84,8 +116,6 @@ export async function GET(
   }
 
   // 5. Render PDF
-  const download = new URL(req.url).searchParams.get('download') === '1'
-
   const stream = await renderToStream(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     React.createElement(QuotePDF, { quote: fullQuote, organization: orgWithLogo, client }) as any,

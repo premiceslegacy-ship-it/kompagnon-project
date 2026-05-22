@@ -327,7 +327,13 @@ export async function submitClientSignatureWithQuote(input: SubmitClientSignatur
       .from('quotes')
       .update({
         status: 'accepted',
+        accepted_at: signedAt,
         signed_at: signedAt,
+        signed_ip: ip,
+        signed_user_agent: userAgent,
+        client_signatory_name: signatoryName,
+        client_signatory_role: signatoryRole,
+        client_signature_image: signatureImage,
       })
       .eq('id', quoteId)
     if (quoteErr) {
