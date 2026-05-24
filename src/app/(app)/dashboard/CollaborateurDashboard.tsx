@@ -1,11 +1,15 @@
-import React from 'react'
+'use client'
+
+import React, { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import {
   CheckCircle2, Clock, AlertTriangle, CalendarDays,
-  HardHat, Target, TrendingUp, MapPin,
+  HardHat, Target, TrendingUp, MapPin, Loader2, PlayCircle,
 } from 'lucide-react'
-import type { CollaborateurDashboard } from '@/lib/data/queries/dashboard-collaborateur'
+import type { CollaborateurDashboard, MyTask } from '@/lib/data/queries/dashboard-collaborateur'
 import type { MemberGoalWithProgress } from '@/lib/data/queries/member-goals'
+import { updateMyAssignedTaskStatus } from '@/lib/data/mutations/chantiers'
 
 const cardCls = "rounded-3xl p-6 card transition-all duration-300 ease-out"
 
@@ -66,10 +70,32 @@ type Props = {
 }
 
 export default function CollaborateurDashboard({ data, goals, firstName }: Props) {
-  const { tasks, todayPlanning, weekPointage } = data
+  const router = useRouter()
+  const { todayPlanning, weekPointage } = data
+  const [tasks, setTasks] = useState(data.tasks)
+  const [taskLoadingId, setTaskLoadingId] = useState<string | null>(null)
+  const [taskError, setTaskError] = useState<string | null>(null)
 
   const overdueTasks = tasks.filter(t => t.is_overdue)
   const activeTasks = tasks.filter(t => !t.is_overdue && t.status !== 'termine')
+
+  const handleTaskStatus = async (task: MyTask, status: 'en_cours' | 'termine') => {
+    setTaskError(null)
+    setTaskLoadingId(`${task.id}:${status}`)
+    if (status === 'termine') {
+      setTasks(prev => prev.filter(t => t.id !== task.id))
+    } else {
+      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status } : t))
+    }
+    const { error } = await updateMyAssignedTaskStatus(task.id, status)
+    setTaskLoadingId(null)
+    if (error) {
+      setTaskError(error)
+      setTasks(data.tasks)
+      return
+    }
+    router.refresh()
+  }
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -202,10 +228,10 @@ export default function CollaborateurDashboard({ data, goals, firstName }: Props
               </div>
             ) : (
               <div className="flex flex-col gap-2">
+                {taskError && <p className="text-xs text-red-500">{taskError}</p>}
                 {[...overdueTasks, ...activeTasks].map(task => (
-                  <Link
+                  <div
                     key={task.id}
-                    href={`/chantiers/${task.chantier_id}`}
                     className={`flex items-center justify-between p-3 rounded-2xl border transition-colors hover:bg-black/3 dark:hover:bg-white/5 ${
                       task.is_overdue
                         ? 'bg-red-50 dark:bg-red-500/5 border-red-200 dark:border-red-500/20'
@@ -214,7 +240,7 @@ export default function CollaborateurDashboard({ data, goals, firstName }: Props
                         : 'bg-black/2 dark:bg-white/3 border-black/5 dark:border-white/10'
                     }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <Link href={`/chantiers/${task.chantier_id}`} className="flex items-center gap-3 min-w-0 flex-1">
                       {task.is_overdue
                         ? <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
                         : task.status === 'en_cours'
@@ -225,8 +251,8 @@ export default function CollaborateurDashboard({ data, goals, firstName }: Props
                         <p className="text-sm font-semibold text-primary truncate">{task.title}</p>
                         <p className="text-xs text-secondary truncate">{task.chantier_title}</p>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 ml-3 flex-shrink-0">
+                    </Link>
+                    <div className="flex items-center gap-2 ml-3 flex-shrink-0 flex-wrap justify-end">
                       {task.due_date && (
                         <span className={`text-xs font-medium ${task.is_overdue ? 'text-red-500' : 'text-secondary'}`}>
                           {fmtDate(task.due_date)}
@@ -239,8 +265,24 @@ export default function CollaborateurDashboard({ data, goals, firstName }: Props
                       }`}>
                         {task.status === 'en_cours' ? 'En cours' : 'A faire'}
                       </span>
+                      {task.status === 'a_faire' && (
+                        <button
+                          onClick={() => handleTaskStatus(task, 'en_cours')}
+                          disabled={!!taskLoadingId}
+                          className="state-action px-2 py-1 text-xs font-bold text-secondary hover:text-accent"
+                        >
+                          {taskLoadingId === `${task.id}:en_cours` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleTaskStatus(task, 'termine')}
+                        disabled={!!taskLoadingId}
+                        className="state-action px-2 py-1 text-xs font-bold text-green-700 dark:text-green-300"
+                      >
+                        {taskLoadingId === `${task.id}:termine` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      </button>
                     </div>
-                  </Link>
+                  </div>
                 ))}
               </div>
             )}

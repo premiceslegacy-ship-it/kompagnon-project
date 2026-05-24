@@ -59,6 +59,16 @@ export type Tache = {
   completed_at: string | null
   created_at: string
   jalon_id: string | null
+  assignments: TacheAssignment[]
+}
+
+export type TacheAssignment = {
+  id: string
+  tache_id: string
+  equipe_id: string | null
+  member_id: string | null
+  label: string
+  color: string | null
 }
 
 export type Pointage = {
@@ -255,7 +265,14 @@ export async function getChantierTaches(chantierId: string): Promise<Tache[]> {
 
   const { data, error } = await supabase
     .from('chantier_taches')
-    .select('*')
+    .select(`
+      *,
+      assignments:chantier_task_assignments(
+        id, tache_id, equipe_id, member_id,
+        equipe:chantier_equipes(id, name, color),
+        member:chantier_equipe_membres(id, prenom, name)
+      )
+    `)
     .eq('chantier_id', chantierId)
     .order('position', { ascending: true })
 
@@ -264,7 +281,19 @@ export async function getChantierTaches(chantierId: string): Promise<Tache[]> {
     return []
   }
 
-  return (data ?? []) as Tache[]
+  return (data ?? []).map((t: any) => ({
+    ...t,
+    assignments: (t.assignments ?? []).map((a: any) => ({
+      id: a.id,
+      tache_id: a.tache_id,
+      equipe_id: a.equipe_id ?? null,
+      member_id: a.member_id ?? null,
+      label: a.equipe?.name
+        ?? [a.member?.prenom, a.member?.name].filter(Boolean).join(' ')
+        ?? 'Assignation',
+      color: a.equipe?.color ?? null,
+    })),
+  })) as Tache[]
 }
 
 export async function getChantierPointages(chantierId: string): Promise<Pointage[]> {

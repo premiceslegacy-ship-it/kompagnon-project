@@ -1,7 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { getCurrentUserProfile } from '@/lib/data/queries/user';
-import { getDashboardSetupReadiness, getDashboardStats } from '@/lib/data/queries/dashboard';
+import { getDashboardSetupReadiness, getDashboardStats, getPrevMonthKPIs } from '@/lib/data/queries/dashboard';
 import type { DashboardStats } from '@/lib/data/queries/dashboard';
 import {
   FileText, UserPlus,
@@ -44,13 +44,13 @@ const KPIRow = ({
   stats, prevStats, chantiersEnCours,
 }: {
   stats: DashboardStats
-  prevStats: DashboardStats
+  prevStats: Pick<DashboardStats, 'caMois' | 'encaisseMois'>
   chantiersEnCours: number
 }) => (
   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
     <div className={`${cardCls} flex flex-col justify-between`}>
       <div className="flex justify-between items-start">
-        <p className="text-sm font-semibold text-secondary tracking-wider uppercase">CA prévisionnel TTC</p>
+        <p className="text-sm font-semibold text-secondary tracking-wider uppercase">Facturé TTC</p>
         <Wallet className="w-4 h-4 text-accent" />
       </div>
       <p className="text-3xl font-bold text-primary tabular-nums mt-4">
@@ -107,14 +107,14 @@ const QuickActions = () => (
     <div className="flex flex-col gap-4">
       <Link
         href={`/finances/quote-editor?returnTo=${encodeURIComponent('/dashboard')}`}
-        className="w-full py-4 rounded-pill bg-accent text-black font-bold text-lg flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-95 transition-all duration-300 ease-out shadow-lg shadow-accent/20"
+        className="btn-primary w-full py-4 text-lg flex items-center justify-center gap-2"
       >
         <FileText className="w-5 h-5" />
         Nouveau Devis
       </Link>
       <Link
         href="/clients"
-        className="w-full py-4 bg-[rgb(var(--accent-navy))] text-inverse dark:bg-white/10 dark:text-white font-bold text-lg rounded-pill flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-95 transition-all duration-300 ease-out shadow-lg border border-[var(--elevation-border)]"
+        className="btn-secondary w-full py-4 text-lg flex items-center justify-center gap-2"
       >
         <UserPlus className="w-5 h-5" />
         Nouveau Client
@@ -191,7 +191,7 @@ export default async function DashboardPage({
   // ─── Dashboard owner / admin / manager / commercial ────────────────────────
   const [stats, prevStats, chantierStats, modules, todaySlots, setupReadiness] = await Promise.all([
     getDashboardStats(selectedMonth),
-    getDashboardStats(previousMonth),
+    getPrevMonthKPIs(previousMonth),
     getChantierStats(),
     getOrganizationModules(),
     getTodayPlanningDigest(),

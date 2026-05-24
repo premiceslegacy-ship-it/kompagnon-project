@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Archive, CheckCircle, CopyPlus, Download, Edit3, FileText, LayoutTemplate, Plus, RefreshCw, Save, Search, Send, ShieldAlert, Trash2, X } from 'lucide-react'
+import { Archive, CheckCircle, ChevronLeft, ChevronRight, CopyPlus, Download, Edit3, FileText, LayoutTemplate, Plus, RefreshCw, Save, Search, Send, ShieldAlert, Trash2, X } from 'lucide-react'
 import type { Chantier } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
 import type { ContractListItem, ContractTemplateOption } from '@/lib/data/queries/contracts'
@@ -114,8 +114,9 @@ function buildInitialForm(templates: ContractTemplateOption[], contract?: Contra
 
 function StatusBadge({ status }: { status: ContractStatus }) {
   const cfg = STATUS_CONFIG[status]
+  const tone = status === 'signed' ? 'success' : status === 'sent' ? 'info' : 'muted'
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${cfg.color}`}>
+    <span className={`status-pill status-pill-${tone} px-2 py-0.5 text-xs font-semibold`}>
       {cfg.label}
     </span>
   )
@@ -704,6 +705,8 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
   const [sendModalLoading, setSendModalLoading] = useState(false)
   const [sendModalSubmitting, setSendModalSubmitting] = useState(false)
   const [sendModalError, setSendModalError] = useState<string | null>(null)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
 
   const openSendModal = async (contract: ContractListItem) => {
     setSendModalContract(contract)
@@ -762,6 +765,10 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
       || (contract.pdf_reference ?? '').toLowerCase().includes(q),
     )
   }, [contracts, query])
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pageStart = (currentPage - 1) * PAGE_SIZE
+  const paginatedContracts = filtered.slice(pageStart, pageStart + PAGE_SIZE)
 
   const stats = useMemo(() => ({
     total: contracts.length,
@@ -864,7 +871,7 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
             className="bg-transparent outline-none flex-1 text-primary placeholder:text-secondary"
             placeholder="Rechercher un contrat"
             value={query}
-            onChange={event => setQuery(event.target.value)}
+            onChange={event => { setQuery(event.target.value); setPage(1) }}
           />
         </div>
       </div>
@@ -901,7 +908,7 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
                 <tr>
                   <td colSpan={6} className="px-4 py-10 text-center text-secondary">Aucun contrat.</td>
                 </tr>
-              ) : filtered.map(contract => (
+              ) : paginatedContracts.map(contract => (
                 <tr key={contract.id} className="border-b border-[var(--elevation-border)] last:border-b-0 hover:bg-base/60">
                   <td className="px-4 py-4 min-w-64">
                     <p className="font-bold text-primary">{contract.title}</p>
@@ -1016,6 +1023,32 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
               ))}
             </tbody>
           </table>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--elevation-border)]">
+              <span className="text-xs text-secondary">
+                {pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, filtered.length)} sur {filtered.length}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="Page précédente"
+                >
+                  <ChevronLeft className="w-4 h-4 text-secondary" />
+                </button>
+                <span className="px-2 text-xs font-semibold text-secondary">Page {currentPage} / {totalPages}</span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="Page suivante"
+                >
+                  <ChevronRight className="w-4 h-4 text-secondary" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
         )}
       </div>

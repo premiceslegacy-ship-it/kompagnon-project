@@ -3,7 +3,7 @@
 import React, { useState, useTransition } from 'react'
 import { acceptQuoteByToken } from '@/lib/data/mutations/sign'
 import SignaturePad from '@/components/SignaturePad'
-import { CheckCircle2, Loader2, ShieldCheck, FileText, AlertTriangle, ExternalLink } from 'lucide-react'
+import { CheckCircle2, Loader2, ShieldCheck, FileText, AlertTriangle, ExternalLink, Download } from 'lucide-react'
 
 const fmt = (n: number, currency = 'EUR') =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: 2 }).format(n)
@@ -90,8 +90,17 @@ export default function SignClient({
               <p className="text-3xl font-bold text-green-800 mt-1">{fmt(totalTtc, currency)}</p>
             </div>
           )}
+          <a
+            href={`/api/pdf/quote/${quoteId}?token=${token}&download=1`}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white text-sm font-semibold rounded-xl hover:bg-gray-800 transition-colors"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Download className="w-4 h-4" />
+            Télécharger le devis signé
+          </a>
           <p className="text-xs text-gray-400 leading-relaxed">
-            Un email de confirmation vous a été envoyé. Conservez-le comme preuve d'acceptation.
+            Un email de confirmation vous a été envoyé. Conservez-le comme preuve d&apos;acceptation.
             <br />{orgName} prendra contact avec vous prochainement.
           </p>
         </div>

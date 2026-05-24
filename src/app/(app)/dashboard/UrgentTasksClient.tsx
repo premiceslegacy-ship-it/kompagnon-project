@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useTransition } from 'react'
-import { AlertTriangle, Clock, CheckCircle2, Mail, Check, Loader2, Repeat, Landmark, Send, CalendarClock } from 'lucide-react'
+import { AlertTriangle, Clock, CheckCircle2, Mail, Check, Loader2, Repeat, Landmark, Send, CalendarClock, HardHat, ClipboardCheck } from 'lucide-react'
 import Link from 'next/link'
 import type { UrgentItem } from '@/lib/data/queries/dashboard'
 import { markQuoteAccepted } from '@/lib/data/mutations/reminders'
@@ -12,9 +12,21 @@ const fmt = (n: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n)
 
 const cardCls = "rounded-3xl p-6 card transition-all duration-300 ease-out"
+type StateTone = 'danger' | 'warning' | 'amber' | 'info' | 'violet' | 'success'
 
 function getContextLine(item: UrgentItem) {
   return [item.clientName, item.title].filter(Boolean).join(' · ')
+}
+
+function getItemTone(item: UrgentItem): StateTone {
+  if (item.type === 'overdue_invoice') return 'danger'
+  if (item.type === 'invoice_to_follow_up') return 'warning'
+  if (item.type === 'pending_recurring') return 'violet'
+  if (item.type === 'installment_due') return 'info'
+  if (item.type === 'task_due' || item.type === 'planning_slot') return 'info'
+  if (item.type === 'missing_pointage' || item.type === 'chantier_profitability') return 'danger'
+  if (item.type === 'recently_sent' || item.type === 'task_completed') return 'success'
+  return 'amber'
 }
 
 export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
@@ -75,10 +87,11 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
   const recurringCount = items.filter(i => i.type === 'pending_recurring').length
   const balanceDueCount = items.filter(i => i.type === 'balance_due').length
   const installmentCount = items.filter(i => i.type === 'installment_due').length
-  const recentlySentCount = items.filter(i => i.type === 'recently_sent').length
+  const chantierAlertCount = items.filter(i => i.type === 'task_due' || i.type === 'planning_slot' || i.type === 'missing_pointage' || i.type === 'chantier_profitability').length
+  const recentlySentCount = items.filter(i => i.type === 'recently_sent' || i.type === 'task_completed').length
 
-  const actionItems = items.filter(i => i.type !== 'recently_sent')
-  const sentItems = items.filter(i => i.type === 'recently_sent')
+  const actionItems = items.filter(i => i.type !== 'recently_sent' && i.type !== 'task_completed')
+  const sentItems = items.filter(i => i.type === 'recently_sent' || i.type === 'task_completed')
 
   return (
     <>
@@ -87,28 +100,33 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
         <h3 className="text-xl font-bold text-primary">Suivi prioritaire</h3>
         <div className="flex items-center gap-2">
           {overdueCount > 0 && (
-            <span className="text-xs font-bold text-red-500 bg-red-50 dark:bg-red-500/10 px-3 py-1 rounded-full">
+            <span className="status-pill status-pill-danger px-3 py-1 text-xs font-bold">
               {overdueCount} en retard
             </span>
           )}
           {invoiceFollowupCount > 0 && (
-            <span className="text-xs font-bold text-orange-600 bg-orange-50 dark:bg-orange-500/10 px-3 py-1 rounded-full">
+            <span className="status-pill status-pill-warning px-3 py-1 text-xs font-bold">
               {invoiceFollowupCount} à relancer
             </span>
           )}
           {balanceDueCount > 0 && (
-            <span className="text-xs font-bold text-amber-600 bg-amber-50 dark:bg-amber-500/10 px-3 py-1 rounded-full">
+            <span className="status-pill status-pill-amber px-3 py-1 text-xs font-bold">
               {balanceDueCount} solde à encaisser
             </span>
           )}
           {installmentCount > 0 && (
-            <span className="text-xs font-bold text-blue-600 bg-blue-50 dark:bg-blue-500/10 px-3 py-1 rounded-full">
+            <span className="status-pill status-pill-info px-3 py-1 text-xs font-bold">
               {installmentCount} échéance{installmentCount > 1 ? 's' : ''}
             </span>
           )}
           {recurringCount > 0 && (
-            <span className="text-xs font-bold text-violet-600 bg-violet-50 dark:bg-violet-500/10 px-3 py-1 rounded-full">
+            <span className="status-pill status-pill-violet px-3 py-1 text-xs font-bold">
               {recurringCount} à confirmer
+            </span>
+          )}
+          {chantierAlertCount > 0 && (
+            <span className="status-pill status-pill-info px-3 py-1 text-xs font-bold">
+              {chantierAlertCount} chantier{chantierAlertCount > 1 ? 's' : ''}
             </span>
           )}
         </div>
@@ -126,22 +144,11 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
         <div className="flex flex-col gap-3 flex-1 overflow-y-auto">
           {actionItems.map(item => {
             const contextLine = getContextLine(item)
+            const tone = getItemTone(item)
             return (
             <div key={item.id} className="flex flex-col gap-1">
               <div
-                className={`flex items-center justify-between p-4 rounded-2xl border ${
-                  item.type === 'overdue_invoice'
-                    ? 'bg-red-50 dark:bg-red-500/5 border-red-200 dark:border-red-500/20'
-                    : item.type === 'invoice_to_follow_up'
-                    ? 'bg-orange-50 dark:bg-orange-500/5 border-orange-200 dark:border-orange-500/20'
-                    : item.type === 'pending_recurring'
-                    ? 'bg-violet-50 dark:bg-violet-500/5 border-violet-200 dark:border-violet-500/20'
-                    : item.type === 'balance_due'
-                    ? 'bg-amber-50 dark:bg-amber-500/5 border-amber-200 dark:border-amber-500/20'
-                    : item.type === 'installment_due'
-                    ? 'bg-blue-50 dark:bg-blue-500/5 border-blue-200 dark:border-blue-500/20'
-                    : 'bg-amber-50 dark:bg-amber-500/5 border-amber-200 dark:border-amber-500/20'
-                }`}
+                className={`state-card state-card-${tone} flex items-center justify-between gap-3 p-4`}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   {item.type === 'overdue_invoice'
@@ -154,6 +161,12 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                     ? <Landmark className="w-4 h-4 text-amber-500 flex-shrink-0" />
                     : item.type === 'installment_due'
                     ? <CalendarClock className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                    : item.type === 'task_due'
+                    ? <ClipboardCheck className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                    : item.type === 'planning_slot'
+                    ? <CalendarClock className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                    : item.type === 'missing_pointage' || item.type === 'chantier_profitability'
+                    ? <HardHat className="w-4 h-4 text-red-500 flex-shrink-0" />
                     : <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
                   }
                   <div className="min-w-0">
@@ -163,6 +176,8 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                       : item.type === 'invoice_to_follow_up' ? 'text-orange-700 dark:text-orange-400'
                       : item.type === 'pending_recurring' ? 'text-violet-700 dark:text-violet-400'
                       : item.type === 'installment_due' ? 'text-blue-700 dark:text-blue-400'
+                      : item.type === 'task_due' || item.type === 'planning_slot' ? 'text-blue-700 dark:text-blue-400'
+                      : item.type === 'missing_pointage' || item.type === 'chantier_profitability' ? 'text-red-700 dark:text-red-400'
                       : 'text-amber-700 dark:text-amber-400'
                     }`}>
                       {item.label}
@@ -174,6 +189,9 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                           : item.type === 'pending_recurring' ? 'Envoi prévu le : '
                           : item.type === 'balance_due' ? 'Solde attendu le : '
                           : item.type === 'installment_due' ? 'Versement attendu le : '
+                          : item.type === 'task_due' ? 'À faire pour le : '
+                          : item.type === 'planning_slot' ? 'Créneau : '
+                          : item.type === 'missing_pointage' ? 'Créneau passé le : '
                           : 'Envoyé le : '}
                         {new Date(item.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </p>
@@ -189,16 +207,34 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                     <Link
                       href={`/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`}
                       title="Vérifier et modifier le brouillon"
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold text-violet-700 dark:text-violet-400 bg-violet-100 dark:bg-violet-500/10 hover:bg-violet-200 dark:hover:bg-violet-500/20 transition-colors"
+                      className="state-action px-3 py-1.5 text-xs font-bold text-violet-700 dark:text-violet-300"
                     >
                       Modifier
+                    </Link>
+                  )}
+                  {item.type === 'pending_recurring' && item.invoiceId && (
+                    <Link
+                      href={`/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`}
+                      title="Vérifier puis envoyer le brouillon"
+                      className="state-action px-3 py-1.5 text-xs font-bold text-violet-700 dark:text-violet-300"
+                    >
+                      Envoyer
+                    </Link>
+                  )}
+                  {(item.type === 'task_due' || item.type === 'planning_slot' || item.type === 'missing_pointage' || item.type === 'chantier_profitability') && item.chantierId && (
+                    <Link
+                      href={`/chantiers/${item.chantierId}`}
+                      title="Ouvrir le chantier"
+                      className="state-action px-3 py-1.5 text-xs font-bold text-blue-700 dark:text-blue-300"
+                    >
+                      Ouvrir
                     </Link>
                   )}
                   {item.type === 'balance_due' && item.invoiceId && (
                     <Link
                       href={`/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`}
                       title="Voir la facture d'acompte"
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10 hover:bg-amber-200 dark:hover:bg-amber-500/20 transition-colors"
+                      className="state-action px-3 py-1.5 text-xs font-bold text-amber-700 dark:text-amber-300"
                     >
                       Voir
                     </Link>
@@ -207,7 +243,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                     <Link
                       href={`/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`}
                       title="Voir la facture"
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold text-blue-700 dark:text-blue-400 bg-blue-100 dark:bg-blue-500/10 hover:bg-blue-200 dark:hover:bg-blue-500/20 transition-colors"
+                      className="state-action px-3 py-1.5 text-xs font-bold text-blue-700 dark:text-blue-300"
                     >
                       Voir
                     </Link>
@@ -217,7 +253,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                       onClick={() => handleMarkPaid(item.id)}
                       disabled={!!loadingId}
                       title="Marquer comme payée"
-                      className="p-1.5 text-secondary hover:text-accent-green transition-colors disabled:opacity-50 rounded-lg hover:bg-black/5 dark:hover:bg-white/5"
+                      className="state-action p-1.5 text-secondary hover:text-accent-green disabled:opacity-50"
                     >
                       {loadingId === `paid-${item.id}`
                         ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -229,19 +265,19 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                       onClick={() => handleMarkQuoteAccepted(item.id)}
                       disabled={!!loadingId}
                       title="Marquer comme accepté"
-                      className="p-1.5 text-secondary hover:text-accent-green transition-colors disabled:opacity-50 rounded-lg hover:bg-black/5 dark:hover:bg-white/5"
+                      className="state-action p-1.5 text-secondary hover:text-accent-green disabled:opacity-50"
                     >
                       {loadingId === `accepted-${item.id}`
                         ? <Loader2 className="w-4 h-4 animate-spin" />
                         : <Check className="w-4 h-4" />}
                     </button>
                   )}
-                  {quoteAiEnabled && item.type !== 'pending_recurring' && (
+                  {quoteAiEnabled && item.type !== 'pending_recurring' && item.type !== 'task_due' && item.type !== 'planning_slot' && item.type !== 'missing_pointage' && item.type !== 'chantier_profitability' && (
                     <button
                       onClick={() => handleRemind(item)}
                       disabled={!!loadingId}
                       title="Rédiger une relance IA"
-                      className="p-1.5 text-secondary hover:text-accent transition-colors disabled:opacity-50 rounded-lg hover:bg-black/5 dark:hover:bg-white/5"
+                      className="state-action p-1.5 text-secondary hover:text-accent disabled:opacity-50"
                     >
                       <Mail className="w-4 h-4" />
                     </button>
@@ -265,11 +301,12 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
               <div className="flex flex-col gap-2">
                 {sentItems.map(item => {
                   const isRelance = item.subtype === 'auto_reminder_invoice' || item.subtype === 'auto_reminder_quote'
+                  const isTaskCompleted = item.type === 'task_completed'
                   const dAgo = item.date
                     ? Math.floor((Date.now() - new Date(item.date).getTime()) / 86400000)
                     : null
                   return (
-                    <div key={item.id} className="flex items-center justify-between p-3 rounded-xl bg-green-50 dark:bg-green-500/5 border border-green-200 dark:border-green-500/15">
+                    <div key={item.id} className="state-card state-card-success flex items-center justify-between p-3">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <CheckCircle2 className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
                         <div className="min-w-0">
@@ -278,6 +315,8 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                             {item.clientName && <>{item.clientName} · </>}
                             {isRelance
                               ? `${item.subtype === 'auto_reminder_invoice' ? 'Relance facture' : 'Relance devis'}${item.rank && item.rank > 1 ? ` n°${item.rank}` : ''}`
+                              : isTaskCompleted
+                              ? 'Tâche terminée'
                               : 'Facture récurrente'
                             }
                           </p>

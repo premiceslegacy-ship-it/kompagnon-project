@@ -441,9 +441,12 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-sm font-semibold hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               {isAnalyzing ? (
-                <><Loader2 className="w-4 h-4 animate-spin" />Sarah analyse...</>
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Sarah analyse...</span>
+                </>
               ) : (
-                <>Confier à Sarah</>
+                <span>Confier à Sarah</span>
               )}
             </button>
           ) : (

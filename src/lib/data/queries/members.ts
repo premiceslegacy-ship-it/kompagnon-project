@@ -46,6 +46,16 @@ export type MemberPlanning = {
   travel_from_prev_min: number | null
 }
 
+export type MemberTask = {
+  id: string
+  chantier_id: string
+  chantier_title: string
+  title: string
+  status: 'a_faire' | 'en_cours' | 'termine'
+  due_date: string | null
+  is_overdue: boolean
+}
+
 /** Membres "fantômes" de l'organisation : sans équipe parente (equipe_id IS NULL). */
 export async function getOrgIndividualMembers(): Promise<IndividualMember[]> {
   const supabase = await createClient()
@@ -188,6 +198,80 @@ export async function getMemberPlannings(
     duration_min:   r.duration_min ?? null,
     travel_from_prev_min: r.travel_from_prev_min ?? null,
   })) as MemberPlanning[]
+}
+
+/** Tâches assignées au membre, directement ou via son équipe. */
+export async function getMemberTasks(
+  memberId: string,
+  opts?: { useAdmin?: boolean },
+): Promise<MemberTask[]> {
+  const supabase = opts?.useAdmin ? createAdminClient() : await createClient()
+  const today = new Date().toISOString().slice(0, 10)
+
+  const { data: memberRow } = await supabase
+    .from('chantier_equipe_membres')
+    .select('id, organization_id, equipe_id, profile_id')
+    .eq('id', memberId)
+    .maybeSingle()
+
+  if (!memberRow) return []
+
+  const filters = [
+    `member_id.eq.${memberId}`,
+    memberRow.equipe_id ? `equipe_id.eq.${memberRow.equipe_id}` : null,
+  ].filter(Boolean).join(',')
+
+  const { data: assignmentRows } = await supabase
+    .from('chantier_task_assignments')
+    .select('tache_id')
+    .or(filters)
+
+  const assignedTaskIds = [...new Set((assignmentRows ?? []).map((row: any) => row.tache_id).filter(Boolean))]
+
+  const taskRows: any[] = []
+  if (assignedTaskIds.length > 0) {
+    const { data } = await supabase
+      .from('chantier_taches')
+      .select(`
+        id, chantier_id, title, status, due_date,
+        chantier:chantiers!inner(id, title, organization_id, is_archived, status)
+      `)
+      .eq('chantier.organization_id', memberRow.organization_id)
+      .eq('chantier.is_archived', false)
+      .not('chantier.status', 'in', '("termine","annule")')
+      .neq('status', 'termine')
+      .in('id', assignedTaskIds)
+      .order('due_date', { ascending: true, nullsFirst: false })
+      .limit(30)
+    taskRows.push(...(data ?? []))
+  }
+
+  if (memberRow.profile_id) {
+    const { data } = await supabase
+      .from('chantier_taches')
+      .select(`
+        id, chantier_id, title, status, due_date,
+        chantier:chantiers!inner(id, title, organization_id, is_archived, status)
+      `)
+      .eq('chantier.organization_id', memberRow.organization_id)
+      .eq('chantier.is_archived', false)
+      .not('chantier.status', 'in', '("termine","annule")')
+      .neq('status', 'termine')
+      .eq('assigned_to', memberRow.profile_id)
+      .order('due_date', { ascending: true, nullsFirst: false })
+      .limit(30)
+    taskRows.push(...(data ?? []))
+  }
+
+  return Array.from(new Map(taskRows.map((task: any) => [task.id, task])).values()).map((task: any) => ({
+    id: task.id,
+    chantier_id: task.chantier_id,
+    chantier_title: task.chantier?.title ?? '',
+    title: task.title,
+    status: task.status,
+    due_date: task.due_date ?? null,
+    is_overdue: Boolean(task.due_date && task.due_date < today && task.status !== 'termine'),
+  }))
 }
 
 /** Lookup admin (sans RLS) - utilisé par /mon-espace côté serveur. */

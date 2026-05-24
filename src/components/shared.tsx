@@ -61,9 +61,9 @@ export const ActionMenu = ({
             <button
                 ref={buttonRef}
                 onClick={toggleMenu}
-                className="p-1 transition-colors text-secondary hover:text-primary"
+                className="btn-icon"
             >
-                <MoreVertical className="w-5 h-5" />
+                <MoreVertical className="w-5 h-5 text-secondary" />
             </button>
             {mounted && isOpen && typeof document !== 'undefined' && createPortal(
                 <div

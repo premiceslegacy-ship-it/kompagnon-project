@@ -26,10 +26,50 @@ import {
     ClipboardSignature,
     ChevronDown,
     BarChart2,
+    Repeat,
+    CheckSquare,
+    CalendarCheck,
+    AlertCircle,
 } from 'lucide-react';
 import type { UserProfile } from '@/lib/data/queries/user';
-import { AI_NAME } from '@/lib/brand';
 import type { OrganizationModules } from '@/lib/organization-modules';
+import type { NotificationsSummary } from '@/lib/data/queries/notifications';
+
+const routeKey = (href: string) => href.split(/[?#]/)[0] || '/';
+
+const NavChipLink = ({
+    href,
+    icon,
+    label,
+    active,
+    pending,
+    onNavigate,
+    onPrefetch,
+    className = '',
+    title,
+}: {
+    href: string;
+    icon: React.ReactNode;
+    label: string;
+    active: boolean;
+    pending: boolean;
+    onNavigate: (href: string) => void;
+    onPrefetch: (href: string) => void;
+    className?: string;
+    title?: string;
+}) => (
+    <Link
+        href={href}
+        title={title}
+        prefetch
+        onClick={() => onNavigate(href)}
+        onPointerEnter={() => onPrefetch(href)}
+        className={`nav-chip px-3.5 py-2 text-sm font-semibold flex items-center gap-2 whitespace-nowrap ${active ? 'nav-chip-active' : ''} ${pending ? 'nav-chip-pending' : ''} ${className}`}
+    >
+        {icon}
+        {label}
+    </Link>
+);
 
 const ThemeToggle = () => {
     const { theme, setTheme } = useTheme();
@@ -48,7 +88,7 @@ const ThemeToggle = () => {
     return (
         <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="w-10 h-10 flex items-center justify-center hover:scale-110 transition-all duration-300 ease-out"
+            className="btn-icon"
         >
             {theme === 'dark' ? <Moon className="w-5 h-5 text-accent" /> : <Sun className="w-5 h-5 text-accent" />}
         </button>
@@ -101,7 +141,7 @@ const UserMenu = ({ profile }: { profile: UserProfile | null }) => {
             <button
                 ref={buttonRef}
                 onClick={toggleMenu}
-                className="w-10 h-10 rounded-full overflow-hidden border-2 border-accent/20 p-0.5 hover:scale-105 transition-all"
+                className="btn-avatar w-10 h-10 p-0.5"
             >
                 {profile?.avatar_url ? (
                     <img className="w-full h-full object-cover rounded-full" alt={displayName} src={profile.avatar_url} />
@@ -147,10 +187,11 @@ const UserMenu = ({ profile }: { profile: UserProfile | null }) => {
     );
 };
 
-type NotificationsData = { overdueInvoices: number; expiringQuotes: number; newRequests?: number; chantiersAtRisk?: number }
+type NotificationsData = Partial<NotificationsSummary> & { overdueInvoices: number; expiringQuotes: number }
 
 const NotificationBell = ({ notifications }: { notifications: NotificationsData }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const [seenSignature, setSeenSignature] = useState<string | null>(null);
     const [mounted, setMounted] = useState(false);
     const buttonRef = useRef<HTMLButtonElement>(null);
     const [coords, setCoords] = useState({ top: 0, left: 0 });
@@ -158,13 +199,41 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
 
     useEffect(() => { setMounted(true); }, []);
 
-    const total = notifications.overdueInvoices + notifications.expiringQuotes + (notifications.chantiersAtRisk ?? 0);
+    const total = notifications.total ?? (
+        notifications.overdueInvoices +
+        (notifications.invoiceFollowups ?? 0) +
+        (notifications.pendingQuotes ?? 0) +
+        (notifications.pendingRecurring ?? 0) +
+        (notifications.recentAutoReminders ?? 0) +
+        (notifications.dueTasks ?? 0) +
+        (notifications.planningToday ?? 0) +
+        (notifications.missingPointages ?? 0) +
+        (notifications.completedTasks ?? 0) +
+        (notifications.newRequests ?? 0) +
+        (notifications.chantiersAtRisk ?? 0)
+    );
+    const notificationSignature = [
+        total,
+        notifications.overdueInvoices,
+        notifications.invoiceFollowups ?? 0,
+        notifications.pendingQuotes ?? 0,
+        notifications.pendingRecurring ?? 0,
+        notifications.recentAutoReminders ?? 0,
+        notifications.dueTasks ?? 0,
+        notifications.planningToday ?? 0,
+        notifications.missingPointages ?? 0,
+        notifications.completedTasks ?? 0,
+        notifications.newRequests ?? 0,
+        notifications.chantiersAtRisk ?? 0,
+    ].join(':');
+    const badgeTotal = seenSignature === notificationSignature ? 0 : total;
 
     const toggleMenu = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (!isOpen && buttonRef.current) {
             const rect = buttonRef.current.getBoundingClientRect();
-            setCoords({ top: rect.bottom + window.scrollY, left: rect.right + window.scrollX - 240 });
+            setCoords({ top: rect.bottom + window.scrollY, left: rect.right + window.scrollX - 320 });
+            setSeenSignature(notificationSignature);
         }
         setIsOpen(!isOpen);
     };
@@ -186,19 +255,19 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
             <button
                 ref={buttonRef}
                 onClick={toggleMenu}
-                className="relative w-10 h-10 flex items-center justify-center hover:scale-110 transition-all duration-300 ease-out"
+                className="btn-icon relative"
                 title="Notifications"
             >
                 <Bell className="w-5 h-5 text-primary" />
-                {total > 0 && (
-                    <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-accent text-black text-[9px] font-extrabold flex items-center justify-center leading-none">
-                        {total > 9 ? '9+' : total}
+                {badgeTotal > 0 && (
+                    <span className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-accent text-black text-[9px] font-extrabold flex items-center justify-center leading-none">
+                        {badgeTotal > 9 ? '9+' : badgeTotal}
                     </span>
                 )}
             </button>
             {mounted && isOpen && typeof document !== 'undefined' && createPortal(
                 <div
-                    className="absolute w-60 menu-panel py-2 z-[9999] animate-in fade-in slide-in-from-top-2 duration-200"
+                    className="absolute w-80 menu-panel py-2 z-[9999] animate-in fade-in slide-in-from-top-2 duration-200 max-h-[min(70vh,32rem)] overflow-y-auto overscroll-contain"
                     style={{ top: coords.top + 8, left: coords.left }}
                     onClick={e => e.stopPropagation()}
                 >
@@ -219,6 +288,30 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                                     </div>
                                 </button>
                             )}
+                            {(notifications.invoiceFollowups ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/reminders'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <span className="w-2 h-2 rounded-full bg-orange-500 mt-1.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.invoiceFollowups} facture{(notifications.invoiceFollowups ?? 0) > 1 ? 's' : ''} à vérifier</p>
+                                        <p className="text-xs text-secondary mt-0.5">Demander si le paiement est reçu ou relancer</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.pendingRecurring ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/dashboard'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <Repeat className="w-4 h-4 text-violet-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.pendingRecurring} facture{(notifications.pendingRecurring ?? 0) > 1 ? 's' : ''} récurrente{(notifications.pendingRecurring ?? 0) > 1 ? 's' : ''}</p>
+                                        <p className="text-xs text-secondary mt-0.5">Brouillon disponible, à envoyer ou modifier</p>
+                                    </div>
+                                </button>
+                            )}
                             {notifications.expiringQuotes > 0 && (
                                 <button
                                     onClick={() => { setIsOpen(false); router.push('/finances'); }}
@@ -231,6 +324,78 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                                     </div>
                                 </button>
                             )}
+                            {(notifications.pendingQuotes ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/reminders'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <MailWarning className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.pendingQuotes} devis à relancer</p>
+                                        <p className="text-xs text-secondary mt-0.5">Sans réponse depuis plusieurs jours</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.recentAutoReminders ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/dashboard'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <CheckSquare className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.recentAutoReminders} relance{(notifications.recentAutoReminders ?? 0) > 1 ? 's' : ''} auto envoyée{(notifications.recentAutoReminders ?? 0) > 1 ? 's' : ''}</p>
+                                        <p className="text-xs text-secondary mt-0.5">Factures ou devis relancés automatiquement</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.dueTasks ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/dashboard'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <CheckSquare className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.dueTasks} tâche{(notifications.dueTasks ?? 0) > 1 ? 's' : ''} à échéance</p>
+                                        <p className="text-xs text-secondary mt-0.5">À faire aujourd'hui ou en retard</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.planningToday ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/chantiers/planning'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <CalendarCheck className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.planningToday} créneau{(notifications.planningToday ?? 0) > 1 ? 'x' : ''} aujourd'hui</p>
+                                        <p className="text-xs text-secondary mt-0.5">Planning chantier du jour</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.missingPointages ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/chantiers/heures'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.missingPointages} pointage{(notifications.missingPointages ?? 0) > 1 ? 's' : ''} à vérifier</p>
+                                        <p className="text-xs text-secondary mt-0.5">Créneau passé sans heure pointée</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.completedTasks ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/dashboard'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <CheckSquare className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.completedTasks} tâche{(notifications.completedTasks ?? 0) > 1 ? 's' : ''} terminée{(notifications.completedTasks ?? 0) > 1 ? 's' : ''}</p>
+                                        <p className="text-xs text-secondary mt-0.5">Un membre a clôturé une tâche chantier</p>
+                                    </div>
+                                </button>
+                            )}
                             {(notifications.chantiersAtRisk ?? 0) > 0 && (
                                 <button
                                     onClick={() => { setIsOpen(false); router.push('/chantiers'); }}
@@ -240,6 +405,18 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                                     <div>
                                         <p className="text-sm font-semibold text-primary">{notifications.chantiersAtRisk} chantier{(notifications.chantiersAtRisk ?? 0) > 1 ? 's' : ''} en alerte budget</p>
                                         <p className="text-xs text-secondary mt-0.5">Coûts dépassent 90% du budget prévu</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.newRequests ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/requests'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <Inbox className="w-4 h-4 text-accent mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.newRequests} nouvelle{(notifications.newRequests ?? 0) > 1 ? 's' : ''} demande{(notifications.newRequests ?? 0) > 1 ? 's' : ''}</p>
+                                        <p className="text-xs text-secondary mt-0.5">Formulaire public à traiter</p>
                                     </div>
                                 </button>
                             )}
@@ -293,7 +470,7 @@ const NavDropdown = ({ label, icon, active, badge, children }: {
             <button
                 ref={buttonRef}
                 onClick={toggle}
-                className={`relative text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap ${active ? 'text-primary' : 'text-secondary hover:text-primary'}`}
+                className={`nav-chip relative px-3.5 py-2 text-sm font-semibold flex items-center gap-1.5 whitespace-nowrap ${active ? 'nav-chip-active' : ''}`}
             >
                 {icon}
                 {label}
@@ -329,6 +506,7 @@ const NavDropdownItem = ({ href, icon, label, badge, active, onClick }: {
     <Link
         href={href}
         onClick={onClick}
+        prefetch
         className={`flex items-center gap-3 px-4 py-2.5 text-sm font-semibold transition-colors ${active ? 'text-accent bg-accent/8' : 'text-primary hover:bg-base'}`}
     >
         <span className={active ? 'text-accent' : 'text-secondary'}>{icon}</span>
@@ -353,12 +531,16 @@ type NavItem = {
 const MobileDrawer = ({
     isOpen,
     onClose,
+    onNavigate,
+    onPrefetch,
     navItems,
     profile,
     notifications,
 }: {
     isOpen: boolean;
     onClose: () => void;
+    onNavigate: (href: string) => void;
+    onPrefetch: (href: string) => void;
     navItems: NavItem[];
     profile: UserProfile | null;
     notifications: NotificationsData;
@@ -387,7 +569,19 @@ const MobileDrawer = ({
 
     const displayName = profile?.full_name || 'Utilisateur';
     const initials = displayName.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase();
-    const total = notifications.overdueInvoices + notifications.expiringQuotes + (notifications.chantiersAtRisk ?? 0);
+    const total = notifications.total ?? (
+        notifications.overdueInvoices +
+        (notifications.invoiceFollowups ?? 0) +
+        (notifications.pendingQuotes ?? 0) +
+        (notifications.pendingRecurring ?? 0) +
+        (notifications.recentAutoReminders ?? 0) +
+        (notifications.dueTasks ?? 0) +
+        (notifications.planningToday ?? 0) +
+        (notifications.missingPointages ?? 0) +
+        (notifications.completedTasks ?? 0) +
+        (notifications.newRequests ?? 0) +
+        (notifications.chantiersAtRisk ?? 0)
+    );
 
     return createPortal(
         <>
@@ -427,7 +621,9 @@ const MobileDrawer = ({
                         <div key={item.href}>
                             <Link
                                 href={item.href}
-                                onClick={onClose}
+                                prefetch
+                                onPointerEnter={() => onPrefetch(item.href)}
+                                onClick={() => { onNavigate(item.href); onClose(); }}
                                 className={`flex items-center gap-3 px-5 py-3.5 text-sm font-semibold transition-colors relative ${item.active ? 'text-primary bg-accent/8' : 'text-secondary hover:text-primary hover:bg-base'}`}
                             >
                                 {item.active && (
@@ -445,7 +641,9 @@ const MobileDrawer = ({
                                 <Link
                                     key={sub.href}
                                     href={sub.href}
-                                    onClick={onClose}
+                                    prefetch
+                                    onPointerEnter={() => onPrefetch(sub.href)}
+                                    onClick={() => { onNavigate(sub.href); onClose(); }}
                                     className={`flex items-center gap-3 pl-12 pr-5 py-3 text-sm font-semibold transition-colors ${sub.active ? 'text-accent' : 'text-secondary hover:text-primary hover:bg-base'}`}
                                 >
                                     {sub.icon}
@@ -486,14 +684,30 @@ const MobileDrawer = ({
 
 export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifications = { overdueInvoices: 0, expiringQuotes: 0 }, modules, permissionKeys = [] }: { profile: UserProfile | null; orgName?: string | null; logoUrl?: string | null; notifications?: NotificationsData; modules?: OrganizationModules; permissionKeys?: string[] }) => {
     const pathname = usePathname() || '/dashboard';
+    const router = useRouter();
     const showAtelierAi = !!(modules?.quote_ai || modules?.document_import_ai || modules?.voice_input);
     const [drawerOpen, setDrawerOpen] = useState(false);
+    const [pendingHref, setPendingHref] = useState<string | null>(null);
     const permissionSet = new Set(permissionKeys);
     const canView = (key: string) => permissionSet.has('*') || permissionSet.has(key);
 
     const facturationActive = pathname.startsWith('/finances') || pathname.startsWith('/contracts') || pathname.startsWith('/reminders');
     const autreActive = pathname.startsWith('/requests');
     const newRequests = notifications.newRequests ?? 0;
+    const pathnameKey = routeKey(pathname);
+
+    useEffect(() => {
+        setPendingHref(null);
+    }, [pathname]);
+
+    const handleNavigate = (href: string) => {
+        const target = routeKey(href);
+        if (target !== pathnameKey) setPendingHref(target);
+    };
+
+    const prefetchRoute = (href: string) => {
+        router.prefetch(href);
+    };
 
     const navItems: NavItem[] = [
         ...(canView('dashboard.view') ? [{
@@ -554,7 +768,7 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
         }] : []),
         ...(showAtelierAi ? [{
             href: '/atelier-ia',
-            label: AI_NAME,
+            label: 'ATELIER IA',
             icon: <Bot className="w-4 h-4" />,
             active: pathname.startsWith('/atelier-ia'),
         }] : []),
@@ -569,57 +783,69 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
 
     return (
         <>
-            <header className="flex items-center px-4 sm:px-6 py-3 header-glass sticky top-0 z-50">
+            <header className="relative flex items-center px-4 sm:px-6 py-3 header-glass sticky top-0 z-50">
                 {/* Hamburger — mobile + tablette (< lg) */}
                 <button
                     onClick={() => setDrawerOpen(true)}
-                    className="lg:hidden w-10 h-10 flex items-center justify-center hover:scale-110 transition-all duration-300 ease-out mr-1"
+                    className="btn-icon lg:hidden mr-1"
                     aria-label="Ouvrir le menu"
                 >
                     <Menu className="w-5 h-5 text-primary" />
                 </button>
 
                 {/* Nav centré — desktop uniquement (lg+) */}
-                <nav className="hidden lg:flex items-center justify-center gap-6 xl:gap-8 flex-1">
-                    {canView('dashboard.view') && <Link
+                <nav className="hidden lg:flex items-center justify-center gap-2 xl:gap-3 flex-1">
+                    {canView('dashboard.view') && <NavChipLink
                         href="/dashboard"
-                        className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname === '/dashboard' ? 'text-primary' : 'text-secondary hover:text-primary'}`}
-                    >
-                        <LayoutDashboard className="w-4 h-4" />
-                        Tableau de bord
-                    </Link>}
+                        icon={<LayoutDashboard className="w-4 h-4" />}
+                        label="Tableau de bord"
+                        active={pathname === '/dashboard'}
+                        pending={pendingHref === '/dashboard'}
+                        onNavigate={handleNavigate}
+                        onPrefetch={prefetchRoute}
+                    />}
 
-                    {(canView('dashboard.view_ca') || canView('*')) && <Link
+                    {(canView('dashboard.view_ca') || canView('*')) && <NavChipLink
                         href="/rapports"
-                        className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/rapports') ? 'text-primary' : 'text-secondary hover:text-primary'}`}
-                    >
-                        <BarChart2 className="w-4 h-4" />
-                        Rapports
-                    </Link>}
+                        icon={<BarChart2 className="w-4 h-4" />}
+                        label="Rapports"
+                        active={pathname.startsWith('/rapports')}
+                        pending={pendingHref === '/rapports'}
+                        onNavigate={handleNavigate}
+                        onPrefetch={prefetchRoute}
+                    />}
 
-                    {canView('clients.view') && <Link
+                    {canView('clients.view') && <NavChipLink
                         href="/clients"
-                        className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/clients') ? 'text-primary' : 'text-secondary hover:text-primary'}`}
-                    >
-                        <UserCircle className="w-4 h-4" />
-                        Clients
-                    </Link>}
+                        icon={<UserCircle className="w-4 h-4" />}
+                        label="Clients"
+                        active={pathname.startsWith('/clients')}
+                        pending={pendingHref === '/clients'}
+                        onNavigate={handleNavigate}
+                        onPrefetch={prefetchRoute}
+                    />}
 
                     {canView('chantiers.view') && <div className="flex items-center gap-1">
-                        <Link
+                        <NavChipLink
                             href="/chantiers"
-                            className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/chantiers') ? 'text-primary' : 'text-secondary hover:text-primary'}`}
-                        >
-                            <HardHat className="w-4 h-4" />
-                            Chantiers
-                        </Link>
-                        <Link
+                            icon={<HardHat className="w-4 h-4" />}
+                            label="Chantiers"
+                            active={pathname.startsWith('/chantiers') && !pathname.startsWith('/chantiers/planning')}
+                            pending={pendingHref === '/chantiers'}
+                            onNavigate={handleNavigate}
+                            onPrefetch={prefetchRoute}
+                        />
+                        <NavChipLink
                             href="/chantiers/planning"
                             title="Planning global"
-                            className={`p-1 rounded transition-colors ${pathname.startsWith('/chantiers/planning') ? 'text-accent' : 'text-secondary hover:text-primary'}`}
-                        >
-                            <Calendar className="w-3.5 h-3.5" />
-                        </Link>
+                            icon={<Calendar className="w-3.5 h-3.5" />}
+                            label=""
+                            active={pathname.startsWith('/chantiers/planning')}
+                            pending={pendingHref === '/chantiers/planning'}
+                            onNavigate={handleNavigate}
+                            onPrefetch={prefetchRoute}
+                            className="px-2.5"
+                        />
                     </div>}
 
                     {(canView('quotes.view') || canView('invoices.view') || canView('contracts.view') || canView('reminders.view')) && <NavDropdown
@@ -632,40 +858,44 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                             icon={<FileText className="w-4 h-4" />}
                             label="Devis & Factures"
                             active={pathname.startsWith('/finances')}
-                            onClick={() => {}}
+                            onClick={() => handleNavigate('/finances')}
                         />}
                         {canView('contracts.view') && <NavDropdownItem
                             href="/contracts"
                             icon={<ClipboardSignature className="w-4 h-4" />}
                             label="Contrats"
                             active={pathname.startsWith('/contracts')}
-                            onClick={() => {}}
+                            onClick={() => handleNavigate('/contracts')}
                         />}
                         {canView('reminders.view') && <NavDropdownItem
                             href="/reminders"
                             icon={<MailWarning className="w-4 h-4" />}
                             label="Relances"
                             active={pathname.startsWith('/reminders')}
-                            onClick={() => {}}
+                            onClick={() => handleNavigate('/reminders')}
                         />}
                     </NavDropdown>}
 
-                    {canView('catalog.view') && <Link
+                    {canView('catalog.view') && <NavChipLink
                         href="/catalog"
-                        className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/catalog') ? 'text-primary' : 'text-secondary hover:text-primary'}`}
-                    >
-                        <Package className="w-4 h-4" />
-                        Catalogue
-                    </Link>}
+                        icon={<Package className="w-4 h-4" />}
+                        label="Catalogue"
+                        active={pathname.startsWith('/catalog')}
+                        pending={pendingHref === '/catalog'}
+                        onNavigate={handleNavigate}
+                        onPrefetch={prefetchRoute}
+                    />}
 
                     {showAtelierAi && (
-                        <Link
+                        <NavChipLink
                             href="/atelier-ia"
-                            className={`text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap ${pathname.startsWith('/atelier-ia') ? 'text-primary' : 'text-secondary hover:text-primary'}`}
-                        >
-                            <Bot className="w-4 h-4" />
-                            {AI_NAME}
-                        </Link>
+                            icon={<Bot className="w-4 h-4" />}
+                            label="ATELIER IA"
+                            active={pathname.startsWith('/atelier-ia')}
+                            pending={pendingHref === '/atelier-ia'}
+                            onNavigate={handleNavigate}
+                            onPrefetch={prefetchRoute}
+                        />
                     )}
 
                     {canView('leads.view') && <NavDropdown
@@ -679,7 +909,7 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                             label="Demandes"
                             badge={newRequests}
                             active={pathname.startsWith('/requests')}
-                            onClick={() => {}}
+                            onClick={() => handleNavigate('/requests')}
                         />
                     </NavDropdown>}
                 </nav>
@@ -692,7 +922,10 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                     <ThemeToggle />
                     {canView('settings.view') && <Link
                         href="/settings"
-                        className="hidden lg:flex w-10 h-10 items-center justify-center hover:scale-110 transition-all duration-300 ease-out"
+                        prefetch
+                        onClick={() => handleNavigate('/settings')}
+                        onPointerEnter={() => prefetchRoute('/settings')}
+                        className={`btn-icon hidden lg:flex ${pendingHref === '/settings' ? 'translate-y-[2px]' : ''}`}
                         title="Paramètres"
                     >
                         <Settings className="w-5 h-5 text-primary" />
@@ -700,11 +933,14 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                     <NotificationBell notifications={notifications} />
                     <UserMenu profile={profile} />
                 </div>
+                {pendingHref && <div className="nav-pending-bar" aria-hidden="true" />}
             </header>
 
             <MobileDrawer
                 isOpen={drawerOpen}
                 onClose={() => setDrawerOpen(false)}
+                onNavigate={handleNavigate}
+                onPrefetch={prefetchRoute}
                 navItems={navItems}
                 profile={profile}
                 notifications={notifications}

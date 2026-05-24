@@ -147,11 +147,11 @@ export default function RapportKpiPDF({
             <Text style={S.kpiSubAccent}>{fmt(r?.caTtc ?? ar?.caTtc ?? 0)} TTC</Text>
           </View>
           <View style={S.kpiBox}>
-            <Text style={S.kpiLabel}>Encaissé</Text>
+            <Text style={S.kpiLabel}>Encaissé TTC</Text>
             <Text style={S.kpiValue}>{fmt(r?.encaisse ?? ar?.encaisse ?? 0)}</Text>
           </View>
           <View style={S.kpiBox}>
-            <Text style={S.kpiLabel}>TVA collectée</Text>
+            <Text style={S.kpiLabel}>TVA facturée</Text>
             <Text style={S.kpiValue}>{fmt(r?.tvaDue ?? ar?.tvaDue ?? 0)}</Text>
           </View>
           <View style={S.kpiBoxLast}>
@@ -259,15 +259,15 @@ export default function RapportKpiPDF({
             <Text style={S.sectionTitle}>Top chantiers</Text>
             <View style={S.tableHeader}>
               <View style={{ width: '42%' }}><Text style={S.thText}>Chantier</Text></View>
-              <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.thText}>Facturé</Text></View>
-              <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.thText}>Encaissé</Text></View>
+              <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.thText}>Facturé HT</Text></View>
+              <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.thText}>Encaissé TTC</Text></View>
               <View style={{ width: '18%', alignItems: 'flex-end' }}><Text style={S.thText}>Marge</Text></View>
             </View>
             {topChantiers.slice(0, 8).map((c, i) => (
               <View key={c.chantierId} style={i % 2 === 1 ? S.rowAlt : S.row} wrap={false}>
                 <View style={{ width: '42%' }}><Text style={S.cell}>{pdfText(c.chantierTitle)}</Text></View>
                 <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.cellBold}>{fmt(c.caHt)}</Text></View>
-                <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.cellBold}>{fmt(c.encaisseHt)}</Text></View>
+                <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.cellBold}>{fmt(c.encaisseTtc)}</Text></View>
                 <View style={{ width: '18%', alignItems: 'flex-end' }}>
                   <Text style={[S.cell, { color: c.marginEur >= 0 ? '#16A34A' : '#DC2626' }]}>{fmt(c.marginEur)}</Text>
                 </View>

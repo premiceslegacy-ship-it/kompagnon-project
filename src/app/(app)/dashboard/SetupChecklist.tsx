@@ -36,7 +36,7 @@ type SetupItem = {
 function StatusBadge({ done, optional, reward }: { done: boolean; optional?: boolean; reward: number }) {
   if (done) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-xs font-bold text-green-600 dark:text-success">
+      <span className="status-pill status-pill-success px-2.5 py-1 text-xs font-bold">
         <Check className="h-3 w-3" />
         +{reward} pts
       </span>
@@ -44,7 +44,7 @@ function StatusBadge({ done, optional, reward }: { done: boolean; optional?: boo
   }
 
   return (
-    <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${optional ? 'bg-base text-secondary' : 'bg-accent/10 text-accent'}`}>
+    <span className={`status-pill ${optional ? 'status-pill-muted' : 'status-pill-accent'} px-2.5 py-1 text-xs font-bold`}>
       {optional ? `Bonus +${reward}` : `+${reward} pts`}
     </span>
   )
@@ -56,9 +56,9 @@ function ChecklistItem({ item }: { item: SetupItem }) {
   return (
     <Link
       href={item.href}
-      className="group flex min-h-[112px] items-start gap-3 rounded-2xl border border-[var(--elevation-border)] bg-base/70 p-4 transition-all hover:-translate-y-0.5 hover:border-accent/45 hover:bg-accent/5 dark:bg-white/[0.03]"
+      className={`state-card ${item.done ? 'state-card-success' : item.optional ? 'state-card-muted' : 'state-card-warning'} group flex min-h-[112px] items-start gap-3 p-4`}
     >
-      <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${item.done ? 'bg-success/10 text-green-600 dark:text-success' : 'bg-accent/10 text-accent'}`}>
+      <span className={`status-pill ${item.done ? 'status-pill-success' : 'status-pill-accent'} mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center px-0 py-0`}>
         {item.done ? <Check className="h-5 w-5" /> : <Icon className="h-5 w-5" />}
       </span>
       <span className="min-w-0 flex-1">
@@ -90,31 +90,31 @@ function SetupCompleteCard({ organizationName, earnedPoints }: { organizationNam
   }
 
   return (
-    <section className="card overflow-hidden rounded-3xl border-accent/25 bg-white dark:bg-white/[0.04]">
+    <section className="card overflow-hidden rounded-3xl border-accent/25">
       <div className="relative p-5 sm:p-6 lg:p-7">
         <div className="absolute inset-x-0 top-0 h-1 bg-accent" />
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-start gap-4">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-accent/30 bg-accent/10 text-accent shadow-lg shadow-accent/10">
+            <span className="status-pill status-pill-success flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl px-0 py-0">
               <Trophy className="h-7 w-7" />
-            </div>
+            </span>
             <div className="min-w-0">
               <p className="text-sm font-bold uppercase tracking-wider text-accent">Quête de lancement terminée</p>
               <h2 className="mt-1 text-2xl font-extrabold tracking-tight text-primary sm:text-3xl">
                 {organizationName} est prêt à vendre
               </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-secondary sm:text-base">
+              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-primary/70 sm:text-[1rem]">
                 Votre espace est configuré : identité, documents, paiement, signature, catalogue, client et premier devis.
               </p>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:min-w-[260px]">
-            <div className="rounded-2xl border border-[var(--elevation-border)] bg-black/[0.04] p-3 dark:bg-white/[0.06]">
+            <div className="state-card state-card-muted p-3">
               <p className="text-[11px] font-bold uppercase tracking-wider text-secondary">Score</p>
               <p className="mt-1 text-lg font-extrabold tabular-nums text-primary">{earnedPoints} pts</p>
             </div>
-            <div className="rounded-2xl border border-accent/25 bg-accent/10 p-3">
+            <div className="state-card state-card-success p-3">
               <p className="text-[11px] font-bold uppercase tracking-wider text-accent">Statut</p>
               <p className="mt-1 text-lg font-extrabold text-primary">Prêt à vendre</p>
             </div>
@@ -124,14 +124,14 @@ function SetupCompleteCard({ organizationName, earnedPoints }: { organizationNam
         <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center">
           <button
             onClick={() => handleNav(`/finances/quote-editor?returnTo=${encodeURIComponent('/dashboard')}`)}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-extrabold text-black shadow-lg shadow-accent/20 active:scale-[0.98] transition-transform"
+            className="btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm"
           >
             Créer le prochain devis
             <ArrowRight className="h-4 w-4" />
           </button>
           <button
             onClick={() => { setDismissed(true); dismissSetupChecklist() }}
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--elevation-border)] bg-black/[0.04] px-5 py-3 text-sm font-bold text-primary hover:border-accent/40 hover:text-accent active:scale-[0.98] transition-transform dark:bg-white/[0.06]"
+            className="btn-secondary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm"
           >
             Continuer sur le dashboard
             <Sparkles className="h-4 w-4" />
@@ -275,11 +275,11 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-2">
-            <div className="rounded-2xl border border-[var(--elevation-border)] bg-surface p-3 dark:bg-white/[0.03]">
+            <div className="state-card state-card-muted p-3">
               <p className="text-[11px] font-bold uppercase tracking-wider text-secondary">Niveau</p>
               <p className="mt-1 text-sm font-extrabold text-primary">{level}</p>
             </div>
-            <div className="rounded-2xl border border-[var(--elevation-border)] bg-surface p-3 dark:bg-white/[0.03]">
+            <div className="state-card state-card-muted p-3">
               <p className="text-[11px] font-bold uppercase tracking-wider text-secondary">Score</p>
               <p className="mt-1 text-sm font-extrabold tabular-nums text-primary">{earnedPoints}/{totalRequiredPoints} pts</p>
             </div>
@@ -293,7 +293,7 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
           </p>
 
           {nextItem && (
-            <Link href={nextItem.href} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-extrabold text-black shadow-lg shadow-accent/20 transition-all hover:scale-[1.01] active:scale-[0.99]">
+            <Link href={nextItem.href} className="btn-primary mt-6 inline-flex w-full items-center justify-center gap-2 px-5 py-3 text-sm">
               {nextItem.title}
               <ArrowRight className="h-4 w-4" />
             </Link>

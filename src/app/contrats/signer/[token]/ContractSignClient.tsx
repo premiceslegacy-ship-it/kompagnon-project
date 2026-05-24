@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useTransition } from 'react'
-import { CheckCircle2, FileText, Loader2, ShieldCheck, AlertTriangle, ExternalLink, MessageSquare, X, ChevronDown } from 'lucide-react'
+import { CheckCircle2, FileText, Loader2, ShieldCheck, AlertTriangle, ExternalLink, MessageSquare, X, ChevronDown, Download } from 'lucide-react'
 import SignaturePad from '@/components/SignaturePad'
 import { submitClientSignatureWithQuote, sendQuoteDeclineMessage } from '@/lib/data/mutations/contract-sign'
 
@@ -10,6 +10,11 @@ type LinkedQuote = {
   number: string | null
   title: string | null
   total_ttc: number | null
+}
+
+type LinkedQuoteForDownload = {
+  id: string
+  accepted: boolean
 }
 
 type Props = {
@@ -26,6 +31,7 @@ type Props = {
   signedAt: string | null
   archived: boolean
   linkedQuote: LinkedQuote | null
+  linkedQuoteForDownload: LinkedQuoteForDownload | null
 }
 
 const fmtDateTime = (iso: string) =>
@@ -41,7 +47,7 @@ const fmtCurrency = (n: number | null | undefined) =>
 
 export default function ContractSignClient({
   token, contractId, contractTitle, contractType, counterpartyName,
-  orgName, orgLogoUrl, orgEmail, pdfReady, alreadySigned, signedAt, archived, linkedQuote,
+  orgName, orgLogoUrl, orgEmail, pdfReady, alreadySigned, signedAt, archived, linkedQuote, linkedQuoteForDownload,
 }: Props) {
   const [isPending, startTransition] = useTransition()
   const [isDeclinePending, startDeclineTransition] = useTransition()
@@ -54,7 +60,7 @@ export default function ContractSignClient({
   const [signed, setSigned] = useState(alreadySigned)
   const [signedAtState, setSignedAtState] = useState<string | null>(signedAt)
   const [pdfReadyState, setPdfReadyState] = useState(pdfReady)
-  const [acceptedQuote, setAcceptedQuote] = useState(false)
+  const [acceptedQuote, setAcceptedQuote] = useState(Boolean(alreadySigned && linkedQuoteForDownload?.accepted))
 
   // Champs du formulaire
   const [signatoryName, setSignatoryName] = useState(counterpartyName ?? '')
@@ -150,19 +156,32 @@ export default function ContractSignClient({
               </p>
             </div>
           )}
-          {pdfReadyState ? (
-            <a
-              href={`/api/pdf/contract/${contractId}?token=${token}&download=1`}
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white text-sm font-semibold rounded-xl hover:bg-gray-800"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <FileText className="w-4 h-4" />
-              Télécharger le contrat signé
-            </a>
-          ) : (
-            <p className="text-sm text-gray-400 italic">Le PDF est en cours de génération, vous le recevrez par e-mail.</p>
-          )}
+          <div className="flex flex-col items-center gap-3 w-full">
+            {pdfReadyState ? (
+              <a
+                href={`/api/pdf/contract/${contractId}?token=${token}&download=1`}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white text-sm font-semibold rounded-xl hover:bg-gray-800 transition-colors"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Download className="w-4 h-4" />
+                Télécharger le contrat signé
+              </a>
+            ) : (
+              <p className="text-sm text-gray-400 italic">Le PDF du contrat est en cours de génération, vous le recevrez par e-mail.</p>
+            )}
+            {acceptedQuote && linkedQuoteForDownload && (
+              <a
+                href={`/api/pdf/quote/${linkedQuoteForDownload.id}?contractToken=${token}&download=1`}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-white border border-gray-200 text-gray-800 text-sm font-semibold rounded-xl hover:border-gray-900 transition-colors"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Download className="w-4 h-4" />
+                Télécharger le devis signé
+              </a>
+            )}
+          </div>
           <p className="text-xs text-gray-400">
             {orgName} a été notifié de votre signature et reviendra vers vous.
           </p>

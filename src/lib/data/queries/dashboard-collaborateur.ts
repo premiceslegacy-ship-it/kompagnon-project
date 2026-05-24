@@ -75,31 +75,63 @@ export const getCollaborateurDashboard = cache(async (userId: string): Promise<C
   // Cherche un enregistrement terrain lié (optionnel — membres org purs n'en ont pas)
   const { data: memberRow } = await supabase
     .from('chantier_equipe_membres')
-    .select('id')
+    .select('id, equipe_id')
     .eq('organization_id', orgId)
     .eq('profile_id', userId)
     .maybeSingle()
 
   const memberId = memberRow?.id ?? null
+  const equipeId = memberRow?.equipe_id ?? null
+
+  let assignedTaskIds: string[] = []
+  if (memberId || equipeId) {
+    const filters = [
+      memberId ? `member_id.eq.${memberId}` : null,
+      equipeId ? `equipe_id.eq.${equipeId}` : null,
+    ].filter(Boolean).join(',')
+    const { data: assignmentRows } = await supabase
+      .from('chantier_task_assignments')
+      .select('tache_id')
+      .or(filters)
+    assignedTaskIds = [...new Set((assignmentRows ?? []).map((row: any) => row.tache_id).filter(Boolean))]
+  }
+
+  const oldAssignedTasksQuery = supabase
+    .from('chantier_taches')
+    .select(`
+      id, title, status, due_date, chantier_id,
+      chantier:chantiers!inner(title, organization_id)
+    `)
+    .eq('chantier.organization_id', orgId)
+    .eq('assigned_to', userId)
+    .neq('status', 'termine')
+    .order('due_date', { ascending: true, nullsFirst: false })
+    .limit(15)
+
+  const assignedTasksQuery = assignedTaskIds.length > 0
+    ? supabase
+        .from('chantier_taches')
+        .select(`
+          id, title, status, due_date, chantier_id,
+          chantier:chantiers!inner(title, organization_id)
+        `)
+        .eq('chantier.organization_id', orgId)
+        .in('id', assignedTaskIds)
+        .neq('status', 'termine')
+        .order('due_date', { ascending: true, nullsFirst: false })
+        .limit(15)
+    : Promise.resolve({ data: [] as any[] })
 
   const [
-    { data: tasksData },
+    { data: oldAssignedTasks },
+    { data: assignedTasks },
     { data: planningByMember },
     { data: pointagesByMember },
     { data: pointagesByUser },
   ] = await Promise.all([
-    // Tâches assignées à ce user (assigned_to référence profiles.id = userId)
-    supabase
-      .from('chantier_taches')
-      .select(`
-        id, title, status, due_date, chantier_id,
-        chantier:chantiers!inner(title, organization_id)
-      `)
-      .eq('chantiers.organization_id', orgId)
-      .eq('assigned_to', userId)
-      .neq('status', 'termine')
-      .order('due_date', { ascending: true, nullsFirst: false })
-      .limit(15),
+    // Compat ancienne colonne assigned_to + nouvelles assignations multiples.
+    oldAssignedTasksQuery,
+    assignedTasksQuery,
 
     // Planning du jour via profil terrain (member_id)
     memberId
@@ -134,7 +166,10 @@ export const getCollaborateurDashboard = cache(async (userId: string): Promise<C
       .lte('date', sundayStr),
   ])
 
-  const tasks: MyTask[] = (tasksData ?? []).map((t: any) => ({
+  const taskRows = [...(oldAssignedTasks ?? []), ...(assignedTasks ?? [])]
+  const uniqueTaskRows = Array.from(new Map(taskRows.map((task: any) => [task.id, task])).values())
+
+  const tasks: MyTask[] = uniqueTaskRows.map((t: any) => ({
     id: t.id,
     title: t.title,
     chantier_id: t.chantier_id,

@@ -2,6 +2,32 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { getSupabaseRuntimeConfig } from '@/lib/supabase/config'
 
+const publicRoutePrefixes = [
+  '/login',
+  '/auth',
+  '/onboarding',
+  '/invite',
+  '/forgot-password',
+  '/reset-password',
+  '/verify-email',
+  '/demande',
+  '/sign',
+  '/contrats/signer',
+  '/mon-espace',
+]
+
+const publicExactRoutes = [
+  '/legal',
+  '/privacy',
+  '/terms',
+  '/api/manifest',
+  '/api/app-icon',
+]
+
+function isPathOrChild(pathname: string, prefix: string) {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`)
+}
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
@@ -40,20 +66,13 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  // Routes publiques (auth + flux mot de passe + invitations)
-  const isAuthRoute =
-    pathname.startsWith('/login') ||
-    pathname.startsWith('/auth') ||
-    pathname.startsWith('/onboarding') ||
-    pathname.startsWith('/invite') ||
-    pathname.startsWith('/forgot-password') ||
-    pathname.startsWith('/reset-password') ||
-    pathname.startsWith('/verify-email') ||
-    pathname.startsWith('/request') ||
-    pathname.startsWith('/demande')
+  // Routes publiques (auth, pages legales, PWA, signatures et flux clients).
+  const isPublicRoute =
+    publicExactRoutes.includes(pathname) ||
+    publicRoutePrefixes.some((prefix) => isPathOrChild(pathname, prefix))
 
   // 1. Pas de session → /login (sauf routes publiques)
-  if (!user && !isAuthRoute) {
+  if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
@@ -69,7 +88,12 @@ export async function middleware(request: NextRequest) {
   // 3. Utilisateur connecté : vérifier onboarding_done
   // Optimisation : on lit d'abord le cookie hint (posé après onboarding) pour éviter
   // une query BDD à chaque navigation. Si absent, on retombe sur la query profiles.
-  if (user && !pathname.startsWith('/onboarding') && !pathname.startsWith('/login') && !pathname.startsWith('/auth')) {
+  if (
+    user &&
+    !isPathOrChild(pathname, '/onboarding') &&
+    !isPathOrChild(pathname, '/login') &&
+    !isPathOrChild(pathname, '/auth')
+  ) {
     const onboardedCookie = request.cookies.get('atelier_onboarded')
     const cookieIsValid = onboardedCookie?.value === user.id
 

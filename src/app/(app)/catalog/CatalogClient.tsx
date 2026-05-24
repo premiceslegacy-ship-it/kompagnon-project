@@ -14,12 +14,12 @@ import {
 } from '@/lib/data/mutations/catalog'
 import { importSuppliers, createSupplier, updateSupplier, deleteSupplier, type ImportSuppliersState } from '@/lib/data/mutations/suppliers'
 import type { Supplier } from '@/lib/data/queries/suppliers'
-import { Search, Plus, Trash2, X, Package, AlertCircle, AlertTriangle, Loader2, FileUp, Download, CheckCircle2, Layers, Pencil, ToggleLeft, ToggleRight, Eye, EyeOff, Wrench, Truck, Tag, Copy, Bot, Building2, Mail, Phone, MapPin, Cog } from 'lucide-react'
+import { Search, Plus, Trash2, X, Package, AlertCircle, AlertTriangle, Loader2, FileUp, Download, CheckCircle2, Layers, Pencil, ToggleLeft, ToggleRight, Eye, EyeOff, Wrench, Truck, Tag, Copy, Bot, Building2, Mail, Phone, MapPin, Cog, ChevronLeft, ChevronRight } from 'lucide-react'
 import { EditMaterialModal } from './EditMaterialModal'
 import { UnitSelect } from '@/components/ui/UnitSelect'
 import DimensionConfigEditor, { type EditableDimensionSchemaState, type EditableVariantState } from '@/components/catalog/DimensionConfigEditor'
 import { displayUnitToMeters, formatDimensionLabel, getDimensionFieldDefinition, normalizeDimensionSchema, type DimensionPricingMode } from '@/lib/catalog-pricing'
-import type { ResolvedCatalogContext } from '@/lib/catalog-context'
+import { getBusinessActivityById, type ResolvedCatalogContext } from '@/lib/catalog-context'
 import { getCatalogLabelsForProfile, getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import CatalogAIPanel from '@/components/catalog/CatalogAIPanel'
 
@@ -1460,6 +1460,7 @@ function ImportModal({ isOpen, onClose, title, fields, templateFilename, serverA
 export default function CatalogClient({ initialMaterials, initialLaborRates, initialPrestationTypes, initialSuppliers = [], catalogContext, catalogAIEnabled = false }: Props) {
   const router = useRouter()
   const profileLabels = getCatalogLabelsForProfile(catalogContext)
+  const businessActivity = getBusinessActivityById(catalogContext.activityId)
   const [activeTab, setActiveTab] = useState<'materials' | 'services' | 'labor' | 'prestations' | 'suppliers'>('materials')
   const [searchTerm, setSearchTerm] = useState('')
   const [isNewMaterialOpen, setIsNewMaterialOpen] = useState(false)
@@ -1474,6 +1475,8 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
   const [editingPrestation, setEditingPrestation] = useState<PrestationType | null>(null)
   const [editingMaterial, setEditingMaterial] = useState<CatalogMaterial | null>(null)
   const [isAIPanelOpen, setIsAIPanelOpen] = useState(false)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
 
   // Données locales
   const [materials, setMaterials] = useState<CatalogMaterial[]>(initialMaterials)
@@ -1517,6 +1520,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
 
   // ── Filtrage ─────────────────────────────────────────────────────────────────
 
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase()
   const currentData = activeTab === 'materials'
     ? materials.filter(item => item.item_kind !== 'service')
     : activeTab === 'services'
@@ -1530,15 +1534,36 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
       ? (item as CatalogMaterial).reference
       : (item as CatalogLaborRate).reference
     return (
-      name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (ref ?? '').toLowerCase().includes(searchTerm.toLowerCase())
+      name.toLowerCase().includes(normalizedSearchTerm) ||
+      (ref ?? '').toLowerCase().includes(normalizedSearchTerm)
     )
   })
 
   const filteredPrestations = prestationTypes.filter(p =>
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (p.category ?? '').toLowerCase().includes(searchTerm.toLowerCase())
+    p.name.toLowerCase().includes(normalizedSearchTerm) ||
+    (p.category ?? '').toLowerCase().includes(normalizedSearchTerm)
   )
+  const filteredSuppliers = suppliers.filter(s =>
+    s.name.toLowerCase().includes(normalizedSearchTerm) ||
+    (s.contact_name ?? '').toLowerCase().includes(normalizedSearchTerm) ||
+    (s.email ?? '').toLowerCase().includes(normalizedSearchTerm) ||
+    (s.phone ?? '').toLowerCase().includes(normalizedSearchTerm)
+  )
+  const activeFilteredCount = activeTab === 'prestations'
+    ? filteredPrestations.length
+    : activeTab === 'suppliers'
+      ? filteredSuppliers.length
+      : filteredData.length
+  const totalPages = Math.max(1, Math.ceil(activeFilteredCount / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pageStart = (currentPage - 1) * PAGE_SIZE
+  const paginatedData = filteredData.slice(pageStart, pageStart + PAGE_SIZE)
+  const paginatedPrestations = filteredPrestations.slice(pageStart, pageStart + PAGE_SIZE)
+  const paginatedSuppliers = filteredSuppliers.slice(pageStart, pageStart + PAGE_SIZE)
+
+  useEffect(() => {
+    setPage(1)
+  }, [activeTab])
 
   const prestationCategories = Array.from(new Set([
     ...catalogContext.defaultCategories.bundleTemplate,
@@ -1750,6 +1775,59 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
     )
   }
 
+  function PaginationFooter() {
+    if (totalPages <= 1) return null
+
+    return (
+      <div className="flex items-center justify-between px-6 py-3 border-t border-[var(--elevation-border)]">
+        <span className="text-xs text-secondary">
+          {pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, activeFilteredCount)} sur {activeFilteredCount}
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Page précédente"
+          >
+            <ChevronLeft className="w-4 h-4 text-secondary" />
+          </button>
+          {Array.from({ length: totalPages }, (_, i) => i + 1)
+            .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+            .reduce<(number | '...')[]>((acc, p, idx, arr) => {
+              if (idx > 0 && p - arr[idx - 1] > 1) acc.push('...')
+              acc.push(p)
+              return acc
+            }, [])
+            .map((p, i) =>
+              p === '...' ? (
+                <span key={`ellipsis-${i}`} className="px-1 text-xs text-secondary">...</span>
+              ) : (
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={`min-w-[28px] h-7 rounded-lg text-xs font-bold transition-colors ${
+                    currentPage === p ? 'bg-accent text-black' : 'hover:bg-accent/10 text-secondary'
+                  }`}
+                >
+                  {p}
+                </button>
+              )
+            )
+          }
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+            className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Page suivante"
+          >
+            <ChevronRight className="w-4 h-4 text-secondary" />
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
@@ -1842,6 +1920,9 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
               onClose={() => setIsAIPanelOpen(false)}
               onCreated={() => { router.refresh(); setIsAIPanelOpen(false) }}
               bundleTemplateLabel={catalogContext.labelSet.bundleTemplate.singular}
+              bundleTemplatePluralLabel={catalogContext.labelSet.bundleTemplate.plural}
+              activityLabel={businessActivity?.label ?? catalogContext.sectorFallback}
+              activityDescription={businessActivity?.description ?? catalogContext.onboardingDescription}
             />
           )}
           {!isAIPanelOpen && (
@@ -1904,7 +1985,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                 type="text"
                 placeholder="Rechercher..."
                 value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
+                onChange={e => { setSearchTerm(e.target.value); setPage(1) }}
                 className="w-full sm:w-56 md:w-72 pl-10 pr-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all text-sm"
               />
             </div>
@@ -1947,20 +2028,20 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
       {/* Tabs */}
       <div className="overflow-x-auto pb-1">
         <div className="flex items-center gap-1.5 p-1 bg-base/50 rounded-full w-max min-w-full sm:w-fit sm:min-w-0 border border-[var(--elevation-border)]">
-          <button onClick={() => setActiveTab('materials')} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'materials' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
+          <button onClick={() => { setActiveTab('materials'); setPage(1) }} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'materials' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
             {catalogContext.labelSet.material.plural}
           </button>
-          <button onClick={() => setActiveTab('services')} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'services' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
+          <button onClick={() => { setActiveTab('services'); setPage(1) }} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'services' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
             {catalogContext.labelSet.service.plural}
           </button>
-          <button onClick={() => setActiveTab('labor')} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'labor' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
+          <button onClick={() => { setActiveTab('labor'); setPage(1) }} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'labor' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
             {catalogContext.labelSet.laborRate.plural}
           </button>
-          <button onClick={() => setActiveTab('prestations')} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'prestations' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
+          <button onClick={() => { setActiveTab('prestations'); setPage(1) }} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'prestations' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
             <Layers className="w-3.5 h-3.5" />
             {catalogContext.labelSet.bundleTemplate.plural}
           </button>
-          <button onClick={() => setActiveTab('suppliers')} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'suppliers' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
+          <button onClick={() => { setActiveTab('suppliers'); setPage(1) }} className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'suppliers' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>
             <Building2 className="w-3.5 h-3.5" />
             Fournisseurs
           </button>
@@ -1970,6 +2051,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
       {/* Table - Articles / Main d'oeuvre */}
       {activeTab !== 'prestations' && activeTab !== 'suppliers' && (
         <div className={`rounded-3xl card overflow-hidden transition-opacity ${isPending ? 'opacity-80' : ''}`}>
+          {filteredData.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -2007,9 +2089,8 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
-                {filteredData.length > 0 ? (
-                  activeTab === 'materials' || activeTab === 'services'
-                    ? (filteredData as CatalogMaterial[]).map(item => (
+                {activeTab === 'materials' || activeTab === 'services'
+                    ? (paginatedData as CatalogMaterial[]).map(item => (
                       <tr key={item.id} className="hover:bg-accent/5 transition-colors group">
                         <td className="px-3 md:px-6 py-3 md:py-4 min-w-[100px]">
                           <InlineText id={item.id} field="reference" value={item.reference} onSave={v => saveMaterialField(item, 'reference', v)} className="text-sm font-bold text-primary tabular-nums" />
@@ -2074,7 +2155,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                         </td>
                       </tr>
                     ))
-                    : (filteredData as CatalogLaborRate[]).map(item => (
+                    : (paginatedData as CatalogLaborRate[]).map(item => (
                       <tr key={item.id} className="hover:bg-accent/5 transition-colors group">
                         <td className="px-3 md:px-6 py-3 md:py-4 min-w-[100px]">
                           <InlineText id={item.id} field="reference" value={item.reference} onSave={v => saveLaborField(item, 'reference', v)} className="text-sm font-bold text-primary tabular-nums" />
@@ -2140,31 +2221,29 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                         </td>
                       </tr>
                     ))
-                ) : (
-                  <tr>
-                    <td colSpan={activeTab === 'labor' ? 8 : 8} className="px-6 py-20 text-center">
-                      <div className="flex flex-col items-center gap-4">
-                        <Package className="w-10 h-10 text-secondary opacity-20" />
-                        <div>
-                          <p className="text-xl font-bold text-primary">
-                            {searchTerm ? 'Aucun élément trouvé' : activeTab === 'materials' ? catalogContext.labelSet.material.emptyLabel : activeTab === 'services' ? catalogContext.labelSet.service.emptyLabel : catalogContext.labelSet.laborRate.emptyLabel}
-                          </p>
-                          <p className="text-secondary mt-1">
-                            {searchTerm ? 'Essayez de modifier vos critères.' : activeTab === 'materials' ? catalogContext.labelSet.material.emptyHelp : activeTab === 'services' ? catalogContext.labelSet.service.emptyHelp : catalogContext.labelSet.laborRate.emptyHelp}
-                          </p>
-                        </div>
-                        {!searchTerm && (
-                          <button onClick={() => activeTab === 'labor' ? setIsNewLaborOpen(true) : setIsNewMaterialOpen(true)} className="mt-2 px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap">
-                            <Plus className="w-4 h-4" />{activeTab === 'materials' ? catalogContext.labelSet.material.createLabel : activeTab === 'services' ? catalogContext.labelSet.service.createLabel : catalogContext.labelSet.laborRate.createLabel}
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )}
+                }
               </tbody>
             </table>
           </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-4 py-20 px-6 text-center">
+              <Package className="w-10 h-10 text-secondary opacity-20" />
+              <div>
+                <p className="text-xl font-bold text-primary">
+                  {searchTerm ? 'Aucun élément trouvé' : activeTab === 'materials' ? catalogContext.labelSet.material.emptyLabel : activeTab === 'services' ? catalogContext.labelSet.service.emptyLabel : catalogContext.labelSet.laborRate.emptyLabel}
+                </p>
+                <p className="text-secondary mt-1">
+                  {searchTerm ? 'Essayez de modifier vos critères.' : activeTab === 'materials' ? catalogContext.labelSet.material.emptyHelp : activeTab === 'services' ? catalogContext.labelSet.service.emptyHelp : catalogContext.labelSet.laborRate.emptyHelp}
+                </p>
+              </div>
+              {!searchTerm && (
+                <button onClick={() => activeTab === 'labor' ? setIsNewLaborOpen(true) : setIsNewMaterialOpen(true)} className="btn-primary mt-2 inline-flex items-center gap-2 px-6 py-3 text-sm">
+                  <Plus className="w-4 h-4" />{activeTab === 'materials' ? catalogContext.labelSet.material.createLabel : activeTab === 'services' ? catalogContext.labelSet.service.createLabel : catalogContext.labelSet.laborRate.createLabel}
+                </button>
+              )}
+            </div>
+          )}
+          <PaginationFooter />
         </div>
       )}
 
@@ -2186,7 +2265,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
-                {filteredPrestations.length > 0 ? filteredPrestations.map(item => (
+                {filteredPrestations.length > 0 ? paginatedPrestations.map(item => (
                   <tr key={item.id} className="hover:bg-accent/5 transition-colors group">
                     <td className="px-6 py-4 min-w-[200px]">
                       <p className="font-semibold text-primary">{item.name}</p>
@@ -2250,6 +2329,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
               </tbody>
             </table>
           </div>
+          <PaginationFooter />
         </div>
       )}
       {/* Table - Fournisseurs */}
@@ -2269,10 +2349,8 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
-                {suppliers.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).length > 0
-                  ? suppliers
-                      .filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
-                      .map(supplier => (
+                {filteredSuppliers.length > 0
+                  ? paginatedSuppliers.map(supplier => (
                     <tr key={supplier.id} className="hover:bg-accent/5 transition-colors group">
                       <td className="px-6 py-4">
                         <p className="font-semibold text-primary">{supplier.name}</p>
@@ -2337,6 +2415,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
               </tbody>
             </table>
           </div>
+          <PaginationFooter />
         </div>
       )}
     </main>

@@ -17,7 +17,7 @@ export default async function ContractSignPage({ params }: { params: { token: st
       id, title, contract_type, organization_id, counterparty_name,
       status, client_signed_at, pdf_reference, pdf_generated_at, quote_id,
       client:clients(first_name, last_name, contact_name),
-      quote:quotes(id, number, title, total_ttc, status)
+      quote:quotes(id, number, title, total_ttc, status, signature_token)
     `)
     .eq('signature_token', params.token)
     .single()
@@ -44,6 +44,9 @@ export default async function ContractSignPage({ params }: { params: { token: st
   const linkedQuote = quoteRaw && !['accepted', 'converted', 'refused'].includes(quoteRaw.status ?? '')
     ? { id: quoteRaw.id, number: quoteRaw.number, title: quoteRaw.title, total_ttc: quoteRaw.total_ttc }
     : null
+  const linkedQuoteForDownload = quoteRaw
+    ? { id: quoteRaw.id, accepted: ['accepted', 'converted'].includes(quoteRaw.status ?? '') }
+    : null
 
   return (
     <ContractSignClient
@@ -60,6 +63,7 @@ export default async function ContractSignPage({ params }: { params: { token: st
       signedAt={contract.client_signed_at}
       archived={archived}
       linkedQuote={linkedQuote}
+      linkedQuoteForDownload={linkedQuoteForDownload}
     />
   )
 }

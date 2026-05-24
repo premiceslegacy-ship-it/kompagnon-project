@@ -7,7 +7,19 @@ const RECENT_ACTIVITY_DAYS = 7
 
 export type UrgentItem = {
   id: string
-  type: 'overdue_invoice' | 'invoice_to_follow_up' | 'pending_quote' | 'pending_recurring' | 'balance_due' | 'installment_due' | 'recently_sent'
+  type:
+    | 'overdue_invoice'
+    | 'invoice_to_follow_up'
+    | 'pending_quote'
+    | 'pending_recurring'
+    | 'balance_due'
+    | 'installment_due'
+    | 'recently_sent'
+    | 'task_due'
+    | 'planning_slot'
+    | 'missing_pointage'
+    | 'chantier_profitability'
+    | 'task_completed'
   label: string
   subtype?: 'recurring_invoice' | 'auto_reminder_invoice' | 'auto_reminder_quote'
   title?: string | null
@@ -17,6 +29,7 @@ export type UrgentItem = {
   clientName?: string | null
   invoiceId?: string | null
   recurringId?: string | null
+  chantierId?: string | null
   rank?: number | null
 }
 
@@ -93,6 +106,13 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
     { data: recentAutoSent },
     { data: recentAutoReminders },
     { data: recentRemindersSent },
+    { data: dueTasks },
+    { data: todayPlanningSlots },
+    { data: yesterdayPlanningSlots },
+    { data: yesterdayPointages },
+    { data: orgLabor },
+    { data: activeChantiersForRisk },
+    { data: recentCompletedTasks },
   ] = await Promise.all([
     // Factures du mois - filtre sur issue_date (date d'émission réelle, pas de création du brouillon)
     supabase
@@ -121,7 +141,8 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       .eq('organization_id', orgId)
       .eq('is_archived', false)
       .in('status', ['sent', 'viewed'])
-      .order('sent_at'),
+      .order('sent_at')
+      .limit(100),
 
     // Brouillons récurrents en attente de confirmation avant envoi
     supabase
@@ -201,6 +222,78 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       .select('invoice_id, quote_id, sent_at')
       .eq('organization_id', orgId)
       .gte('sent_at', followUpCutoff),
+
+    // Tâches arrivées à échéance
+    supabase
+      .from('chantier_taches')
+      .select(`
+        id, title, due_date,
+        chantier:chantiers!inner(id, title, organization_id, is_archived, status)
+      `)
+      .eq('chantier.organization_id', orgId)
+      .eq('chantier.is_archived', false)
+      .not('chantier.status', 'in', '("termine","annule")')
+      .not('status', 'eq', 'termine')
+      .not('due_date', 'is', null)
+      .lte('due_date', today)
+      .order('due_date')
+      .limit(5),
+
+    // Créneaux chantier du jour
+    supabase
+      .from('chantier_plannings')
+      .select(`
+        id, chantier_id, planned_date, start_time, end_time, label,
+        chantier:chantiers!inner(id, title, organization_id, is_archived, status)
+      `)
+      .eq('chantier.organization_id', orgId)
+      .eq('chantier.is_archived', false)
+      .not('chantier.status', 'in', '("termine","annule")')
+      .eq('planned_date', today)
+      .order('start_time', { ascending: true, nullsFirst: false })
+      .limit(5),
+
+    // Créneaux d'hier sans pointage associé
+    supabase
+      .from('chantier_plannings')
+      .select(`
+        id, chantier_id, planned_date, member_id, label,
+        chantier:chantiers!inner(id, title, organization_id, is_archived, status)
+      `)
+      .eq('chantier.organization_id', orgId)
+      .eq('chantier.is_archived', false)
+      .not('chantier.status', 'in', '("termine","annule")')
+      .eq('planned_date', dateParis(now.getTime() - 24 * 60 * 60 * 1000))
+      .limit(5),
+
+    supabase
+      .from('chantier_pointages')
+      .select('id, chantier_id, date, member_id')
+      .eq('date', dateParis(now.getTime() - 24 * 60 * 60 * 1000)),
+
+    supabase
+      .from('organizations')
+      .select('default_labor_cost_per_hour, default_hourly_rate')
+      .eq('id', orgId)
+      .single(),
+
+    supabase
+      .from('chantiers')
+      .select('id, title, budget_ht')
+      .eq('organization_id', orgId)
+      .eq('is_archived', false)
+      .in('status', ['planifie', 'en_cours'])
+      .gt('budget_ht', 0)
+      .limit(50),
+
+    supabase
+      .from('activity_log')
+      .select('id, created_at, metadata')
+      .eq('organization_id', orgId)
+      .eq('action', 'chantier_task.completed')
+      .gte('created_at', recentActivityCutoff)
+      .order('created_at', { ascending: false })
+      .limit(5),
   ])
 
   // IDs des factures/devis déjà relancés dans les 48h — on les exclut des urgences
@@ -235,7 +328,7 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
     })
   }
 
-  // CA prévisionnel = toutes les factures émises ce mois (sent + partial + paid), en TTC.
+  // Facturé TTC = toutes les factures émises ce mois (sent + partial + paid), en TTC.
   // L'encaissé réel reste affiché séparément dans le dashboard.
   const caMois = monthInvoices
     ?.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0) ?? 0
@@ -252,6 +345,44 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
   const staleQuotes = (pendingQuotes ?? [])
     .filter(q => q.sent_at && q.sent_at < followUpCutoff)
     .slice(0, 5)
+
+  const riskChantierIds = (activeChantiersForRisk ?? []).map(c => c.id)
+  let chantierRiskItems: UrgentItem[] = []
+  if (riskChantierIds.length > 0) {
+    const [{ data: expenses }, { data: chantierPointages }] = await Promise.all([
+      supabase
+        .from('chantier_expenses')
+        .select('chantier_id, amount_ht')
+        .in('chantier_id', riskChantierIds),
+      supabase
+        .from('chantier_pointages')
+        .select('chantier_id, hours, rate_snapshot')
+        .in('chantier_id', riskChantierIds),
+    ])
+    const fallbackRate = orgLabor?.default_labor_cost_per_hour
+      ?? (orgLabor?.default_hourly_rate ? orgLabor.default_hourly_rate * 0.5 : 0)
+    const costs: Record<string, number> = {}
+    for (const exp of expenses ?? []) {
+      costs[exp.chantier_id] = (costs[exp.chantier_id] ?? 0) + (exp.amount_ht ?? 0)
+    }
+    for (const p of chantierPointages ?? []) {
+      costs[p.chantier_id] = (costs[p.chantier_id] ?? 0) + (p.hours ?? 0) * (p.rate_snapshot ?? fallbackRate)
+    }
+    chantierRiskItems = (activeChantiersForRisk ?? [])
+      .filter(c => (costs[c.id] ?? 0) >= (c.budget_ht ?? 0) * 0.9)
+      .slice(0, 5)
+      .map(c => ({
+        id: `chantier-risk-${c.id}`,
+        type: 'chantier_profitability' as const,
+        label: `Rentabilité à surveiller · ${Math.round(((costs[c.id] ?? 0) / (c.budget_ht ?? 1)) * 100)}% du budget`,
+        title: c.title,
+        amount: null,
+        date: null,
+        clientEmail: null,
+        clientName: c.title,
+        chantierId: c.id,
+      }))
+  }
 
   const urgentItems: UrgentItem[] = [
     ...(overdueInvoices ?? []).filter(inv => !recentlyRemindedInvoiceIds.has(inv.id)).map(inv => {
@@ -358,6 +489,59 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
         rank: r.rank,
       }
     }),
+    ...(recentCompletedTasks ?? []).map((log: any) => ({
+      id: `task-completed-${log.id}`,
+      type: 'task_completed' as const,
+      label: `${log.metadata?.actor_name ?? 'Un membre'} a terminé : ${log.metadata?.task_title ?? 'Tâche'}`,
+      title: log.metadata?.chantier_title ?? null,
+      amount: null,
+      date: log.created_at,
+      clientEmail: null,
+      clientName: log.metadata?.chantier_title ?? null,
+      chantierId: log.metadata?.chantier_id ?? null,
+    })),
+    ...(dueTasks ?? []).map((t: any) => ({
+      id: `task-${t.id}`,
+      type: 'task_due' as const,
+      label: `Tâche à faire · ${t.title}`,
+      title: t.chantier?.title ?? null,
+      amount: null,
+      date: t.due_date,
+      clientEmail: null,
+      clientName: t.chantier?.title ?? null,
+      chantierId: t.chantier?.id ?? null,
+    })),
+    ...(todayPlanningSlots ?? []).map((slot: any) => ({
+      id: `planning-${slot.id}`,
+      type: 'planning_slot' as const,
+      label: slot.start_time ? `${slot.label} · ${slot.start_time.slice(0, 5)}` : slot.label,
+      title: slot.chantier?.title ?? null,
+      amount: null,
+      date: slot.planned_date,
+      clientEmail: null,
+      clientName: slot.chantier?.title ?? null,
+      chantierId: slot.chantier?.id ?? null,
+    })),
+    ...(yesterdayPlanningSlots ?? [])
+      .filter((slot: any) => {
+        const pointageKeys = new Set((yesterdayPointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}:${p.member_id ?? '*'}`))
+        const pointageDayKeys = new Set((yesterdayPointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}`))
+        const directKey = `${slot.chantier_id}:${slot.planned_date}:${slot.member_id ?? '*'}`
+        const dayKey = `${slot.chantier_id}:${slot.planned_date}`
+        return !pointageKeys.has(directKey) && !pointageDayKeys.has(dayKey)
+      })
+      .map((slot: any) => ({
+        id: `missing-pointage-${slot.id}`,
+        type: 'missing_pointage' as const,
+        label: `Pointage à vérifier · ${slot.label}`,
+        title: slot.chantier?.title ?? null,
+        amount: null,
+        date: slot.planned_date,
+        clientEmail: null,
+        clientName: slot.chantier?.title ?? null,
+        chantierId: slot.chantier?.id ?? null,
+      })),
+    ...chantierRiskItems,
   ]
 
   return {
@@ -459,4 +643,40 @@ export async function getDashboardSetupReadiness(): Promise<DashboardSetupReadin
       teamMembers: teamCount ?? 0,
     },
   }
+}
+
+export async function getPrevMonthKPIs(month?: string): Promise<Pick<DashboardStats, 'caMois' | 'encaisseMois'>> {
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+
+  if (!orgId) return { caMois: 0, encaisseMois: 0 }
+
+  const now = new Date()
+  let year: number, mon: number
+  if (month && /^\d{4}-\d{2}$/.test(month)) {
+    ;[year, mon] = month.split('-').map(Number)
+    mon = mon - 1
+  } else {
+    year = now.getFullYear()
+    mon = now.getMonth()
+  }
+  const firstOfMonth = new Date(year, mon, 1).toISOString().split('T')[0]
+  const firstOfNextMonth = new Date(year, mon + 1, 1).toISOString().split('T')[0]
+
+  const { data: monthInvoices } = await supabase
+    .from('invoices')
+    .select('total_ttc, total_paid, status')
+    .eq('organization_id', orgId)
+    .gte('issue_date', firstOfMonth)
+    .lt('issue_date', firstOfNextMonth)
+    .in('status', ['sent', 'partial', 'paid'])
+
+  const caMois = monthInvoices?.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0) ?? 0
+  const encaisseMois = monthInvoices?.reduce((sum, inv) => {
+    if (inv.status === 'paid') return sum + (inv.total_ttc ?? 0)
+    if (inv.status === 'partial') return sum + (inv.total_paid ?? 0)
+    return sum
+  }, 0) ?? 0
+
+  return { caMois, encaisseMois }
 }

@@ -43,6 +43,7 @@ import IndividualMembersSection from './IndividualMembersSection'
 import JalonsTab from './JalonsTab'
 import type { ChantierProfitability } from '@/lib/data/queries/chantier-profitability'
 import type { ChantierJalon } from '@/lib/data/queries/chantier-jalons'
+import type { IndividualMember } from '@/lib/data/queries/members'
 import ChantierAIAssistant from '@/components/ai/ChantierAIAssistant'
 import SituationsSection from '@/components/situations/SituationsSection'
 import type { SituationsSummary } from '@/lib/data/queries/invoices'
@@ -167,18 +168,38 @@ function SortableTache({
   onStatusToggle,
   onDelete,
   onSaveNote,
+  onSaveAssignments,
+  onRenameTitle,
+  equipes,
+  members,
   canEdit,
 }: {
   tache: Tache
   onStatusToggle: (tache: Tache) => void
   onDelete: (tache: Tache) => void
   onSaveNote: (tache: Tache, note: string) => Promise<void>
+  onSaveAssignments: (tache: Tache, equipeIds: string[], memberIds: string[]) => Promise<void>
+  onRenameTitle: (tache: Tache, title: string) => Promise<void>
+  equipes: Equipe[]
+  members: IndividualMember[]
   canEdit: boolean
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tache.id })
   const [noteOpen, setNoteOpen] = useState(false)
   const [noteVal, setNoteVal] = useState(tache.progress_note ?? '')
   const [noteSaving, setNoteSaving] = useState(false)
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [assignmentSaving, setAssignmentSaving] = useState(false)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleVal, setTitleVal] = useState(tache.title)
+  const [titleSaving, setTitleSaving] = useState(false)
+  const titleInputRef = useRef<HTMLInputElement>(null)
+  const [selectedEquipeIds, setSelectedEquipeIds] = useState<Set<string>>(
+    () => new Set((tache.assignments ?? []).map(a => a.equipe_id).filter(Boolean) as string[]),
+  )
+  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(
+    () => new Set((tache.assignments ?? []).map(a => a.member_id).filter(Boolean) as string[]),
+  )
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -194,6 +215,37 @@ function SortableTache({
     await onSaveNote(tache, noteVal)
     setNoteSaving(false)
     setNoteOpen(false)
+  }
+
+  const toggleSet = (setState: React.Dispatch<React.SetStateAction<Set<string>>>, id: string) => {
+    setState(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleSaveAssignments = async () => {
+    setAssignmentSaving(true)
+    await onSaveAssignments(tache, Array.from(selectedEquipeIds), Array.from(selectedMemberIds))
+    setAssignmentSaving(false)
+    setAssignOpen(false)
+  }
+
+  const handleStartEditTitle = () => {
+    setTitleVal(tache.title)
+    setEditingTitle(true)
+    setTimeout(() => titleInputRef.current?.select(), 0)
+  }
+
+  const handleSaveTitle = async () => {
+    const trimmed = titleVal.trim()
+    if (!trimmed || trimmed === tache.title) { setEditingTitle(false); return }
+    setTitleSaving(true)
+    await onRenameTitle(tache, trimmed)
+    setTitleSaving(false)
+    setEditingTitle(false)
   }
 
   return (
@@ -222,14 +274,44 @@ function SortableTache({
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <span className={`font-medium text-sm ${tache.status === 'termine' ? 'line-through text-secondary' : 'text-primary'}`}>
-            {tache.title}
-          </span>
-          {tache.due_date && (
+          {editingTitle ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                ref={titleInputRef}
+                value={titleVal}
+                onChange={e => setTitleVal(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSaveTitle(); if (e.key === 'Escape') setEditingTitle(false) }}
+                className="input flex-1 text-sm py-0.5 px-2 h-7"
+                disabled={titleSaving}
+                autoFocus
+              />
+              <button onClick={handleSaveTitle} disabled={titleSaving} className="text-accent hover:text-accent/80 flex-shrink-0">
+                {titleSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              </button>
+              <button onClick={() => setEditingTitle(false)} className="text-secondary hover:text-primary flex-shrink-0">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <span className={`font-medium text-sm ${tache.status === 'termine' ? 'line-through text-secondary' : 'text-primary'}`}>
+              {tache.title}
+            </span>
+          )}
+          {!editingTitle && tache.due_date && (
             <span className="ml-2 text-xs text-secondary">· échéance {fmtDue(tache.due_date)}</span>
           )}
           {tache.progress_note && !noteOpen && (
             <p className="text-xs text-secondary mt-0.5 italic truncate">{tache.progress_note}</p>
+          )}
+          {(tache.assignments?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {tache.assignments.map(a => (
+                <span key={a.id} className="status-pill status-pill-info px-2 py-0.5 text-[10px] font-semibold">
+                  {a.equipe_id ? <Users className="w-3 h-3" /> : <User className="w-3 h-3" />}
+                  {a.label}
+                </span>
+              ))}
+            </div>
           )}
         </div>
 
@@ -241,6 +323,27 @@ function SortableTache({
             title="Note d'avancement"
           >
             <FileText className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        {canEdit && (
+          <button
+            onClick={() => setAssignOpen(v => !v)}
+            className={`opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-xs px-2 py-1 rounded-lg border ${assignOpen ? 'bg-accent/10 border-accent/40 text-accent' : 'border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
+            title="Assigner"
+          >
+            <Users className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        {/* Rename */}
+        {canEdit && !editingTitle && (
+          <button
+            onClick={handleStartEditTitle}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-secondary hover:text-primary flex-shrink-0"
+            title="Renommer"
+          >
+            <Pencil className="w-3.5 h-3.5" />
           </button>
         )}
 
@@ -271,6 +374,59 @@ function SortableTache({
             <button onClick={() => setNoteOpen(false)} className="text-xs text-secondary hover:text-primary px-2 py-1">Annuler</button>
             <button onClick={handleSaveNote} disabled={noteSaving} className="btn-primary text-xs py-1 px-3">
               {noteSaving ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {assignOpen && (
+        <div className="px-4 pb-3 border-t border-[var(--elevation-border)] pt-3 bg-[var(--elevation-1)] space-y-3">
+          <p className="text-xs font-semibold text-secondary">Assignations</p>
+          <div className="grid md:grid-cols-2 gap-3">
+            <div>
+              <p className="text-[11px] font-bold text-secondary uppercase tracking-wider mb-2">Équipes</p>
+              <div className="space-y-1 max-h-36 overflow-y-auto">
+                {equipes.length === 0 ? (
+                  <p className="text-xs text-secondary">Aucune équipe.</p>
+                ) : equipes.map(equipe => (
+                  <label key={equipe.id} className="flex items-center gap-2 text-sm text-primary px-2 py-1.5 rounded-lg hover:bg-base cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedEquipeIds.has(equipe.id)}
+                      onChange={() => toggleSet(setSelectedEquipeIds, equipe.id)}
+                    />
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: equipe.color }} />
+                    {equipe.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold text-secondary uppercase tracking-wider mb-2">Membres</p>
+              <div className="space-y-1 max-h-36 overflow-y-auto">
+                {members.length === 0 ? (
+                  <p className="text-xs text-secondary">Aucun membre.</p>
+                ) : members.map(member => {
+                  const label = [member.prenom, member.name].filter(Boolean).join(' ')
+                  return (
+                    <label key={member.id} className="flex items-center gap-2 text-sm text-primary px-2 py-1.5 rounded-lg hover:bg-base cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedMemberIds.has(member.id)}
+                        onChange={() => toggleSet(setSelectedMemberIds, member.id)}
+                      />
+                      <User className="w-3.5 h-3.5 text-secondary" />
+                      {label || member.email || 'Membre'}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setAssignOpen(false)} className="text-xs text-secondary hover:text-primary px-2 py-1">Annuler</button>
+            <button onClick={handleSaveAssignments} disabled={assignmentSaving} className="btn-primary text-xs py-1 px-3">
+              {assignmentSaving ? 'Enregistrement…' : 'Enregistrer'}
             </button>
           </div>
         </div>
@@ -1508,6 +1664,9 @@ export default function ChantierDetailClient({
   // Tâches
   const [newTacheTitle, setNewTacheTitle] = useState('')
   const [newTacheDue, setNewTacheDue] = useState('')
+  const [newTacheEquipeIds, setNewTacheEquipeIds] = useState<Set<string>>(new Set())
+  const [newTacheMemberIds, setNewTacheMemberIds] = useState<Set<string>>(new Set())
+  const [showNewTacheAssignments, setShowNewTacheAssignments] = useState(false)
   const [tacheLoading, setTacheLoading] = useState(false)
 
   // Pointages
@@ -1668,6 +1827,27 @@ export default function ChantierDetailClient({
 
   const totalHours = pointages.reduce((s, p) => s + p.hours, 0)
   const selectedPointageEquipe = initialChantierEquipes.find(e => e.id === ptEquipeId) ?? null
+  const allAssignableMembers = useMemo(() => {
+    const map = new Map<string, IndividualMember>()
+    const equipeMembers: IndividualMember[] = allEquipes.flatMap(e => e.membres.map(member => ({
+      id: member.id,
+      organization_id: e.organization_id,
+      equipe_id: member.equipe_id,
+      prenom: member.prenom,
+      name: member.name,
+      email: member.email,
+      role_label: member.role_label,
+      taux_horaire: member.taux_horaire,
+      profile_id: member.profile_id,
+      created_at: e.created_at,
+    })))
+    for (const member of [...initialIndividualMembers, ...orgPhantomMembers, ...equipeMembers]) {
+      map.set(member.id, member)
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      [a.prenom, a.name].filter(Boolean).join(' ').localeCompare([b.prenom, b.name].filter(Boolean).join(' '), 'fr')
+    )
+  }, [initialIndividualMembers, orgPhantomMembers, allEquipes])
 
   // Compteurs dérivés du state vivant (pas du snapshot chantier initial)
   const tachesCount = taches.length
@@ -1683,7 +1863,14 @@ export default function ChantierDetailClient({
     setTacheLoading(true)
     const titleToAdd = newTacheTitle.trim()
     const dueToAdd = newTacheDue || null
-    const { tacheId, error } = await createTache(chantier.id, { title: titleToAdd, dueDate: dueToAdd })
+    const equipeIdsToAdd = Array.from(newTacheEquipeIds)
+    const memberIdsToAdd = Array.from(newTacheMemberIds)
+    const { tacheId, error } = await createTache(chantier.id, {
+      title: titleToAdd,
+      dueDate: dueToAdd,
+      equipeIds: equipeIdsToAdd,
+      memberIds: memberIdsToAdd,
+    })
     setTacheLoading(false)
     if (!error && tacheId) {
       setTaches(prev => [...prev, {
@@ -1699,9 +1886,36 @@ export default function ChantierDetailClient({
         completed_at: null,
         created_at: new Date().toISOString(),
         jalon_id: null,
+        assignments: [
+          ...equipeIdsToAdd.map(id => {
+            const equipe = allEquipes.find(e => e.id === id)
+            return {
+              id: `temp-eq-${id}`,
+              tache_id: tacheId,
+              equipe_id: id,
+              member_id: null,
+              label: equipe?.name ?? 'Équipe',
+              color: equipe?.color ?? null,
+            }
+          }),
+          ...memberIdsToAdd.map(id => {
+            const member = allAssignableMembers.find(m => m.id === id)
+            return {
+              id: `temp-m-${id}`,
+              tache_id: tacheId,
+              equipe_id: null,
+              member_id: id,
+              label: [member?.prenom, member?.name].filter(Boolean).join(' ') || member?.email || 'Membre',
+              color: null,
+            }
+          }),
+        ],
       }])
       setNewTacheTitle('')
       setNewTacheDue('')
+      setNewTacheEquipeIds(new Set())
+      setNewTacheMemberIds(new Set())
+      setShowNewTacheAssignments(false)
     }
   }
 
@@ -1719,10 +1933,48 @@ export default function ChantierDetailClient({
     await deleteTache(tache.id, chantier.id)
   }
 
+  const handleRenameTache = async (tache: Tache, title: string) => {
+    if (!canEditChantier) return
+    setTaches(prev => prev.map(t => t.id === tache.id ? { ...t, title } : t))
+    await updateTache(tache.id, chantier.id, { title })
+  }
+
   const handleSaveTacheNote = async (tache: Tache, note: string) => {
     if (!canEditChantier) return
     setTaches(prev => prev.map(t => t.id === tache.id ? { ...t, progress_note: note || null } : t))
     await updateTache(tache.id, chantier.id, { progressNote: note || null })
+  }
+
+  const handleSaveTacheAssignments = async (tache: Tache, equipeIds: string[], memberIds: string[]) => {
+    if (!canEditChantier) return
+    setTaches(prev => prev.map(t => t.id === tache.id ? {
+      ...t,
+      assignments: [
+        ...equipeIds.map(id => {
+          const equipe = allEquipes.find(e => e.id === id)
+          return {
+            id: `local-eq-${id}`,
+            tache_id: tache.id,
+            equipe_id: id,
+            member_id: null,
+            label: equipe?.name ?? 'Équipe',
+            color: equipe?.color ?? null,
+          }
+        }),
+        ...memberIds.map(id => {
+          const member = allAssignableMembers.find(m => m.id === id)
+          return {
+            id: `local-m-${id}`,
+            tache_id: tache.id,
+            equipe_id: null,
+            member_id: id,
+            label: [member?.prenom, member?.name].filter(Boolean).join(' ') || member?.email || 'Membre',
+            color: null,
+          }
+        }),
+      ],
+    } : t))
+    await updateTache(tache.id, chantier.id, { equipeIds, memberIds })
   }
 
   const handleDragEnd = async (event: DragEndEvent) => {
@@ -1790,6 +2042,7 @@ export default function ChantierDetailClient({
         description: null, status: 'a_faire', position: prev.length,
         assigned_to: null, due_date: null, progress_note: null,
         completed_at: null, created_at: new Date().toISOString(), jalon_id: null,
+        assignments: [],
       }])
       setTaskSuggestions(prev => {
         const next = prev.filter(s => s._id !== id)
@@ -1815,6 +2068,7 @@ export default function ChantierDetailClient({
           description: null, status: 'a_faire', position: startPos + i,
           assigned_to: null, due_date: null, progress_note: null,
           completed_at: null, created_at: new Date().toISOString(), jalon_id: null,
+          assignments: [],
         })
       }
     }
@@ -2429,29 +2683,14 @@ export default function ChantierDetailClient({
         </div>
       )}
 
-      {/* Tabs - select sur mobile, onglets sur desktop */}
+      {/* Tabs - onglets scrollables sur tous les écrans */}
       <div>
-        {/* Mobile : select */}
-        <div className="sm:hidden">
-          <select
-            value={tab}
-            onChange={e => setTab(e.target.value as Tab)}
-            className="w-full px-4 py-2.5 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none"
-          >
-            {tabs.map(t => (
-              <option key={t.id} value={t.id}>
-                {t.label}{t.count !== undefined ? ` (${t.count})` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-        {/* Desktop : onglets */}
-        <div className="hidden sm:flex gap-1 border-b border-[var(--elevation-border)] overflow-x-auto">
+        <div className="flex gap-0.5 border-b border-[var(--elevation-border)] overflow-x-auto scrollbar-none">
           {tabs.map(t => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`px-4 py-2.5 text-sm font-semibold transition-colors flex items-center gap-1.5 border-b-2 -mb-px whitespace-nowrap flex-shrink-0 ${
+              className={`px-3 sm:px-4 py-2.5 text-sm font-semibold transition-colors flex items-center gap-1.5 border-b-2 -mb-px whitespace-nowrap flex-shrink-0 ${
                 tab === t.id
                   ? 'border-accent text-primary'
                   : 'border-transparent text-secondary hover:text-primary'
@@ -2473,23 +2712,87 @@ export default function ChantierDetailClient({
         <div className="space-y-4">
           {/* Add form */}
           {canEditChantier && (
-            <form onSubmit={handleAddTache} className="card p-4 flex flex-col sm:flex-row gap-3">
-              <input
-                className="input flex-1"
-                placeholder="Ajouter une tâche..."
-                value={newTacheTitle}
-                onChange={e => setNewTacheTitle(e.target.value)}
-                required
-              />
-              <input
-                type="date"
-                className="input sm:w-40"
-                value={newTacheDue}
-                onChange={e => setNewTacheDue(e.target.value)}
-              />
-              <button type="submit" disabled={tacheLoading} className="btn-primary flex items-center gap-2 whitespace-nowrap">
-                <Plus className="w-4 h-4" /> Ajouter
-              </button>
+            <form onSubmit={handleAddTache} className="card p-4 space-y-3">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <input
+                  className="input flex-1"
+                  placeholder="Ajouter une tâche..."
+                  value={newTacheTitle}
+                  onChange={e => setNewTacheTitle(e.target.value)}
+                  required
+                />
+                <input
+                  type="date"
+                  className="input sm:w-40"
+                  value={newTacheDue}
+                  onChange={e => setNewTacheDue(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewTacheAssignments(v => !v)}
+                  className={`btn-secondary flex items-center justify-center gap-2 whitespace-nowrap ${showNewTacheAssignments ? 'border-accent/40 text-accent' : ''}`}
+                >
+                  <Users className="w-4 h-4" />
+                  Assigner
+                </button>
+                <button type="submit" disabled={tacheLoading} className="btn-primary flex items-center justify-center gap-2 whitespace-nowrap">
+                  <Plus className="w-4 h-4" /> Ajouter
+                </button>
+              </div>
+
+              {showNewTacheAssignments && (
+                <div className="grid md:grid-cols-2 gap-4 pt-3 border-t border-[var(--elevation-border)]">
+                  <div>
+                    <p className="text-[11px] font-bold text-secondary uppercase tracking-wider mb-2">Équipes</p>
+                    <div className="flex flex-wrap gap-2">
+                      {allEquipes.length === 0 ? (
+                        <p className="text-xs text-secondary">Aucune équipe créée.</p>
+                      ) : allEquipes.map(equipe => (
+                        <label key={equipe.id} className="px-3 py-1.5 rounded-lg border border-[var(--elevation-border)] bg-[var(--elevation-1)] text-sm text-primary flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={newTacheEquipeIds.has(equipe.id)}
+                            onChange={() => setNewTacheEquipeIds(prev => {
+                              const next = new Set(prev)
+                              if (next.has(equipe.id)) next.delete(equipe.id)
+                              else next.add(equipe.id)
+                              return next
+                            })}
+                          />
+                          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: equipe.color }} />
+                          {equipe.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-bold text-secondary uppercase tracking-wider mb-2">Membres</p>
+                    <div className="flex flex-wrap gap-2">
+                      {allAssignableMembers.length === 0 ? (
+                        <p className="text-xs text-secondary">Aucun membre créé.</p>
+                      ) : allAssignableMembers.map(member => {
+                        const label = [member.prenom, member.name].filter(Boolean).join(' ') || member.email || 'Membre'
+                        return (
+                          <label key={member.id} className="px-3 py-1.5 rounded-lg border border-[var(--elevation-border)] bg-[var(--elevation-1)] text-sm text-primary flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={newTacheMemberIds.has(member.id)}
+                              onChange={() => setNewTacheMemberIds(prev => {
+                                const next = new Set(prev)
+                                if (next.has(member.id)) next.delete(member.id)
+                                else next.add(member.id)
+                                return next
+                              })}
+                            />
+                            <User className="w-3.5 h-3.5 text-secondary" />
+                            {label}
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
             </form>
           )}
 
@@ -2642,6 +2945,10 @@ export default function ChantierDetailClient({
                     onStatusToggle={handleStatusToggle}
                     onDelete={handleDeleteTache}
                     onSaveNote={handleSaveTacheNote}
+                    onSaveAssignments={handleSaveTacheAssignments}
+                    onRenameTitle={handleRenameTache}
+                    equipes={allEquipes}
+                    members={allAssignableMembers}
                     canEdit={canEditChantier}
                   />
                 ))}

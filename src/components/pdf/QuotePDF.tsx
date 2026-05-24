@@ -280,116 +280,113 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
           </View>
         ))}
 
-        {/* ── Totaux + Conditions + Signature ── */}
-        <View wrap={false}>
-
-          <View style={S.totalsContainer}>
-            <View style={S.totalsBox}>
-              <View style={S.totalsRow}>
-                <Text style={S.totalsLabel}>Total HT</Text>
-                <Text style={S.totalsValue}>{fmt(totalHt, quote.currency)}</Text>
-              </View>
-              {isVatSubject ? (
-                Object.entries(vatMap).map(([rate, amount]) => (
-                  <View key={rate} style={S.totalsRow}>
-                    <Text style={S.totalsLabel}>TVA {rate}%</Text>
-                    <Text style={S.totalsValue}>{fmt(amount, quote.currency)}</Text>
-                  </View>
-                ))
-              ) : (
-                <View style={S.totalsRow}>
-                  <Text style={S.totalsLabel}>TVA</Text>
-                  <Text style={[S.totalsValue, { color: DS.color.muted }]}>Non applicable</Text>
+        {/* ── Totaux ── */}
+        <View style={S.totalsContainer} wrap={false}>
+          <View style={S.totalsBox}>
+            <View style={S.totalsRow}>
+              <Text style={S.totalsLabel}>Total HT</Text>
+              <Text style={S.totalsValue}>{fmt(totalHt, quote.currency)}</Text>
+            </View>
+            {isVatSubject ? (
+              Object.entries(vatMap).map(([rate, amount]) => (
+                <View key={rate} style={S.totalsRow}>
+                  <Text style={S.totalsLabel}>TVA {rate}%</Text>
+                  <Text style={S.totalsValue}>{fmt(amount, quote.currency)}</Text>
                 </View>
-              )}
-              <View style={S.totalTtcRow}>
-                <Text style={S.totalTtcLabel}>{isVatSubject ? 'TOTAL TTC' : 'TOTAL HT'}</Text>
-                <Text style={S.totalTtcValue}>{fmt(totalTtc, quote.currency)}</Text>
+              ))
+            ) : (
+              <View style={S.totalsRow}>
+                <Text style={S.totalsLabel}>TVA</Text>
+                <Text style={[S.totalsValue, { color: DS.color.muted }]}>Non applicable</Text>
               </View>
-              {!isVatSubject && (
-                <Text style={S.vatExemptNotice}>TVA non applicable, art. 293B du CGI</Text>
-              )}
+            )}
+            <View style={S.totalTtcRow}>
+              <Text style={S.totalTtcLabel}>{isVatSubject ? 'TOTAL TTC' : 'TOTAL HT'}</Text>
+              <Text style={S.totalTtcValue}>{fmt(totalTtc, quote.currency)}</Text>
             </View>
+            {!isVatSubject && (
+              <Text style={S.vatExemptNotice}>TVA non applicable, art. 293B du CGI</Text>
+            )}
           </View>
+        </View>
 
-          <View style={S.bottomSection}>
-            <View style={S.conditionsBox}>
-              {quote.payment_conditions && (
-                <>
-                  <Text style={S.conditionsTitle}>Conditions de paiement</Text>
-                  <Text style={S.conditionsText}>{quote.payment_conditions}</Text>
-                </>
-              )}
-              {(organization.iban || organization.payment_terms_days) && (
-                <>
-                  <Text style={S.conditionsTitle}>Modalités de règlement</Text>
-                  {organization.payment_terms_days && (
-                    <Text style={S.conditionsText}>
-                      Règlement à {organization.payment_terms_days} jours à compter de la date de facturation.
-                    </Text>
-                  )}
-                  {organization.iban && (
-                    <Text style={S.conditionsText}>
-                      Virement · IBAN : {organization.iban}
-                      {organization.bic ? `  ·  BIC : ${organization.bic}` : ''}
-                      {organization.bank_name ? `  ·  ${organization.bank_name}` : ''}
-                    </Text>
-                  )}
-                  {organization.late_penalty_rate && (
-                    <Text style={S.conditionsText}>
-                      Pénalités de retard : {organization.late_penalty_rate}% par an.
-                    </Text>
-                  )}
-                  {organization.late_penalty_rate && isClientPro && (
-                    <Text style={S.conditionsText}>
-                      {organization.recovery_indemnity_text
-                        ?? "Conformément à l'article L441-10 du Code de commerce, une indemnité forfaitaire de 40 € pour frais de recouvrement est due de plein droit en cas de retard de paiement."}
-                    </Text>
-                  )}
-                  {organization.court_competent && (
-                    <Text style={S.conditionsText}>En cas de litige : {organization.court_competent}.</Text>
-                  )}
-                </>
-              )}
-            </View>
-            <View style={hasClientSignature ? [S.signatureBox, { minHeight: 118, justifyContent: 'flex-start' }] : S.signatureBox}>
-              {hasClientSignature ? (
-                <>
-                  <Text style={{
-                    fontFamily: DS.font.heading,
-                    fontWeight: 800,
-                    fontSize: DS.size.xxs,
-                    color: DS.color.black,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.7,
-                    marginBottom: DS.space.xs,
-                  }}>
-                    Bon pour accord
+        {/* ── Conditions + Signature ── */}
+        <View style={S.bottomSection}>
+          <View style={S.conditionsBox}>
+            {quote.payment_conditions && (
+              <>
+                <Text style={S.conditionsTitle}>Conditions de paiement</Text>
+                <Text style={S.conditionsText}>{quote.payment_conditions}</Text>
+              </>
+            )}
+            {(organization.iban || organization.payment_terms_days) && (
+              <>
+                <Text style={S.conditionsTitle}>Modalités de règlement</Text>
+                {organization.payment_terms_days && (
+                  <Text style={S.conditionsText}>
+                    Règlement à {organization.payment_terms_days} jours à compter de la date de facturation.
                   </Text>
+                )}
+                {organization.iban && (
+                  <Text style={S.conditionsText}>
+                    Virement · IBAN : {organization.iban}
+                    {organization.bic ? `  ·  BIC : ${organization.bic}` : ''}
+                    {organization.bank_name ? `  ·  ${organization.bank_name}` : ''}
+                  </Text>
+                )}
+                {organization.late_penalty_rate && (
+                  <Text style={S.conditionsText}>
+                    Pénalités de retard : {organization.late_penalty_rate}% par an.
+                  </Text>
+                )}
+                {organization.late_penalty_rate && isClientPro && (
+                  <Text style={S.conditionsText}>
+                    {organization.recovery_indemnity_text
+                      ?? "Conformément à l'article L441-10 du Code de commerce, une indemnité forfaitaire de 40 € pour frais de recouvrement est due de plein droit en cas de retard de paiement."}
+                  </Text>
+                )}
+                {organization.court_competent && (
+                  <Text style={S.conditionsText}>En cas de litige : {organization.court_competent}.</Text>
+                )}
+              </>
+            )}
+          </View>
+          <View style={hasClientSignature ? [S.signatureBox, { minHeight: 118, justifyContent: 'flex-start' }] : S.signatureBox}>
+            {hasClientSignature ? (
+              <>
+                <Text style={{
+                  fontFamily: DS.font.heading,
+                  fontWeight: 800,
+                  fontSize: DS.size.xxs,
+                  color: DS.color.black,
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.7,
+                  marginBottom: DS.space.xs,
+                }}>
+                  Bon pour accord
+                </Text>
+                <Text style={{ fontSize: DS.size.xxs, color: DS.color.secondary, marginBottom: 2 }}>
+                  Nom : <Text style={{ color: DS.color.black, fontFamily: DS.font.heading, fontWeight: 700 }}>{pdfText(quote.client_signatory_name ?? '')}</Text>
+                </Text>
+                {quote.client_signatory_role && (
                   <Text style={{ fontSize: DS.size.xxs, color: DS.color.secondary, marginBottom: 2 }}>
-                    Nom : <Text style={{ color: DS.color.black, fontFamily: DS.font.heading, fontWeight: 700 }}>{pdfText(quote.client_signatory_name ?? '')}</Text>
+                    Qualité : <Text style={{ color: DS.color.black, fontFamily: DS.font.heading, fontWeight: 700 }}>{pdfText(quote.client_signatory_role)}</Text>
                   </Text>
-                  {quote.client_signatory_role && (
-                    <Text style={{ fontSize: DS.size.xxs, color: DS.color.secondary, marginBottom: 2 }}>
-                      Qualité : <Text style={{ color: DS.color.black, fontFamily: DS.font.heading, fontWeight: 700 }}>{pdfText(quote.client_signatory_role)}</Text>
-                    </Text>
-                  )}
-                  <Text style={{ fontSize: DS.size.xxs, color: DS.color.secondary, marginBottom: 4 }}>
-                    Date : <Text style={{ color: DS.color.black, fontFamily: DS.font.heading, fontWeight: 700 }}>{quote.signed_at ? fmtDate(quote.signed_at) : ''}</Text>
-                  </Text>
-                  {quote.client_signature_image ? (
-                    <Image
-                      src={quote.client_signature_image}
-                      style={{ width: 130, height: 46, objectFit: 'contain', alignSelf: 'center', marginTop: 2 }}
-                    />
-                  ) : null}
-                </>
-              ) : (
-                <Text style={S.signatureLabel}>Bon pour accord, date et signature</Text>
-              )}
-            </View>
+                )}
+                <Text style={{ fontSize: DS.size.xxs, color: DS.color.secondary, marginBottom: 4 }}>
+                  Date : <Text style={{ color: DS.color.black, fontFamily: DS.font.heading, fontWeight: 700 }}>{quote.signed_at ? fmtDate(quote.signed_at) : ''}</Text>
+                </Text>
+                {quote.client_signature_image ? (
+                  <Image
+                    src={quote.client_signature_image}
+                    style={{ width: 130, height: 46, objectFit: 'contain', alignSelf: 'center', marginTop: 2 }}
+                  />
+                ) : null}
+              </>
+            ) : (
+              <Text style={S.signatureLabel}>Bon pour accord, date et signature</Text>
+            )}
           </View>
-
         </View>
 
         {/* ── Footer légal + pagination ── */}

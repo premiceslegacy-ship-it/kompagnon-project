@@ -114,8 +114,8 @@ async function createPrestationTypeFromDraft(
       quantity: line.quantity ?? 1,
       unit: line.unit || 'u',
       unit_price_ht: line.unit_price_ht ?? 0,
-      unit_cost_ht: 0,
-      is_internal: false,
+      unit_cost_ht: line.unit_cost_ht ?? 0,
+      is_internal: line.is_internal ?? ['labor', 'transport', 'equipment'].includes(line.item_type),
     }))
 
     const { error: linesErr } = await supabase

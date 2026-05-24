@@ -11,6 +11,7 @@ import { createIndividualMember } from '@/lib/data/mutations/members'
 import { getChantierIndividualMembers, getOrgIndividualMembers, type IndividualMember } from '@/lib/data/queries/members'
 import { getTeamMembers, type TeamMember } from '@/lib/data/queries/team'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIQuotaExceededError } from '@/lib/quota'
 import { getBusinessContext, formatBusinessContextForPrompt } from '@/lib/ai/business-context'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { todayParis } from '@/lib/utils'
@@ -807,6 +808,9 @@ ${canViewExpenses ? '' : '- Tu n\'as pas acces aux donnees financieres (couts, m
     const reply = assistantMsg?.content?.trim() ?? 'Je n\'ai pas pu générer de réponse.'
     return NextResponse.json({ reply, toolsExecuted: null })
   } catch (err) {
+    if (err instanceof AIQuotaExceededError) {
+      return NextResponse.json({ error: 'Quota mensuel de l\'assistant chantier atteint.' }, { status: 402 })
+    }
     if (err instanceof AIModuleDisabledError) {
       return NextResponse.json({ error: 'Module IA planning désactivé.' }, { status: 403 })
     }

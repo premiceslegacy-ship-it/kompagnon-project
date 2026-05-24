@@ -30,6 +30,7 @@ type AIQuoteDraftInput = {
       quantity: number
       unit?: string | null
       unit_price: number
+      unit_cost_ht?: number | null
       vat_rate?: number
       is_internal?: boolean
       is_estimated?: boolean
@@ -216,6 +217,7 @@ export async function createQuoteFromAIResult(aiQuote: AIQuoteDraftInput): Promi
         quantity: item.quantity,
         unit: item.unit ?? 'u',
         unit_price: item.unit_price,
+        unit_cost_ht: item.unit_cost_ht ?? null,
         vat_rate: item.vat_rate,
         position: ii + 1,
         is_internal: item.is_internal === true || looksInternalLine(section.title, item.description),

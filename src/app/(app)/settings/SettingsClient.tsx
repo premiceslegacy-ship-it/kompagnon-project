@@ -857,7 +857,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         if (activeTab === 'profil') {
             return (
                 <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8">
-                    <div><h2 className="text-2xl font-bold text-primary mb-6">Mon Profil</h2>
+                    <div><h2 className="text-2xl font-bold text-primary mb-6">Mon profil</h2>
                         <div className="flex flex-col md:flex-row gap-8">
                             <div className="flex-shrink-0">
                                 <div className="w-32 h-32 rounded-2xl bg-accent flex items-center justify-center">
@@ -3080,7 +3080,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             </div>
             <div className="flex flex-col lg:flex-row gap-8">
                 <div className="w-full lg:w-64 flex-shrink-0 space-y-2">
-                    <button onClick={() => setActiveTab('profil')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'profil' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><User className="w-5 h-5" />Mon Profil</button>
+                    <button onClick={() => setActiveTab('profil')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'profil' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><User className="w-5 h-5" />Mon profil</button>
                     {canEditOrg && (
                         <button onClick={() => setActiveTab('entreprise')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'entreprise' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Building2 className="w-5 h-5" />Entreprise</button>
                     )}

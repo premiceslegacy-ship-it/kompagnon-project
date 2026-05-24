@@ -38,17 +38,17 @@ export function clientDisplayName(client: Client): string {
 export function statusBadge(status: string | null) {
   switch (status) {
     case 'active':
-      return { label: 'Client', cls: 'bg-accent-green/10 text-accent-green' }
+      return { label: 'Client', cls: 'status-pill status-pill-success' }
     case 'prospect':
-      return { label: 'Prospect', cls: 'bg-blue-500/10 text-blue-500' }
+      return { label: 'Prospect', cls: 'status-pill status-pill-info' }
     case 'lead_hot':
-      return { label: 'Lead Chaud', cls: 'bg-accent/10 text-accent' }
+      return { label: 'Lead Chaud', cls: 'status-pill status-pill-accent' }
     case 'lead_cold':
-      return { label: 'Lead Froid', cls: 'bg-secondary/10 text-secondary' }
+      return { label: 'Lead Froid', cls: 'status-pill status-pill-muted' }
     case 'inactive':
-      return { label: 'Inactif', cls: 'bg-red-500/10 text-red-400' }
+      return { label: 'Inactif', cls: 'status-pill status-pill-danger' }
     default:
-      return { label: status ?? '/', cls: 'bg-secondary/10 text-secondary' }
+      return { label: status ?? '/', cls: 'status-pill status-pill-muted' }
   }
 }
 
@@ -694,7 +694,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
   const [isPending, startTransition] = useTransition()
   const [page, setPage] = useState(1)
 
-  const PAGE_SIZE = 20
+  const PAGE_SIZE = 10
 
   const statusOptions = [
     { value: 'All',       label: 'Tous' },
@@ -738,7 +738,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
     const headers = ['ID', 'Entreprise', 'Prénom', 'Nom', 'Email', 'Téléphone', 'Statut', 'Source', 'CA Total']
     const csvContent = [
       headers.join(','),
-      ...filteredClients.map(c => [
+      ...allFiltered.map(c => [
         c.id,
         `"${c.company_name ?? ''}"`,
         c.first_name ?? '',
@@ -830,16 +830,16 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
                 )}
               </div>
             )}
-            <button onClick={handleExportCSV} className="flex-1 md:flex-none px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all text-sm whitespace-nowrap">
+            <button onClick={handleExportCSV} className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
               <Download className="w-4 h-4" />Exporter
             </button>
             {canCreate && (
-              <button onClick={() => setIsNewLeadModalOpen(true)} className="flex-1 md:flex-none px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all text-sm whitespace-nowrap">
+              <button onClick={() => setIsNewLeadModalOpen(true)} className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
                 <Target className="w-4 h-4" />Nouveau Lead
               </button>
             )}
             {canCreate && (
-              <button onClick={() => setIsNewClientModalOpen(true)} className="flex-1 md:flex-none px-6 py-2.5 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 text-sm whitespace-nowrap">
+              <button onClick={() => setIsNewClientModalOpen(true)} className="btn-primary flex-1 md:flex-none px-6 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
                 <UserCheck className="w-4 h-4" />Nouveau Client
               </button>
             )}

@@ -1,10 +1,11 @@
 'use client'
 
 import React, { useState, useRef, useCallback, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Mic, MicOff, FileText, Upload, X, Loader2,
   CheckCircle2, AlertCircle, RotateCcw, AlertTriangle,
-  Trash2, ImageIcon, ChevronDown, ChevronUp, Sparkles,
+  Trash2, ImageIcon, ChevronDown, ChevronUp,
   ChevronLeft, ChevronRight, Wand2, PenLine,
 } from 'lucide-react'
 import type {
@@ -74,14 +75,30 @@ function getItemCategory(item: CatalogDraftItem): string | null | undefined {
   return (item as CatalogDraftMaterial | CatalogDraftLaborRate | CatalogDraftPrestationType).category
 }
 
+function getCompactTabLabel(label: string): string {
+  return label.trim().split(/\s+/)[0] || label
+}
+
 type Props = {
   open: boolean
   onClose: () => void
   onCreated: (count: number) => void
   bundleTemplateLabel?: string
+  bundleTemplatePluralLabel?: string
+  activityLabel?: string
+  activityDescription?: string | null
 }
 
-export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplateLabel = 'Modèle de devis' }: Props) {
+export default function CatalogAIPanel({
+  open,
+  onClose,
+  onCreated,
+  bundleTemplateLabel = 'Modèle de devis',
+  bundleTemplatePluralLabel,
+  activityLabel,
+  activityDescription,
+}: Props) {
+  const [mounted, setMounted] = useState(false)
   const [mode, setMode] = useState<Mode>('voice')
   const [text, setText] = useState('')
   const [file, setFile] = useState<File | null>(null)
@@ -114,6 +131,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplat
     }
   }, [open])
 
+  useEffect(() => { setMounted(true) }, [])
   useEffect(() => () => { mediaRecorderRef.current?.stop() }, [])
 
   const startRecording = useCallback(async () => {
@@ -221,13 +239,24 @@ export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplat
   }
 
   const canAnalyze = mode === 'presets' ? true : mode === 'pdf' ? !!file : text.trim().length >= 5
+  const bundlePlural = bundleTemplatePluralLabel ?? `${bundleTemplateLabel}s`
+  const bundleTabLabel = getCompactTabLabel(bundlePlural)
+  const bundleSingularLower = bundleTemplateLabel.toLowerCase()
+  const bundlePluralLower = bundlePlural.toLowerCase()
+  const activitySentence = activityLabel
+    ? ` pour votre activité : ${activityLabel.toLowerCase()}`
+    : ' pour votre activité'
 
-  if (!open) return null
+  if (!open || !mounted) return null
 
-  return (
-    <div className="fixed bottom-20 right-6 z-50 w-full max-w-[480px] flex flex-col rounded-3xl shadow-2xl overflow-hidden border border-[var(--elevation-border)] animate-in slide-in-from-bottom-4 fade-in duration-300 bg-white dark:bg-[#111118]"
-      style={{ maxHeight: 'calc(100vh - 120px)' }}
-    >
+  return createPortal(
+    <div className="fixed inset-0 z-[9985] pointer-events-none">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto animate-in fade-in duration-300" onClick={onClose} />
+      {/* Panel */}
+      <div className="absolute bottom-6 right-6 w-full max-w-[480px] flex flex-col rounded-3xl shadow-2xl overflow-hidden border border-[var(--elevation-border)] animate-in slide-in-from-bottom-4 fade-in duration-300 bg-white dark:bg-[#111118] pointer-events-auto"
+        style={{ maxHeight: 'calc(100dvh - 5rem)' }}
+      >
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--elevation-border)] flex-shrink-0 bg-gradient-to-r from-violet-500/10 to-indigo-500/10">
         <div className="flex items-center gap-2.5">
@@ -256,14 +285,14 @@ export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplat
                 { id: 'voice' as const, label: 'Vocal', icon: Mic },
                 { id: 'text' as const, label: 'Texte', icon: FileText },
                 { id: 'pdf' as const, label: 'Document', icon: ImageIcon },
-                { id: 'presets' as const, label: `${bundleTemplateLabel}s IA`, icon: Wand2 },
+                { id: 'presets' as const, label: bundleTabLabel, icon: Wand2 },
               ]).map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
                   onClick={() => { setMode(id); setText(''); setFile(null); setError(null); setPresetsCustomMode(false) }}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-all ${mode === id ? 'bg-surface text-primary shadow-sm dark:bg-white/10' : 'text-secondary hover:text-primary'}`}
+                  className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-medium transition-all min-w-0 ${mode === id ? 'bg-surface text-primary shadow-sm dark:bg-white/10' : 'text-secondary hover:text-primary'}`}
                 >
-                  <Icon className="w-3 h-3" />{label}
+                  <Icon className="w-3 h-3 shrink-0" /><span className="truncate">{label}</span>
                 </button>
               ))}
             </div>
@@ -312,7 +341,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplat
                 {!presetsCustomMode ? (
                   <>
                     <p className="text-xs text-secondary">
-                      Léa génère des {bundleTemplateLabel.toLowerCase()}s types adaptés à votre métier. Ajoutez une description pour affiner si besoin.
+                      Léa prépare des propositions adaptées ({bundlePluralLower}){activitySentence}. {activityDescription ? `${activityDescription} ` : ''}Décrivez votre spécialité pour affiner les propositions.
                     </p>
                     <div className="flex flex-col gap-1">
                       <label className="text-[10px] font-semibold text-secondary uppercase tracking-wide">Description (optionnelle)</label>
@@ -326,7 +355,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplat
                     </div>
                     <div className="flex items-center gap-2 p-3 rounded-xl bg-violet-500/5 border border-violet-500/10">
                       <Wand2 className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
-                      <p className="text-xs text-secondary">Léa propose 5 à 8 {bundleTemplateLabel.toLowerCase()}s. Passez-les en revue et supprimez ce qui ne convient pas.</p>
+                      <p className="text-xs text-secondary">Léa propose 5 à 8 {bundlePluralLower}. Passez-les en revue et supprimez ce qui ne convient pas.</p>
                     </div>
                   </>
                 ) : (
@@ -339,7 +368,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplat
                         <RotateCcw className="w-3 h-3" /> Retour aux suggestions automatiques
                       </button>
                     </div>
-                    <p className="text-xs text-secondary">Décrivez précisément le {bundleTemplateLabel.toLowerCase()} que vous souhaitez créer.</p>
+                    <p className="text-xs text-secondary">Décrivez précisément le {bundleSingularLower} que vous souhaitez créer.</p>
                     <textarea
                       value={presetsDescription}
                       onChange={e => setPresetsDescription(e.target.value)}
@@ -393,16 +422,24 @@ export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplat
             )}
 
             <button
+              type="button"
               onClick={handleAnalyze}
               disabled={!canAnalyze || isAnalyzing}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold text-sm hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              className="w-full min-h-11 overflow-hidden px-4 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold text-sm hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
             >
-              {isAnalyzing
-                ? <><Loader2 className="w-4 h-4 animate-spin" />{mode === 'presets' ? 'Léa génère...' : 'Léa analyse...'}</>
-                : mode === 'presets'
-                  ? <><Wand2 className="w-4 h-4" />Demander à Léa</>
-                  : <>Confier à Léa</>
-              }
+              {isAnalyzing ? (
+                <span className="inline-flex min-w-0 max-w-full items-center justify-center gap-2">
+                  <Loader2 className="w-4 h-4 shrink-0 animate-spin" aria-hidden="true" />
+                  <span className="min-w-0 truncate">{mode === 'presets' ? 'Léa génère...' : 'Léa analyse...'}</span>
+                </span>
+              ) : mode === 'presets' ? (
+                <span className="inline-flex min-w-0 max-w-full items-center justify-center gap-2">
+                  <Wand2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 truncate">Demander à Léa</span>
+                </span>
+              ) : (
+                <span className="min-w-0 max-w-full truncate">Confier à Léa</span>
+              )}
             </button>
           </div>
         )}
@@ -428,7 +465,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplat
         {items.length > 0 && !successMsg && (
           <div className="p-4 flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-primary text-sm">{items.length} {mode === 'presets' ? bundleTemplateLabel.toLowerCase() : 'élément'}{items.length > 1 ? 's' : ''} {mode === 'presets' ? 'généré' : 'détecté'}{items.length > 1 ? 's' : ''}</span>
+              <span className="font-bold text-primary text-sm">{items.length} {mode === 'presets' ? bundleSingularLower : 'élément'}{items.length > 1 ? 's' : ''} {mode === 'presets' ? 'généré' : 'détecté'}{items.length > 1 ? 's' : ''}</span>
               <button onClick={() => { setItems([]); setCurrentPage(0); setError(null) }} className="flex items-center gap-1 text-xs text-secondary hover:text-primary transition-colors">
                 <RotateCcw className="w-3 h-3" /> Recommencer
               </button>
@@ -446,7 +483,7 @@ export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplat
                 className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-[var(--elevation-border)] text-xs text-secondary hover:text-primary hover:border-violet-400/40 hover:bg-violet-500/5 transition-all"
               >
                 <PenLine className="w-3.5 h-3.5" />
-                Ces {bundleTemplateLabel.toLowerCase()}s ne me conviennent pas, décrire un {bundleTemplateLabel.toLowerCase()} précis
+                Ces {bundlePluralLower} ne me conviennent pas, décrire un {bundleSingularLower} précis
               </button>
             )}
 
@@ -496,18 +533,31 @@ export default function CatalogAIPanel({ open, onClose, onCreated, bundleTemplat
       {items.length > 0 && !successMsg && (
         <div className="px-4 pb-4 pt-3 border-t border-[var(--elevation-border)] flex-shrink-0">
           <button
+            type="button"
             onClick={handleCreateAll}
             disabled={isCreating || items.length === 0}
-            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold text-sm hover:from-violet-600 hover:to-indigo-700 disabled:opacity-60 transition-colors"
+            className="w-full min-h-11 overflow-hidden px-4 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold text-sm hover:from-violet-600 hover:to-indigo-700 disabled:opacity-60 transition-colors flex items-center justify-center"
           >
             {isCreating
-              ? <><Loader2 className="w-4 h-4 animate-spin" />Création en cours…</>
-              : <><CheckCircle2 className="w-4 h-4" />Tout créer ({items.length} élément{items.length > 1 ? 's' : ''})</>
+              ? (
+                <span className="inline-flex min-w-0 max-w-full items-center justify-center gap-2">
+                  <Loader2 className="w-4 h-4 shrink-0 animate-spin" aria-hidden="true" />
+                  <span className="min-w-0 truncate">Création en cours…</span>
+                </span>
+              )
+              : (
+                <span className="inline-flex min-w-0 max-w-full items-center justify-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 truncate">Tout créer ({items.length} élément{items.length > 1 ? 's' : ''})</span>
+                </span>
+              )
             }
           </button>
         </div>
       )}
-    </div>
+      </div>
+    </div>,
+    document.body
   )
 }
 

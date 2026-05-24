@@ -34,17 +34,25 @@ export async function GET(
 ) {
   const url = new URL(req.url)
   const token = url.searchParams.get('token')
+  const contractToken = url.searchParams.get('contractToken')
   const download = url.searchParams.get('download') === '1'
 
   // Mode public : accès depuis la page de signature du devis via token.
-  if (token) {
+  if (token || contractToken) {
     const admin = createAdminClient()
-    const { data: quote } = await admin
-      .from('quotes')
-      .select('organization_id, signature_token, number')
-      .eq('id', params.id)
-      .eq('signature_token', token)
-      .single()
+    const { data: quote } = token
+      ? await admin
+          .from('quotes')
+          .select('organization_id, signature_token, number')
+          .eq('id', params.id)
+          .eq('signature_token', token)
+          .single()
+      : await admin
+          .from('contracts')
+          .select('organization_id, quote_id')
+          .eq('quote_id', params.id)
+          .eq('signature_token', contractToken)
+          .single()
 
     if (!quote) return new NextResponse('Lien invalide', { status: 404 })
 

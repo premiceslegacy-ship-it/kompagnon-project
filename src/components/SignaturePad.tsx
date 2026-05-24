@@ -50,9 +50,11 @@ export default function SignaturePad({ value, onChange, width = 480, height = 18
     const canvas = canvasRef.current
     if (!canvas) return { x: 0, y: 0 }
     const rect = canvas.getBoundingClientRect()
+    const scaleX = rect.width ? width / rect.width : 1
+    const scaleY = rect.height ? height / rect.height : 1
     return {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY,
     }
   }
 
@@ -101,7 +103,7 @@ export default function SignaturePad({ value, onChange, width = 480, height = 18
 
   return (
     <div className="space-y-2">
-      <div className="relative inline-block">
+      <div className="relative block w-full">
         <canvas
           ref={canvasRef}
           onPointerDown={handlePointerDown}
@@ -109,7 +111,7 @@ export default function SignaturePad({ value, onChange, width = 480, height = 18
           onPointerUp={finishStroke}
           onPointerLeave={finishStroke}
           onPointerCancel={finishStroke}
-          className="rounded-lg border border-gray-200 bg-white touch-none cursor-crosshair"
+          className="rounded-lg border border-gray-200 bg-white touch-none cursor-crosshair block max-w-full"
           style={{ touchAction: 'none' }}
         />
         {!hasDrawing && (
