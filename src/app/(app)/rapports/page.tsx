@@ -7,9 +7,9 @@ import {
   getTopClients,
   getTopChantiers,
   getAnnualObjectives,
+  getMonthlyObjectives,
   getMembersWithoutRate,
 } from '@/lib/data/queries/reporting'
-import type { MemberWithoutRate } from '@/lib/data/queries/reporting'
 import RapportsClient from './RapportsClient'
 
 function currentYM() {
@@ -20,7 +20,7 @@ function currentYM() {
 export default async function RapportsPage({
   searchParams,
 }: {
-  searchParams?: { vue?: string; periode?: string; heures_periode?: string }
+  searchParams?: { vue?: string; periode?: string }
 }) {
   const perms = await getUserPermissions()
   if (!perms.has('*') && !perms.has('dashboard.view_ca')) {
@@ -40,30 +40,31 @@ export default async function RapportsPage({
     year = parseInt(searchParams.periode)
   }
 
-  // Les heures suivent toujours la période principale
   const hoursMonth = vue === 'mois' ? month : undefined
 
-  const [monthlyReport, annualReport, hoursReport, topClients, topChantiers, objectives, membersWithoutRate] = await Promise.all([
+  const [monthlyReport, annualReport, hoursReport, topClients, topChantiers, annualObjectives, monthlyObjectives, membersWithoutRate] = await Promise.all([
     vue === 'mois' ? getMonthlyReport(year, month) : Promise.resolve(null),
     vue === 'annee' ? getAnnualReport(year) : Promise.resolve(null),
     getHoursReport(year, hoursMonth),
     getTopClients(year, hoursMonth),
     getTopChantiers(year, hoursMonth),
     getAnnualObjectives(year),
+    vue === 'mois' ? getMonthlyObjectives(year, month) : Promise.resolve(null),
     getMembersWithoutRate(),
   ])
 
   return (
     <RapportsClient
-      vue={vue}
-      year={year}
-      month={month}
-      monthlyReport={monthlyReport}
-      annualReport={annualReport}
-      hoursReport={hoursReport}
-      topClients={topClients}
-      topChantiers={topChantiers}
-      objectives={objectives}
+      initialVue={vue}
+      initialYear={year}
+      initialMonth={month}
+      initialMonthlyReport={monthlyReport}
+      initialAnnualReport={annualReport}
+      initialHoursReport={hoursReport}
+      initialTopClients={topClients}
+      initialTopChantiers={topChantiers}
+      initialAnnualObjectives={annualObjectives}
+      initialMonthlyObjectives={monthlyObjectives}
       membersWithoutRate={membersWithoutRate ?? []}
     />
   )

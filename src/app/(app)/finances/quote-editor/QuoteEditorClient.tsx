@@ -483,10 +483,15 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const totalHt = visibleItems.reduce((sum, i) => sum + i.quantity * i.unit_price, 0)
   const totalTva = visibleItems.reduce((sum, i) => sum + i.quantity * i.unit_price * (i.vat_rate / 100), 0)
   const totalTtc = totalHt + totalTva
-  const totalInternalHt = internalItems.reduce((sum, i) => sum + i.quantity * i.unit_price, 0)
+  // Coût interne réel = unit_cost_ht sur toutes les lignes (achat matière + coût horaire MO)
+  // Les lignes sans unit_cost_ht (saisie libre) contribuent leur unit_price comme coût proxy
+  const totalInternalHt = allItems.reduce((sum, i) => {
+    const cost = i.unit_cost_ht != null ? i.unit_cost_ht : (i.is_internal ? i.unit_price : 0)
+    return sum + i.quantity * cost
+  }, 0)
   const margeHt = totalHt - totalInternalHt
   const margePct = totalHt > 0 ? (margeHt / totalHt) * 100 : 0
-  const hasInternalItems = internalItems.length > 0
+  const hasInternalItems = allItems.some(i => i.unit_cost_ht != null || i.is_internal)
 
   // ─── Équipement amorti ────────────────────────────────────────────────────
   const [showEquipment, setShowEquipment] = useState(false)
@@ -818,7 +823,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     await createQuoteItemAndFinalize(sectionTempId, tempId, qId, sectionId, { quote_id: qId, section_id: sectionId, type: 'custom', description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, position: pos })
   }
 
-  function handleItemChange(sectionTempId: string, itemTempId: string, field: keyof LocalItem, value: string | number | boolean) {
+  function handleItemChange(sectionTempId: string, itemTempId: string, field: keyof LocalItem, value: string | number | boolean | null) {
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
         ? { ...s, items: s.items.map(i => i._tempId === itemTempId
@@ -1186,7 +1191,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           height_m: aiItem.height_m ?? null,
           dimension_pricing_mode: aiItem.dimension_pricing_mode ?? null,
           dim_quantity: aiItem.dim_quantity ?? 1,
-          unit_cost_ht: null,
+          unit_cost_ht: aiItem.unit_cost_ht ?? null,
           is_estimated: aiItem.is_estimated ?? false,
           is_internal: isInternal,
           transport_km: null, transport_conso: null, transport_prix_l: null,
@@ -1617,7 +1622,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           {modules.quote_ai && (
             <button
               onClick={() => setMoaPanelOpen(true)}
-              className="px-4 py-2.5 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-600 dark:text-violet-400 font-semibold flex items-center gap-2 hover:bg-violet-500/25 hover:border-violet-500 hover:text-violet-500 dark:hover:text-violet-300 transition-all whitespace-nowrap"
+              className="btn-secondary flex items-center gap-2 whitespace-nowrap"
             >
               <Wrench className="w-4 h-4" />
               <span className="hidden md:inline">Estimer les ressources internes</span>
@@ -1627,7 +1632,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           {modules.quote_ai && (
             <button
               onClick={() => setAIPanelOpen(true)}
-              className="px-4 py-2.5 rounded-full bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-semibold flex items-center gap-2 hover:from-violet-600 hover:to-indigo-700 transition-all shadow-lg shadow-violet-500/20 whitespace-nowrap"
+              className="btn-primary flex items-center gap-2 whitespace-nowrap"
             >
               <Bot className="w-4 h-4" />
               {AI_NAME}
@@ -1648,7 +1653,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           <button
             onClick={handleSend}
             disabled={isSending || isPending}
-            className="px-4 sm:px-6 py-2.5 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60 disabled:hover:scale-100 whitespace-nowrap"
+            className="btn-primary flex items-center gap-2 whitespace-nowrap"
           >
             {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             Envoyer
@@ -1925,14 +1930,14 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                 <button
                   onClick={handleAddSection}
                   disabled={isPending}
-                  className="flex items-center gap-2 text-sm font-bold text-accent hover:text-accent hover:bg-accent/15 hover:border-accent/40 px-5 py-2.5 rounded-full border border-accent/20 bg-accent/5 transition-colors disabled:opacity-60"
+                  className="btn-primary flex items-center gap-2 text-sm"
                 >
                   <Plus className="w-4 h-4" />Ajouter une section
                 </button>
                 <button
                   onClick={() => { setPrestationSearch(''); setPrestationOpen(true) }}
                   disabled={isPending}
-                  className="flex items-center gap-2 text-sm font-bold text-primary hover:text-accent px-5 py-2.5 rounded-full border border-[var(--elevation-border)] bg-base/50 transition-colors disabled:opacity-60"
+                  className="btn-secondary flex items-center gap-2 text-sm"
                 >
                   <Layers className="w-4 h-4" />Prestation type
                 </button>
@@ -1985,13 +1990,39 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                             {isEquipment ? 'Équip.' : 'Coût'}
                           </span>
                         )}
-                        <textarea
-                          value={item.description}
-                          onChange={e => handleItemChange(sec._tempId, item._tempId, 'description', e.target.value)}
-                          placeholder="Désignation..."
-                          rows={Math.min(6, Math.max(2, item.description.split('\n').length))}
-                          className="flex-1 min-h-16 p-2 bg-transparent border border-transparent rounded-lg focus:border-accent focus:bg-base/50 outline-none text-primary text-sm leading-6 transition-colors resize-none"
-                        />
+                        <div className="flex-1 flex flex-col gap-1">
+                          {(() => {
+                            const descParts = item.description.split(/\n\n?Comprend\s*:\s*/i)
+                            const titleVal = descParts[0] ?? ''
+                            const detailVal = descParts.length > 1 ? descParts.slice(1).join('\nComprend : ') : ''
+                            const setTitle = (t: string) => {
+                              const next = detailVal ? `${t}\n\nComprend :\n${detailVal}` : t
+                              handleItemChange(sec._tempId, item._tempId, 'description', next)
+                            }
+                            const setDetail = (d: string) => {
+                              const next = d.trim() ? `${titleVal}\n\nComprend :\n${d}` : titleVal
+                              handleItemChange(sec._tempId, item._tempId, 'description', next)
+                            }
+                            return (
+                              <>
+                                <textarea
+                                  value={titleVal}
+                                  onChange={e => setTitle(e.target.value)}
+                                  placeholder="Désignation..."
+                                  rows={Math.min(4, Math.max(1, titleVal.split('\n').length))}
+                                  className="w-full p-2 bg-base/40 border-2 border-[var(--elevation-border)] rounded-lg focus:border-accent focus:bg-base/60 outline-none text-primary text-sm leading-6 transition-colors resize-none"
+                                />
+                                <textarea
+                                  value={detailVal}
+                                  onChange={e => setDetail(e.target.value)}
+                                  placeholder="Détail inclus... (optionnel)"
+                                  rows={detailVal ? Math.min(6, Math.max(2, detailVal.split('\n').length)) : 1}
+                                  className="w-full px-2 py-1.5 bg-base/20 border-2 border-dashed border-[var(--elevation-border)] rounded-lg outline-none text-secondary text-xs leading-5 transition-colors resize-none focus:border-accent focus:bg-base/50 focus:text-primary"
+                                />
+                              </>
+                            )
+                          })()}
+                        </div>
                         <div className="flex flex-col gap-1 pt-0.5">
                           {item.is_estimated && <span title="Prix estimé par l'IA" className="p-1.5 text-amber-500"><Sparkles className="w-3.5 h-3.5" /></span>}
                           <button onClick={() => handleItemChange(sec._tempId, item._tempId, 'is_internal', !item.is_internal)}
@@ -2045,6 +2076,19 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                               onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_price', v ?? 0)}
                               className={`w-full h-9 px-2 border rounded-lg outline-none tabular-nums text-right text-sm transition-colors ${isEquipment ? 'bg-purple-500/5 border-purple-400/40 text-purple-700 dark:text-purple-300 focus:border-purple-400' : item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400 focus:border-amber-400' : 'bg-base border-[var(--elevation-border)] text-primary focus:border-accent'}`}
                               title={isEquipment ? 'Coût interne équipement par usage' : item.is_estimated ? "Prix estimé par l'IA" : undefined} />
+                            {!item.material_id && !item.labor_rate_id && !isEquipment ? (
+                              <NumericInput
+                                value={item.unit_cost_ht ?? undefined}
+                                min={0} decimals={2}
+                                placeholder="coût interne"
+                                onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_cost_ht', v ?? null)}
+                                className="w-full h-7 px-2 bg-transparent border border-dashed border-[var(--elevation-border)] rounded-md outline-none tabular-nums text-right text-[11px] text-secondary/80 focus:border-accent focus:text-primary transition-colors"
+                              />
+                            ) : item.unit_cost_ht != null && item.unit_price > 0 ? (
+                              <span className="text-[10px] tabular-nums text-right text-secondary/70">
+                                coût {fmt(item.unit_cost_ht)}
+                              </span>
+                            ) : null}
                           </div>
                           <div className="flex flex-col gap-1 w-20">
                             <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">TVA</span>
@@ -2058,7 +2102,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                             <div className="h-9 flex items-center px-2 bg-base/60 border border-[var(--elevation-border)]/60 rounded-lg">
                               <span className={`font-bold tabular-nums text-sm w-full text-right ${isEquipment ? 'text-purple-700 dark:text-purple-300' : 'text-primary'}`}>{fmt(item.quantity * item.unit_price)}</span>
                             </div>
-                            {item.unit_cost_ht != null && item.unit_price > 0 && !item.is_internal && (() => {
+                            {item.unit_cost_ht != null && item.unit_price > 0 && (() => {
                               const totalCost = item.quantity * item.unit_cost_ht
                               const totalSale = item.quantity * item.unit_price
                               const margin = totalSale - totalCost
@@ -2095,6 +2139,19 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                               <NumericInput value={item.unit_price} min={0} decimals={2}
                                 onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_price', v ?? 0)}
                                 className={`w-full p-2 border rounded-lg outline-none tabular-nums text-sm ${isEquipment ? 'bg-purple-500/5 border-purple-400/30 text-purple-700 dark:text-purple-300' : item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400' : 'bg-base/50 border-[var(--elevation-border)] text-primary focus:border-accent'}`} />
+                              {!item.material_id && !item.labor_rate_id && !isEquipment ? (
+                                <NumericInput
+                                  value={item.unit_cost_ht ?? undefined}
+                                  min={0} decimals={2}
+                                  placeholder="coût interne"
+                                  onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_cost_ht', v ?? null)}
+                                  className="w-full px-2 py-1 bg-transparent border border-dashed border-[var(--elevation-border)] rounded-md outline-none tabular-nums text-right text-[11px] text-secondary/80 focus:border-accent focus:text-primary transition-colors"
+                                />
+                              ) : item.unit_cost_ht != null && item.unit_price > 0 ? (
+                                <p className="text-[10px] tabular-nums text-right text-secondary/70">
+                                  coût {fmt(item.unit_cost_ht)}
+                                </p>
+                              ) : null}
                             </div>
                             <div className="space-y-0.5">
                               <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">TVA</p>
@@ -2339,9 +2396,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             </div>
             <div className="flex justify-end gap-3">
               <button type="button" onClick={() => setShowTransport(false)}
-                className="px-5 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold">Annuler</button>
+                className="btn-secondary">Annuler</button>
               <button type="button" onClick={handleAddTransport}
-                className="px-5 py-2.5 rounded-full bg-amber-500 text-white font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-amber-500/20">
+                className="btn-primary flex items-center gap-2">
                 <Plus className="w-4 h-4" />Ajouter la ligne
               </button>
             </div>
@@ -2395,9 +2452,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             </div>
             <div className="flex justify-end gap-3">
               <button type="button" onClick={() => setShowEquipment(false)}
-                className="px-5 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold">Annuler</button>
+                className="btn-secondary">Annuler</button>
               <button type="button" onClick={handleAddEquipment} disabled={equipmentPurchase <= 0 || equipmentUses <= 0}
-                className="px-5 py-2.5 rounded-full bg-purple-500 text-white font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-purple-500/20 disabled:opacity-40 disabled:hover:scale-100">
+                className="btn-primary flex items-center gap-2">
                 <Plus className="w-4 h-4" />Ajouter la ligne
               </button>
             </div>
@@ -2507,14 +2564,14 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             )}
 
             <div className="flex gap-3 mt-6">
-              <button type="button" onClick={() => setNewClientOpen(false)} className="flex-1 py-3 rounded-full text-secondary font-semibold border border-[var(--elevation-border)] hover:text-primary transition-colors">
+              <button type="button" onClick={() => setNewClientOpen(false)} className="btn-secondary flex-1">
                 Annuler
               </button>
               <button
                 type="button"
                 onClick={handleCreateClientInline}
                 disabled={newClientPending}
-                className="flex-1 py-3 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60 disabled:hover:scale-100 flex items-center justify-center gap-2"
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
               >
                 {newClientPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 Créer et sélectionner

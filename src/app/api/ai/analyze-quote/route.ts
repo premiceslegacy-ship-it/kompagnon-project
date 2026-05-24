@@ -5,6 +5,7 @@ import { resolveCatalogContext, getBusinessActivityById } from '@/lib/catalog-co
 import { getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIQuotaExceededError } from '@/lib/quota'
 import { fetchRAGContext } from '@/lib/ai/rag'
 import { hasPermission } from '@/lib/data/queries/membership'
 
@@ -13,6 +14,7 @@ export type AIQuoteItem = {
   quantity: number
   unit: string
   unit_price: number
+  unit_cost_ht?: number | null  // coût interne unitaire (jamais affiché au client)
   vat_rate: number
   is_estimated: boolean  // true = prix estimé par l'IA (absent du catalogue)
   is_internal?: boolean  // true = coût interne masqué du devis client
@@ -187,14 +189,51 @@ function enforceNonDeficitMargin(quote: AIQuoteResult): AIQuoteResult {
   }
 }
 
+function isAllCapsWord(word: string): boolean {
+  const letters = word.replace(/[^\p{L}]/gu, '')
+  return letters.length > 0 && letters === letters.toLocaleUpperCase('fr-FR')
+}
+
+function shouldKeepUppercaseWord(word: string): boolean {
+  const letters = word.replace(/[^\p{L}]/gu, '')
+  return /\d/.test(word) || (letters.length <= 4 && isAllCapsWord(word))
+}
+
+function normalizeFrenchSentenceCase(value: string | null | undefined): string {
+  const compact = value?.replace(/\s+/g, ' ').trim()
+  if (!compact) return ''
+
+  const words = compact.match(/[\p{L}\p{N}'’.-]+/gu) ?? []
+  const titleCaseWords = words.filter((word) => {
+    const first = word.match(/\p{L}/u)?.[0]
+    return first ? first === first.toLocaleUpperCase('fr-FR') : false
+  })
+
+  if (words.length < 2 || titleCaseWords.length / words.length <= 0.75) return compact
+
+  let seenWord = false
+  return compact.replace(/[\p{L}\p{N}'’.-]+/gu, (word) => {
+    if (shouldKeepUppercaseWord(word)) return word
+    const normalized = word.toLocaleLowerCase('fr-FR')
+    if (!seenWord) {
+      seenWord = true
+      return normalized.charAt(0).toLocaleUpperCase('fr-FR') + normalized.slice(1)
+    }
+    return normalized
+  })
+}
+
 function normalizeAIQuote(quote: AIQuoteResult): AIQuoteResult {
   const normalized = {
     ...quote,
+    title: normalizeFrenchSentenceCase(quote.title) || quote.title,
     clientName: typeof quote.clientName === 'string' && quote.clientName.trim() ? quote.clientName.trim() : null,
     sections: quote.sections.map(section => ({
       ...section,
+      title: normalizeFrenchSentenceCase(section.title) || section.title,
       items: section.items.map(item => ({
         ...item,
+        description: normalizeFrenchSentenceCase(item.description) || item.description,
         is_internal: item.is_internal === true || looksInternalLine(section.title, item.description),
       })),
     })),
@@ -325,9 +364,10 @@ ${hasCatalog ? `
 ${catalogContext}
 
 ## Instructions de pricing et catalogue (priorité absolue)
-1. **Correspondance catalogue** : si la désignation correspond EXACTEMENT ou TRÈS ÉTROITEMENT à un élément du catalogue ci-dessus → utilise son prix et son unité. Si l'article a des variantes (ex: couleur, dimensions, matière), choisis la variante la plus pertinente et note-la dans la description. Mets \`is_estimated: false\`.
+1. **Correspondance catalogue** : si la désignation correspond EXACTEMENT ou TRÈS ÉTROITEMENT à un élément du catalogue ci-dessus → utilise son prix et son unité. Si l'article a des variantes (ex: couleur, dimensions, matière), choisis la variante la plus pertinente et note-la dans la description. Mets \`is_estimated: false\`. Pour les articles (pas les services), renseigne aussi \`unit_cost_ht\` avec le coût d'achat catalogue si connu, sinon estime-le.
 2. **Correspondance devis récents** : si le poste correspond à un poste déjà facturé → utilise ce prix. Mets \`is_estimated: false\`.
 3. **Estimation IA** : si aucune correspondance → estime un prix réaliste pour le secteur **${sector}** et le corps de métier concerné. Mets \`is_estimated: true\`. Arrondis toujours à la dizaine supérieure (ex: 47 → 50, 123 → 130).
+4. **Coût interne \`unit_cost_ht\`** : pour toute ligne visible (is_internal: false), estime le coût interne unitaire (coût d'achat matière, coût de sous-traitance, coût de revient). Ce champ n'est jamais affiché au client, il sert uniquement au calcul de marge en interne. Arrondis à la dizaine inférieure pour être conservateur. Si tu ne peux pas estimer, laisse null.
 - Les articles marqués **[prix dimensionnel]** ont un prix calculé selon les dimensions (m², ml, m³) : utilise la surface ou longueur mentionnée dans la description comme quantité.
 - Les éléments marqués **[service]** sont des prestations de main-d'œuvre ou services : inclus-les dans la section "Main-d'œuvre" ou dans la section concernée selon le contexte.
 - Ne jamais laisser unit_price à 0.
@@ -335,6 +375,7 @@ ${catalogContext}
 - Si tu utilises des prix catalogue visibles mais que les coûts internes rendent le devis déficitaire, ajoute une marge de sécurité dans les lignes visibles tout en gardant les coûts internes masqués.
 ` : `
 - Si le prix n'est pas mentionné dans la description, estime un prix réaliste pour le secteur **${sector}** et mets \`is_estimated: true\`. Arrondis toujours à la dizaine supérieure.
+- Pour toute ligne visible (is_internal: false), renseigne \`unit_cost_ht\` avec le coût interne unitaire estimé quand c'est possible (achat, sous-traitance, coût de revient). Laisse null uniquement si tu ne peux vraiment pas l'estimer.
 - Ne crée jamais un devis déficitaire : répercute les coûts internes dans les lignes visibles par le client.
 `}
 ## Détection de plusieurs devis
@@ -363,6 +404,7 @@ Retourne UNIQUEMENT un objet JSON valide avec cette structure exacte :
               "quantity": 20,
               "unit": "m²",
               "unit_price": 100,
+              "unit_cost_ht": 60,
               "vat_rate": 20,
               "is_estimated": false,
               "is_internal": false,
@@ -393,6 +435,7 @@ Dans un cahier des charges, le client décrit rarement la main-d'œuvre à dépl
 ${ragContext ? `\n## Mémoire de l'entreprise (devis et tarifs de référence issus de projets passés) :\n${ragContext}\n\n` : ''}Règles générales :
 - Si un nom de client, entreprise, particulier, adresse email ou contact est mentionné, renseigne \`clientName\` avec la chaîne la plus précise. Pour plusieurs devis avec plusieurs clients, renseigne le bon \`clientName\` sur chaque devis.
 - Le champ \`title\` doit synthétiser le projet en un titre court et professionnel. Si un titre ou nom de chantier est explicitement mentionné dans le document, utilise-le. Sinon, forge un titre clair (ex: "Bardage acier façade entrepôt B", "Rénovation cuisine appartement 3e étage").
+- Typographie française obligatoire : pas de Title Case / majuscule à chaque mot dans les titres, sections et descriptions. Utilise la casse phrase ("Pose de tableau électrique", pas "Pose De Tableau Électrique"). Garde les majuscules uniquement pour les noms propres, marques, acronymes et références techniques (PVC, TIG, S235).
 - Regroupe les postes par corps de métier ou par zone (ex: Cuisine, Salle de bain)
 - TVA : 10% pour rénovation logement existant, 20% par défaut (neuf, travaux neufs)
 - Unités courantes : u (unité), m² (mètre carré), ml (mètre linéaire), m³ (mètre cube), h (heure), forfait
@@ -550,6 +593,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result)
   } catch (err: any) {
+    if (err instanceof AIQuotaExceededError) {
+      return NextResponse.json({ error: 'Quota mensuel d\'analyses de devis atteint.' }, { status: 402 })
+    }
     if (err instanceof AIModuleDisabledError) {
       return NextResponse.json({ error: 'Module IA devis désactivé pour cette organisation.' }, { status: 403 })
     }

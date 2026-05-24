@@ -557,6 +557,82 @@ export async function logoutFromMonEspace(): Promise<void> {
   await clearMemberSessionCookie()
 }
 
+export async function updateMyTaskFromSpace(
+  tacheId: string,
+  status: 'a_faire' | 'en_cours' | 'termine',
+): Promise<Result> {
+  const session = await getMemberSession()
+  if (!session) return { error: 'Session expirée. Reconnectez-vous via votre lien.' }
+
+  const admin = createAdminClient()
+  const { data: member } = await admin
+    .from('chantier_equipe_membres')
+    .select('id, organization_id, equipe_id, profile_id, prenom, name, email')
+    .eq('id', session.memberId)
+    .eq('organization_id', session.organizationId)
+    .maybeSingle()
+
+  if (!member) return { error: 'Membre introuvable.' }
+
+  const { data: task } = await admin
+    .from('chantier_taches')
+    .select(`
+      id, title, status, assigned_to, chantier_id,
+      chantier:chantiers!inner(id, title, organization_id)
+    `)
+    .eq('id', tacheId)
+    .eq('chantier.organization_id', session.organizationId)
+    .maybeSingle()
+
+  if (!task) return { error: 'Tâche introuvable.' }
+
+  let isAssigned = Boolean(member.profile_id && task.assigned_to === member.profile_id)
+  const filters = [
+    `member_id.eq.${member.id}`,
+    member.equipe_id ? `equipe_id.eq.${member.equipe_id}` : null,
+  ].filter(Boolean).join(',')
+  const { data: assignment } = await admin
+    .from('chantier_task_assignments')
+    .select('id')
+    .eq('tache_id', tacheId)
+    .or(filters)
+    .limit(1)
+    .maybeSingle()
+
+  isAssigned = isAssigned || !!assignment
+  if (!isAssigned) return { error: "Cette tâche ne vous est pas assignée." }
+
+  const completedAt = status === 'termine' ? new Date().toISOString() : null
+  const { error } = await admin
+    .from('chantier_taches')
+    .update({ status, completed_at: completedAt })
+    .eq('id', tacheId)
+
+  if (error) return { error: error.message }
+
+  if (status === 'termine' && task.status !== 'termine') {
+    const actorName = [member.prenom, member.name].filter(Boolean).join(' ') || member.email || 'Membre'
+    await admin.from('activity_log').insert({
+      organization_id: session.organizationId,
+      user_id: member.profile_id ?? null,
+      action: 'chantier_task.completed',
+      entity_type: 'chantier_task',
+      entity_id: tacheId,
+      metadata: {
+        task_title: task.title,
+        chantier_id: task.chantier_id,
+        chantier_title: (task.chantier as any)?.title ?? null,
+        actor_name: actorName,
+      },
+    })
+  }
+
+  revalidatePath('/mon-espace/dashboard')
+  revalidatePath(`/chantiers/${task.chantier_id}`)
+  revalidatePath('/dashboard')
+  return { error: null }
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function formatPeriodLabel(from: string, to: string): string {

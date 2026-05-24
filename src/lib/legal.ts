@@ -35,7 +35,9 @@ export const LEGAL_EDITOR = {
     'Entrepreneur individuel immatriculé sous le SIRET 98920815200011',
   vatNumber: envValue('NEXT_PUBLIC_LEGAL_VAT_NUMBER'),
   publicationDirector: envValue('NEXT_PUBLIC_LEGAL_PUBLICATION_DIRECTOR') ?? 'Samuel Mbeboura',
-  hostingProvider: envValue('NEXT_PUBLIC_LEGAL_HOSTING_PROVIDER') ?? 'Cloudflare, Inc.',
+  hostingProvider:
+    envValue('NEXT_PUBLIC_LEGAL_HOSTING_PROVIDER') ??
+    'Cloudflare, Inc. (exécution applicative) et Supabase, Inc. (base de données et stockage, région EU West)',
   hostingWebsite: envValue('NEXT_PUBLIC_LEGAL_HOSTING_WEBSITE') ?? 'https://www.cloudflare.com',
 } as const
 
@@ -111,7 +113,7 @@ export const LEGAL_COPY = {
 export const DATA_RETENTION_TABLE = [
   { type: 'Devis et factures', duration: '10 ans', base: 'Art. L123-22 Code de commerce' },
   { type: 'Données de compte (nom, email, org)', duration: '3 ans après fermeture', base: 'Prescription civile' },
-  { type: 'Conversations WhatsApp', duration: '1 an', base: 'Nécessité opérationnelle' },
+  { type: 'Conversations WhatsApp', duration: '1 an', base: 'Intérêt légitime — traçabilité des échanges client (art. 6(1)(f) RGPD)' },
   { type: 'Logs d\'activité et audit', duration: '1 an', base: 'Sécurité & conformité' },
   { type: 'Données de session (cookies)', duration: 'Session / 7 jours max', base: 'Strictement nécessaire' },
   { type: 'Exports ZIP générés', duration: '7 jours (lien de téléchargement)', base: 'Opérationnel' },

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIQuotaExceededError } from '@/lib/quota'
 import { getBusinessContext } from '@/lib/ai/business-context'
 
 const TEXT_MODEL = 'google/gemini-2.5-flash-lite'
@@ -103,6 +104,9 @@ Réponds UNIQUEMENT avec un tableau JSON, rien d'autre.`,
 
     return NextResponse.json(result)
   } catch (err: unknown) {
+    if (err instanceof AIQuotaExceededError) {
+      return NextResponse.json({ error: 'Quota mensuel de suggestions de tâches atteint.' }, { status: 402 })
+    }
     if (err instanceof AIModuleDisabledError) {
       return NextResponse.json({ error: 'Module IA planning désactivé pour cette organisation.' }, { status: 403 })
     }

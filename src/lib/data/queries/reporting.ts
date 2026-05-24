@@ -75,6 +75,7 @@ export type TopChantierEntry = {
   clientName: string | null
   caHt: number
   encaisseHt: number
+  encaisseTtc: number
   costTotal: number
   marginEur: number
   marginPct: number
@@ -100,7 +101,41 @@ export type AnnualObjectives = {
   customs: CustomObjective[]
 }
 
+export type MonthlyObjectives = {
+  id?: string
+  year: number
+  month: number
+  revenue_ht_target: number | null
+  margin_eur_target: number | null
+  margin_pct_target: number | null
+  chantiers_count_target: number | null
+  hours_target: number | null
+  customs: CustomObjective[]
+}
+
 const MONTH_LABELS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jui', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc']
+
+type InvoicePaymentLike = {
+  total_ht: number | null
+  total_ttc: number | null
+  total_paid: number | null
+  status: string
+}
+
+function paidTtc(inv: InvoicePaymentLike): number {
+  const totalTtc = inv.total_ttc ?? 0
+  const totalPaid = inv.total_paid ?? 0
+  if (totalPaid > 0) return Math.min(totalPaid, totalTtc > 0 ? totalTtc : totalPaid)
+  if (inv.status === 'paid') return totalTtc
+  return 0
+}
+
+function paidHt(inv: InvoicePaymentLike): number {
+  const totalHt = inv.total_ht ?? 0
+  const totalTtc = inv.total_ttc ?? 0
+  if (totalTtc <= 0) return inv.status === 'paid' ? totalHt : 0
+  return (paidTtc(inv) / totalTtc) * totalHt
+}
 
 function periodRange(year: number, month?: number): { firstDay: string; lastDay: string } {
   if (!month) return { firstDay: `${year}-01-01`, lastDay: `${year}-12-31` }
@@ -211,8 +246,7 @@ function buildSeries(
     series[m].caHt += inv.total_ht ?? 0
     series[m].caTtc += inv.total_ttc ?? 0
     series[m].tvaDue += inv.total_tva ?? 0
-    if (inv.status === 'paid') series[m].encaisse += inv.total_ttc ?? 0
-    else if (inv.status === 'partial') series[m].encaisse += inv.total_paid ?? 0
+    series[m].encaisse += paidTtc(inv)
   }
   return series
 }
@@ -312,11 +346,7 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   const caHt = validInvoices.reduce((s, i) => s + (i.total_ht ?? 0), 0)
   const caTtc = validInvoices.reduce((s, i) => s + (i.total_ttc ?? 0), 0)
   const tvaDue = validInvoices.reduce((s, i) => s + (i.total_tva ?? 0), 0)
-  const encaisse = validInvoices.reduce((s, i) => {
-    if (i.status === 'paid') return s + (i.total_ttc ?? 0)
-    if (i.status === 'partial') return s + (i.total_paid ?? 0)
-    return s
-  }, 0)
+  const encaisse = validInvoices.reduce((s, i) => s + paidTtc(i), 0)
   const nouvellesFactures = validInvoices.length
   const facturesPayees = validInvoices.filter(i => i.status === 'paid').length
 
@@ -324,11 +354,7 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   const prevCaHt = prevValid.reduce((s, i) => s + (i.total_ht ?? 0), 0)
   const prevCaTtc = prevValid.reduce((s, i) => s + (i.total_ttc ?? 0), 0)
   const prevTvaDue = prevValid.reduce((s, i) => s + (i.total_tva ?? 0), 0)
-  const prevEncaisse = prevValid.reduce((s, i) => {
-    if (i.status === 'paid') return s + (i.total_ttc ?? 0)
-    if (i.status === 'partial') return s + (i.total_paid ?? 0)
-    return s
-  }, 0)
+  const prevEncaisse = prevValid.reduce((s, i) => s + paidTtc(i), 0)
 
   const chantiersTermines = chantiersDuMois.filter(c => c.status === 'termine').length
   const chantiersEnCours = chantiersDuMois.filter(c => c.status === 'en_cours').length
@@ -430,20 +456,12 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
   const caHt = validInv.reduce((s, i) => s + (i.total_ht ?? 0), 0)
   const caTtc = validInv.reduce((s, i) => s + (i.total_ttc ?? 0), 0)
   const tvaDue = validInv.reduce((s, i) => s + (i.total_tva ?? 0), 0)
-  const encaisse = validInv.reduce((s, i) => {
-    if (i.status === 'paid') return s + (i.total_ttc ?? 0)
-    if (i.status === 'partial') return s + (i.total_paid ?? 0)
-    return s
-  }, 0)
+  const encaisse = validInv.reduce((s, i) => s + paidTtc(i), 0)
 
   const prevValid = (prevInvoices ?? []).filter(i => i.invoice_type !== 'avoir')
   const prevCaHt = prevValid.reduce((s, i) => s + (i.total_ht ?? 0), 0)
   const prevCaTtc = prevValid.reduce((s, i) => s + (i.total_ttc ?? 0), 0)
-  const prevEncaisse = prevValid.reduce((s, i) => {
-    if (i.status === 'paid') return s + (i.total_ttc ?? 0)
-    if (i.status === 'partial') return s + (i.total_paid ?? 0)
-    return s
-  }, 0)
+  const prevEncaisse = prevValid.reduce((s, i) => s + paidTtc(i), 0)
 
   const chantiersTermines = chantiersAnnee.filter(c =>
     c.status === 'termine' && c.end_date && c.end_date >= firstDay && c.end_date <= lastDay
@@ -638,6 +656,7 @@ export async function getTopChantiers(year: number, month?: number, limit = 10):
     .from('chantiers')
     .select('id, title, client_id, quote_id, status, created_at, end_date')
     .eq('organization_id', orgId)
+    .eq('is_archived', false)
     .neq('status', 'annule')
 
   const chantiers = allOrgChantiers ?? []
@@ -709,23 +728,33 @@ export async function getTopChantiers(year: number, month?: number, limit = 10):
   }
 
   const seenInvoices = new Set<string>()
-  const caByChantier: Record<string, number> = {}
-  const encaisseHtByChantier: Record<string, number> = {}
+  const invoicesByChantier: Record<string, Array<{
+    id: string
+    total_ht: number | null
+    total_ttc: number | null
+    total_paid: number | null
+    invoice_type: string | null
+    status: string
+  }>> = {}
   for (const inv of invoicesRes.data ?? []) {
-    if (inv.invoice_type === 'avoir') continue
     const cid = inv.chantier_id ?? (inv.quote_id ? quoteToChantier[inv.quote_id] : null)
     if (!cid || !chantierIds.includes(cid)) continue
     const key = inv.id
     if (seenInvoices.has(key)) continue
     seenInvoices.add(key)
-    const totalHt = inv.total_ht ?? 0
-    const totalTtc = inv.total_ttc ?? 0
-    caByChantier[cid] = (caByChantier[cid] ?? 0) + totalHt
-    if (inv.status === 'paid') {
-      encaisseHtByChantier[cid] = (encaisseHtByChantier[cid] ?? 0) + totalHt
-    } else if (inv.status === 'partial' && totalTtc > 0) {
-      encaisseHtByChantier[cid] = (encaisseHtByChantier[cid] ?? 0) + ((inv.total_paid ?? 0) / totalTtc) * totalHt
-    }
+    if (inv.invoice_type === 'avoir' || inv.invoice_type === 'acompte') continue
+    invoicesByChantier[cid] = [...(invoicesByChantier[cid] ?? []), inv]
+  }
+
+  const caByChantier: Record<string, number> = {}
+  const encaisseHtByChantier: Record<string, number> = {}
+  const encaisseTtcByChantier: Record<string, number> = {}
+  for (const [cid, chantierInvoices] of Object.entries(invoicesByChantier)) {
+    const hasSituations = chantierInvoices.some(inv => inv.invoice_type === 'situation' || inv.invoice_type === 'solde')
+    const revenueInvoices = chantierInvoices.filter(inv => !hasSituations || inv.invoice_type !== 'standard')
+    caByChantier[cid] = revenueInvoices.reduce((sum, inv) => sum + (inv.total_ht ?? 0), 0)
+    encaisseHtByChantier[cid] = revenueInvoices.reduce((sum, inv) => sum + paidHt(inv), 0)
+    encaisseTtcByChantier[cid] = revenueInvoices.reduce((sum, inv) => sum + paidTtc(inv), 0)
   }
 
   const expCostByChantier: Record<string, number> = {}
@@ -749,7 +778,12 @@ export async function getTopChantiers(year: number, month?: number, limit = 10):
         chantierId: c.id,
         chantierTitle: c.title ?? 'Sans titre',
         clientName: c.client_id ? (clientNameMap[c.client_id] ?? null) : null,
-        caHt, encaisseHt, costTotal, marginEur, marginPct,
+        caHt,
+        encaisseHt,
+        encaisseTtc: encaisseTtcByChantier[c.id] ?? 0,
+        costTotal,
+        marginEur,
+        marginPct,
       }
     })
     .filter(c => c.caHt > 0 || c.costTotal > 0)
@@ -914,6 +948,93 @@ export async function getAnnualObjectives(year: number): Promise<AnnualObjective
       sort_order: c.sort_order,
     })),
   }
+}
+
+export async function getMonthlyObjectives(year: number, month: number): Promise<MonthlyObjectives | null> {
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return null
+
+  const { data: obj } = await supabase
+    .from('org_monthly_objectives')
+    .select('*')
+    .eq('organization_id', orgId)
+    .eq('year', year)
+    .eq('month', month)
+    .single()
+
+  if (!obj) return { year, month, revenue_ht_target: null, margin_eur_target: null, margin_pct_target: null, chantiers_count_target: null, hours_target: null, customs: [] }
+
+  const { data: customs } = await supabase
+    .from('org_monthly_objective_customs')
+    .select('*')
+    .eq('objective_id', obj.id)
+    .order('sort_order')
+
+  return {
+    id: obj.id,
+    year: obj.year,
+    month: obj.month,
+    revenue_ht_target: obj.revenue_ht_target,
+    margin_eur_target: obj.margin_eur_target,
+    margin_pct_target: obj.margin_pct_target,
+    chantiers_count_target: obj.chantiers_count_target,
+    hours_target: obj.hours_target,
+    customs: (customs ?? []).map(c => ({
+      id: c.id,
+      label: c.label,
+      target: c.target,
+      unit: c.unit ?? '',
+      sort_order: c.sort_order,
+    })),
+  }
+}
+
+export async function upsertMonthlyObjectives(
+  year: number,
+  month: number,
+  data: Omit<MonthlyObjectives, 'year' | 'month' | 'customs'> & { customs: CustomObjective[] }
+): Promise<{ error: string | null }> {
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable' }
+
+  const { data: upserted, error } = await supabase
+    .from('org_monthly_objectives')
+    .upsert({
+      organization_id: orgId,
+      year,
+      month,
+      revenue_ht_target: data.revenue_ht_target,
+      margin_eur_target: data.margin_eur_target,
+      margin_pct_target: data.margin_pct_target,
+      chantiers_count_target: data.chantiers_count_target,
+      hours_target: data.hours_target,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'organization_id,year,month' })
+    .select('id')
+    .single()
+
+  if (error || !upserted) return { error: error?.message ?? 'Erreur upsert' }
+
+  const objId = upserted.id
+  await supabase.from('org_monthly_objective_customs').delete().eq('objective_id', objId)
+
+  if (data.customs.length > 0) {
+    const { error: customError } = await supabase
+      .from('org_monthly_objective_customs')
+      .insert(data.customs.map((c, i) => ({
+        objective_id: objId,
+        organization_id: orgId,
+        label: c.label,
+        target: c.target,
+        unit: c.unit,
+        sort_order: i,
+      })))
+    if (customError) return { error: customError.message }
+  }
+
+  return { error: null }
 }
 
 export async function upsertAnnualObjectives(

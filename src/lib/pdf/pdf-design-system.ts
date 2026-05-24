@@ -163,8 +163,8 @@ export function makePageStyles() {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'flex-start',
-      marginBottom: DS.space.xl,
-      paddingBottom: DS.space.xl,
+      marginBottom: DS.space.md,
+      paddingBottom: DS.space.md,
       borderBottomWidth: 1,
       borderBottomColor: DS.color.divider,
     },
@@ -201,10 +201,10 @@ export function makePageStyles() {
 
     // Title block (sans bannière de couleur)
     titleBlock: {
-      marginBottom: DS.space.xl,
+      marginBottom: DS.space.md,
       borderBottomWidth: 1,
       borderBottomColor: DS.color.black,
-      paddingBottom: DS.space.md,
+      paddingBottom: DS.space.sm,
     },
     titleLabel: {
       fontFamily: DS.font.heading,
@@ -231,7 +231,7 @@ export function makePageStyles() {
     addressRow: {
       flexDirection: 'row',
       gap: DS.space.md,
-      marginBottom: DS.space.xl,
+      marginBottom: DS.space.md,
     },
     addressBlock: {
       flex: 1,
@@ -293,7 +293,7 @@ export function makePageStyles() {
     },
     itemRow: {
       flexDirection: 'row',
-      paddingVertical: DS.space.md,
+      paddingVertical: DS.space.sm,
       borderBottomWidth: 0.5,
       borderBottomColor: DS.color.divider,
     },
@@ -331,7 +331,7 @@ export function makePageStyles() {
     colTotal: { width: 72, textAlign: 'right' },
 
     // Totals
-    totalsContainer: { marginTop: DS.space.xl, alignItems: 'flex-end' },
+    totalsContainer: { marginTop: DS.space.md, alignItems: 'flex-end' },
     totalsBox: { width: 250 },
     totalsRow: {
       flexDirection: 'row',
@@ -425,7 +425,7 @@ export function makePageStyles() {
 
     // Bottom section (conditions + signature)
     bottomSection: {
-      marginTop: DS.space.xl,
+      marginTop: DS.space.md,
       flexDirection: 'row',
       gap: DS.space.lg,
     },

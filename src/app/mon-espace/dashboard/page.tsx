@@ -4,6 +4,7 @@ import {
   getMemberByIdAdmin,
   getMemberPointages,
   getMemberPlannings,
+  getMemberTasks,
 } from '@/lib/data/queries/members'
 import { createAdminClient } from '@/lib/supabase/admin'
 import MonEspaceDashboardClient from './MonEspaceDashboardClient'
@@ -24,9 +25,10 @@ export default async function MonEspaceDashboardPage() {
   const today = now.toISOString().slice(0, 10)
   const in3Weeks = new Date(now.getTime() + 21 * 86_400_000).toISOString().slice(0, 10)
 
-  const [pointages, plannings, orgRow] = await Promise.all([
+  const [pointages, plannings, tasks, orgRow] = await Promise.all([
     getMemberPointages(session.memberId, { dateFrom: monthStart, dateTo: monthEnd, useAdmin: true }),
     getMemberPlannings(session.memberId, { dateFrom: today, dateTo: in3Weeks, useAdmin: true }),
+    getMemberTasks(session.memberId, { useAdmin: true }),
     createAdminClient().from('organizations').select('name').eq('id', member.organization_id).single(),
   ])
 
@@ -46,6 +48,7 @@ export default async function MonEspaceDashboardPage() {
       organizationName={orgRow.data?.name ?? 'Mon espace'}
       pointages={pointages}
       plannings={plannings}
+      tasks={tasks}
       chantiers={chantiers}
       monthStart={monthStart}
       monthEnd={monthEnd}

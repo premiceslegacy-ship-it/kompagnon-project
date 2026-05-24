@@ -17,7 +17,7 @@ export default function LegalPage() {
       eyebrow="Mentions légales"
       title="Éditeur, hébergement et contact"
       description="Cette page centralise les informations publiques minimales relatives à l'édition et à l'hébergement d'ATELIER."
-      updatedAt="23 avril 2026"
+      updatedAt="25 mai 2026"
     >
       <section className="space-y-4" id="contact">
         <h2 className="text-2xl font-bold">Éditeur</h2>
@@ -25,13 +25,14 @@ export default function LegalPage() {
           <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
             <strong className="text-slate-900 dark:text-white">{LEGAL_EDITOR.publisherName}</strong>
             <br />
-            Société : {LEGAL_EDITOR.companyName}
+            {LEGAL_EDITOR.companyName}
             <br />
             Adresse : {LEGAL_EDITOR.address}
             <br />
-            Immatriculation : {LEGAL_EDITOR.registration}
+            {LEGAL_EDITOR.registration}
             <br />
-            {LEGAL_EDITOR.vatNumber ? <>TVA : {LEGAL_EDITOR.vatNumber}<br /></> : null}
+            TVA non applicable — article 293 B du CGI
+            <br />
             {LEGAL_EDITOR.phone ? <>Téléphone : {LEGAL_EDITOR.phone}<br /></> : null}
             Email : {legalContactLabel(LEGAL_CONTACT.legalEmail)}
             <br />
@@ -42,20 +43,37 @@ export default function LegalPage() {
 
       <section className="space-y-4">
         <h2 className="text-2xl font-bold">Hébergement</h2>
-        <div className="rounded-3xl border border-[var(--elevation-border)] p-5">
-          <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
-            Hébergeur : {LEGAL_EDITOR.hostingProvider}
-            <br />
-            Site :{' '}
-            <a
-              href={LEGAL_EDITOR.hostingWebsite}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-slate-900 dark:text-white underline underline-offset-4"
-            >
-              {LEGAL_EDITOR.hostingWebsite}
-            </a>
-          </p>
+        <div className="rounded-3xl border border-[var(--elevation-border)] p-5 space-y-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-900 dark:text-white">Exécution applicative</p>
+            <p className="mt-1 text-sm leading-6 text-slate-700 dark:text-zinc-300">
+              Cloudflare, Inc. — 101 Townsend St, San Francisco, CA 94107, USA
+              <br />
+              <a
+                href="https://www.cloudflare.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-slate-900 dark:text-white underline underline-offset-4"
+              >
+                cloudflare.com
+              </a>
+            </p>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-900 dark:text-white">Base de données et stockage</p>
+            <p className="mt-1 text-sm leading-6 text-slate-700 dark:text-zinc-300">
+              Supabase, Inc. — 970 Toa Payoh North, Singapour (données stockées en région EU West — Frankfurt, Allemagne)
+              <br />
+              <a
+                href="https://supabase.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-slate-900 dark:text-white underline underline-offset-4"
+              >
+                supabase.com
+              </a>
+            </p>
+          </div>
         </div>
       </section>
 

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { canManageLaborRates, hasPermission, requirePermission } from '@/lib/data/queries/membership'
 import { coerceLegalVatRate, todayParis } from '@/lib/utils'
@@ -314,7 +315,7 @@ export async function deleteChantier(chantierId: string): Promise<Result> {
 
 export async function createTache(
   chantierId: string,
-  data: { title: string; description?: string | null; dueDate?: string | null },
+  data: { title: string; description?: string | null; dueDate?: string | null; equipeIds?: string[]; memberIds?: string[] },
 ): Promise<{ tacheId: string | null; error: string | null }> {
   const denied = await requirePermission('chantiers.edit')
   if (denied) return { tacheId: null, error: denied }
@@ -351,6 +352,9 @@ export async function createTache(
     return { tacheId: null, error: 'Erreur lors de la création de la tâche.' }
   }
 
+  const assignmentError = await replaceTacheAssignmentsInternal(supabase, tache.id, data.equipeIds ?? [], data.memberIds ?? [], orgId)
+  if (assignmentError) return { tacheId: tache.id, error: assignmentError }
+
   revalidatePath(`/chantiers/${chantierId}`)
   return { tacheId: tache.id, error: null }
 }
@@ -358,7 +362,16 @@ export async function createTache(
 export async function updateTache(
   tacheId: string,
   chantierId: string,
-  data: { title?: string; description?: string | null; progressNote?: string | null; status?: string; dueDate?: string | null; position?: number },
+  data: {
+    title?: string
+    description?: string | null
+    progressNote?: string | null
+    status?: string
+    dueDate?: string | null
+    position?: number
+    equipeIds?: string[]
+    memberIds?: string[]
+  },
 ): Promise<Result> {
   const denied = await requirePermission('chantiers.edit')
   if (denied) return { error: denied }
@@ -381,19 +394,163 @@ export async function updateTache(
   if (data.dueDate !== undefined) update.due_date = data.dueDate
   if (data.position !== undefined) update.position = data.position
 
-  const { error } = await supabase
-    .from('chantier_taches')
-    .update(update)
-    .eq('id', tacheId)
-    .eq('chantier_id', chantierId)
+  if (Object.keys(update).length > 0) {
+    const { error } = await supabase
+      .from('chantier_taches')
+      .update(update)
+      .eq('id', tacheId)
+      .eq('chantier_id', chantierId)
 
-  if (error) {
-    console.error('[updateTache]', error)
-    return { error: 'Erreur lors de la mise à jour de la tâche.' }
+    if (error) {
+      console.error('[updateTache]', error)
+      return { error: 'Erreur lors de la mise à jour de la tâche.' }
+    }
+  }
+
+  if (data.equipeIds !== undefined || data.memberIds !== undefined) {
+    const assignmentError = await replaceTacheAssignmentsInternal(supabase, tacheId, data.equipeIds ?? [], data.memberIds ?? [], orgId)
+    if (assignmentError) return { error: assignmentError }
   }
 
   revalidatePath(`/chantiers/${chantierId}`)
   return { error: null }
+}
+
+export async function updateMyAssignedTaskStatus(
+  tacheId: string,
+  status: 'a_faire' | 'en_cours' | 'termine',
+): Promise<Result> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Non authentifié.' }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+
+  const [{ data: memberRow }, { data: task }] = await Promise.all([
+    supabase
+      .from('chantier_equipe_membres')
+      .select('id, equipe_id')
+      .eq('organization_id', orgId)
+      .eq('profile_id', user.id)
+      .maybeSingle(),
+    supabase
+      .from('chantier_taches')
+      .select(`
+        id, title, status, assigned_to, chantier_id,
+        chantier:chantiers!inner(id, title, organization_id)
+      `)
+      .eq('id', tacheId)
+      .eq('chantier.organization_id', orgId)
+      .maybeSingle(),
+  ])
+
+  if (!task) return { error: 'Tâche introuvable ou non autorisée.' }
+
+  let isAssigned = task.assigned_to === user.id
+  if (!isAssigned && (memberRow?.id || memberRow?.equipe_id)) {
+    const filters = [
+      memberRow?.id ? `member_id.eq.${memberRow.id}` : null,
+      memberRow?.equipe_id ? `equipe_id.eq.${memberRow.equipe_id}` : null,
+    ].filter(Boolean).join(',')
+    const { data: assignment } = await supabase
+      .from('chantier_task_assignments')
+      .select('id')
+      .eq('tache_id', tacheId)
+      .or(filters)
+      .limit(1)
+      .maybeSingle()
+    isAssigned = !!assignment
+  }
+
+  if (!isAssigned) return { error: "Cette tâche ne vous est pas assignée." }
+
+  const completedAt = status === 'termine' ? new Date().toISOString() : null
+  const { error } = await supabase
+    .from('chantier_taches')
+    .update({ status, completed_at: completedAt })
+    .eq('id', tacheId)
+
+  if (error) return { error: error.message }
+
+  if (status === 'termine' && task.status !== 'termine') {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', user.id)
+      .maybeSingle()
+    await createAdminClient().from('activity_log').insert({
+      organization_id: orgId,
+      user_id: user.id,
+      action: 'chantier_task.completed',
+      entity_type: 'chantier_task',
+      entity_id: tacheId,
+      metadata: {
+        task_title: task.title,
+        chantier_id: task.chantier_id,
+        chantier_title: (task.chantier as any)?.title ?? null,
+        actor_name: profile?.full_name ?? user.email ?? 'Collaborateur',
+      },
+    })
+  }
+
+  revalidatePath('/dashboard')
+  revalidatePath(`/chantiers/${task.chantier_id}`)
+  return { error: null }
+}
+
+async function replaceTacheAssignmentsInternal(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tacheId: string,
+  equipeIds: string[],
+  memberIds: string[],
+  orgId: string,
+): Promise<string | null> {
+  const cleanEquipeIds = [...new Set(equipeIds.filter(Boolean))]
+  const cleanMemberIds = [...new Set(memberIds.filter(Boolean))]
+
+  if (cleanEquipeIds.length > 0) {
+    const { count } = await supabase
+      .from('chantier_equipes')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', orgId)
+      .in('id', cleanEquipeIds)
+    if ((count ?? 0) !== cleanEquipeIds.length) return 'Équipe introuvable ou non autorisée.'
+  }
+
+  if (cleanMemberIds.length > 0) {
+    const { count } = await supabase
+      .from('chantier_equipe_membres')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', orgId)
+      .in('id', cleanMemberIds)
+    if ((count ?? 0) !== cleanMemberIds.length) return 'Membre introuvable ou non autorisé.'
+  }
+
+  const { error: deleteError } = await supabase
+    .from('chantier_task_assignments')
+    .delete()
+    .eq('tache_id', tacheId)
+  if (deleteError) {
+    console.error('[replaceTacheAssignmentsInternal:delete]', deleteError)
+    return 'Erreur lors de la mise à jour des assignations.'
+  }
+
+  const rows = [
+    ...cleanEquipeIds.map(equipeId => ({ tache_id: tacheId, equipe_id: equipeId, member_id: null })),
+    ...cleanMemberIds.map(memberId => ({ tache_id: tacheId, equipe_id: null, member_id: memberId })),
+  ]
+  if (rows.length === 0) return null
+
+  const { error: insertError } = await supabase
+    .from('chantier_task_assignments')
+    .insert(rows)
+  if (insertError) {
+    console.error('[replaceTacheAssignmentsInternal:insert]', insertError)
+    return 'Erreur lors de la mise à jour des assignations.'
+  }
+
+  return null
 }
 
 export async function reorderTaches(

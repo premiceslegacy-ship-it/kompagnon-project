@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { TrendingUp, Eye, Plus, CheckCircle } from 'lucide-react'
 import type { SituationsSummary } from '@/lib/data/queries/invoices'
@@ -354,15 +355,16 @@ export default function SituationsSection({
         </div>
       )}
 
-      {/* Modal */}
-      {modalMode && (
+      {/* Modal — portal pour éviter le bug fixed à l'intérieur d'un card (isolation: isolate) */}
+      {modalMode && createPortal(
         <SituationCreatorModal
           chantierId={chantierId}
           summary={summary}
           mode={modalMode}
           returnTo={returnTo}
           onClose={() => setModalMode(null)}
-        />
+        />,
+        document.body
       )}
     </div>
   )

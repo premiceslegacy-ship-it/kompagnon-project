@@ -174,7 +174,7 @@ export default function AtelierIAPage() {
       {/* Header */}
       <div className="flex items-center gap-4 mb-8">
         <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
-          <Bot className="w-6 h-6 text-white" />
+          <Bot className="w-6 h-6 text-white" style={{ filter: 'var(--icon-on-accent-filter)', strokeWidth: '2.5' }} />
         </div>
         <div>
           <h1 className="text-2xl font-bold text-primary">{AI_NAME}</h1>
@@ -204,7 +204,7 @@ export default function AtelierIAPage() {
                       : 'text-secondary hover:text-primary'
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5" />
+                  <Icon className="w-3.5 h-3.5" style={{ strokeWidth: '2.5', filter: 'var(--icon-depth-filter)' }} />
                   {label}
                 </button>
               ))}
@@ -225,7 +225,7 @@ export default function AtelierIAPage() {
                           : 'bg-gradient-to-br from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700'
                       }`}
                     >
-                      {isRecording ? <MicOff className="w-10 h-10 text-white" /> : <Mic className="w-10 h-10 text-white" />}
+                      {isRecording ? <MicOff className="w-10 h-10 text-white" style={{ filter: 'var(--icon-on-accent-filter)', strokeWidth: '2.5' }} /> : <Mic className="w-10 h-10 text-white" style={{ filter: 'var(--icon-on-accent-filter)', strokeWidth: '2.5' }} />}
                     </button>
                     <p className="text-sm text-secondary">
                       {isRecording ? 'Enregistrement en cours... (cliquez pour arrêter)' : isTranscribing ? 'Transcription Mistral...' : 'Cliquez pour parler'}
@@ -284,7 +284,7 @@ export default function AtelierIAPage() {
                         }}
                       />
                       <div className="w-14 h-14 rounded-2xl bg-violet-500/10 flex items-center justify-center">
-                        <Upload className="w-7 h-7 text-violet-500" />
+                        <Upload className="w-7 h-7 text-violet-500" style={{ strokeWidth: '2.5', filter: 'var(--icon-depth-filter)' }} />
                       </div>
                       <div className="text-center">
                         <p className="font-semibold text-primary text-sm">Glissez votre document ici</p>
@@ -396,7 +396,7 @@ export default function AtelierIAPage() {
                     onClick={handleReset}
                     className="flex items-center gap-1.5 text-xs text-secondary hover:text-primary transition-colors"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" /> Recommencer
+                    <RotateCcw className="w-3.5 h-3.5" style={{ strokeWidth: '2.5', filter: 'var(--icon-depth-filter)' }} /> Recommencer
                   </button>
                 </div>
 
@@ -406,7 +406,7 @@ export default function AtelierIAPage() {
                     <button
                       onClick={() => setCurrentIndex(i => Math.max(0, i - 1))}
                       disabled={currentIndex === 0}
-                      className="w-8 h-8 flex items-center justify-center rounded-xl text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      className="btn-icon text-secondary disabled:opacity-30 disabled:cursor-not-allowed"
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
@@ -417,7 +417,7 @@ export default function AtelierIAPage() {
                     <button
                       onClick={() => setCurrentIndex(i => Math.min(results.length - 1, i + 1))}
                       disabled={currentIndex === results.length - 1}
-                      className="w-8 h-8 flex items-center justify-center rounded-xl text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      className="btn-icon text-secondary disabled:opacity-30 disabled:cursor-not-allowed"
                     >
                       <ChevronRight className="w-4 h-4" />
                     </button>
@@ -461,7 +461,7 @@ export default function AtelierIAPage() {
                     {isCreating ? (
                       <><Loader2 className="w-5 h-5 animate-spin" />Création en cours...</>
                     ) : (
-                      <><FileText className="w-5 h-5" />{results.length > 1 ? `Créer les ${results.length} devis et ouvrir` : 'Ouvrir dans l\'éditeur'}<ChevronRight className="w-5 h-5" /></>
+                      <><FileText className="w-5 h-5" style={{ filter: 'var(--icon-on-accent-filter)', strokeWidth: '2.5' }} />{results.length > 1 ? `Créer les ${results.length} devis et ouvrir` : 'Ouvrir dans l\'éditeur'}<ChevronRight className="w-5 h-5" style={{ filter: 'var(--icon-on-accent-filter)', strokeWidth: '2.5' }} /></>
                     )}
                   </button>
                   <p className="text-xs text-secondary text-center mt-2">

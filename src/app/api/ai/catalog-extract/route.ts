@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { resolveCatalogContext, getCatalogAIPromptContext } from '@/lib/catalog-context'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIQuotaExceededError } from '@/lib/quota'
 import { hasPermission } from '@/lib/data/queries/membership'
 
 const TEXT_MODEL = 'google/gemini-2.5-flash'
@@ -55,8 +56,10 @@ export type CatalogDraftPrestationType = {
     designation: string
     quantity: number
     unit: string
-    item_type: 'material' | 'service' | 'labor' | 'transport' | 'free'
+    item_type: 'material' | 'service' | 'labor' | 'transport' | 'free' | 'equipment'
     unit_price_ht?: number | null
+    unit_cost_ht?: number | null
+    is_internal?: boolean
   }>
   confidence: CatalogDraftConfidence
 }
@@ -130,6 +133,103 @@ function extractJson(text: string): string {
   const obj = text.match(/\{[\s\S]*\}/)
   if (obj) return obj[0]
   return text.trim()
+}
+
+function isAllCapsWord(word: string): boolean {
+  const letters = word.replace(/[^\p{L}]/gu, '')
+  return letters.length > 0 && letters === letters.toLocaleUpperCase('fr-FR')
+}
+
+function shouldKeepUppercaseWord(word: string): boolean {
+  const letters = word.replace(/[^\p{L}]/gu, '')
+  return /\d/.test(word) || (letters.length <= 4 && isAllCapsWord(word))
+}
+
+function normalizeFrenchSentenceCase(value: string | null | undefined): string | null {
+  const compact = value?.replace(/\s+/g, ' ').trim()
+  if (!compact) return null
+
+  const words = compact.match(/[\p{L}\p{N}'’.-]+/gu) ?? []
+  const titleCaseWords = words.filter((word) => {
+    const first = word.match(/\p{L}/u)?.[0]
+    return first ? first === first.toLocaleUpperCase('fr-FR') : false
+  })
+
+  if (words.length < 2 || titleCaseWords.length / words.length <= 0.75) return compact
+
+  let seenWord = false
+  return compact.replace(/[\p{L}\p{N}'’.-]+/gu, (word) => {
+    if (shouldKeepUppercaseWord(word)) return word
+    const normalized = word.toLocaleLowerCase('fr-FR')
+    if (!seenWord) {
+      seenWord = true
+      return normalized.charAt(0).toLocaleUpperCase('fr-FR') + normalized.slice(1)
+    }
+    return normalized
+  })
+}
+
+const PRESTATION_LINE_TYPES = ['material', 'service', 'labor', 'transport', 'free', 'equipment'] as const
+type PrestationDraftLineType = typeof PRESTATION_LINE_TYPES[number]
+const INTERNAL_PRESTATION_LINE_TYPES = new Set(['labor', 'transport', 'equipment'])
+
+function normalizePrestationItemType(value: unknown): PrestationDraftLineType {
+  return PRESTATION_LINE_TYPES.includes(value as PrestationDraftLineType) ? value as PrestationDraftLineType : 'free'
+}
+
+function ensurePrestationMargin(item: CatalogDraftPrestationType): CatalogDraftPrestationType {
+  const rawLines = item.lines ?? []
+  let lines = rawLines.map((line) => {
+    const itemType = normalizePrestationItemType(line.item_type)
+    const quantity = toFiniteNumber(line.quantity) ?? 1
+    const unitPrice = toFiniteNumber(line.unit_price_ht) ?? 0
+    const isInternal = line.is_internal ?? INTERNAL_PRESTATION_LINE_TYPES.has(itemType)
+    const fallbackCost = isInternal ? unitPrice : itemType === 'material' || itemType === 'service' ? Number((unitPrice * 0.7).toFixed(2)) : 0
+    const unitCost = toFiniteNumber(line.unit_cost_ht) ?? fallbackCost
+
+    return {
+      ...line,
+      designation: normalizeFrenchSentenceCase(line.designation) ?? line.designation,
+      item_type: itemType,
+      quantity,
+      unit: line.unit || (itemType === 'labor' ? 'h' : itemType === 'transport' ? 'L' : 'u'),
+      unit_price_ht: isInternal ? 0 : unitPrice,
+      unit_cost_ht: unitCost,
+      is_internal: isInternal,
+    }
+  })
+
+  const visibleTotal = () => lines.reduce((sum, line) => line.is_internal ? sum : sum + line.quantity * (line.unit_price_ht ?? 0), 0)
+  const costTotal = () => lines.reduce((sum, line) => sum + line.quantity * (line.unit_cost_ht ?? 0), 0)
+  const cost = costTotal()
+  const minVisible = cost > 0 ? Math.ceil(cost * 1.2 * 100) / 100 : 0
+  const visible = visibleTotal()
+
+  if (cost > 0 && visible > 0 && visible < minVisible) {
+    const factor = minVisible / visible
+    lines = lines.map((line) => line.is_internal
+      ? line
+      : { ...line, unit_price_ht: Math.ceil((line.unit_price_ht ?? 0) * factor * 100) / 100 })
+  } else if (cost > 0 && visible === 0) {
+    lines.unshift({
+      designation: `Forfait ${normalizeFrenchSentenceCase(item.name)?.toLocaleLowerCase('fr-FR') ?? 'intervention'}`,
+      quantity: 1,
+      unit: item.unit || 'forfait',
+      item_type: 'service',
+      unit_price_ht: minVisible,
+      unit_cost_ht: 0,
+      is_internal: false,
+    })
+  }
+
+  return {
+    ...item,
+    name: normalizeFrenchSentenceCase(item.name) ?? item.name,
+    description: normalizeFrenchSentenceCase(item.description) ?? item.description,
+    lines,
+    base_price_ht: lines.length > 0 ? Number(visibleTotal().toFixed(2)) : item.base_price_ht,
+    base_cost_ht: lines.length > 0 ? Number(costTotal().toFixed(2)) : item.base_cost_ht,
+  }
 }
 
 function buildMarketPriceHints(ctx: ReturnType<typeof getCatalogAIPromptContext>): string {
@@ -255,6 +355,7 @@ RÈGLE CRITIQUE pour labor_rate — deux champs distincts, ne pas les confondre 
 Pour les prix non mentionnés explicitement, utilise les fourchettes marché ci-dessus comme référence et indique confidence "low".
 Pour chaque champ, indique confidence: "high" si tu es sûr de la valeur fournie, "low" si tu as dû inférer ou estimer.
 Propose dimension_pricing_mode "area" pour les produits/matières au m², "linear" pour ceux au ml, "volume" pour m³, "none" sinon.
+Respecte la typographie française : pas de Title Case / majuscule à chaque mot. Utilise la casse phrase ("Pose de tableau électrique", pas "Pose De Tableau Électrique"). Garde les majuscules uniquement pour les noms propres, marques, acronymes et références techniques (PVC, TIG, S235).
 
 Retourne UNIQUEMENT un JSON valide avec ce format exact (tous les champs optionnels peuvent être null) :
 {
@@ -325,11 +426,14 @@ Taux de TVA légaux : ${ctx.vatRates.join(', ')}%
 ${catalogHint ? catalogHint + '\n\n' : ''}${marketHints ? marketHints + '\n\n' : ''}Ta tâche : générer entre 5 et 8 ${ctx.bundleTemplateLabel.toLowerCase()}s réalistes, représentatifs du métier "${ctx.activityLabel}" et cohérents avec la description fournie par l'utilisateur.
 
 Chaque ${ctx.bundleTemplateLabel.toLowerCase()} doit :
-- Avoir un nom professionnel et précis, fidèle au vocabulaire du secteur
-- Inclure 2 à 6 lignes détaillées typiques (item_type: "material", "service", "labor", "transport" ou "free")
+- Avoir un nom professionnel et précis, fidèle au vocabulaire du secteur, en casse phrase française
+- Avoir une description courte adaptée à l'activité : ce que le modèle couvre, le contexte d'usage, et ce qui est inclus
+- Inclure 2 à 6 lignes détaillées typiques (item_type: "material", "service", "labor", "transport", "equipment" ou "free")
 - Avoir des prix cohérents avec les fourchettes marché ci-dessus (base_price_ht et base_cost_ht estimés)
+- Être calibré comme l'onglet devis : base_price_ht = total HT présenté au client, base_cost_ht = coût interne total, marge positive. Les lignes internes (labor, transport, equipment) ont is_internal=true, unit_price_ht=0 et unit_cost_ht renseigné. Les lignes visibles ont un prix client et, si possible, leur coût interne.
 - Utiliser les bonnes unités et catégories du secteur
 - Respecter le taux de TVA applicable (10% pour travaux rénovation, 20% sinon)
+- Respecter la typographie française : pas de majuscule à chaque mot dans les noms, descriptions et lignes. Garde les majuscules seulement pour noms propres, marques, acronymes et références techniques (PVC, TIG, S235).
 
 Retourne UNIQUEMENT un JSON valide avec ce format :
 {
@@ -344,7 +448,7 @@ Retourne UNIQUEMENT un JSON valide avec ce format :
       "base_cost_ht": 0,
       "vat_rate": 20,
       "lines": [
-        { "designation": "Libellé ligne", "quantity": 1, "unit": "forfait", "item_type": "service", "unit_price_ht": null }
+        { "designation": "Libellé ligne", "quantity": 1, "unit": "forfait", "item_type": "service", "unit_price_ht": 0, "unit_cost_ht": 0, "is_internal": false }
       ],
       "confidence": { "name": "high", "unit": "high", "base_price_ht": "low" }
     }
@@ -371,9 +475,23 @@ function toFiniteNumber(value: unknown): number | null {
 
 function normalizeCatalogDrafts(items: CatalogDraftItem[]): CatalogDraftItem[] {
   return items.map((item) => {
+    if (item.kind === 'prestation_type') {
+      return ensurePrestationMargin(item as CatalogDraftPrestationType)
+    }
+
+    if (item.kind === 'labor_rate') {
+      return {
+        ...item,
+        designation: normalizeFrenchSentenceCase((item as CatalogDraftLaborRate).designation) ?? (item as CatalogDraftLaborRate).designation,
+        description: normalizeFrenchSentenceCase((item as CatalogDraftLaborRate).description) ?? (item as CatalogDraftLaborRate).description,
+      } as CatalogDraftLaborRate
+    }
+
     if (item.kind !== 'material' && item.kind !== 'service') return item
 
     const material = { ...item } as CatalogDraftMaterial
+    material.name = normalizeFrenchSentenceCase(material.name) ?? material.name
+    material.description = normalizeFrenchSentenceCase(material.description) ?? material.description
     const purchasePrice = toFiniteNumber(material.purchase_price)
     const salePrice = toFiniteNumber(material.sale_price)
     const marginRate = toFiniteNumber(material.margin_rate)
@@ -586,6 +704,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(parsed)
   } catch (err) {
+    if (err instanceof AIQuotaExceededError) {
+      return NextResponse.json({ error: "Quota mensuel d'extractions catalogue atteint." }, { status: 402 })
+    }
     if (err instanceof AIModuleDisabledError) {
       return NextResponse.json({ error: "Le module IA catalogue n'est pas activé pour votre organisation." }, { status: 403 })
     }

@@ -2,12 +2,13 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Calendar, Clock, FileDown, LogOut, Plus, Loader2, Check, X, Mail, MapPin, Navigation, Timer, LogIn } from 'lucide-react'
-import type { IndividualMember, MemberPointage, MemberPlanning } from '@/lib/data/queries/members'
+import { Calendar, Clock, FileDown, LogOut, Plus, Loader2, Check, X, Mail, MapPin, Navigation, Timer, LogIn, AlertTriangle, PlayCircle } from 'lucide-react'
+import type { IndividualMember, MemberPointage, MemberPlanning, MemberTask } from '@/lib/data/queries/members'
 import {
   pointMyHoursFromSpace,
   sendMyHoursReportFromSpace,
   logoutFromMonEspace,
+  updateMyTaskFromSpace,
 } from '@/lib/data/mutations/members'
 
 type ChantierStub = { id: string; title: string }
@@ -42,6 +43,7 @@ export default function MonEspaceDashboardClient({
   organizationName,
   pointages,
   plannings,
+  tasks: initialTasks,
   chantiers,
   monthStart,
   monthEnd,
@@ -50,6 +52,7 @@ export default function MonEspaceDashboardClient({
   organizationName: string
   pointages: MemberPointage[]
   plannings: MemberPlanning[]
+  tasks: MemberTask[]
   chantiers: ChantierStub[]
   monthStart: string
   monthEnd: string
@@ -58,6 +61,9 @@ export default function MonEspaceDashboardClient({
   const fullName = [member.prenom, member.name].filter(Boolean).join(' ') || member.name
 
   const totalHours = pointages.reduce((s, p) => s + p.hours, 0)
+  const [tasks, setTasks] = useState(initialTasks)
+  const [taskLoadingId, setTaskLoadingId] = useState<string | null>(null)
+  const [taskError, setTaskError] = useState<string | null>(null)
 
   // Formulaire pointage
   const [showPoint, setShowPoint] = useState(false)
@@ -146,6 +152,24 @@ export default function MonEspaceDashboardClient({
   const handleLogout = async () => {
     await logoutFromMonEspace()
     router.replace('/mon-espace/request-access')
+  }
+
+  const handleTaskStatus = async (task: MemberTask, status: 'en_cours' | 'termine') => {
+    setTaskError(null)
+    setTaskLoadingId(`${task.id}:${status}`)
+    if (status === 'termine') {
+      setTasks(prev => prev.filter(t => t.id !== task.id))
+    } else {
+      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status } : t))
+    }
+    const { error } = await updateMyTaskFromSpace(task.id, status)
+    setTaskLoadingId(null)
+    if (error) {
+      setTaskError(error)
+      setTasks(initialTasks)
+      return
+    }
+    router.refresh()
   }
 
   // Plannings groupés par jour
@@ -348,6 +372,62 @@ export default function MonEspaceDashboardClient({
           </div>
         </section>
       )}
+
+      {/* Mes tâches */}
+      <section className="space-y-2">
+        <h2 className="text-sm font-bold text-primary flex items-center gap-2">
+          <Check className="w-4 h-4 text-accent" /> Mes tâches
+        </h2>
+        {taskError && <p className="text-xs text-red-500">{taskError}</p>}
+        {tasks.length === 0 ? (
+          <div className="card p-4 text-sm text-secondary text-center">
+            Aucune tâche assignée.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {tasks.map(task => (
+              <div key={task.id} className={`card p-3 ${task.is_overdue ? 'border-red-500/25 bg-red-500/5' : ''}`}>
+                <div className="flex items-start gap-3">
+                  {task.is_overdue ? (
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                  ) : (
+                    <Clock className="mt-0.5 h-4 w-4 shrink-0 text-secondary" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-primary">{task.title}</p>
+                    <p className="text-xs text-secondary">{task.chantier_title}</p>
+                    {task.due_date && (
+                      <p className={`mt-1 text-xs ${task.is_overdue ? 'text-red-500 font-semibold' : 'text-secondary'}`}>
+                        Échéance {fmtDate(task.due_date)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-[var(--elevation-border)] pt-3">
+                  {task.status === 'a_faire' && (
+                    <button
+                      onClick={() => handleTaskStatus(task, 'en_cours')}
+                      disabled={!!taskLoadingId}
+                      className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                    >
+                      {taskLoadingId === `${task.id}:en_cours` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5" />}
+                      Démarrer
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleTaskStatus(task, 'termine')}
+                    disabled={!!taskLoadingId}
+                    className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                  >
+                    {taskLoadingId === `${task.id}:termine` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                    Terminer
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Créneaux à venir */}
       <section className="space-y-2">

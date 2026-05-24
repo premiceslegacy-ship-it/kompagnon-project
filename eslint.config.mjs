@@ -27,6 +27,8 @@ const eslintConfig = [
       'node_modules/**',
       'supabase/.temp/**',
       'src/app/(app)/_backup.tsx.bak',
+      'venv_scraper/**',
+      'workers/**',
     ],
   },
 ]

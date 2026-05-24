@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   HardHat, Plus, X, Search, MapPin, Calendar,
   MoreVertical, Trash2, CheckCircle, PauseCircle, XCircle, PlayCircle,
-  RefreshCw, Copy, Clock, Users,
+  RefreshCw, Copy, Clock, Users, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import type { Chantier, ChantierStats } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
@@ -90,8 +90,17 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
 
 function StatusBadge({ status }: { status: Status }) {
   const cfg = STATUS_CONFIG[status] ?? { label: status, color: 'bg-secondary/20 text-secondary' }
+  const tone = status === 'en_cours'
+    ? 'success'
+    : status === 'planifie'
+    ? 'info'
+    : status === 'suspendu'
+    ? 'amber'
+    : status === 'annule'
+    ? 'danger'
+    : 'muted'
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${cfg.color}`}>
+    <span className={`status-pill status-pill-${tone} px-2 py-0.5 text-xs font-semibold`}>
       {cfg.label}
     </span>
   )
@@ -101,7 +110,7 @@ function RecurrenceBadge({ recurrence }: { recurrence: RecurrenceType | null | u
   if (!recurrence || recurrence === 'none') return null
   const label = RECURRENCE_OPTIONS.find(o => o.value === recurrence)?.label ?? recurrence
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-accent/10 text-accent">
+    <span className="status-pill status-pill-accent px-2 py-0.5 text-xs font-semibold">
       <RefreshCw className="w-3 h-3" />
       {label}
     </span>
@@ -547,6 +556,8 @@ export default function ChantiersClient({
   const [filterStatus, setFilterStatus] = useState<Status | 'tous'>('tous')
   const [showCreate, setShowCreate] = useState(false)
   const [isNavigating, setIsNavigating] = useState(false)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
@@ -559,6 +570,10 @@ export default function ChantiersClient({
       return matchSearch && matchStatus
     })
   }, [chantiers, search, filterStatus])
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pageStart = (currentPage - 1) * PAGE_SIZE
+  const paginated = filtered.slice(pageStart, pageStart + PAGE_SIZE)
 
   const handleStatusChange = async (chantier: Chantier, newStatus: Status) => {
     setChantiers(prev => prev.map(c => c.id === chantier.id ? { ...c, status: newStatus } : c))
@@ -606,28 +621,28 @@ export default function ChantiersClient({
         <div className="flex items-center gap-4 flex-wrap mt-4 md:mt-0">
           <Link
             href="/chantiers/planning"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 bg-base transition-all shadow-sm whitespace-nowrap"
+            className="btn-secondary flex items-center gap-2 px-4 py-2.5 text-sm whitespace-nowrap"
           >
             <Calendar className="w-4 h-4" /> Planning global
           </Link>
           <Link
             href="/chantiers/heures"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 bg-base transition-all shadow-sm whitespace-nowrap"
+            className="btn-secondary flex items-center gap-2 px-4 py-2.5 text-sm whitespace-nowrap"
           >
             <Clock className="w-4 h-4" /> Heures pointées
           </Link>
           <Link
             href="/chantiers/equipes"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 bg-base transition-all shadow-sm whitespace-nowrap"
+            className="btn-secondary flex items-center gap-2 px-4 py-2.5 text-sm whitespace-nowrap"
           >
             <Users className="w-4 h-4" /> Équipes & Intervenants
           </Link>
           {canCreate && (
             <button
               onClick={() => setShowCreate(true)}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-accent text-white font-bold hover:bg-accent/90 shadow-sm shadow-accent/20 transition-all border border-accent/20 whitespace-nowrap"
+              className="btn-primary flex items-center gap-2 px-5 py-2.5 whitespace-nowrap"
             >
-              <Plus className="w-5 h-5 text-white" /> Créer un chantier
+              <Plus className="w-5 h-5" /> Créer un chantier
             </button>
           )}
         </div>
@@ -649,13 +664,13 @@ export default function ChantiersClient({
             className="input pl-9 w-full"
             placeholder="Rechercher un chantier, client, ville..."
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => { setSearch(e.target.value); setPage(1) }}
           />
         </div>
         <select
           className="input w-full sm:w-44"
           value={filterStatus}
-          onChange={e => setFilterStatus(e.target.value as Status | 'tous')}
+          onChange={e => { setFilterStatus(e.target.value as Status | 'tous'); setPage(1) }}
         >
           <option value="tous">Tous les statuts</option>
           {Object.entries(STATUS_CONFIG).map(([k, v]) => (
@@ -672,23 +687,24 @@ export default function ChantiersClient({
           <p className="text-secondary text-sm mt-1">Créez votre premier chantier ou modifiez les filtres</p>
         </div>
       ) : (
-        <div className="card overflow-x-auto">
-          <table className="w-full text-sm min-w-[600px]">
-            <thead>
-              <tr className="border-b border-[var(--elevation-border)] text-xs text-secondary uppercase tracking-wider">
-                <th className="text-left px-4 py-3 font-semibold">Chantier / Client</th>
-                <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Adresse</th>
-                <th className="text-left px-4 py-3 font-semibold">Statut</th>
-                <th className="text-left px-4 py-3 font-semibold hidden lg:table-cell">Dates</th>
-                <th className="text-right px-4 py-3 font-semibold hidden lg:table-cell">Budget HT</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--elevation-border)]">
-              {filtered.map((c, i) => (
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[600px]">
+              <thead>
+                <tr className="border-b border-[var(--elevation-border)] text-xs text-secondary uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 font-semibold">Chantier / Client</th>
+                  <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Adresse</th>
+                  <th className="text-left px-4 py-3 font-semibold">Statut</th>
+                  <th className="text-left px-4 py-3 font-semibold hidden lg:table-cell">Dates</th>
+                  <th className="text-right px-4 py-3 font-semibold hidden lg:table-cell">Budget HT</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--elevation-border)]">
+              {paginated.map((c, i) => (
                 <tr
                   key={c.id}
-                  className={`hover:bg-base/50 transition-colors cursor-pointer ${i === filtered.length - 1 ? '[&>td:first-child]:rounded-bl-3xl [&>td:last-child]:rounded-br-3xl' : ''}`}
+                  className={`hover:bg-base/50 transition-colors cursor-pointer ${i === paginated.length - 1 ? '[&>td:first-child]:rounded-bl-3xl [&>td:last-child]:rounded-br-3xl' : ''}`}
                   onClick={() => router.push(`/chantiers/${c.id}`)}
                 >
                   <td className="px-4 py-3">
@@ -736,8 +752,35 @@ export default function ChantiersClient({
                   </td>
                 </tr>
               ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--elevation-border)]">
+              <span className="text-xs text-secondary">
+                {pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, filtered.length)} sur {filtered.length}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="Page précédente"
+                >
+                  <ChevronLeft className="w-4 h-4 text-secondary" />
+                </button>
+                <span className="px-2 text-xs font-semibold text-secondary">Page {currentPage} / {totalPages}</span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="Page suivante"
+                >
+                  <ChevronRight className="w-4 h-4 text-secondary" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

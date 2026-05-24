@@ -1,7 +1,6 @@
 'use client'
 
-import React, { useState, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
+import React, { useState, useTransition, useCallback } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import {
@@ -10,10 +9,15 @@ import {
 } from 'lucide-react'
 import type {
   MonthlyReport, AnnualReport, HoursReport,
-  TopClientEntry, TopChantierEntry, AnnualObjectives, CustomObjective,
+  TopClientEntry, TopChantierEntry, AnnualObjectives, MonthlyObjectives, CustomObjective,
   MemberWithoutRate,
 } from '@/lib/data/queries/reporting'
-import { saveObjectivesAction } from './actions'
+import {
+  saveObjectivesAction,
+  saveMonthlyObjectivesAction,
+  fetchMonthlyDataAction,
+  fetchAnnualDataAction,
+} from './actions'
 
 const RevenueChart = dynamic(() => import('./RevenueChart'), { ssr: false })
 
@@ -63,17 +67,24 @@ function KpiCard({ label, value, sub, delta, icon }: {
   )
 }
 
-function ProgressBar({ label, current, target, format }: {
-  label: string; current: number; target: number | null; format: (n: number) => string
+function ProgressBar({ label, current, target, format, onClear }: {
+  label: string; current: number; target: number | null; format: (n: number) => string; onClear?: () => void
 }) {
   if (!target) return null
   const pct = Math.min((current / target) * 100, 100)
   const color = pct >= 100 ? 'bg-accent-green' : pct >= 70 ? 'bg-accent' : 'bg-blue-500'
   return (
     <div className="space-y-1.5">
-      <div className="flex justify-between text-sm">
+      <div className="flex justify-between text-sm items-center">
         <span className="font-medium text-primary">{label}</span>
-        <span className="text-secondary tabular-nums">{format(current)} / {format(target)}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-secondary tabular-nums">{format(current)} / {format(target)}</span>
+          {onClear && (
+            <button onClick={onClear} title="Supprimer cet objectif" className="p-0.5 text-secondary hover:text-red-500 transition-colors">
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
       </div>
       <div className="h-2 bg-secondary/20 rounded-full overflow-hidden">
         <div className={`h-full ${color} rounded-full transition-all duration-700`} style={{ width: `${pct}%` }} />
@@ -83,40 +94,231 @@ function ProgressBar({ label, current, target, format }: {
   )
 }
 
+// Entrée unifiée dans la liste d'objectifs : soit un champ standard, soit un custom libre
+type ObjEntry =
+  | { kind: 'standard'; key: StandardKey; value: number | null }
+  | { kind: 'custom'; id?: string; label: string; target: number; unit: string }
 
-function ObjectivesModal({ year, objectives, onClose }: {
+type StandardKey =
+  | 'revenue_ht_target'
+  | 'margin_eur_target'
+  | 'margin_pct_target'
+  | 'chantiers_count_target'
+  | 'new_clients_target'
+  | 'hours_target'
+
+const ANNUAL_STANDARD_OPTS: { key: StandardKey; label: string; unit: string; placeholder: string; step: string }[] = [
+  { key: 'revenue_ht_target',      label: 'Facturé HT',         unit: '€',  placeholder: '100000', step: '1000' },
+  { key: 'margin_eur_target',      label: 'Marge (EUR)',         unit: '€',  placeholder: '30000',  step: '1000' },
+  { key: 'margin_pct_target',      label: 'Marge (%)',           unit: '%',  placeholder: '30',     step: '0.5'  },
+  { key: 'chantiers_count_target', label: 'Chantiers terminés', unit: '',   placeholder: '20',     step: '1'    },
+  { key: 'new_clients_target',     label: 'Nouveaux clients',   unit: '',   placeholder: '10',     step: '1'    },
+  { key: 'hours_target',           label: 'Heures totales',     unit: 'h',  placeholder: '2000',   step: '50'   },
+]
+
+const MONTHLY_STANDARD_OPTS: { key: Exclude<StandardKey, 'new_clients_target'>; label: string; unit: string; placeholder: string; step: string }[] = [
+  { key: 'revenue_ht_target',      label: 'Facturé HT',         unit: '€',  placeholder: '10000',  step: '500'  },
+  { key: 'margin_eur_target',      label: 'Marge (EUR)',         unit: '€',  placeholder: '3000',   step: '500'  },
+  { key: 'margin_pct_target',      label: 'Marge (%)',           unit: '%',  placeholder: '30',     step: '0.5'  },
+  { key: 'chantiers_count_target', label: 'Chantiers terminés', unit: '',   placeholder: '2',      step: '1'    },
+  { key: 'hours_target',           label: 'Heures totales',     unit: 'h',  placeholder: '160',    step: '10'   },
+]
+
+function annualToEntries(obj: AnnualObjectives): ObjEntry[] {
+  const entries: ObjEntry[] = []
+  for (const opt of ANNUAL_STANDARD_OPTS) {
+    const val = obj[opt.key as keyof AnnualObjectives] as number | null
+    if (val != null) entries.push({ kind: 'standard', key: opt.key, value: val })
+  }
+  for (const c of obj.customs) {
+    entries.push({ kind: 'custom', id: c.id, label: c.label, target: c.target, unit: c.unit })
+  }
+  return entries
+}
+
+function monthlyToEntries(obj: MonthlyObjectives): ObjEntry[] {
+  const entries: ObjEntry[] = []
+  for (const opt of MONTHLY_STANDARD_OPTS) {
+    const val = obj[opt.key as keyof MonthlyObjectives] as number | null
+    if (val != null) entries.push({ kind: 'standard', key: opt.key, value: val })
+  }
+  for (const c of obj.customs) {
+    entries.push({ kind: 'custom', id: c.id, label: c.label, target: c.target, unit: c.unit })
+  }
+  return entries
+}
+
+function entriesToAnnual(entries: ObjEntry[], base: AnnualObjectives): AnnualObjectives {
+  const result: AnnualObjectives = {
+    ...base,
+    revenue_ht_target: null, margin_eur_target: null, margin_pct_target: null,
+    chantiers_count_target: null, new_clients_target: null, hours_target: null,
+    customs: [],
+  }
+  let customOrder = 0
+  for (const e of entries) {
+    if (e.kind === 'standard') {
+      (result as any)[e.key] = e.value
+    } else {
+      result.customs.push({ id: e.id, label: e.label, target: e.target, unit: e.unit, sort_order: customOrder++ })
+    }
+  }
+  return result
+}
+
+function entriesToMonthly(entries: ObjEntry[], base: MonthlyObjectives): MonthlyObjectives {
+  const result: MonthlyObjectives = {
+    ...base,
+    revenue_ht_target: null, margin_eur_target: null, margin_pct_target: null,
+    chantiers_count_target: null, hours_target: null,
+    customs: [],
+  }
+  let customOrder = 0
+  for (const e of entries) {
+    if (e.kind === 'standard') {
+      (result as any)[e.key] = e.value
+    } else {
+      result.customs.push({ id: e.id, label: e.label, target: e.target, unit: e.unit, sort_order: customOrder++ })
+    }
+  }
+  return result
+}
+
+function ObjEntryRow({
+  entry,
+  standardOpts,
+  usedStandardKeys,
+  onChange,
+  onRemove,
+}: {
+  entry: ObjEntry
+  standardOpts: typeof ANNUAL_STANDARD_OPTS
+  usedStandardKeys: Set<string>
+  onChange: (e: ObjEntry) => void
+  onRemove: () => void
+}) {
+  const availableStandards = standardOpts.filter(
+    o => o.key === (entry.kind === 'standard' ? entry.key : '') || !usedStandardKeys.has(o.key)
+  )
+
+  return (
+    <div className="flex gap-2 items-start p-3 rounded-2xl bg-secondary/5 border border-secondary/10">
+      <div className="flex-1 space-y-2">
+        {/* Ligne 1 : type */}
+        <div className="relative">
+          <select
+            value={entry.kind === 'standard' ? entry.key : '__custom__'}
+            onChange={e => {
+              const val = e.target.value
+              if (val === '__custom__') {
+                onChange({ kind: 'custom', label: '', target: 0, unit: '' })
+              } else {
+                onChange({ kind: 'standard', key: val as StandardKey, value: null })
+              }
+            }}
+            className="w-full appearance-none input text-sm pr-8 cursor-pointer"
+          >
+            <option value="__custom__">Personnalisé</option>
+            {availableStandards.map(o => (
+              <option key={o.key} value={o.key}>{o.label}</option>
+            ))}
+          </select>
+          <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-secondary">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </span>
+        </div>
+
+        {/* Ligne 2 : valeur + unité/libellé */}
+        {entry.kind === 'standard' ? (() => {
+          const opt = standardOpts.find(o => o.key === entry.key)!
+          return (
+            <div className="flex gap-2 items-center">
+              <input
+                type="number"
+                placeholder={opt.placeholder}
+                step={opt.step}
+                value={entry.value ?? ''}
+                onChange={e => {
+                  const n = parseFloat(e.target.value)
+                  onChange({ ...entry, value: isNaN(n) ? null : n })
+                }}
+                className="flex-1 input text-sm"
+              />
+              {opt.unit && (
+                <span className="flex-shrink-0 px-2 py-1 rounded-lg bg-secondary/10 border border-secondary/15 text-xs font-medium text-secondary">
+                  {opt.unit}
+                </span>
+              )}
+            </div>
+          )
+        })() : (
+          <div className="space-y-2">
+            <input
+              type="text"
+              placeholder="Libellé (ex: Avis Google, leads...)"
+              value={entry.label}
+              onChange={e => onChange({ ...entry, label: e.target.value })}
+              className="w-full input text-sm"
+            />
+            <div className="flex gap-2 items-center">
+              <input
+                type="number"
+                placeholder="Cible (ex: 50)"
+                value={entry.target || ''}
+                onChange={e => onChange({ ...entry, target: parseFloat(e.target.value) || 0 })}
+                className="flex-1 input text-sm"
+              />
+              <input
+                type="text"
+                placeholder="unité (ex: avis)"
+                value={entry.unit}
+                onChange={e => onChange({ ...entry, unit: e.target.value })}
+                className="w-32 input text-sm"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={onRemove}
+        className="mt-1 p-1.5 text-secondary hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors flex-shrink-0"
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+    </div>
+  )
+}
+
+function ObjectivesModalAnnual({ year, objectives, onClose, onSaved }: {
   year: number
   objectives: AnnualObjectives
   onClose: () => void
+  onSaved: (updated: AnnualObjectives) => void
 }) {
   const [pending, startTransition] = useTransition()
-  const [form, setForm] = useState<AnnualObjectives>({ ...objectives })
+  const [entries, setEntries] = useState<ObjEntry[]>(() => annualToEntries(objectives))
   const [error, setError] = useState<string | null>(null)
 
-  function addCustom() {
-    setForm(f => ({ ...f, customs: [...f.customs, { label: '', target: 0, unit: '', sort_order: f.customs.length }] }))
-  }
+  const usedStandardKeys = new Set(entries.filter(e => e.kind === 'standard').map(e => (e as any).key as string))
+  const availableToAdd = ANNUAL_STANDARD_OPTS.filter(o => !usedStandardKeys.has(o.key))
 
-  function removeCustom(i: number) {
-    setForm(f => ({ ...f, customs: f.customs.filter((_, idx) => idx !== i) }))
-  }
-
-  function updateCustom(i: number, field: keyof CustomObjective, value: string | number) {
-    setForm(f => ({
-      ...f,
-      customs: f.customs.map((c, idx) => idx === i ? { ...c, [field]: value } : c),
-    }))
-  }
-
-  function parseNum(v: string): number | null {
-    const n = parseFloat(v.replace(',', '.'))
-    return isNaN(n) ? null : n
+  function addEntry() {
+    if (availableToAdd.length > 0) {
+      setEntries(e => [...e, { kind: 'standard', key: availableToAdd[0].key, value: null }])
+    } else {
+      setEntries(e => [...e, { kind: 'custom', label: '', target: 0, unit: '' }])
+    }
   }
 
   function handleSave() {
     startTransition(async () => {
-      const result = await saveObjectivesAction(year, form)
+      const updated = entriesToAnnual(entries, objectives)
+      const result = await saveObjectivesAction(year, updated)
       if (result.error) { setError(result.error); return }
+      onSaved(updated)
       onClose()
     })
   }
@@ -126,106 +328,34 @@ function ObjectivesModal({ year, objectives, onClose }: {
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
       <div className="relative z-10 card rounded-3xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-bold text-primary">Objectifs {year}</h2>
+          <h2 className="text-xl font-bold text-primary">Objectifs annuels {year}</h2>
           <button onClick={onClose} className="p-2 hover:bg-secondary/20 rounded-xl transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-secondary uppercase tracking-wide block mb-1">CA HT cible (€)</label>
-              <input
-                type="number" placeholder="100000" step="1000"
-                value={form.revenue_ht_target ?? ''}
-                onChange={e => setForm(f => ({ ...f, revenue_ht_target: parseNum(e.target.value) }))}
-                className="w-full input-field text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-secondary uppercase tracking-wide block mb-1">Marge EUR cible (€)</label>
-              <input
-                type="number" placeholder="30000" step="1000"
-                value={form.margin_eur_target ?? ''}
-                onChange={e => setForm(f => ({ ...f, margin_eur_target: parseNum(e.target.value) }))}
-                className="w-full input-field text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-secondary uppercase tracking-wide block mb-1">Marge % cible</label>
-              <input
-                type="number" placeholder="30" step="0.5" min="0" max="100"
-                value={form.margin_pct_target ?? ''}
-                onChange={e => setForm(f => ({ ...f, margin_pct_target: parseNum(e.target.value) }))}
-                className="w-full input-field text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-secondary uppercase tracking-wide block mb-1">Nb chantiers terminés</label>
-              <input
-                type="number" placeholder="20" step="1"
-                value={form.chantiers_count_target ?? ''}
-                onChange={e => setForm(f => ({ ...f, chantiers_count_target: parseNum(e.target.value) }))}
-                className="w-full input-field text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-secondary uppercase tracking-wide block mb-1">Nouveaux clients</label>
-              <input
-                type="number" placeholder="10" step="1"
-                value={form.new_clients_target ?? ''}
-                onChange={e => setForm(f => ({ ...f, new_clients_target: parseNum(e.target.value) }))}
-                className="w-full input-field text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-secondary uppercase tracking-wide block mb-1">Heures totales</label>
-              <input
-                type="number" placeholder="2000" step="50"
-                value={form.hours_target ?? ''}
-                onChange={e => setForm(f => ({ ...f, hours_target: parseNum(e.target.value) }))}
-                className="w-full input-field text-sm"
-              />
-            </div>
-          </div>
+        <div className="space-y-3">
+          {entries.length === 0 && (
+            <p className="text-sm text-secondary text-center py-4">Aucun objectif. Ajoutez-en un ci-dessous.</p>
+          )}
+          {entries.map((entry, i) => (
+            <ObjEntryRow
+              key={i}
+              entry={entry}
+              standardOpts={ANNUAL_STANDARD_OPTS}
+              usedStandardKeys={usedStandardKeys}
+              onChange={updated => setEntries(es => es.map((e, idx) => idx === i ? updated : e))}
+              onRemove={() => setEntries(es => es.filter((_, idx) => idx !== i))}
+            />
+          ))}
 
-          {/* Objectifs custom */}
-          <div className="border-t border-secondary/20 pt-4">
-            <div className="flex justify-between items-center mb-3">
-              <p className="text-sm font-semibold text-primary">Objectifs personnalisés</p>
-              <button onClick={addCustom} className="flex items-center gap-1 text-xs text-accent hover:text-accent/80 transition-colors font-medium">
-                <Plus className="w-3.5 h-3.5" /> Ajouter
-              </button>
-            </div>
-            <div className="space-y-2">
-              {form.customs.map((c, i) => (
-                <div key={i} className="flex gap-2 items-center">
-                  <input
-                    type="text" placeholder="Libellé"
-                    value={c.label}
-                    onChange={e => updateCustom(i, 'label', e.target.value)}
-                    className="flex-1 input-field text-sm"
-                  />
-                  <input
-                    type="number" placeholder="Cible"
-                    value={c.target}
-                    onChange={e => updateCustom(i, 'target', parseFloat(e.target.value) || 0)}
-                    className="w-24 input-field text-sm"
-                  />
-                  <input
-                    type="text" placeholder="unité"
-                    value={c.unit}
-                    onChange={e => updateCustom(i, 'unit', e.target.value)}
-                    className="w-16 input-field text-sm"
-                  />
-                  <button onClick={() => removeCustom(i)} className="p-1.5 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
+          <button
+            onClick={addEntry}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border border-dashed border-secondary/30 text-sm text-secondary hover:text-primary hover:border-secondary/60 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Ajouter un objectif
+          </button>
 
           {error && <p className="text-sm text-red-500">{error}</p>}
 
@@ -233,11 +363,7 @@ function ObjectivesModal({ year, objectives, onClose }: {
             <button onClick={onClose} className="flex-1 py-3 rounded-pill border border-secondary/30 text-secondary text-sm font-semibold hover:bg-secondary/10 transition-colors">
               Annuler
             </button>
-            <button
-              onClick={handleSave}
-              disabled={pending}
-              className="flex-1 py-3 rounded-pill bg-accent text-black text-sm font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
-            >
+            <button onClick={handleSave} disabled={pending} className="flex-1 py-3 rounded-pill bg-accent text-black text-sm font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
               {pending ? 'Enregistrement…' : 'Enregistrer'}
             </button>
           </div>
@@ -247,48 +373,201 @@ function ObjectivesModal({ year, objectives, onClose }: {
   )
 }
 
-
-type Props = {
-  vue: 'mois' | 'annee'
+function ObjectivesModalMonthly({ year, month, objectives, onClose, onSaved }: {
   year: number
   month: number
-  monthlyReport: MonthlyReport | null
-  annualReport: AnnualReport | null
-  hoursReport: HoursReport | null
-  topClients: TopClientEntry[]
-  topChantiers: TopChantierEntry[]
-  objectives: AnnualObjectives | null
+  objectives: MonthlyObjectives
+  onClose: () => void
+  onSaved: (updated: MonthlyObjectives) => void
+}) {
+  const [pending, startTransition] = useTransition()
+  const [entries, setEntries] = useState<ObjEntry[]>(() => monthlyToEntries(objectives))
+  const [error, setError] = useState<string | null>(null)
+
+  const usedStandardKeys = new Set(entries.filter(e => e.kind === 'standard').map(e => (e as any).key as string))
+  const availableToAdd = MONTHLY_STANDARD_OPTS.filter(o => !usedStandardKeys.has(o.key))
+
+  function addEntry() {
+    if (availableToAdd.length > 0) {
+      setEntries(e => [...e, { kind: 'standard', key: availableToAdd[0].key, value: null }])
+    } else {
+      setEntries(e => [...e, { kind: 'custom', label: '', target: 0, unit: '' }])
+    }
+  }
+
+  function handleSave() {
+    startTransition(async () => {
+      const updated = entriesToMonthly(entries, objectives)
+      const result = await saveMonthlyObjectivesAction(year, month, updated)
+      if (result.error) { setError(result.error); return }
+      onSaved(updated)
+      onClose()
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      <div className="relative z-10 card rounded-3xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold text-primary">Objectifs {MONTH_LABELS[month - 1]} {year}</h2>
+          <button onClick={onClose} className="p-2 hover:bg-secondary/20 rounded-xl transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          {entries.length === 0 && (
+            <p className="text-sm text-secondary text-center py-4">Aucun objectif. Ajoutez-en un ci-dessous.</p>
+          )}
+          {entries.map((entry, i) => (
+            <ObjEntryRow
+              key={i}
+              entry={entry}
+              standardOpts={MONTHLY_STANDARD_OPTS as typeof ANNUAL_STANDARD_OPTS}
+              usedStandardKeys={usedStandardKeys}
+              onChange={updated => setEntries(es => es.map((e, idx) => idx === i ? updated : e))}
+              onRemove={() => setEntries(es => es.filter((_, idx) => idx !== i))}
+            />
+          ))}
+
+          <button
+            onClick={addEntry}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border border-dashed border-secondary/30 text-sm text-secondary hover:text-primary hover:border-secondary/60 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Ajouter un objectif
+          </button>
+
+          {error && <p className="text-sm text-red-500">{error}</p>}
+
+          <div className="flex gap-3 pt-2">
+            <button onClick={onClose} className="flex-1 py-3 rounded-pill border border-secondary/30 text-secondary text-sm font-semibold hover:bg-secondary/10 transition-colors">
+              Annuler
+            </button>
+            <button onClick={handleSave} disabled={pending} className="flex-1 py-3 rounded-pill bg-accent text-black text-sm font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
+              {pending ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+type Props = {
+  initialVue: 'mois' | 'annee'
+  initialYear: number
+  initialMonth: number
+  initialMonthlyReport: MonthlyReport | null
+  initialAnnualReport: AnnualReport | null
+  initialHoursReport: HoursReport | null
+  initialTopClients: TopClientEntry[]
+  initialTopChantiers: TopChantierEntry[]
+  initialAnnualObjectives: AnnualObjectives | null
+  initialMonthlyObjectives: MonthlyObjectives | null
   membersWithoutRate: MemberWithoutRate[]
 }
 
 export default function RapportsClient({
-  vue, year, month, monthlyReport, annualReport, hoursReport,
-  topClients, topChantiers, objectives, membersWithoutRate,
+  initialVue, initialYear, initialMonth,
+  initialMonthlyReport, initialAnnualReport,
+  initialHoursReport, initialTopClients, initialTopChantiers,
+  initialAnnualObjectives, initialMonthlyObjectives,
+  membersWithoutRate,
 }: Props) {
-  const router = useRouter()
+  const [vue, setVue] = useState(initialVue)
+  const [year, setYear] = useState(initialYear)
+  const [month, setMonth] = useState(initialMonth)
+
+  const [monthlyReport, setMonthlyReport] = useState(initialMonthlyReport)
+  const [annualReport, setAnnualReport] = useState(initialAnnualReport)
+  const [hoursReport, setHoursReport] = useState(initialHoursReport)
+  const [topClients, setTopClients] = useState(initialTopClients)
+  const [topChantiers, setTopChantiers] = useState(initialTopChantiers)
+  const [annualObjectives, setAnnualObjectives] = useState(initialAnnualObjectives)
+  const [monthlyObjectives, setMonthlyObjectives] = useState(initialMonthlyObjectives)
+
+  const [loading, startTransition] = useTransition()
   const [showObjectives, setShowObjectives] = useState(false)
 
-  function navigate(newVue: 'mois' | 'annee', periode?: string) {
-    const params = new URLSearchParams({ vue: newVue })
-    if (periode) params.set('periode', periode)
-    router.push(`/rapports?${params.toString()}`)
-  }
-
   const now = new Date()
+
+  const goMonthly = useCallback((y: number, m: number) => {
+    startTransition(async () => {
+      setVue('mois')
+      setYear(y)
+      setMonth(m)
+      const data = await fetchMonthlyDataAction(y, m)
+      setMonthlyReport(data.monthlyReport)
+      setHoursReport(data.hoursReport)
+      setTopClients(data.topClients)
+      setTopChantiers(data.topChantiers)
+      setMonthlyObjectives(data.objectives)
+    })
+  }, [])
+
+  const goAnnual = useCallback((y: number) => {
+    startTransition(async () => {
+      setVue('annee')
+      setYear(y)
+      const data = await fetchAnnualDataAction(y)
+      setAnnualReport(data.annualReport)
+      setHoursReport(data.hoursReport)
+      setTopClients(data.topClients)
+      setTopChantiers(data.topChantiers)
+      setAnnualObjectives(data.objectives)
+    })
+  }, [])
+
   const prevYear = year - 1
   const nextYear = year + 1
   const prevMonth = month === 1 ? 12 : month - 1
   const prevMonthYear = month === 1 ? year - 1 : year
   const nextMonth = month === 12 ? 1 : month + 1
   const nextMonthYear = month === 12 ? year + 1 : year
-  const isMonthFuture = (vue === 'mois') && (year > now.getFullYear() || (year === now.getFullYear() && month > now.getMonth() + 1))
-  const isYearFuture = (vue === 'annee') && year >= now.getFullYear()
+  const isMonthFuture = vue === 'mois' && (year > now.getFullYear() || (year === now.getFullYear() && month > now.getMonth() + 1))
+  const isYearFuture = vue === 'annee' && year >= now.getFullYear()
 
   const r = monthlyReport
   const ar = annualReport
+  const objectives = vue === 'mois' ? monthlyObjectives : annualObjectives
+
+  const objectivesEmpty = !objectives ||
+    (!objectives.revenue_ht_target && !objectives.margin_eur_target &&
+     !objectives.chantiers_count_target && !objectives.hours_target &&
+     objectives.customs.length === 0)
+
+  function clearAnnualField(key: keyof Omit<AnnualObjectives, 'id' | 'year' | 'customs'>) {
+    if (!annualObjectives) return
+    const updated = { ...annualObjectives, [key]: null }
+    setAnnualObjectives(updated)
+    saveObjectivesAction(year, updated)
+  }
+
+  function clearMonthlyField(key: keyof Omit<MonthlyObjectives, 'id' | 'year' | 'month' | 'customs'>) {
+    if (!monthlyObjectives) return
+    const updated = { ...monthlyObjectives, [key]: null }
+    setMonthlyObjectives(updated)
+    saveMonthlyObjectivesAction(year, month, updated)
+  }
+
+  function removeAnnualCustom(id: string | undefined, idx: number) {
+    if (!annualObjectives) return
+    const updated = { ...annualObjectives, customs: annualObjectives.customs.filter((_, i) => i !== idx) }
+    setAnnualObjectives(updated)
+    saveObjectivesAction(year, updated)
+  }
+
+  function removeMonthlyCustom(id: string | undefined, idx: number) {
+    if (!monthlyObjectives) return
+    const updated = { ...monthlyObjectives, customs: monthlyObjectives.customs.filter((_, i) => i !== idx) }
+    setMonthlyObjectives(updated)
+    saveMonthlyObjectivesAction(year, month, updated)
+  }
 
   return (
-    <main className="page-container space-y-6 md:space-y-8">
+    <main className={`page-container space-y-6 md:space-y-8 transition-opacity duration-150 ${loading ? 'opacity-60 pointer-events-none' : ''}`}>
       {/* En-tête + nav */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -296,9 +575,7 @@ export default function RapportsClient({
             Rapports
           </h1>
           <p className="text-secondary text-sm mt-0.5">
-            {vue === 'mois'
-              ? `${MONTH_LABELS[month - 1]} ${year}`
-              : `Année ${year}`}
+            {vue === 'mois' ? `${MONTH_LABELS[month - 1]} ${year}` : `Année ${year}`}
           </p>
         </div>
 
@@ -306,13 +583,13 @@ export default function RapportsClient({
           {/* Tabs vue */}
           <div className="flex rounded-xl overflow-hidden border border-secondary/20 text-sm font-semibold">
             <button
-              onClick={() => navigate('mois', `${year}-${String(month).padStart(2, '0')}`)}
+              onClick={() => vue !== 'mois' && goMonthly(year, month)}
               className={`px-4 py-2 transition-colors ${vue === 'mois' ? 'bg-accent text-black' : 'text-secondary hover:text-primary'}`}
             >
               Mensuel
             </button>
             <button
-              onClick={() => navigate('annee', String(year))}
+              onClick={() => vue !== 'annee' && goAnnual(year)}
               className={`px-4 py-2 transition-colors ${vue === 'annee' ? 'bg-accent text-black' : 'text-secondary hover:text-primary'}`}
             >
               Annuel
@@ -323,7 +600,7 @@ export default function RapportsClient({
           {vue === 'mois' ? (
             <div className="flex items-center gap-1 text-sm">
               <button
-                onClick={() => navigate('mois', `${prevMonthYear}-${String(prevMonth).padStart(2, '0')}`)}
+                onClick={() => goMonthly(prevMonthYear, prevMonth)}
                 className="px-3 py-2 rounded-xl border border-secondary/20 text-secondary hover:text-primary transition-colors"
               >
                 &lsaquo;
@@ -332,7 +609,7 @@ export default function RapportsClient({
                 {MONTH_LABELS[month - 1].slice(0, 3)}. {year}
               </span>
               <button
-                onClick={() => navigate('mois', `${nextMonthYear}-${String(nextMonth).padStart(2, '0')}`)}
+                onClick={() => goMonthly(nextMonthYear, nextMonth)}
                 disabled={isMonthFuture}
                 className="px-3 py-2 rounded-xl border border-secondary/20 text-secondary hover:text-primary transition-colors disabled:opacity-30"
               >
@@ -342,14 +619,14 @@ export default function RapportsClient({
           ) : (
             <div className="flex items-center gap-1 text-sm">
               <button
-                onClick={() => navigate('annee', String(prevYear))}
+                onClick={() => goAnnual(prevYear)}
                 className="px-3 py-2 rounded-xl border border-secondary/20 text-secondary hover:text-primary transition-colors"
               >
                 &lsaquo;
               </button>
               <span className="px-2 font-medium text-primary">{year}</span>
               <button
-                onClick={() => navigate('annee', String(nextYear))}
+                onClick={() => goAnnual(nextYear)}
                 disabled={isYearFuture}
                 className="px-3 py-2 rounded-xl border border-secondary/20 text-secondary hover:text-primary transition-colors disabled:opacity-30"
               >
@@ -401,56 +678,16 @@ export default function RapportsClient({
       {vue === 'mois' && r && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KpiCard
-              label="CA HT"
-              value={r.caHt > 0 ? fmt(r.caHt) : '-'}
-              sub={r.caTtc > 0 ? `${fmt(r.caTtc)} TTC` : undefined}
-              delta={<Delta current={r.caHt} prev={r.prevCaHt} />}
-              icon={<Euro className="w-4 h-4" />}
-            />
-            <KpiCard
-              label="Encaissé"
-              value={r.encaisse > 0 ? fmt(r.encaisse) : '-'}
-              delta={<Delta current={r.encaisse} prev={r.prevEncaisse} />}
-              icon={<TrendingUp className="w-4 h-4 text-accent-green" />}
-            />
-            <KpiCard
-              label="TVA collectée"
-              value={r.tvaDue > 0 ? fmt(r.tvaDue) : '-'}
-              delta={<Delta current={r.tvaDue} prev={r.prevTvaDue} />}
-              icon={<BarChart2 className="w-4 h-4" />}
-            />
-            <KpiCard
-              label="Bénéfice estimé"
-              value={r.hasCostData ? fmt(r.beneficeEstime) : '-'}
-              sub={r.hasCostData ? 'CA HT - dépenses - MO' : 'Aucun coût saisi ce mois'}
-              icon={<Target className="w-4 h-4" />}
-            />
+            <KpiCard label="Facturé HT" value={r.caHt > 0 ? fmt(r.caHt) : '-'} sub={r.caTtc > 0 ? `${fmt(r.caTtc)} TTC facturé` : 'Factures émises, non forcément encaissées'} delta={<Delta current={r.caHt} prev={r.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
+            <KpiCard label="Encaissé TTC" value={r.encaisse > 0 ? fmt(r.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={r.encaisse} prev={r.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
+            <KpiCard label="TVA facturée" value={r.tvaDue > 0 ? fmt(r.tvaDue) : '-'} delta={<Delta current={r.tvaDue} prev={r.prevTvaDue} />} icon={<BarChart2 className="w-4 h-4" />} />
+            <KpiCard label="Bénéfice estimé" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} sub={r.hasCostData ? 'Facturé HT - dépenses - MO' : 'Aucun coût saisi ce mois'} icon={<Target className="w-4 h-4" />} />
           </div>
-
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KpiCard
-              label="Chantiers terminés"
-              value={String(r.chantiersTermines || '-')}
-              icon={<HardHat className="w-4 h-4 text-amber-500" />}
-            />
-            <KpiCard
-              label="Chantiers en cours"
-              value={String(r.chantiersEnCours || '-')}
-              icon={<HardHat className="w-4 h-4" />}
-            />
-            <KpiCard
-              label="Heures travaillées"
-              value={r.heuresTotal > 0 ? fmtH(r.heuresTotal) : '-'}
-              delta={<Delta current={r.heuresTotal} prev={r.prevHeuresTotal} />}
-              icon={<Clock className="w-4 h-4" />}
-            />
-            <KpiCard
-              label="Factures émises"
-              value={r.nouvellesFactures > 0 ? String(r.nouvellesFactures) : '-'}
-              sub={r.facturesPayees > 0 ? `${r.facturesPayees} payée(s)` : undefined}
-              icon={<ChevronRight className="w-4 h-4" />}
-            />
+            <KpiCard label="Chantiers terminés" value={String(r.chantiersTermines || '-')} icon={<HardHat className="w-4 h-4 text-amber-500" />} />
+            <KpiCard label="Chantiers en cours" value={String(r.chantiersEnCours || '-')} icon={<HardHat className="w-4 h-4" />} />
+            <KpiCard label="Heures travaillées" value={r.heuresTotal > 0 ? fmtH(r.heuresTotal) : '-'} delta={<Delta current={r.heuresTotal} prev={r.prevHeuresTotal} />} icon={<Clock className="w-4 h-4" />} />
+            <KpiCard label="Factures émises" value={r.nouvellesFactures > 0 ? String(r.nouvellesFactures) : '-'} sub={r.facturesPayees > 0 ? `${r.facturesPayees} payée(s)` : undefined} icon={<ChevronRight className="w-4 h-4" />} />
           </div>
         </>
       )}
@@ -458,88 +695,82 @@ export default function RapportsClient({
       {vue === 'annee' && ar && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KpiCard
-              label="CA HT"
-              value={ar.caHt > 0 ? fmt(ar.caHt) : '-'}
-              sub={ar.caTtc > 0 ? `${fmt(ar.caTtc)} TTC` : undefined}
-              delta={<Delta current={ar.caHt} prev={ar.prevCaHt} />}
-              icon={<Euro className="w-4 h-4" />}
-            />
-            <KpiCard
-              label="Encaissé"
-              value={ar.encaisse > 0 ? fmt(ar.encaisse) : '-'}
-              delta={<Delta current={ar.encaisse} prev={ar.prevEncaisse} />}
-              icon={<TrendingUp className="w-4 h-4 text-accent-green" />}
-            />
-            <KpiCard
-              label="TVA collectée"
-              value={ar.tvaDue > 0 ? fmt(ar.tvaDue) : '-'}
-              icon={<BarChart2 className="w-4 h-4" />}
-            />
-            <KpiCard
-              label="Bénéfice estimé"
-              value={ar.hasCostData ? fmt(ar.beneficeEstime) : '-'}
-              sub={ar.hasCostData ? 'CA HT - dépenses - MO' : 'Aucun coût saisi cette année'}
-              icon={<Target className="w-4 h-4" />}
-            />
+            <KpiCard label="Facturé HT" value={ar.caHt > 0 ? fmt(ar.caHt) : '-'} sub={ar.caTtc > 0 ? `${fmt(ar.caTtc)} TTC facturé` : 'Factures émises, non forcément encaissées'} delta={<Delta current={ar.caHt} prev={ar.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
+            <KpiCard label="Encaissé TTC" value={ar.encaisse > 0 ? fmt(ar.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={ar.encaisse} prev={ar.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
+            <KpiCard label="TVA facturée" value={ar.tvaDue > 0 ? fmt(ar.tvaDue) : '-'} icon={<BarChart2 className="w-4 h-4" />} />
+            <KpiCard label="Bénéfice estimé" value={ar.hasCostData ? fmt(ar.beneficeEstime) : '-'} sub={ar.hasCostData ? 'Facturé HT - dépenses - MO' : 'Aucun coût saisi cette année'} icon={<Target className="w-4 h-4" />} />
           </div>
-
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <KpiCard
-              label="Chantiers terminés"
-              value={String(ar.chantiersTermines || '-')}
-              icon={<HardHat className="w-4 h-4 text-amber-500" />}
-            />
-            <KpiCard
-              label="Nouveaux clients"
-              value={String(ar.nouveauxClients || '-')}
-              icon={<Users className="w-4 h-4 text-blue-500" />}
-            />
-            <KpiCard
-              label="Heures travaillées"
-              value={ar.heuresTotal > 0 ? fmtH(ar.heuresTotal) : '-'}
-              icon={<Clock className="w-4 h-4" />}
-            />
+            <KpiCard label="Chantiers terminés" value={String(ar.chantiersTermines || '-')} icon={<HardHat className="w-4 h-4 text-amber-500" />} />
+            <KpiCard label="Nouveaux clients" value={String(ar.nouveauxClients || '-')} icon={<Users className="w-4 h-4 text-blue-500" />} />
+            <KpiCard label="Heures travaillées" value={ar.heuresTotal > 0 ? fmtH(ar.heuresTotal) : '-'} icon={<Clock className="w-4 h-4" />} />
           </div>
-
-          {/* Graphique CA mensuel */}
           <div className="card rounded-3xl p-6">
             <RevenueChart series={ar.series} prevSeries={ar.prevSeries} />
           </div>
         </>
       )}
 
-      {objectives && (
-        <div className="card rounded-3xl p-6">
-          <div className="flex justify-between items-center mb-5">
-            <h2 className="text-lg font-bold text-primary">Objectifs {year}</h2>
-            <button
-              onClick={() => setShowObjectives(true)}
-              className="flex items-center gap-1.5 text-sm text-accent font-semibold hover:text-accent/80 transition-colors"
-            >
-              <Target className="w-4 h-4" />
-              Modifier
-            </button>
-          </div>
-          {[
-            objectives.revenue_ht_target && { label: 'CA HT', current: vue === 'mois' ? (r?.caHt ?? 0) : (ar?.caHt ?? 0), target: objectives.revenue_ht_target, format: fmt },
-            objectives.margin_eur_target && { label: 'Marge (EUR)', current: vue === 'mois' ? (r?.beneficeEstime ?? 0) : (ar?.beneficeEstime ?? 0), target: objectives.margin_eur_target, format: fmt },
-            objectives.chantiers_count_target && { label: 'Chantiers terminés', current: vue === 'mois' ? (r?.chantiersTermines ?? 0) : (ar?.chantiersTermines ?? 0), target: objectives.chantiers_count_target, format: (n: number) => String(Math.round(n)) },
-            objectives.new_clients_target && vue === 'annee' && ar && { label: 'Nouveaux clients', current: ar.nouveauxClients, target: objectives.new_clients_target, format: (n: number) => String(Math.round(n)) },
-            objectives.hours_target && { label: 'Heures travaillées', current: hoursReport?.total ?? 0, target: objectives.hours_target, format: fmtH },
-            ...objectives.customs.map(c => ({ label: c.label, current: 0, target: c.target, format: (n: number) => `${n.toFixed(1)} ${c.unit}` })),
-          ].filter(Boolean).map((obj, i) => (
-            obj && <div key={i} className="mb-4 last:mb-0">
-              <ProgressBar label={obj.label} current={obj.current} target={obj.target} format={obj.format} />
-            </div>
-          ))}
-          {!objectives.revenue_ht_target && !objectives.margin_eur_target && !objectives.chantiers_count_target && !objectives.hours_target && objectives.customs.length === 0 && (
-            <button onClick={() => setShowObjectives(true)} className="text-sm text-secondary hover:text-primary transition-colors">
-              Aucun objectif défini. Cliquer pour en ajouter.
-            </button>
-          )}
+      {/* Objectifs */}
+      <div className="card rounded-3xl p-6">
+        <div className="flex justify-between items-center mb-5">
+          <h2 className="text-lg font-bold text-primary">
+            Objectifs {vue === 'mois' ? `${MONTH_LABELS[month - 1]} ${year}` : year}
+          </h2>
+          <button
+            onClick={() => setShowObjectives(true)}
+            className="flex items-center gap-1.5 text-sm text-accent font-semibold hover:text-accent/80 transition-colors"
+          >
+            <Target className="w-4 h-4" />
+            Modifier
+          </button>
         </div>
-      )}
+
+        {objectivesEmpty ? (
+          <button onClick={() => setShowObjectives(true)} className="text-sm text-secondary hover:text-primary transition-colors">
+            Aucun objectif défini. Cliquer pour en ajouter.
+          </button>
+        ) : vue === 'mois' && monthlyObjectives ? (
+          <div className="space-y-4">
+            {monthlyObjectives.revenue_ht_target && (
+              <ProgressBar label="Facturé HT" current={r?.caHt ?? 0} target={monthlyObjectives.revenue_ht_target} format={fmt} onClear={() => clearMonthlyField('revenue_ht_target')} />
+            )}
+            {monthlyObjectives.margin_eur_target && (
+              <ProgressBar label="Marge (EUR)" current={r?.beneficeEstime ?? 0} target={monthlyObjectives.margin_eur_target} format={fmt} onClear={() => clearMonthlyField('margin_eur_target')} />
+            )}
+            {monthlyObjectives.chantiers_count_target && (
+              <ProgressBar label="Chantiers terminés" current={r?.chantiersTermines ?? 0} target={monthlyObjectives.chantiers_count_target} format={n => String(Math.round(n))} onClear={() => clearMonthlyField('chantiers_count_target')} />
+            )}
+            {monthlyObjectives.hours_target && (
+              <ProgressBar label="Heures travaillées" current={hoursReport?.total ?? 0} target={monthlyObjectives.hours_target} format={fmtH} onClear={() => clearMonthlyField('hours_target')} />
+            )}
+            {monthlyObjectives.customs.map((c, i) => (
+              <ProgressBar key={i} label={c.label} current={0} target={c.target} format={n => `${n.toFixed(1)} ${c.unit}`} onClear={() => removeMonthlyCustom(c.id, i)} />
+            ))}
+          </div>
+        ) : vue === 'annee' && annualObjectives ? (
+          <div className="space-y-4">
+            {annualObjectives.revenue_ht_target && (
+              <ProgressBar label="Facturé HT" current={ar?.caHt ?? 0} target={annualObjectives.revenue_ht_target} format={fmt} onClear={() => clearAnnualField('revenue_ht_target')} />
+            )}
+            {annualObjectives.margin_eur_target && (
+              <ProgressBar label="Marge (EUR)" current={ar?.beneficeEstime ?? 0} target={annualObjectives.margin_eur_target} format={fmt} onClear={() => clearAnnualField('margin_eur_target')} />
+            )}
+            {annualObjectives.chantiers_count_target && (
+              <ProgressBar label="Chantiers terminés" current={ar?.chantiersTermines ?? 0} target={annualObjectives.chantiers_count_target} format={n => String(Math.round(n))} onClear={() => clearAnnualField('chantiers_count_target')} />
+            )}
+            {annualObjectives.new_clients_target && ar && (
+              <ProgressBar label="Nouveaux clients" current={ar.nouveauxClients} target={annualObjectives.new_clients_target} format={n => String(Math.round(n))} onClear={() => clearAnnualField('new_clients_target')} />
+            )}
+            {annualObjectives.hours_target && (
+              <ProgressBar label="Heures travaillées" current={hoursReport?.total ?? 0} target={annualObjectives.hours_target} format={fmtH} onClear={() => clearAnnualField('hours_target')} />
+            )}
+            {annualObjectives.customs.map((c, i) => (
+              <ProgressBar key={i} label={c.label} current={0} target={c.target} format={n => `${n.toFixed(1)} ${c.unit}`} onClear={() => removeAnnualCustom(c.id, i)} />
+            ))}
+          </div>
+        ) : null}
+      </div>
 
       <div className="card rounded-3xl p-6">
         <div className="mb-4">
@@ -563,10 +794,7 @@ export default function RapportsClient({
                     <span className="text-sm font-semibold tabular-nums text-primary ml-2">{fmtH(p.hours)}</span>
                   </div>
                   <div className="h-1.5 bg-secondary/20 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-accent rounded-full"
-                      style={{ width: `${(p.hours / hoursReport.total) * 100}%` }}
-                    />
+                    <div className="h-full bg-accent rounded-full" style={{ width: `${(p.hours / hoursReport.total) * 100}%` }} />
                   </div>
                 </div>
                 <span className="text-xs text-secondary w-10 text-right">
@@ -587,9 +815,7 @@ export default function RapportsClient({
               <h2 className="text-lg font-bold text-primary">Meilleurs clients</h2>
               <p className="text-xs text-secondary mt-0.5">Classés par CA HT sur {vue === 'mois' ? `${MONTH_LABELS[month - 1]} ${year}` : `l'année ${year}`}</p>
             </div>
-            <Link href="/clients" className="text-xs text-accent font-semibold hover:underline">
-              Voir tous
-            </Link>
+            <Link href="/clients" className="text-xs text-accent font-semibold hover:underline">Voir tous</Link>
           </div>
           {topClients.length === 0 ? (
             <p className="text-sm text-secondary">Aucune donnée pour cette période.</p>
@@ -600,12 +826,7 @@ export default function RapportsClient({
                   <span className="w-6 text-xs font-bold text-secondary mt-0.5 flex-shrink-0">{i + 1}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-baseline gap-2">
-                      <Link
-                        href={`/clients/${c.clientId}`}
-                        className="text-sm font-medium text-primary truncate hover:text-accent transition-colors"
-                      >
-                        {c.clientName}
-                      </Link>
+                      <Link href={`/clients/${c.clientId}`} className="text-sm font-medium text-primary truncate hover:text-accent transition-colors">{c.clientName}</Link>
                       <span className="text-sm font-bold tabular-nums text-primary flex-shrink-0">{fmt(c.caHt)}</span>
                     </div>
                     <div className="flex gap-3 mt-0.5 text-xs text-secondary">
@@ -623,11 +844,9 @@ export default function RapportsClient({
           <div className="flex justify-between items-center mb-4">
             <div>
               <h2 className="text-lg font-bold text-primary">Meilleurs chantiers</h2>
-              <p className="text-xs text-secondary mt-0.5">Classés par marge encaissée sur {vue === 'mois' ? `${MONTH_LABELS[month - 1]} ${year}` : `l'année ${year}`}</p>
+              <p className="text-xs text-secondary mt-0.5">Classés par marge HT encaissée sur {vue === 'mois' ? `${MONTH_LABELS[month - 1]} ${year}` : `l'année ${year}`}</p>
             </div>
-            <Link href="/chantiers" className="text-xs text-accent font-semibold hover:underline">
-              Voir tous
-            </Link>
+            <Link href="/chantiers" className="text-xs text-accent font-semibold hover:underline">Voir tous</Link>
           </div>
           {topChantiers.length === 0 ? (
             <p className="text-sm text-secondary">Aucune donnée pour cette période.</p>
@@ -638,21 +857,14 @@ export default function RapportsClient({
                   <span className="w-6 text-xs font-bold text-secondary mt-0.5 flex-shrink-0">{i + 1}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-baseline gap-2">
-                      <Link
-                        href={`/chantiers/${c.chantierId}`}
-                        className="text-sm font-medium text-primary truncate hover:text-accent transition-colors"
-                      >
-                        {c.chantierTitle}
-                      </Link>
-                      <span className={`text-sm font-bold tabular-nums flex-shrink-0 ${c.marginEur >= 0 ? 'text-accent-green' : 'text-red-500'}`}>
-                        {fmt(c.marginEur)}
-                      </span>
+                      <Link href={`/chantiers/${c.chantierId}`} className="text-sm font-medium text-primary truncate hover:text-accent transition-colors">{c.chantierTitle}</Link>
+                      <span className={`text-sm font-bold tabular-nums flex-shrink-0 ${c.marginEur >= 0 ? 'text-accent-green' : 'text-red-500'}`}>{fmt(c.marginEur)}</span>
                     </div>
                     <div className="flex gap-3 mt-0.5 text-xs text-secondary">
                       {c.clientName && <span>{c.clientName}</span>}
-                      <span>Facturé : {fmt(c.caHt)}</span>
-                      <span>Encaissé : {fmt(c.encaisseHt)}</span>
-                      <span>Marge : {fmtPct(c.marginPct)}</span>
+                      <span>Facturé HT : {fmt(c.caHt)}</span>
+                      <span>Encaissé TTC : {fmt(c.encaisseTtc)}</span>
+                      <span>Marge HT : {fmtPct(c.marginPct)}</span>
                     </div>
                   </div>
                 </div>
@@ -662,8 +874,22 @@ export default function RapportsClient({
         </div>
       </div>
 
-      {showObjectives && objectives && (
-        <ObjectivesModal year={year} objectives={objectives} onClose={() => setShowObjectives(false)} />
+      {showObjectives && vue === 'annee' && annualObjectives && (
+        <ObjectivesModalAnnual
+          year={year}
+          objectives={annualObjectives}
+          onClose={() => setShowObjectives(false)}
+          onSaved={updated => setAnnualObjectives(updated)}
+        />
+      )}
+      {showObjectives && vue === 'mois' && monthlyObjectives && (
+        <ObjectivesModalMonthly
+          year={year}
+          month={month}
+          objectives={monthlyObjectives}
+          onClose={() => setShowObjectives(false)}
+          onSaved={updated => setMonthlyObjectives(updated)}
+        />
       )}
     </main>
   )

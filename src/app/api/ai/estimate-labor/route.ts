@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIQuotaExceededError } from '@/lib/quota'
 import { fetchRAGContext } from '@/lib/ai/rag'
 import { getBusinessContext } from '@/lib/ai/business-context'
 
@@ -105,6 +106,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result)
   } catch (err: unknown) {
+    if (err instanceof AIQuotaExceededError) {
+      return NextResponse.json({ error: "Quota mensuel d'estimations main d'oeuvre atteint." }, { status: 402 })
+    }
     if (err instanceof AIModuleDisabledError) {
       return NextResponse.json({ error: 'Module IA devis désactivé pour cette organisation.' }, { status: 403 })
     }

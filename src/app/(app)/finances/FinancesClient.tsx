@@ -182,6 +182,9 @@ export default function FinancesClient({
   const [paymentRef, setPaymentRef] = useState('')
   const [paymentLoading, setPaymentLoading] = useState(false)
   const [paymentError, setPaymentError] = useState<string | null>(null)
+  const [markPaidLoadingId, setMarkPaidLoadingId] = useState<string | null>(null)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
   const returnTo = activeTab === 'quotes'
     ? `/finances?tab=quotes&month=${quoteStatsMonth}`
     : `/finances?tab=invoices&month=${statsMonth}`
@@ -244,6 +247,12 @@ export default function FinancesClient({
     const matchMonth = invDate(inv).startsWith(statsMonth)
     return matchSearch && matchStatus && matchMonth
   })
+  const activeFilteredCount = activeTab === 'quotes' ? filtered.length : filteredInvoices.length
+  const totalPages = Math.max(1, Math.ceil(activeFilteredCount / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pageStart = (currentPage - 1) * PAGE_SIZE
+  const paginatedQuotes = filtered.slice(pageStart, pageStart + PAGE_SIZE)
+  const paginatedInvoices = filteredInvoices.slice(pageStart, pageStart + PAGE_SIZE)
 
   // Stats globales (toutes périodes) - pour les lignes de la table
   // Stats par mois sélectionné - pour les KPI cards
@@ -281,8 +290,22 @@ export default function FinancesClient({
   }
 
   const handleMarkPaid = async (id: string) => {
+    if (markPaidLoadingId) return
+    const previousInvoices = invoices
+    const optimisticPaidAt = new Date().toISOString()
+    setMarkPaidLoadingId(id)
+    setInvoices(prev => prev.map(inv =>
+      inv.id === id
+        ? { ...inv, status: 'paid' as const, total_paid: inv.total_ttc ?? inv.total_paid, paid_at: optimisticPaidAt }
+        : inv
+    ))
     const res = await markInvoicePaid(id)
-    if (res.error) return
+    setMarkPaidLoadingId(null)
+    if (res.error) {
+      setInvoices(previousInvoices)
+      alert(res.error)
+      return
+    }
     setInvoices(prev => prev.map(inv =>
       inv.id === id
         ? { ...inv, status: 'paid' as const, total_paid: res.total_paid ?? inv.total_ttc, paid_at: res.paid_at ?? inv.paid_at }
@@ -401,6 +424,7 @@ export default function FinancesClient({
     setActiveTab(tab)
     setStatusFilter('all')
     setSearchTerm('')
+    setPage(1)
     router.replace(`/finances?tab=${tab}`, { scroll: false })
   }
 
@@ -845,13 +869,13 @@ export default function FinancesClient({
               type="text"
               placeholder={`Rechercher ${activeTab === 'quotes' ? 'un devis' : 'une facture'}...`}
               value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
+              onChange={e => { setSearchTerm(e.target.value); setPage(1) }}
               className="w-full pl-12 pr-4 py-3 rounded-full bg-base/50 border border-[var(--elevation-border)] focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all text-primary"
             />
           </div>
           <select
             value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
+            onChange={e => { setStatusFilter(e.target.value); setPage(1) }}
             className="w-full sm:w-auto px-4 py-3 rounded-full bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all appearance-none"
           >
             <option value="all">Tous les statuts</option>
@@ -874,7 +898,7 @@ export default function FinancesClient({
             </thead>
             <tbody className="divide-y divide-[var(--elevation-border)]">
               {activeTab === 'quotes' ? (
-                filtered.length > 0 ? filtered.map(q => {
+                filtered.length > 0 ? paginatedQuotes.map(q => {
                   const st = STATUS[q.status] ?? STATUS['draft']
                   const date = new Date(q.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
                   const clientName = q.client?.company_name ?? q.client?.email ?? '/'
@@ -942,7 +966,7 @@ export default function FinancesClient({
                   </tr>
                 )
               ) : (
-                filteredInvoices.length > 0 ? filteredInvoices.map(inv => {
+                filteredInvoices.length > 0 ? paginatedInvoices.map(inv => {
                   const st = INVOICE_STATUS[inv.status] ?? INVOICE_STATUS['draft']
                   const date = new Date(invDate(inv)).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
                   const clientName = inv.client?.company_name ?? inv.client?.email ?? '/'
@@ -1002,10 +1026,11 @@ export default function FinancesClient({
                           {canRecordPayment && inv.status === 'sent' && (
                             <button
                               onClick={() => handleMarkPaid(inv.id)}
+                              disabled={!!markPaidLoadingId}
                               title="Marquer payée"
-                              className="w-8 h-8 rounded-lg flex items-center justify-center text-accent-green hover:bg-accent-green/10 transition-colors"
+                              className="w-8 h-8 rounded-lg flex items-center justify-center text-accent-green hover:bg-accent-green/10 transition-colors disabled:opacity-50"
                             >
-                              <CheckCircle2 className="w-4 h-4" />
+                              {markPaidLoadingId === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                             </button>
                           )}
                           <ActionMenu actions={[
@@ -1056,6 +1081,32 @@ export default function FinancesClient({
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-[var(--elevation-border)]">
+            <span className="text-xs text-secondary">
+              {pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, activeFilteredCount)} sur {activeFilteredCount}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="Page précédente"
+              >
+                <ChevronLeft className="w-4 h-4 text-secondary" />
+              </button>
+              <span className="px-2 text-xs font-semibold text-secondary">Page {currentPage} / {totalPages}</span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="Page suivante"
+              >
+                <ChevronRight className="w-4 h-4 text-secondary" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   )
