@@ -1,7 +1,7 @@
 /**
  * Cloudflare Worker — Crons automatiques Atelier
  *
- * Déclenché chaque matin à 8h (cron schedule dans wrangler.toml).
+ * Déclenché chaque matin à 7h UTC (8h Paris hiver, 9h Paris été).
  * Appelle séquentiellement les API routes Next.js sécurisées par CRON_SECRET :
  *   1. /api/cron/auto-reminders    — relances devis/factures en retard (IA)
  *   2. /api/cron/recurring-invoices — brouillons récurrents + auto-envoi PDF si délai expiré

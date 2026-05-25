@@ -1,11 +1,11 @@
 'use client'
 
-import React, { useState, useTransition, useMemo } from 'react'
+import React, { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Users, UserPlus, Plus, Pencil, Trash2, X, Loader2,
   ChevronRight, Mail, Euro, Shield, UserCheck, UserMinus,
-  HardHat, Check, ArrowLeft,
+  Check, ArrowLeft,
 } from 'lucide-react'
 import type { Equipe, EquipeMembre } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
@@ -122,11 +122,12 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
   const [membreModal, setMembreModal] = useState<MembreModalState | null>(null)
   const [equipeModal, setEquipeModal] = useState<EquipeModalState | null>(null)
   const [showAddExistant, setShowAddExistant] = useState<string | null>(null) // equipeId
-  const [confirmDelete, setConfirmDelete] = useState<{ type: 'equipe' | 'membre'; id: string; label: string } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ type: 'equipe' | 'membre'; id: string; label: string; soloMembre?: boolean } | null>(null)
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [inviteSent, setInviteSent] = useState<Set<string>>(new Set())
+  const inviteTimers = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   // Formulaire membre
   const [fPrenom, setFPrenom] = useState('')
@@ -269,19 +270,19 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
     refresh()
   }
 
-  async function handleDeleteMembre(id: string) {
+  async function handleDeleteEquipeMembre(id: string) {
     if (!canManageTeam) return
     setSaving(true)
-    await deleteIndividualMember(id)
+    await removeEquipeMembre(id)
     setSaving(false)
     setConfirmDelete(null)
     refresh()
   }
 
-  async function handleDeleteEquipeMembre(id: string) {
+  async function handleDeleteSoloMembre(id: string) {
     if (!canManageTeam) return
     setSaving(true)
-    await removeEquipeMembre(id)
+    await deleteIndividualMember(id)
     setSaving(false)
     setConfirmDelete(null)
     refresh()
@@ -301,8 +302,17 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
 
   async function handleInvite(membreId: string) {
     if (!canManageTeam) return
+    if (inviteSent.has(membreId)) return
     const { error: e } = await sendMemberSpaceInvite(membreId)
-    if (!e) setInviteSent(prev => new Set(prev).add(membreId))
+    if (e) { setError(e); return }
+    setInviteSent(prev => new Set(prev).add(membreId))
+    const existing = inviteTimers.current.get(membreId)
+    if (existing) clearTimeout(existing)
+    const t = setTimeout(() => {
+      setInviteSent(prev => { const s = new Set(prev); s.delete(membreId); return s })
+      inviteTimers.current.delete(membreId)
+    }, 3000)
+    inviteTimers.current.set(membreId, t)
   }
 
   async function handleAddExistant(equipeId: string) {
@@ -642,7 +652,7 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button
-                    onClick={() => setConfirmDelete({ type: 'membre', id: membre.id, label: fullName(membre) })}
+                    onClick={() => setConfirmDelete({ type: 'membre', id: membre.id, label: fullName(membre), soloMembre: true })}
                     className="p-1.5 rounded-lg text-secondary hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
                     title="Supprimer"
                   >
@@ -885,6 +895,7 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
               <button
                 onClick={() => {
                   if (confirmDelete.type === 'equipe') handleDeleteEquipe(confirmDelete.id)
+                  else if (confirmDelete.soloMembre) handleDeleteSoloMembre(confirmDelete.id)
                   else handleDeleteEquipeMembre(confirmDelete.id)
                 }}
                 disabled={saving}
