@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, Clock, Users, Calendar, Filter, FileDown,
   PlusCircle, CheckCircle2, AlertCircle,
-  X, Check,
+  X, Check, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import type { GlobalPointage } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
@@ -311,8 +311,6 @@ type ReportEntry = {
   roleLabel?: string | null
 }
 
-const MONTH_NAMES = ['Janv.', 'Févr.', 'Mars', 'Avr.', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.']
-
 function MemberReportsPanel({
   pointages,
   individualMembers,
@@ -354,33 +352,53 @@ function MemberReportsPanel({
 
   const now = new Date()
   const thisYear      = now.getFullYear()
-  const defaultYear   = thisYear
-  const defaultMonthIdx = now.getMonth() // 0-based, mois en cours
-  const yearOptions   = Array.from({ length: 5 }, (_, i) => thisYear - i)
+  const defaultMonthIdx = now.getMonth()
+  const minYear = thisYear - 1
 
-  const [modes,         setModes]         = useState<Record<string, 'month' | 'year'>>({})
-  const [monthIdxs,     setMonthIdxs]     = useState<Record<string, number>>({})
-  const [selectedYears, setSelectedYears] = useState<Record<string, number>>({})
+  // "YYYY-MM" ou "YYYY" (année complète)
+  const [selections, setSelections] = useState<Record<string, string>>({})
 
-  const getMode     = (id: string) => modes[id]          ?? 'month'
-  const getMonthIdx = (id: string) => monthIdxs[id]      ?? defaultMonthIdx
-  const getYear     = (id: string) => selectedYears[id]  ?? defaultYear
+  const getSelection = (id: string) => selections[id] ?? `${thisYear}-${String(defaultMonthIdx + 1).padStart(2, '0')}`
+
+  const stepMonth = (id: string, dir: 1 | -1) => {
+    const sel = getSelection(id)
+    if (sel.length === 4) return // mode année, pas de navigation
+    const [y, m] = sel.split('-').map(Number)
+    let nm = m + dir, ny = y
+    if (nm > 12) { nm = 1; ny++ }
+    if (nm < 1)  { nm = 12; ny-- }
+    if (ny < minYear || ny > thisYear) return
+    setSelections(prev => ({ ...prev, [id]: `${ny}-${String(nm).padStart(2, '0')}` }))
+  }
 
   const handleDownload = (m: ReportEntry) => {
-    const mode = getMode(m.id)
-    const y    = getYear(m.id)
+    const sel = getSelection(m.id)
     let dateFrom: string, dateTo: string
-    if (mode === 'year') {
-      dateFrom = `${y}-01-01`
-      dateTo   = `${y}-12-31`
+    if (sel.length === 4) {
+      dateFrom = `${sel}-01-01`
+      dateTo   = `${sel}-12-31`
     } else {
-      const mo = getMonthIdx(m.id) + 1 // 1-based
-      dateFrom = `${y}-${String(mo).padStart(2, '0')}-01`
+      const [y, mo] = sel.split('-').map(Number)
+      dateFrom = `${sel}-01`
       dateTo   = new Date(y, mo, 0).toISOString().slice(0, 10)
     }
     const params = new URLSearchParams({ from: dateFrom, to: dateTo, download: '1', type: m.idType })
     window.open(`/api/pdf/member/${m.id}?${params.toString()}`, '_blank')
   }
+
+  const buildSelectOptions = () => {
+    const opts: { value: string; label: string }[] = []
+    for (let y = thisYear; y >= minYear; y--) {
+      opts.push({ value: String(y), label: `Année ${y}` })
+      for (let mo = 12; mo >= 1; mo--) {
+        const val = `${y}-${String(mo).padStart(2, '0')}`
+        const label = new Date(y, mo - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+        opts.push({ value: val, label })
+      }
+    }
+    return opts
+  }
+  const selectOptions = buildSelectOptions()
 
   if (members.length === 0) return null
 
@@ -401,32 +419,30 @@ function MemberReportsPanel({
               {m.roleLabel && <p className="text-xs text-secondary">{m.roleLabel}</p>}
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
-              <select
-                className="input text-xs px-1.5 py-1 h-7 w-20"
-                value={getMode(m.id)}
-                onChange={e => setModes(prev => ({ ...prev, [m.id]: e.target.value as 'month' | 'year' }))}
+              <button
+                onClick={() => stepMonth(m.id, -1)}
+                disabled={getSelection(m.id).length === 4}
+                className="btn-secondary text-xs py-1 px-2 h-7 disabled:opacity-30"
               >
-                <option value="month">Mois</option>
-                <option value="year">Année</option>
-              </select>
-              {getMode(m.id) === 'month' && (
-                <select
-                  className="input text-xs px-1.5 py-1 h-7 w-20"
-                  value={getMonthIdx(m.id)}
-                  onChange={e => setMonthIdxs(prev => ({ ...prev, [m.id]: Number(e.target.value) }))}
-                >
-                  {MONTH_NAMES.map((name, i) => (
-                    <option key={i} value={i}>{name}</option>
-                  ))}
-                </select>
-              )}
+                &lsaquo;
+              </button>
               <select
-                className="input text-xs px-1.5 py-1 h-7 w-20"
-                value={getYear(m.id)}
-                onChange={e => setSelectedYears(prev => ({ ...prev, [m.id]: Number(e.target.value) }))}
+                className="input text-xs px-1.5 py-1 h-7"
+                style={{ minWidth: '9rem' }}
+                value={getSelection(m.id)}
+                onChange={e => setSelections(prev => ({ ...prev, [m.id]: e.target.value }))}
               >
-                {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                {selectOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
+              <button
+                onClick={() => stepMonth(m.id, 1)}
+                disabled={getSelection(m.id).length === 4}
+                className="btn-secondary text-xs py-1 px-2 h-7 disabled:opacity-30"
+              >
+                &rsaquo;
+              </button>
               <button
                 onClick={() => handleDownload(m)}
                 className="btn-secondary text-xs flex items-center gap-1.5 py-1 px-2.5"
@@ -436,6 +452,77 @@ function MemberReportsPanel({
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Accordéon par personne → chantiers ──────────────────────────────────────
+
+function PersonAccordion({
+  groups,
+  totalHours,
+}: {
+  groups: { key: string; name: string; total: number; chantiers: { id: string; title: string; hours: number; count: number }[] }[]
+  totalHours: number
+}) {
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const toggle = (key: string) =>
+    setOpen(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s })
+
+  return (
+    <div className="card overflow-hidden divide-y divide-[var(--elevation-border)]">
+      <div className="p-4 border-b border-[var(--elevation-border)] flex items-center gap-2">
+        <Users className="w-4 h-4 text-accent" />
+        <p className="font-bold text-primary text-sm">Détail par personne</p>
+      </div>
+      {groups.map(g => {
+        const isOpen = open.has(g.key)
+        const sorted = [...g.chantiers].sort((a, b) => b.hours - a.hours)
+        return (
+          <div key={g.key}>
+            <button
+              onClick={() => toggle(g.key)}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--elevation-1)] transition-colors text-left"
+            >
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                style={{ backgroundColor: getUserColor(g.key) }}
+              >
+                {g.name[0]?.toUpperCase() ?? '?'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm text-primary truncate">{g.name}</p>
+                <p className="text-xs text-secondary">
+                  {g.chantiers.length} chantier{g.chantiers.length > 1 ? 's' : ''} · {Math.round((g.total / totalHours) * 100)}%
+                </p>
+              </div>
+              <p className="font-extrabold text-primary text-sm flex-shrink-0">{fmtHours(g.total)}</p>
+              {isOpen
+                ? <ChevronUp className="w-4 h-4 text-secondary flex-shrink-0" />
+                : <ChevronDown className="w-4 h-4 text-secondary flex-shrink-0" />}
+            </button>
+            {isOpen && (
+              <div className="border-t border-[var(--elevation-border)] bg-[var(--elevation-1)]/40 divide-y divide-[var(--elevation-border)]">
+                {sorted.map(c => (
+                  <div key={c.id} className="flex items-center gap-3 px-6 py-2.5">
+                    <div className="flex-1 min-w-0">
+                      <Link href={`/chantiers/${c.id}`} className="text-sm text-primary hover:text-accent transition-colors truncate block">
+                        {c.title}
+                      </Link>
+                      <p className="text-xs text-secondary">{c.count} pointage{c.count > 1 ? 's' : ''}</p>
+                    </div>
+                    <p className="font-semibold text-sm text-primary flex-shrink-0">{fmtHours(c.hours)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+      <div className="flex items-center justify-between px-4 py-3 bg-[var(--elevation-1)]/60">
+        <p className="text-xs font-semibold text-secondary uppercase tracking-wider">Total</p>
+        <p className="font-extrabold text-primary">{fmtHours(totalHours)}</p>
       </div>
     </div>
   )
@@ -463,6 +550,10 @@ export default function HeuresGlobalesClient({
   const [customTo, setCustomTo] = useState(toLocalDateStr(today))
   const [selectedChantier, setSelectedChantier] = useState('')
   const [selectedUser, setSelectedUser] = useState('')
+  const currentYear = today.getFullYear()
+  const minMonthYear = currentYear - 1
+  const isAtMinMonth = selectedMonthYear === minMonthYear && selectedMonthIdx === 0
+  const isAtCurrentMonth = selectedMonthYear === currentYear && selectedMonthIdx === today.getMonth()
 
   // Gestion edition
   const [editingPointage, setEditingPointage] = useState<GlobalPointage | null>(null)
@@ -609,7 +700,8 @@ export default function HeuresGlobalesClient({
                 if (selectedMonthIdx === 0) { setSelectedMonthIdx(11); setSelectedMonthYear(y => y - 1) }
                 else setSelectedMonthIdx(i => i - 1)
               }}
-              className="p-2 rounded-lg border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors"
+              disabled={isAtMinMonth}
+              className="p-2 rounded-lg border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors disabled:opacity-30"
             >
               ‹
             </button>
@@ -628,7 +720,7 @@ export default function HeuresGlobalesClient({
                 value={selectedMonthYear}
                 onChange={e => setSelectedMonthYear(Number(e.target.value))}
               >
-                {Array.from({ length: 5 }, (_, i) => today.getFullYear() - 3 + i).map(y => (
+                {[currentYear, minMonthYear].map(y => (
                   <option key={y} value={y}>{y}</option>
                 ))}
               </select>
@@ -638,7 +730,8 @@ export default function HeuresGlobalesClient({
                 if (selectedMonthIdx === 11) { setSelectedMonthIdx(0); setSelectedMonthYear(y => y + 1) }
                 else setSelectedMonthIdx(i => i + 1)
               }}
-              className="p-2 rounded-lg border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors"
+              disabled={isAtCurrentMonth}
+              className="p-2 rounded-lg border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors disabled:opacity-30"
             >
               ›
             </button>
@@ -761,90 +854,27 @@ export default function HeuresGlobalesClient({
         <MemberReportsPanel pointages={initialPointages} individualMembers={individualMembers} />
       )}
 
-      {/* Détail des pointages — regroupé par personne + chantier */}
+      {/* Accordéon par personne → chantiers */}
       {filtered.length > 0 && (() => {
-        // Regrouper par (personKey, chantier_id)
-        type GroupKey = string
-        type Group = {
-          personKey: string
-          user_name: string
-          member_id: string | null
-          chantier_id: string
-          chantier_title: string
-          hours: number
-          hasAlert: boolean
-        }
-        const groupMap = new Map<GroupKey, Group>()
+        type ChantierEntry = { id: string; title: string; hours: number; count: number }
+        type PersonGroup = { key: string; name: string; total: number; chantiers: ChantierEntry[] }
+
+        const personMap = new Map<string, PersonGroup>()
         for (const p of filtered) {
           const pk = getPersonKey(p)
-          const key = `${pk}__${p.chantier_id}`
-          const existing = groupMap.get(key)
-          if (existing) {
-            existing.hours += p.hours
-            if (p.hours >= HOURS_ALERT_THRESHOLD) existing.hasAlert = true
-          } else {
-            groupMap.set(key, {
-              personKey: pk,
-              user_name: p.user_name,
-              member_id: p.member_id,
-              chantier_id: p.chantier_id,
-              chantier_title: p.chantier_title,
-              hours: p.hours,
-              hasAlert: p.hours >= HOURS_ALERT_THRESHOLD,
-            })
+          let person = personMap.get(pk)
+          if (!person) {
+            person = { key: pk, name: p.user_name, total: 0, chantiers: [] }
+            personMap.set(pk, person)
           }
+          person.total += p.hours
+          const existing = person.chantiers.find(c => c.id === p.chantier_id)
+          if (existing) { existing.hours += p.hours; existing.count++ }
+          else person.chantiers.push({ id: p.chantier_id, title: p.chantier_title, hours: p.hours, count: 1 })
         }
-        const groups = Array.from(groupMap.values()).sort((a, b) =>
-          a.user_name.localeCompare(b.user_name, 'fr') || a.chantier_title.localeCompare(b.chantier_title, 'fr')
-        )
+        const groups = [...personMap.values()].sort((a, b) => b.total - a.total)
 
-        return (
-          <div className="card overflow-hidden">
-            <div className="p-4 border-b border-[var(--elevation-border)] flex items-center justify-between gap-3">
-              <p className="font-bold text-primary text-sm">Détail des pointages</p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--elevation-border)] bg-[var(--elevation-1)]">
-                    <th className="text-left px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Personne</th>
-                    <th className="text-left px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Chantier</th>
-                    <th className="text-right px-4 py-2 text-xs font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Heures</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--elevation-border)]">
-                  {groups.map(g => (
-                    <tr key={`${g.personKey}__${g.chantier_id}`} className="hover:bg-[var(--elevation-1)] transition-colors">
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0" style={{ backgroundColor: getUserColor(g.personKey) }}>
-                            {g.user_name[0]?.toUpperCase() ?? '?'}
-                          </div>
-                          <span className="font-medium text-primary">
-                            {g.user_name}
-                            {g.member_id && <span className="ml-1 text-xs text-secondary">(ext.)</span>}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <Link href={`/chantiers/${g.chantier_id}`} className="text-primary hover:text-accent transition-colors">
-                          {g.chantier_title}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-bold text-primary">{fmtHours(g.hours)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t-2 border-[var(--elevation-border)] bg-[var(--elevation-1)]">
-                    <td colSpan={2} className="px-4 py-2.5 text-xs font-semibold text-secondary uppercase tracking-wider">Total</td>
-                    <td className="px-4 py-2.5 text-right font-extrabold text-primary">{fmtHours(totalHours)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </div>
-        )
+        return <PersonAccordion groups={groups} totalHours={totalHours} />
       })()}
 
       {/* Modal d'édition */}

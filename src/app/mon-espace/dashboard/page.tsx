@@ -7,6 +7,7 @@ import {
   getMemberTasks,
 } from '@/lib/data/queries/members'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { computeMemberIcalToken } from '@/lib/auth/member-ical-token'
 import MonEspaceDashboardClient from './MonEspaceDashboardClient'
 
 export default async function MonEspaceDashboardPage() {
@@ -25,11 +26,12 @@ export default async function MonEspaceDashboardPage() {
   const today = now.toISOString().slice(0, 10)
   const in3Weeks = new Date(now.getTime() + 21 * 86_400_000).toISOString().slice(0, 10)
 
-  const [pointages, plannings, tasks, orgRow] = await Promise.all([
+  const [pointages, plannings, tasks, orgRow, icalToken] = await Promise.all([
     getMemberPointages(session.memberId, { dateFrom: monthStart, dateTo: monthEnd, useAdmin: true }),
     getMemberPlannings(session.memberId, { dateFrom: today, dateTo: in3Weeks, useAdmin: true }),
     getMemberTasks(session.memberId, { useAdmin: true }),
     createAdminClient().from('organizations').select('name').eq('id', member.organization_id).single(),
+    computeMemberIcalToken(session.memberId),
   ])
 
   // Liste des chantiers ouverts pour le formulaire de pointage
@@ -41,6 +43,7 @@ export default async function MonEspaceDashboardPage() {
     .order('title', { ascending: true })
 
   const chantiers = (chantiersRows ?? []).map(c => ({ id: c.id, title: c.title }))
+  const icalUrl = `/api/planning/ical-member?memberId=${session.memberId}&token=${icalToken}`
 
   return (
     <MonEspaceDashboardClient
@@ -52,6 +55,7 @@ export default async function MonEspaceDashboardPage() {
       chantiers={chantiers}
       monthStart={monthStart}
       monthEnd={monthEnd}
+      icalUrl={icalUrl}
     />
   )
 }

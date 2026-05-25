@@ -1495,6 +1495,77 @@ type ReportMember = {
   roleLabel?: string | null
 }
 
+// ─── Accordéon pointages par membre ──────────────────────────────────────────
+
+function PointageAccordion({
+  groups,
+  canManage,
+  onDelete,
+}: {
+  groups: { key: string; name: string; total: number; entries: Pointage[] }[]
+  canManage: boolean
+  onDelete: (p: Pointage) => void
+}) {
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const toggle = (key: string) =>
+    setOpen(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s })
+
+  return (
+    <div className="card overflow-hidden divide-y divide-[var(--elevation-border)]">
+      {groups.map(g => {
+        const isOpen = open.has(g.key)
+        const sorted = [...g.entries].sort((a, b) => b.date.localeCompare(a.date))
+        return (
+          <div key={g.key}>
+            <button
+              onClick={() => toggle(g.key)}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--elevation-1)] transition-colors text-left"
+            >
+              <div className="w-8 h-8 rounded-full bg-accent/15 text-accent flex items-center justify-center font-bold text-sm flex-shrink-0">
+                {g.name[0]?.toUpperCase() ?? '?'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm text-primary truncate">{g.name}</p>
+                <p className="text-xs text-secondary">{g.entries.length} pointage{g.entries.length > 1 ? 's' : ''}</p>
+              </div>
+              <p className="font-extrabold text-primary text-sm flex-shrink-0">{fmtHours(g.total)}</p>
+              {isOpen
+                ? <ChevronUp className="w-4 h-4 text-secondary flex-shrink-0" />
+                : <ChevronDown className="w-4 h-4 text-secondary flex-shrink-0" />}
+            </button>
+            {isOpen && (
+              <div className="border-t border-[var(--elevation-border)] bg-[var(--elevation-1)]/40">
+                {sorted.map(p => (
+                  <div key={p.id} className="flex items-start gap-3 px-5 py-2.5 border-b border-[var(--elevation-border)] last:border-b-0">
+                    <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-0.5 min-w-0">
+                      <span className="text-xs text-secondary">
+                        {new Date(p.date + 'T00:00:00').toLocaleDateString('fr-FR')}
+                        {p.start_time ? <span className="ml-1 text-secondary/60">{p.start_time.slice(0, 5)}</span> : null}
+                      </span>
+                      <span className="text-xs font-semibold text-primary">{fmtHours(p.hours)}</span>
+                      {p.tache_title
+                        ? <span className="text-xs text-secondary truncate sm:col-span-1">{p.tache_title}</span>
+                        : <span className="text-xs text-secondary/40">—</span>}
+                      {p.description
+                        ? <span className="text-xs text-secondary truncate sm:col-span-1">{p.description}</span>
+                        : <span className="text-xs text-secondary/40">—</span>}
+                    </div>
+                    {canManage && (
+                      <button onClick={() => onDelete(p)} className="text-secondary hover:text-red-500 transition-colors flex-shrink-0 mt-0.5">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function MemberHoursReports({
   pointages,
   individualMembers,
@@ -1524,18 +1595,55 @@ function MemberHoursReports({
     return result.sort((a, b) => a.fullName.localeCompare(b.fullName, 'fr'))
   }, [pointages, individualMembers])
 
-  const thisMonth = new Date().toISOString().slice(0, 7)
-  const [reportMonths, setReportMonths] = React.useState<Record<string, string>>({})
-  const getMonth = (id: string) => reportMonths[id] ?? thisMonth
+  const now = new Date()
+  const thisYear = now.getFullYear()
+  const defaultMonthIdx = now.getMonth()
+  const minYear = thisYear - 1
+
+  // "YYYY-MM" ou "YYYY" (année complète)
+  const [selections, setSelections] = React.useState<Record<string, string>>({})
+  const getSelection = (id: string) => selections[id] ?? `${thisYear}-${String(defaultMonthIdx + 1).padStart(2, '0')}`
+
+  const stepMonth = (id: string, dir: 1 | -1) => {
+    const sel = getSelection(id)
+    if (sel.length === 4) return
+    const [y, m] = sel.split('-').map(Number)
+    let nm = m + dir
+    let ny = y
+    if (nm > 12) { nm = 1; ny++ }
+    if (nm < 1) { nm = 12; ny-- }
+    if (ny < minYear || ny > thisYear) return
+    setSelections(prev => ({ ...prev, [id]: `${ny}-${String(nm).padStart(2, '0')}` }))
+  }
 
   const handleDownload = (m: ReportMember) => {
-    const month = getMonth(m.id)
-    const [y, mo] = month.split('-').map(Number)
-    const dateFrom = `${month}-01`
-    const dateTo = new Date(y, mo, 0).toISOString().slice(0, 10)
+    const sel = getSelection(m.id)
+    let dateFrom: string
+    let dateTo: string
+    if (sel.length === 4) {
+      dateFrom = `${sel}-01-01`
+      dateTo = `${sel}-12-31`
+    } else {
+      const [y, mo] = sel.split('-').map(Number)
+      dateFrom = `${sel}-01`
+      dateTo = new Date(y, mo, 0).toISOString().slice(0, 10)
+    }
     const params = new URLSearchParams({ from: dateFrom, to: dateTo, download: '1', type: m.idType })
     window.open(`/api/pdf/member/${m.id}?${params.toString()}`, '_blank')
   }
+
+  const selectOptions = React.useMemo(() => {
+    const opts: { value: string; label: string }[] = []
+    for (let y = thisYear; y >= minYear; y--) {
+      opts.push({ value: String(y), label: `Année ${y}` })
+      for (let mo = 12; mo >= 1; mo--) {
+        const val = `${y}-${String(mo).padStart(2, '0')}`
+        const label = new Date(y, mo - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+        opts.push({ value: val, label })
+      }
+    }
+    return opts
+  }, [minYear, now, thisYear])
 
   if (members.length === 0) return null
 
@@ -1547,7 +1655,7 @@ function MemberHoursReports({
       </div>
       <div className="divide-y divide-[var(--elevation-border)]">
         {members.map(m => (
-          <div key={m.id} className="flex items-center gap-3 p-3">
+          <div key={m.id} className="flex items-center gap-3 p-3 flex-wrap">
             <div className="w-8 h-8 rounded-full bg-accent/15 text-accent flex items-center justify-center font-bold text-sm flex-shrink-0">
               {(m.fullName?.[0] ?? '?').toUpperCase()}
             </div>
@@ -1555,13 +1663,35 @@ function MemberHoursReports({
               <p className="font-semibold text-sm text-primary truncate">{m.fullName}</p>
               {m.roleLabel && <p className="text-xs text-secondary">{m.roleLabel}</p>}
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <input
-                type="month"
-                className="input text-xs px-1.5 py-1 h-7 w-32"
-                value={getMonth(m.id)}
-                onChange={e => setReportMonths(prev => ({ ...prev, [m.id]: e.target.value }))}
-              />
+            <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+              <button
+                onClick={() => stepMonth(m.id, -1)}
+                disabled={getSelection(m.id).length === 4}
+                className="btn-secondary h-7 w-7 p-0 flex items-center justify-center disabled:opacity-30"
+                title="Mois précédent"
+                aria-label="Mois précédent"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <select
+                className="input text-xs px-1.5 py-1 h-7"
+                style={{ minWidth: '9rem' }}
+                value={getSelection(m.id)}
+                onChange={e => setSelections(prev => ({ ...prev, [m.id]: e.target.value }))}
+              >
+                {selectOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => stepMonth(m.id, 1)}
+                disabled={getSelection(m.id).length === 4}
+                className="btn-secondary h-7 w-7 p-0 flex items-center justify-center disabled:opacity-30"
+                title="Mois suivant"
+                aria-label="Mois suivant"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
               <button
                 onClick={() => handleDownload(m)}
                 className="btn-secondary text-xs flex items-center gap-1.5 py-1 px-2.5"
@@ -3123,46 +3253,30 @@ export default function ChantierDetailClient({
           </form>
           )}
 
-          {/* Table pointages */}
-          <div className="card overflow-hidden">
-            <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[500px]">
-              <thead>
-                <tr className="border-b border-[var(--elevation-border)] text-xs text-secondary uppercase tracking-wider">
-                  <th className="text-left px-4 py-3 font-semibold">Date</th>
-                  <th className="text-left px-4 py-3 font-semibold hidden sm:table-cell">Début</th>
-                  <th className="text-left px-4 py-3 font-semibold">Utilisateur</th>
-                  <th className="text-right px-4 py-3 font-semibold">Heures</th>
-                  <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Tâche</th>
-                  <th className="text-left px-4 py-3 font-semibold hidden lg:table-cell">Description</th>
-                  {canManagePointages && <th className="px-4 py-3" />}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--elevation-border)]">
-                {pointages.length === 0 && (
-                  <tr><td colSpan={7} className="px-4 py-8 text-center text-secondary text-sm">Aucun pointage</td></tr>
-                )}
-                {pointages.map(p => (
-                  <tr key={p.id} className="hover:bg-base/50 transition-colors">
-                    <td className="px-4 py-3 text-sm text-primary">{new Date(p.date).toLocaleDateString('fr-FR')}</td>
-                    <td className="px-4 py-3 text-sm text-secondary hidden sm:table-cell">{p.start_time ? p.start_time.slice(0, 5) : '/'}</td>
-                    <td className="px-4 py-3 text-sm text-secondary">{p.user_name}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-primary">{fmtHours(p.hours)}</td>
-                    <td className="px-4 py-3 text-sm text-secondary hidden md:table-cell">{p.tache_title ?? '/'}</td>
-                    <td className="px-4 py-3 text-sm text-secondary hidden lg:table-cell truncate max-w-xs">{p.description ?? '/'}</td>
-                    {canManagePointages && (
-                      <td className="px-4 py-3">
-                        <button onClick={() => handleDeletePointage(p)} className="text-secondary hover:text-red-500 transition-colors">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
-          </div>
+          {/* Accordéon pointages par membre */}
+          {(() => {
+            if (pointages.length === 0) {
+              return (
+                <div className="card p-8 text-center text-secondary text-sm">Aucun pointage</div>
+              )
+            }
+            type MemberGroup = { key: string; name: string; total: number; entries: Pointage[] }
+            const memberMap = new Map<string, MemberGroup>()
+            for (const p of pointages) {
+              const key = p.user_id ?? `m_${p.member_id}`
+              const g = memberMap.get(key)
+              if (g) { g.total += p.hours; g.entries.push(p) }
+              else memberMap.set(key, { key, name: p.user_name, total: p.hours, entries: [p] })
+            }
+            const groups = [...memberMap.values()].sort((a, b) => b.total - a.total)
+            return (
+              <PointageAccordion
+                groups={groups}
+                canManage={canManagePointages}
+                onDelete={handleDeletePointage}
+              />
+            )
+          })()}
 
           {/* Rapports PDF par membre */}
           {canManagePointages && pointages.length > 0 && (
