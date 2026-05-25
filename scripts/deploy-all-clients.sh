@@ -26,7 +26,8 @@ if [[ ! -f "$CLIENTS_FILE" ]]; then
   echo "   Crée ce fichier avec un worker-name par ligne, par exemple :"
   echo "     atelier-weber"
   echo "     atelier-dupont"
-  echo "     orsayn-cockpit"
+  echo ""
+  echo "   Ne mets pas orsayn-cockpit ici : il se déploie via scripts/deploy-cockpit.sh."
   exit 1
 fi
 

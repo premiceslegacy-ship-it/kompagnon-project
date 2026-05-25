@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { revalidatePath } from 'next/cache'
-import { pdf } from '@react-pdf/renderer'
+import { renderToBuffer } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
@@ -478,17 +478,14 @@ export async function sendMemberHoursReport(
   const periodLabel = formatPeriodLabel(dateFrom, dateTo)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pdfBuffer: Buffer = await (pdf as any)(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    React.createElement(MemberHoursReportPDF as any, {
-      member,
-      organization: org,
-      pointages,
-      periodFrom: dateFrom,
-      periodTo: dateTo,
-      totalHours,
-    }),
-  ).toBuffer()
+  const pdfBuffer = await renderToBuffer(React.createElement(MemberHoursReportPDF as any, {
+    member,
+    organization: org,
+    pointages,
+    periodFrom: dateFrom,
+    periodTo: dateTo,
+    totalHours,
+  }) as any)
 
   const fileName = `rapport-heures-${(member.prenom ?? '').toLowerCase()}-${member.name.toLowerCase()}-${dateFrom}-${dateTo}.pdf`
     .replace(/[^a-z0-9.-]/gi, '-')

@@ -5,8 +5,8 @@
  * Traite 50 entrées max par run (embedding IS NULL AND is_active = true).
  *
  * Variables d'environnement à configurer dans Cloudflare Dashboard :
- *   APP_URL      → URL de l'app (ex: https://atelier-weber.vercel.app)
- *   CRON_SECRET  → même valeur que dans .env.local de l'app
+ *   APP_URL      → URL de l'app (ex: https://atelier-weber.workers.dev)
+ *   CRON_SECRET  → même valeur que dans les variables du Worker app
  */
 
 export interface Env {

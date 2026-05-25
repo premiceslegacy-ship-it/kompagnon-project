@@ -2,7 +2,7 @@ name = "kompagnon-auto-reminder"
 main = "index.ts"
 compatibility_date = "2024-01-01"
 
-# Cron : tous les jours à 8h UTC (9h heure Paris en hiver, 10h en été)
+# Cron : tous les jours à 7h UTC (8h Paris en hiver, 9h en été)
 # Ajuster selon le fuseau horaire cible — Workers Cron est toujours en UTC
 [triggers]
 crons = ["0 7 * * *"]
