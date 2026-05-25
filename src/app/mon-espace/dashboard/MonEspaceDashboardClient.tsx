@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Calendar, Clock, FileDown, LogOut, Plus, Loader2, Check, X, Mail, MapPin, Navigation, Timer, LogIn, AlertTriangle, PlayCircle } from 'lucide-react'
+import { Calendar, Clock, FileDown, LogOut, Plus, Loader2, Check, X, Mail, MapPin, Navigation, Timer, LogIn, AlertTriangle, PlayCircle, ChevronDown, ChevronUp, CalendarDays } from 'lucide-react'
 import type { IndividualMember, MemberPointage, MemberPlanning, MemberTask } from '@/lib/data/queries/members'
 import {
   pointMyHoursFromSpace,
@@ -38,6 +38,69 @@ function fmtMin(min: number): string {
 
 const dayNames = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam']
 
+function PointageAccordionMembre({
+  pointagesByDay,
+  sortedDates,
+}: {
+  pointagesByDay: Record<string, MemberPointage[]>
+  sortedDates: string[]
+}) {
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const toggle = (d: string) =>
+    setOpen(prev => { const s = new Set(prev); s.has(d) ? s.delete(d) : s.add(d); return s })
+
+  const totalHours = sortedDates.reduce(
+    (sum, d) => sum + pointagesByDay[d].reduce((s, p) => s + p.hours, 0), 0,
+  )
+
+  return (
+    <div className="card overflow-hidden divide-y divide-[var(--elevation-border)]">
+      {sortedDates.map(date => {
+        const rows = pointagesByDay[date]
+        const dayTotal = rows.reduce((s, p) => s + p.hours, 0)
+        const isOpen = open.has(date)
+        const d = new Date(date + 'T00:00:00')
+        return (
+          <div key={date}>
+            <button
+              onClick={() => toggle(date)}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--elevation-1)] transition-colors text-left"
+            >
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-primary">
+                  {dayNames[d.getDay()]} {fmtDate(date)}
+                </p>
+                <p className="text-xs text-secondary">{rows.length} pointage{rows.length > 1 ? 's' : ''}</p>
+              </div>
+              <p className="font-extrabold text-primary text-sm flex-shrink-0">{fmtHours(dayTotal)}</p>
+              {isOpen
+                ? <ChevronUp className="w-4 h-4 text-secondary flex-shrink-0" />
+                : <ChevronDown className="w-4 h-4 text-secondary flex-shrink-0" />}
+            </button>
+            {isOpen && (
+              <div className="border-t border-[var(--elevation-border)] bg-[var(--elevation-1)]/40 divide-y divide-[var(--elevation-border)]">
+                {rows.map(p => (
+                  <div key={p.id} className="flex items-center gap-3 px-5 py-2.5">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-primary truncate">{p.chantier_title}</p>
+                      {p.description && <p className="text-xs text-secondary truncate">{p.description}</p>}
+                    </div>
+                    <p className="text-sm font-semibold text-primary flex-shrink-0 tabular-nums">{fmtHours(p.hours)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+      <div className="flex items-center justify-between px-4 py-3 bg-[var(--elevation-1)]/60">
+        <p className="text-xs font-semibold text-secondary uppercase tracking-wider">Total du mois</p>
+        <p className="font-extrabold text-primary">{fmtHours(totalHours)}</p>
+      </div>
+    </div>
+  )
+}
+
 export default function MonEspaceDashboardClient({
   member,
   organizationName,
@@ -47,6 +110,7 @@ export default function MonEspaceDashboardClient({
   chantiers,
   monthStart,
   monthEnd,
+  icalUrl,
 }: {
   member: IndividualMember
   organizationName: string
@@ -56,6 +120,7 @@ export default function MonEspaceDashboardClient({
   chantiers: ChantierStub[]
   monthStart: string
   monthEnd: string
+  icalUrl: string
 }) {
   const router = useRouter()
   const fullName = [member.prenom, member.name].filter(Boolean).join(' ') || member.name
@@ -431,9 +496,20 @@ export default function MonEspaceDashboardClient({
 
       {/* Créneaux à venir */}
       <section className="space-y-2">
-        <h2 className="text-sm font-bold text-primary flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-accent" /> Mes créneaux planifiés
-        </h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-bold text-primary flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-accent" /> Mes créneaux planifiés
+          </h2>
+          <a
+            href={icalUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--elevation-border)] text-xs font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-colors"
+            title="Synchroniser avec Apple Calendar, Google Calendar ou votre agenda"
+          >
+            <CalendarDays className="w-3.5 h-3.5" /> Sync agenda
+          </a>
+        </div>
         {sortedPlanningDates.length === 0 ? (
           <div className="card p-4 text-sm text-secondary text-center">
             Aucun créneau à venir dans les 3 prochaines semaines.
@@ -465,7 +541,7 @@ export default function MonEspaceDashboardClient({
         )}
       </section>
 
-      {/* Pointages du mois */}
+      {/* Pointages du mois — accordéon par jour */}
       <section className="space-y-2">
         <h2 className="text-sm font-bold text-primary flex items-center gap-2">
           <Clock className="w-4 h-4 text-accent" /> Mes heures du mois
@@ -475,29 +551,10 @@ export default function MonEspaceDashboardClient({
             Aucune heure pointée ce mois-ci.
           </div>
         ) : (
-          <div className="card overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--elevation-border)] bg-[var(--elevation-1)]">
-                  <th className="text-left px-3 py-2 text-xs font-semibold text-secondary uppercase">Date</th>
-                  <th className="text-left px-3 py-2 text-xs font-semibold text-secondary uppercase">Chantier</th>
-                  <th className="text-right px-3 py-2 text-xs font-semibold text-secondary uppercase">Heures</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--elevation-border)]">
-                {sortedPointageDates.map(date => {
-                  const rows = pointagesByDay[date]
-                  return rows.map((p, i) => (
-                    <tr key={p.id}>
-                      <td className="px-3 py-2 text-secondary tabular-nums">{i === 0 ? fmtDate(date) : ''}</td>
-                      <td className="px-3 py-2 text-primary">{p.chantier_title}</td>
-                      <td className="px-3 py-2 text-right text-primary tabular-nums">{fmtHours(p.hours)}</td>
-                    </tr>
-                  ))
-                })}
-              </tbody>
-            </table>
-          </div>
+          <PointageAccordionMembre
+            pointagesByDay={pointagesByDay}
+            sortedDates={sortedPointageDates}
+          />
         )}
       </section>
 
