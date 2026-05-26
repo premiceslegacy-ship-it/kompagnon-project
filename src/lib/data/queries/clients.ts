@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCachedOrganizationId } from './session-cache'
 
-export type ClientStatus = 'active' | 'prospect' | 'lead_hot' | 'lead_cold' | 'inactive'
+export type ClientStatus = 'active' | 'prospect' | 'lead_hot' | 'lead_cold' | 'subcontractor' | 'inactive'
 
 export type Client = {
   id: string

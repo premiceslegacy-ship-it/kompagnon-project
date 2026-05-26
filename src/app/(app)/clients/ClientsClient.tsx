@@ -45,6 +45,8 @@ export function statusBadge(status: string | null) {
       return { label: 'Lead Chaud', cls: 'status-pill status-pill-accent' }
     case 'lead_cold':
       return { label: 'Lead Froid', cls: 'status-pill status-pill-muted' }
+    case 'subcontractor':
+      return { label: 'Sous-traitant', cls: 'status-pill status-pill-info' }
     case 'inactive':
       return { label: 'Inactif', cls: 'status-pill status-pill-danger' }
     default:
@@ -229,8 +231,14 @@ function NewClientModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
         )}
 
         <form action={formAction} className="space-y-6">
-          <input type="hidden" name="status" value="active" />
           <ContactFields />
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-secondary">Catégorie</label>
+            <select name="status" defaultValue="active" className={`${inputCls} appearance-none`}>
+              <option value="active">Client</option>
+              <option value="subcontractor">Sous-traitant</option>
+            </select>
+          </div>
           <div className="space-y-2">
             <label className="text-sm font-semibold text-secondary">Adresse de facturation</label>
             <input name="address_line1" type="text" placeholder="12 rue de la Paix, 75001 Paris" className={inputCls} />
@@ -394,6 +402,7 @@ function EditClientModal({ client, onClose }: { client: Client; onClose: () => v
                 <option value="lead_hot">Lead Chaud</option>
                 <option value="prospect">Prospect</option>
                 <option value="active">Client</option>
+                <option value="subcontractor">Sous-traitant</option>
                 <option value="inactive">Inactif</option>
               </select>
             </div>
@@ -464,7 +473,7 @@ const CSV_FIELDS = [
   { key: 'vat_number',          label: 'TVA Intracommunautaire' },
   { key: 'payment_terms_days',  label: 'Délai paiement (jours)' },
   { key: 'source',              label: 'Source' },
-  { key: 'status',              label: 'Statut (lead_cold, lead_hot, prospect, active)' },
+  { key: 'status',              label: 'Statut (lead_cold, lead_hot, prospect, active, subcontractor)' },
   { key: 'notes',               label: 'Notes internes' },
 ]
 
@@ -702,6 +711,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
     { value: 'prospect',  label: 'Prospects' },
     { value: 'lead_hot',  label: 'Leads Chauds' },
     { value: 'lead_cold', label: 'Leads Froids' },
+    { value: 'subcontractor', label: 'Sous-traitants' },
     { value: 'inactive',  label: 'Inactifs' },
   ]
 

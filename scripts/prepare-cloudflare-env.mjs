@@ -6,7 +6,8 @@ import path from 'node:path'
 
 const workerName = process.argv[2]
 const args = new Set(process.argv.slice(3))
-const applySecrets = args.has('--apply-secrets')
+const applySecrets = args.has('--apply-secrets') || args.has('--apply-all')
+const applyAll = args.has('--apply-all')
 const envFileFlag = process.argv.find((arg) => arg.startsWith('--env-file='))
 const envFile = envFileFlag ? envFileFlag.split('=')[1] : '.env.local'
 
@@ -19,6 +20,7 @@ const secretKeys = [
   'CRON_SECRET',
   'MEMBER_SESSION_SECRET',
   'RATE_LIMIT_SECRET',
+  'VAPID_PRIVATE_KEY',
   'SHARED_WABA_ACCESS_TOKEN',
   'OPERATOR_INGEST_SECRET',
   'OPERATOR_CONFIG_SYNC_SECRET',
@@ -32,6 +34,7 @@ const textKeys = [
   'NEXT_PUBLIC_APP_URL',
   'RESEND_FROM_ADDRESS',
   'RESEND_FROM_NAME',
+  'NEXT_PUBLIC_VAPID_PUBLIC_KEY',
   'NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER',
   'SHARED_WABA_PHONE_NUMBER_ID',
   'OPERATOR_MODE',
@@ -83,23 +86,55 @@ function putSecret(key, value) {
   return result.status === 0
 }
 
+async function putTextVarsViaApi(vars, accountId, apiToken) {
+  // Cloudflare API : PUT /accounts/{id}/workers/scripts/{name}/settings
+  // body : { bindings: [ { type: "plain_text", name: KEY, text: VALUE }, ... ] }
+  const bindings = Object.entries(vars).map(([name, text]) => ({
+    type: 'plain_text',
+    name,
+    text,
+  }))
+
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/settings`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ bindings }),
+    }
+  )
+
+  const json = await res.json()
+  if (!json.success) {
+    console.error('  Cloudflare API error:', JSON.stringify(json.errors))
+    return false
+  }
+  return true
+}
+
 if (!workerName || !/^[a-z0-9][a-z0-9-]{1,62}$/.test(workerName)) {
-  console.error('Usage: npm run cf:env -- <worker-name> [--env-file=.env.client] [--apply-secrets]')
+  console.error('Usage: npm run cf:env -- <worker-name> [--env-file=.env.client] [--apply-secrets] [--apply-all]')
   process.exit(1)
 }
 
 const env = {
-  ...readEnvFile(path.resolve(process.cwd(), envFile)),
   ...process.env,
+  ...readEnvFile(path.resolve(process.cwd(), envFile)),
 }
 
 console.log(`Cloudflare env preparation for ${workerName}`)
-console.log(applySecrets ? 'Mode: apply secrets via wrangler' : 'Mode: dry-run')
+if (applyAll) console.log('Mode: apply ALL (secrets via wrangler + text vars via API)')
+else if (applySecrets) console.log('Mode: apply secrets via wrangler (dry-run for text vars)')
+else console.log('Mode: dry-run')
 console.log('')
 
 const missingSecrets = secretKeys.filter((key) => !env[key])
 const missingText = textKeys.filter((key) => !env[key])
 
+// ── Secrets ────────────────────────────────────────────────────────────────────
 console.log('Secrets:')
 for (const key of secretKeys) {
   if (!env[key]) {
@@ -116,12 +151,43 @@ for (const key of secretKeys) {
 }
 
 console.log('')
-console.log('Text variables to set in Cloudflare dashboard or API automation:')
-for (const key of textKeys) {
-  if (!env[key]) {
-    console.log(`  MISSING ${key}`)
+
+// ── Variables texte ────────────────────────────────────────────────────────────
+console.log('Text variables:')
+
+if (applyAll) {
+  const accountId = env['CLOUDFLARE_ACCOUNT_ID']
+  const apiToken = env['CLOUDFLARE_API_TOKEN']
+
+  if (!accountId || !apiToken) {
+    console.error('  CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_API_TOKEN sont requis pour --apply-all')
+    console.error('  Ajoute-les dans ton .env.local (jamais dans un .env.client-xxx)')
+    process.exitCode = 1
   } else {
-    console.log(`  ${key}=${env[key]}`)
+    const varsToApply = {}
+    for (const key of textKeys) {
+      if (env[key]) varsToApply[key] = env[key]
+      else console.log(`  SKIP (absent) ${key}`)
+    }
+
+    if (Object.keys(varsToApply).length > 0) {
+      console.log(`  Envoi de ${Object.keys(varsToApply).length} variable(s) texte via API Cloudflare...`)
+      const ok = await putTextVarsViaApi(varsToApply, accountId, apiToken)
+      if (ok) {
+        for (const key of Object.keys(varsToApply)) console.log(`  OK ${key}`)
+      } else {
+        process.exitCode = 1
+      }
+    }
+  }
+} else {
+  for (const key of textKeys) {
+    if (!env[key]) console.log(`  MISSING ${key}`)
+    else console.log(`  ${key}=${env[key]}`)
+  }
+  if (!applySecrets) {
+    console.log('')
+    console.log('  → Pour tout appliquer d\'un coup : --apply-all (nécessite CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN dans .env.local)')
   }
 }
 

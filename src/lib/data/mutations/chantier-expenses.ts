@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
+import { sendPushToOrg } from '@/lib/push'
 
 type Result = { error: string | null }
 
@@ -47,7 +48,7 @@ export async function createChantierExpense(data: ChantierExpenseInput): Promise
   if (!orgId) return { error: 'Organisation introuvable.' }
   const { data: chantier } = await supabase
     .from('chantiers')
-    .select('id')
+    .select('id, title')
     .eq('id', data.chantierId)
     .eq('organization_id', orgId)
     .maybeSingle()
@@ -89,6 +90,13 @@ export async function createChantierExpense(data: ChantierExpenseInput): Promise
     console.error('[createChantierExpense]', error)
     return { error: "Erreur lors de l'enregistrement de la dépense." }
   }
+
+  const chantierTitle = (chantier as any).title ?? 'Chantier'
+  sendPushToOrg(orgId, {
+    title: `Dépense — ${chantierTitle}`,
+    body: `${data.label} · ${amountHt.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € HT`,
+    url: `/chantiers/${data.chantierId}`,
+  }, user.id).catch(() => {})
 
   revalidatePath(`/chantiers/${data.chantierId}`)
   return { error: null, id: inserted.id }

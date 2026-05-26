@@ -8,6 +8,7 @@ import { CreateQuoteSchema, UpdateQuoteSchema, UpsertQuoteItemSchema } from '@/l
 import { getQuoteById } from '@/lib/data/queries/quotes'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { sendEmail } from '@/lib/email'
+import { sendPushToOrg } from '@/lib/push'
 import { buildQuoteSentEmail } from '@/lib/email/templates'
 import { getClientGreetingName } from '@/lib/client'
 import { renderToBuffer } from '@react-pdf/renderer'
@@ -636,6 +637,13 @@ export async function markQuoteAccepted(quoteId: string): Promise<Result> {
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
 
+  const { data: quote } = await supabase
+    .from('quotes')
+    .select('number, title, total_ttc, currency, client_id')
+    .eq('id', quoteId)
+    .eq('organization_id', orgId)
+    .single()
+
   const { error } = await supabase
     .from('quotes')
     .update({ status: 'accepted', signed_at: new Date().toISOString() })
@@ -644,6 +652,26 @@ export async function markQuoteAccepted(quoteId: string): Promise<Result> {
 
   if (error) return { error: error.message }
   await syncQuoteMemoryEntry(supabase, orgId, quoteId)
+
+  if (quote) {
+    const clientData = quote.client_id
+      ? await supabase.from('clients').select('company_name, contact_name').eq('id', quote.client_id).maybeSingle().then(r => r.data)
+      : null
+    const clientLabel = clientData?.company_name ?? clientData?.contact_name ?? null
+    const bodyParts = [
+      clientLabel,
+      quote.title,
+      quote.total_ttc != null
+        ? new Intl.NumberFormat('fr-FR', { style: 'currency', currency: quote.currency ?? 'EUR' }).format(quote.total_ttc)
+        : null,
+    ].filter(Boolean)
+    sendPushToOrg(orgId, {
+      title: `Devis ${quote.number} accepté`,
+      body: bodyParts.join(' · '),
+      url: `/finances/quote-editor?id=${quoteId}`,
+    }).catch(() => {})
+  }
+
   revalidatePath('/finances')
   revalidatePath('/clients')
   return { error: null }

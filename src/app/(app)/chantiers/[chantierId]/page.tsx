@@ -54,6 +54,7 @@ export default async function ChantierDetailPage({
     canEditExpenses,
     canDeleteExpenses,
     canEditRates,
+    canCreateInvoice,
     canCreateSituation,
     canCreateSolde,
   ] = await Promise.all([
@@ -84,6 +85,7 @@ export default async function ChantierDetailPage({
     hasPermission('chantiers.expenses.edit'),
     hasPermission('chantiers.expenses.delete'),
     canManageLaborRates(),
+    hasPermission('invoices.create'),
     hasPermission('invoices.create_situation'),
     hasPermission('invoices.create_solde'),
   ])
@@ -112,6 +114,7 @@ export default async function ChantierDetailPage({
     hoursLogged: 0,
     expenses: [],
     laborByMember: [],
+    periods: [],
   }
 
   return (
@@ -137,6 +140,7 @@ export default async function ChantierDetailPage({
       situationsSummary={situationsSummary}
       canCreateSituation={canCreateSituation}
       canCreateSolde={canCreateSolde}
+      canCreateInvoice={canCreateInvoice}
       permissions={{
         canEditChantier,
         canManageTeam,

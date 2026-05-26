@@ -16,6 +16,8 @@ import { getBusinessContext, formatBusinessContextForPrompt } from '@/lib/ai/bus
 import { hasPermission } from '@/lib/data/queries/membership'
 import { todayParis } from '@/lib/utils'
 
+export const dynamic = 'force-dynamic'
+
 const MODEL = 'anthropic/claude-haiku-4-5'
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────

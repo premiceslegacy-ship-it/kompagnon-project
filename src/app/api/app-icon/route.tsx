@@ -38,23 +38,11 @@ export async function GET(request: NextRequest) {
             }}
           />
         ) : (
-          <div
-            style={{
-              alignItems: 'center',
-              background: '#0a0a0a',
-              borderRadius: size * 0.18,
-              color: '#ffffff',
-              display: 'flex',
-              fontSize: size * 0.56,
-              fontWeight: 800,
-              height: '82%',
-              justifyContent: 'center',
-              letterSpacing: 0,
-              width: '82%',
-            }}
-          >
-            A
-          </div>
+          <img
+            alt="Atelier"
+            src={`${(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '')}/icon-192.png`}
+            style={{ height: '100%', width: '100%', objectFit: 'contain' }}
+          />
         )}
       </div>
     ),

@@ -5,6 +5,7 @@ import { Topbar } from '@/components/layout/Topbar'
 import type { UserProfile } from '@/lib/data/queries/user'
 import type { OrganizationModules } from '@/lib/organization-modules'
 import type { NotificationsSummary } from '@/lib/data/queries/notifications'
+import { usePushNotifications } from '@/lib/hooks/use-push-notifications'
 
 const EMPTY: NotificationsSummary = {
   total: 0,
@@ -40,12 +41,16 @@ export function AppShell({
 }) {
   const [notifications, setNotifications] = useState<NotificationsSummary>(EMPTY)
 
-  useEffect(() => {
+  function refreshNotifications() {
     fetch('/api/notifications')
       .then(r => r.json())
       .then(setNotifications)
       .catch(() => {})
-  }, [])
+  }
+
+  useEffect(() => { refreshNotifications() }, [])
+
+  usePushNotifications(() => refreshNotifications())
 
   const { decennaleExpiringDays } = notifications
 

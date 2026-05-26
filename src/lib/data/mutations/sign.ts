@@ -8,6 +8,7 @@ import {
   buildQuoteAcceptedProfessionalEmail,
 } from '@/lib/email/templates'
 import { getClientGreetingName } from '@/lib/client'
+import { sendPushToOrg } from '@/lib/push'
 
 export type AcceptQuoteResult = {
   error: string | null
@@ -156,6 +157,20 @@ export async function acceptQuoteByToken(input: AcceptQuoteInput): Promise<Accep
       }).catch(err => console.error('[acceptQuoteByToken] pro email error:', err))
     }
   }
+
+  const clientLabel = (client as any)?.company_name ?? (client as any)?.contact_name ?? null
+  const bodyParts = [
+    clientLabel,
+    quote.title,
+    quote.total_ttc != null
+      ? new Intl.NumberFormat('fr-FR', { style: 'currency', currency: quote.currency ?? 'EUR' }).format(quote.total_ttc)
+      : null,
+  ].filter(Boolean)
+  sendPushToOrg(quote.organization_id, {
+    title: `Devis ${quote.number} signé`,
+    body: bodyParts.join(' · '),
+    url: `/finances/quote-editor?id=${quote.id}`,
+  }).catch(() => {})
 
   return {
     error: null,

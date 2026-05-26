@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useTransition, useRef } from 'react'
+import React, { useState, useTransition, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import {
   Plus, Trash2, Pencil, Check, X, TrendingUp, TrendingDown, Minus,
@@ -554,6 +554,13 @@ function ExpenseForm({
 
 // ─── Composant principal ──────────────────────────────────────────────────────
 
+export type DeletedPointageInfo = {
+  id: string
+  userId: string | null
+  memberId: string | null
+  hours: number
+}
+
 export default function RentabiliteTab({
   chantierId,
   initialProfitability,
@@ -563,6 +570,7 @@ export default function RentabiliteTab({
   invoiceStubs = [],
   targetMarginPct: initialTargetMarginPct = 30,
   permissions,
+  deletedPointages = [],
 }: {
   chantierId: string
   initialProfitability: ChantierProfitability
@@ -578,6 +586,7 @@ export default function RentabiliteTab({
     canEditRates: boolean
     canEditChantier: boolean
   }
+  deletedPointages?: DeletedPointageInfo[]
 }) {
   const { canCreateExpenses, canEditExpenses, canDeleteExpenses, canEditRates, canEditChantier } = permissions
   const ownExpensesOnly = initialProfitability.ownExpensesOnly ?? false
@@ -585,6 +594,28 @@ export default function RentabiliteTab({
 
   const [profitability, setProfitability] = useState(initialProfitability)
   const [laborByMember, setLaborByMember] = useState<LaborByMemberEntry[]>(initialProfitability.laborByMember)
+
+  // Synchronise les suppressions de pointages effectuées depuis un autre onglet
+  const processedPointageIds = useRef(new Set<string>())
+  useEffect(() => {
+    const toProcess = deletedPointages.filter(d => !processedPointageIds.current.has(d.id))
+    if (toProcess.length === 0) return
+    toProcess.forEach(d => processedPointageIds.current.add(d.id))
+    setLaborByMember(prev => {
+      let next = prev.map(entry => ({ ...entry }))
+      for (const { userId, memberId, hours } of toProcess) {
+        next = next.map(entry => {
+          const matches = userId ? entry.user_id === userId : entry.member_id === memberId
+          if (!matches) return entry
+          const newHours = Math.max(0, entry.hours - hours)
+          const newCost = entry.ratePerHour != null ? newHours * entry.ratePerHour : 0
+          return { ...entry, hours: newHours, cost: newCost }
+        }).filter(entry => entry.hours > 0)
+      }
+      setProfitability(prev => recalc(prev, next))
+      return next
+    })
+  }, [deletedPointages])
 
   // Marge cible - éditable inline
   const [targetMarginPct, setTargetMarginPct] = useState(initialTargetMarginPct)
@@ -748,6 +779,7 @@ export default function RentabiliteTab({
   } = profitability
 
   const expenses = profitability.expenses
+  const periods = profitability.periods ?? []
 
   // Budget coûts max = prix devis × (1 - marge cible)
   const costBudget    = budgetHt > 0 ? budgetHt * (1 - targetMarginPct / 100) : 0
@@ -761,8 +793,6 @@ export default function RentabiliteTab({
   // ── Handlers dépenses ──
 
   const handleExpenseSaved = (saved: ChantierExpense) => {
-    setShowAddForm(false)
-    setEditingExpense(null)
     setProfitability(prev => {
       const existing = prev.expenses.find(e => e.id === saved.id)
       const newExpenses = existing
@@ -770,6 +800,8 @@ export default function RentabiliteTab({
         : [saved, ...prev.expenses]
       return recalc({ ...prev, expenses: newExpenses })
     })
+    setShowAddForm(false)
+    setEditingExpense(null)
   }
 
   const handleDelete = async (id: string) => {
@@ -972,6 +1004,47 @@ export default function RentabiliteTab({
         </div>
       </div>}
 
+      {!ownExpensesOnly && periods.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="p-4 border-b border-[var(--elevation-border)] flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-primary">Rentabilité par période</h3>
+              <p className="text-xs text-secondary mt-0.5">Vue mensuelle : facturé, encaissé, dépenses, main-d&apos;œuvre et marge.</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-secondary border-b border-[var(--elevation-border)]">
+                <tr>
+                  <th className="text-left font-semibold px-4 py-2">Période</th>
+                  <th className="text-right font-semibold px-4 py-2">Facturé HT</th>
+                  <th className="text-right font-semibold px-4 py-2">Encaissé HT</th>
+                  <th className="text-right font-semibold px-4 py-2">Coûts HT</th>
+                  <th className="text-right font-semibold px-4 py-2">Marge encaissée</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--elevation-border)]">
+                {periods.slice(0, 18).map(period => (
+                  <tr key={period.period}>
+                    <td className="px-4 py-3 font-medium text-primary capitalize">{period.label}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-primary">{fmtMoney(period.revenueHt)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-primary">{fmtMoney(period.collectedRevenueHt)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-primary">
+                      {fmtMoney(period.costTotal)}
+                      {period.hoursLogged > 0 && <span className="block text-xs text-secondary">{fmtHours(period.hoursLogged)}</span>}
+                    </td>
+                    <td className={`px-4 py-3 text-right tabular-nums font-semibold ${period.marginEur >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      {fmtMoney(period.marginEur)}
+                      {period.collectedRevenueHt > 0 && <span className="block text-xs text-secondary">{fmtPct(period.marginPct)}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* ── 2. Main-d'œuvre par membre ── */}
       {!ownExpensesOnly && <div className="space-y-3">
         <div className="flex items-center gap-2">
@@ -998,7 +1071,7 @@ export default function RentabiliteTab({
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
                 {laborByMember.map(entry => (
-                  <tr key={entry.user_id}>
+                  <tr key={entry.user_id ?? entry.member_id}>
                     <td className="px-4 py-3 font-medium text-primary">{entry.full_name ?? 'Inconnu'}</td>
                     <td className="px-4 py-3 text-secondary tabular-nums">{fmtHours(entry.hours)}</td>
                     <td className="px-4 py-3">
@@ -1205,7 +1278,12 @@ export default function RentabiliteTab({
                         {!ownExpensesOnly && exp.created_by_name ? ` · ${exp.created_by_name}` : ''}
                       </p>
                     </div>
-                    <span className="text-sm font-bold text-primary flex-shrink-0">{fmtMoney(exp.amount_ht)}</span>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-bold text-primary">{fmtMoney(exp.amount_ht)} HT</p>
+                      {exp.vat_rate > 0 && (
+                        <p className="text-xs text-secondary">{fmtMoney(exp.amount_ht * (1 + exp.vat_rate / 100))} TTC</p>
+                      )}
+                    </div>
                     <div className="flex gap-1 flex-shrink-0">
                       {exp.receipt_storage_path && (
                         <button
