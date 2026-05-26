@@ -20,6 +20,11 @@ export type Chantier = {
   estimated_end_date: string | null
   budget_ht: number
   target_margin_pct: number
+  montant_periode_ht: number | null
+  libelle_facturation_periode: string | null
+  periode_facturation: 'none' | 'mensuelle' | 'bimestrielle' | 'trimestrielle' | 'annuelle' | null
+  jour_facturation: number | null
+  prochaine_facturation: string | null
   quote_id: string | null
   created_at: string
   // Contact référent
@@ -184,6 +189,7 @@ export async function getChantiers(): Promise<Chantier[]> {
       address_line1, postal_code, city,
       start_date, end_date, estimated_end_date,
       budget_ht, target_margin_pct, quote_id, created_at,
+      montant_periode_ht, libelle_facturation_periode, periode_facturation, jour_facturation, prochaine_facturation,
       contact_name, contact_email, contact_phone,
       recurrence, recurrence_times, recurrence_team_size,
       recurrence_duration_h, recurrence_notes,
@@ -216,6 +222,7 @@ export async function getChantierById(chantierId: string): Promise<ChantierDetai
           address_line1, postal_code, city,
           start_date, end_date, estimated_end_date,
           budget_ht, target_margin_pct, quote_id, created_at,
+          montant_periode_ht, libelle_facturation_periode, periode_facturation, jour_facturation, prochaine_facturation,
           contact_name, contact_email, contact_phone,
           recurrence, recurrence_times, recurrence_team_size,
           recurrence_duration_h, recurrence_notes,

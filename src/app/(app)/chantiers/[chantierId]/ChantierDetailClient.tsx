@@ -31,6 +31,7 @@ import {
   uploadChantierPhoto, deleteChantierPhoto, updateChantierPhotoCaption, updateChantierPhotoTitle,
   togglePhotoReportFlag,
   updateChantier,
+  generateChantierPeriodInvoice,
   createEquipe, deleteEquipe, addEquipeMembre, removeEquipeMembre, updateEquipeMembreTaux, updateEquipeMembreProfile,
   assignEquipeToChantier, removeEquipeFromChantier,
   createChantierPlanning, deleteChantierPlanning,
@@ -38,7 +39,7 @@ import {
 import { sendChantierReportEmail } from '@/lib/data/mutations/chantier-report-email'
 import { sendChantierPhotosEmail } from '@/lib/data/mutations/chantier-photos-email'
 import { todayParis } from '@/lib/utils'
-import RentabiliteTab from './RentabiliteTab'
+import RentabiliteTab, { type DeletedPointageInfo } from './RentabiliteTab'
 import IndividualMembersSection from './IndividualMembersSection'
 import JalonsTab from './JalonsTab'
 import type { ChantierProfitability } from '@/lib/data/queries/chantier-profitability'
@@ -61,6 +62,7 @@ function fmtHours(hours: number): string {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Tab = 'taches' | 'jalons' | 'planning' | 'pointages' | 'photos' | 'notes' | 'equipes' | 'rentabilite'
+type BillingPeriod = 'none' | 'mensuelle' | 'bimestrielle' | 'trimestrielle' | 'annuelle'
 
 type ChantierPermissions = {
   canEditChantier: boolean
@@ -103,6 +105,40 @@ const RECURRENCE_LABELS: Record<string, string> = {
   mensuel:           'Tous les mois',
   bimensuel:         'Tous les 2 mois',
   trimestriel:       'Tous les trimestres',
+}
+
+const BILLING_PERIOD_OPTIONS = [
+  { value: 'none', label: 'Pas de facturation périodique' },
+  { value: 'mensuelle', label: 'Mensuelle' },
+  { value: 'bimestrielle', label: 'Tous les 2 mois' },
+  { value: 'trimestrielle', label: 'Trimestrielle' },
+  { value: 'annuelle', label: 'Annuelle' },
+] as const
+
+const MONTH_NAMES = [
+  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+]
+
+function splitDateParts(date: string | null | undefined) {
+  if (!date) {
+    const now = new Date()
+    return {
+      day: String(Math.min(now.getDate(), 28)),
+      month: String(now.getMonth() + 1),
+      year: String(now.getFullYear()),
+    }
+  }
+  const [year, month, day] = date.split('-')
+  return { day: String(Number(day)), month: String(Number(month)), year }
+}
+
+function buildDateFromParts(year: string, month: string, day: string) {
+  const y = Number(year)
+  const m = Number(month)
+  const d = Number(day)
+  const lastDay = new Date(y, m, 0).getDate()
+  return `${y}-${String(m).padStart(2, '0')}-${String(Math.min(d, lastDay)).padStart(2, '0')}`
 }
 
 const CAL_START_H = 5
@@ -1731,6 +1767,7 @@ export default function ChantierDetailClient({
   situationsSummary = null,
   canCreateSituation = false,
   canCreateSolde = false,
+  canCreateInvoice = false,
   permissions,
 }: {
   chantier: ChantierDetail
@@ -1754,6 +1791,7 @@ export default function ChantierDetailClient({
   situationsSummary?: SituationsSummary | null
   canCreateSituation?: boolean
   canCreateSolde?: boolean
+  canCreateInvoice?: boolean
   permissions: ChantierPermissions
 }) {
   const router = useRouter()
@@ -1761,6 +1799,7 @@ export default function ChantierDetailClient({
   const [chantier] = useState(initialChantier)
   const [taches, setTaches] = useState(initialTaches)
   const [pointages, setPointages] = useState(initialPointages)
+  const [deletedPointages, setDeletedPointages] = useState<DeletedPointageInfo[]>([])
   const [photos, setPhotos] = useState(initialPhotos)
   const [notes, setNotes] = useState(initialNotes)
   const [plannings, setPlannings] = useState(initialPlannings)
@@ -1848,6 +1887,19 @@ export default function ChantierDetailClient({
   const [datesSaving, setDatesSaving] = useState(false)
   const [datesError, setDatesError] = useState<string | null>(null)
 
+  // Facturation périodique - édition inline avec selects
+  const initialBillingParts = splitDateParts(chantier.prochaine_facturation)
+  const [editBilling, setEditBilling] = useState(false)
+  const [billingAmount, setBillingAmount] = useState(chantier.montant_periode_ht != null ? String(chantier.montant_periode_ht) : '')
+  const [billingLabel, setBillingLabel] = useState(chantier.libelle_facturation_periode ?? '')
+  const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>(chantier.periode_facturation ?? 'none')
+  const [billingDay, setBillingDay] = useState(String(chantier.jour_facturation ?? Number(initialBillingParts.day) ?? 1))
+  const [billingMonth, setBillingMonth] = useState(initialBillingParts.month)
+  const [billingYear, setBillingYear] = useState(initialBillingParts.year)
+  const [billingSaving, setBillingSaving] = useState(false)
+  const [billingGenerating, setBillingGenerating] = useState(false)
+  const [billingError, setBillingError] = useState<string | null>(null)
+
   // Devis lié
   const [linkedQuoteId, setLinkedQuoteId] = useState<string | null>(chantier.quote_id)
   const [editQuoteLink, setEditQuoteLink] = useState(false)
@@ -1894,6 +1946,47 @@ export default function ChantierDetailClient({
     setDatesSaving(false)
     if (error) { setDatesError(error); return }
     setEditDates(false)
+  }
+
+  const selectedBillingDate = buildDateFromParts(billingYear, billingMonth, billingDay)
+  const billingYears = useMemo(() => {
+    const now = new Date()
+    const start = now.getFullYear()
+    return Array.from({ length: 8 }, (_, i) => start + i)
+  }, [])
+
+  const handleSaveBilling = async () => {
+    if (!canEditChantier) return
+    const amount = billingAmount.trim() ? parseFloat(billingAmount.replace(',', '.')) : null
+    if (amount != null && (Number.isNaN(amount) || amount < 0)) {
+      setBillingError('Montant invalide.')
+      return
+    }
+    setBillingSaving(true)
+    setBillingError(null)
+    const { error } = await updateChantier(chantier.id, {
+      montantPeriodeHt: amount,
+      libelleFacturationPeriode: billingLabel || null,
+      periodeFacturation: billingPeriod,
+      jourFacturation: Number(billingDay),
+      prochaineFacturation: billingPeriod === 'none' || !amount ? null : selectedBillingDate,
+    })
+    setBillingSaving(false)
+    if (error) { setBillingError(error); return }
+    setEditBilling(false)
+  }
+
+  const handleGeneratePeriodInvoice = async () => {
+    if (!canCreateInvoice) return
+    setBillingGenerating(true)
+    setBillingError(null)
+    const { invoiceId, error } = await generateChantierPeriodInvoice(chantier.id)
+    setBillingGenerating(false)
+    if (error || !invoiceId) {
+      setBillingError(error ?? 'Facture introuvable.')
+      return
+    }
+    router.push(`/finances/invoice-editor?id=${invoiceId}&returnTo=${encodeURIComponent(`/chantiers/${chantier.id}`)}`)
   }
 
   // PDF période
@@ -2349,6 +2442,7 @@ export default function ChantierDetailClient({
   const handleDeletePointage = async (p: Pointage) => {
     if (!canManagePointages) return
     setPointages(prev => prev.filter(pt => pt.id !== p.id))
+    setDeletedPointages(prev => [...prev, { id: p.id, userId: p.user_id, memberId: p.member_id, hours: p.hours }])
     await deletePointage(p.id, chantier.id)
   }
 
@@ -2675,6 +2769,116 @@ export default function ChantierDetailClient({
             <div className="text-sm text-secondary flex items-center gap-2">
               <Euro className="w-4 h-4" />
               <span className="font-semibold text-primary">{fmtMoney(chantier.budget_ht)} HT</span>
+            </div>
+            {/* Facturation périodique */}
+            <div className="rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)] p-3 space-y-2">
+              {!editBilling ? (
+                <>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-secondary">Facturation périodique</p>
+                      {billingPeriod !== 'none' && Number(billingAmount) > 0 ? (
+                        <p className="text-sm text-primary">
+                          <span className="font-semibold">{fmtMoney(Number(billingAmount))} HT</span>
+                          <span className="text-secondary"> · {BILLING_PERIOD_OPTIONS.find(o => o.value === billingPeriod)?.label.toLowerCase()}</span>
+                        </p>
+                      ) : (
+                        <p className="text-sm text-secondary">Non configurée</p>
+                      )}
+                      {billingPeriod !== 'none' && Number(billingAmount) > 0 && (
+                        <>
+                          {billingLabel && <p className="text-xs text-secondary truncate">Libellé : {billingLabel}</p>}
+                          <p className="text-xs text-secondary">
+                            Prochaine facture : {fmtDate(selectedBillingDate)}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    {canEditChantier && (
+                      <button
+                        onClick={() => { setEditBilling(true); setBillingError(null) }}
+                        className="p-1 text-secondary hover:text-primary transition-colors flex-shrink-0"
+                        title="Modifier la facturation périodique"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  {billingError && <p className="text-xs text-red-500">{billingError}</p>}
+                  {canCreateInvoice && billingPeriod !== 'none' && Number(billingAmount) > 0 && (
+                    <button
+                      onClick={handleGeneratePeriodInvoice}
+                      disabled={billingGenerating}
+                      className="btn-primary text-xs py-1.5 px-3 flex items-center justify-center gap-1.5 w-full disabled:opacity-50"
+                    >
+                      {billingGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Euro className="w-3.5 h-3.5" />}
+                      {billingGenerating ? 'Génération...' : 'Générer facture de période'}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] font-semibold text-secondary mb-0.5 block">Montant HT</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className="input input-sm w-full"
+                        value={billingAmount}
+                        onChange={e => setBillingAmount(e.target.value)}
+                        autoFocus
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold text-secondary mb-0.5 block">Fréquence</label>
+                      <select
+                        className="input input-sm w-full"
+                        value={billingPeriod}
+                        onChange={e => setBillingPeriod(e.target.value as typeof billingPeriod)}
+                      >
+                        {BILLING_PERIOD_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-secondary mb-0.5 block">Libellé de ligne</label>
+                    <input
+                      className="input input-sm w-full"
+                      value={billingLabel}
+                      onChange={e => setBillingLabel(e.target.value)}
+                      placeholder="Maintenance mensuelle"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-secondary mb-0.5 block">Prochaine facture</label>
+                    <div className="grid grid-cols-[0.8fr_1.2fr_1fr] gap-2">
+                      <select className="input input-sm w-full" value={billingDay} onChange={e => setBillingDay(e.target.value)}>
+                        {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                          <option key={day} value={day}>{day}</option>
+                        ))}
+                      </select>
+                      <select className="input input-sm w-full" value={billingMonth} onChange={e => setBillingMonth(e.target.value)}>
+                        {MONTH_NAMES.map((name, idx) => (
+                          <option key={name} value={idx + 1}>{name}</option>
+                        ))}
+                      </select>
+                      <select className="input input-sm w-full" value={billingYear} onChange={e => setBillingYear(e.target.value)}>
+                        {billingYears.map(year => <option key={year} value={year}>{year}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {billingError && <p className="text-xs text-red-500">{billingError}</p>}
+                  <div className="flex gap-2">
+                    <button onClick={() => setEditBilling(false)} className="btn-secondary text-xs py-1 px-2 flex-1">Annuler</button>
+                    <button onClick={handleSaveBilling} disabled={billingSaving} className="btn-primary text-xs py-1 px-2 flex-1 flex items-center justify-center gap-1.5">
+                      {billingSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      Enregistrer
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
             {/* Progression */}
             <div className="space-y-1">
@@ -3612,6 +3816,7 @@ export default function ChantierDetailClient({
             canEditRates,
             canEditChantier,
           }}
+          deletedPointages={deletedPointages}
         />
       )}
 

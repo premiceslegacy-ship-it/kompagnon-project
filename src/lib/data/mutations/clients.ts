@@ -321,14 +321,30 @@ export async function importClients(
     return { error: 'Format de données invalide.', imported: 0, skipped: 0 }
   }
 
-  const validStatuses = ['active', 'prospect', 'lead_hot', 'lead_cold', 'inactive']
+  const statusAliases: Record<string, string> = {
+    active: 'active',
+    client: 'active',
+    prospect: 'prospect',
+    lead_hot: 'lead_hot',
+    'lead-hot': 'lead_hot',
+    'lead chaud': 'lead_hot',
+    lead_cold: 'lead_cold',
+    'lead-cold': 'lead_cold',
+    'lead froid': 'lead_cold',
+    subcontractor: 'subcontractor',
+    sous_traitant: 'subcontractor',
+    'sous-traitant': 'subcontractor',
+    'sous traitant': 'subcontractor',
+    inactive: 'inactive',
+    inactif: 'inactive',
+  }
 
   const toInsert = rows
     .filter(row => row.company_name?.trim() || row.last_name?.trim() || row.first_name?.trim())
     .map(row => {
       const companyName = row.company_name?.trim() || null
-      const rawStatus   = row.status?.trim().toLowerCase()
-      const status      = validStatuses.includes(rawStatus) ? rawStatus : 'lead_cold'
+      const rawStatus   = row.status?.trim().toLowerCase() ?? ''
+      const status      = statusAliases[rawStatus] ?? 'lead_cold'
       return {
         organization_id:    organizationId,
         company_name:       companyName,

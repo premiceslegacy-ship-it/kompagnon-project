@@ -29,6 +29,19 @@ export type LaborByMemberEntry = {
   cost: number
 }
 
+export type ChantierProfitabilityPeriod = {
+  period: string
+  label: string
+  revenueHt: number
+  collectedRevenueHt: number
+  expensesHt: number
+  laborCost: number
+  costTotal: number
+  marginEur: number
+  marginPct: number
+  hoursLogged: number
+}
+
 export type ChantierProfitability = {
   budgetHt: number
   budgetCostMaterial: number  // coût d'achat budgété (unit_cost_ht × qty) lignes material du devis
@@ -46,7 +59,25 @@ export type ChantierProfitability = {
   hoursLogged: number
   expenses: ChantierExpense[]
   laborByMember: LaborByMemberEntry[]
+  periods: ChantierProfitabilityPeriod[]
   ownExpensesOnly?: boolean   // vrai si l'utilisateur ne voit que ses propres dépenses
+}
+
+function monthKey(date: string | null | undefined) {
+  return date ? date.slice(0, 7) : null
+}
+
+function monthLabel(key: string) {
+  const [year, month] = key.split('-').map(Number)
+  return new Date(year, month - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+}
+
+function paidHt(inv: { status: string; total_ht: number | null; total_ttc: number | null; total_paid: number | null }) {
+  const totalHt = inv.total_ht ?? 0
+  const totalTtc = inv.total_ttc ?? 0
+  if (inv.status === 'paid') return totalHt
+  if (inv.status === 'partial' && totalTtc > 0) return ((inv.total_paid ?? 0) / totalTtc) * totalHt
+  return 0
 }
 
 export async function getChantierProfitability(chantierId: string): Promise<ChantierProfitability | null> {
@@ -104,7 +135,7 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   // 3. Heures par membre + taux individuels
   const { data: pointages } = await supabase
     .from('chantier_pointages')
-    .select('user_id, member_id, hours, rate_snapshot')
+    .select('user_id, member_id, date, hours, rate_snapshot')
     .eq('chantier_id', chantierId)
 
   // Agréger heures et coût par user_id / member_id
@@ -160,9 +191,9 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
       .eq('chantier_id', chantierId),
     memberIds.length > 0
       ? supabase.from('chantier_equipe_membres')
-          .select('id, prenom, name, taux_horaire')
+          .select('id, prenom, name, taux_horaire, profile_id')
           .in('id', memberIds)
-      : Promise.resolve({ data: [] as Array<{ id: string; prenom: string | null; name: string; taux_horaire: number | null }> }),
+      : Promise.resolve({ data: [] as Array<{ id: string; prenom: string | null; name: string; taux_horaire: number | null; profile_id: string | null }> }),
   ])
 
   // Taux horaire par user_id depuis les membres d'équipe du chantier (profile_id → taux_horaire)
@@ -207,7 +238,8 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   })
 
   // Entrées pour les membres fantômes
-  for (const fm of (fantomeMembresRes.data ?? []) as Array<{ id: string; prenom: string | null; name: string; taux_horaire: number | null }>) {
+  // Si un membre fantôme a un profile_id lié à un user déjà présent, on fusionne pour éviter le doublon
+  for (const fm of (fantomeMembresRes.data ?? []) as Array<{ id: string; prenom: string | null; name: string; taux_horaire: number | null; profile_id: string | null }>) {
     const hrs = hoursByMember[fm.id]
     if (!hrs) continue
     const dynamicRate: number | null = fm.taux_horaire ?? orgFallback
@@ -216,11 +248,22 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
       ? (pointages ?? []).filter(p => p.member_id === fm.id && p.rate_snapshot == null).reduce((s, p) => s + (p.hours ?? 0), 0)
       : 0
     const cost = costFromSnapshot + (dynamicRate != null ? hrsNoSnapshot * dynamicRate : 0)
+
+    // Fusion avec la ligne user_id existante si ce membre fantôme est lié au même profil
+    if (fm.profile_id) {
+      const existing = laborByMember.find(e => e.user_id === fm.profile_id)
+      if (existing) {
+        existing.hours += hrs
+        existing.cost += cost
+        continue
+      }
+    }
+
     laborByMember.push({
-      user_id: null,
+      user_id: fm.profile_id ?? null,
       member_id: fm.id,
       membership_id: '',
-      full_name: `${fm.prenom ?? ''} ${fm.name}`.trim(),
+      full_name: fm.profile_id ? (nameMap[fm.profile_id] ?? `${fm.prenom ?? ''} ${fm.name}`.trim()) : `${fm.prenom ?? ''} ${fm.name}`.trim(),
       hours: hrs,
       ratePerHour: dynamicRate,
       cost,
@@ -278,13 +321,22 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   // 5. CA facturé et encaissé : factures liées au chantier (chantier_id direct OU via le devis lié), hors avoirs
   let revenueHt = 0
   let collectedRevenueHt = 0
+  let revenueInvoices: Array<{
+    id: string
+    total_ht: number | null
+    total_ttc: number | null
+    total_paid: number | null
+    invoice_type: string | null
+    status: string
+    issue_date: string | null
+  }> = []
   {
     const orFilters: string[] = [`chantier_id.eq.${chantierId}`]
     if (chantier.quote_id) orFilters.push(`quote_id.eq.${chantier.quote_id}`)
 
     const { data: invoices } = await supabase
       .from('invoices')
-      .select('id, total_ht, total_ttc, total_paid, invoice_type, status')
+      .select('id, total_ht, total_ttc, total_paid, invoice_type, status, issue_date')
       .or(orFilters.join(','))
       .eq('organization_id', orgId)
       .neq('status', 'cancelled')
@@ -299,7 +351,7 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
     // Si des situations/soldes existent, exclure les factures standard liées via quote_id
     // (elles ont été remplacées par le mode situations et ne doivent pas être doublonnées)
     const hasSituations = allValid.some((inv: any) => inv.invoice_type === 'situation' || inv.invoice_type === 'solde')
-    const revenueInvoices = allValid.filter((inv: any) => !hasSituations || inv.invoice_type !== 'standard')
+    revenueInvoices = allValid.filter((inv: any) => !hasSituations || inv.invoice_type !== 'standard')
     revenueHt = revenueInvoices.reduce((sum: number, inv: any) => sum + (inv.total_ht ?? 0), 0)
     collectedRevenueHt = revenueInvoices.reduce((sum: number, inv: any) => {
       const totalHt = inv.total_ht ?? 0
@@ -329,6 +381,7 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
       hoursLogged,
       expenses: expenseList,
       laborByMember: [],
+      periods: [],
       ownExpensesOnly: true,
     }
   }
@@ -336,6 +389,67 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   const costTotal = costMaterial + costLabor + costSubcontract + costOther
   const marginEur = collectedRevenueHt - costTotal
   const marginPct = collectedRevenueHt > 0 ? marginEur / collectedRevenueHt : 0
+  const periodMap: Record<string, ChantierProfitabilityPeriod> = {}
+  const ensurePeriod = (key: string) => {
+    periodMap[key] ??= {
+      period: key,
+      label: monthLabel(key),
+      revenueHt: 0,
+      collectedRevenueHt: 0,
+      expensesHt: 0,
+      laborCost: 0,
+      costTotal: 0,
+      marginEur: 0,
+      marginPct: 0,
+      hoursLogged: 0,
+    }
+    return periodMap[key]
+  }
+
+  for (const inv of revenueInvoices) {
+    const key = monthKey(inv.issue_date)
+    if (!key) continue
+    const p = ensurePeriod(key)
+    p.revenueHt += inv.total_ht ?? 0
+    p.collectedRevenueHt += paidHt(inv)
+  }
+  for (const expense of expenseList) {
+    const key = monthKey(expense.expense_date)
+    if (!key) continue
+    ensurePeriod(key).expensesHt += expense.amount_ht ?? 0
+  }
+  const fantomeRateByMemberId: Record<string, number | null> = {}
+  for (const fm of (fantomeMembresRes.data ?? []) as Array<{ id: string; taux_horaire: number | null }>) {
+    fantomeRateByMemberId[fm.id] = fm.taux_horaire ?? null
+  }
+
+  for (const p of pointages ?? []) {
+    const key = monthKey((p as any).date)
+    if (!key) continue
+    const hours = p.hours ?? 0
+    const dynamicRate = p.user_id
+      ? (equipeTauxByUserId[p.user_id] ?? memberRateMap[p.user_id]?.rate ?? orgFallback ?? 0)
+      : p.member_id
+      ? (fantomeRateByMemberId[p.member_id] ?? orgFallback ?? 0)
+      : orgFallback ?? 0
+    const laborCostForPointage = hours * (p.rate_snapshot ?? dynamicRate)
+    const period = ensurePeriod(key)
+    period.hoursLogged += hours
+    period.laborCost += laborCostForPointage
+  }
+
+  const periods = Object.values(periodMap)
+    .map(p => {
+      const costTotal = p.expensesHt + p.laborCost
+      const marginEur = p.collectedRevenueHt - costTotal
+      return {
+        ...p,
+        costTotal,
+        marginEur,
+        marginPct: p.collectedRevenueHt > 0 ? marginEur / p.collectedRevenueHt : 0,
+      }
+    })
+    .sort((a, b) => b.period.localeCompare(a.period))
 
   return {
     budgetHt: chantier.budget_ht ?? 0,
@@ -354,6 +468,7 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
     hoursLogged,
     expenses: expenseList,
     laborByMember,
+    periods,
     ownExpensesOnly: false,
   }
 }

@@ -3,7 +3,7 @@
 > **Document vivant.** Toute nouvelle étape de déploiement doit être ajoutée ici immédiatement.
 > Modèle : **1 Supabase + 1 déploiement Cloudflare Workers + 1 domaine** par client — données totalement isolées.
 
-> **Etat réel mai 2026 :** le déploiement app client, les migrations, les Edge Functions et les Workers cron sont opérables. Les variables Cloudflare restent partiellement manuelles : `scripts/prepare-cloudflare-env.mjs` injecte les secrets via Wrangler, mais les variables texte restent à poser dans le dashboard ou via une future automatisation API.
+> **Etat réel mai 2026 :** le déploiement app client, les migrations, les Edge Functions et les Workers cron sont opérables. Les variables Cloudflare sont entièrement automatisables : `scripts/prepare-cloudflare-env.mjs` injecte les secrets via Wrangler (`--apply-secrets`) et les variables texte via l'API REST Cloudflare (`--apply-all`). `CLOUDFLARE_ACCOUNT_ID` et `CLOUDFLARE_API_TOKEN` requis dans `.env.local` pour `--apply-all`.
 > **Scopes séparées :** Stripe abonnements cockpit → `docs/scope-cockpit-stripe-abonnements.md`. B2Brouter / sandbox facturation électronique → `docs/atelier-facturation-electronique.md`. Paiement en ligne des factures artisan → `docs/scope-paiement-en-ligne.md`. WhatsApp mutualisé → en attente de vérification Meta / routage central.
 
 ---
@@ -67,13 +67,25 @@ Cloudflare Workers — Atelier-Dupont
 
 > Quand tu demandes à Claude de déployer un nouveau client, donne-lui **uniquement ça** en début de session. Claude fait le reste.
 
+> **Ce que Claude lit automatiquement depuis ton `.env.local`** (ne pas répéter dans le protocole) :
+> - `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` — injection vars Cloudflare via `--apply-all`
+> - `OPERATOR_INGEST_SECRET` + `OPERATOR_CONFIG_SYNC_SECRET` — HMAC partagés cockpit ↔ instances
+> - `OPERATOR_SUPABASE_URL` + `OPERATOR_SUPABASE_SERVICE_ROLE_KEY` — Supabase cockpit Orsayn
+> - `OPERATOR_INGEST_URL` + `OPERATOR_ALLOWED_EMAILS` + `OPERATOR_USD_TO_EUR_RATE`
+> - `OPERATOR_SOURCE_INSTANCE` — **déduit automatiquement du worker-name** fourni dans le protocole (ex: `atelier-weber`)
+> - `VAPID_PRIVATE_KEY` + `NEXT_PUBLIC_VAPID_PUBLIC_KEY` — paire partagée notifications push
+> - `OPENROUTER_API_KEY` + `MISTRAL_API_KEY` — clés IA Atelier partagées (sauf si Client fournit la sienne)
+> - `RESEND_API_KEY` Atelier partagée (sauf si client a son propre compte Resend)
+> - `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET` — générés par Claude si absents du protocole
+
 ```
 Client : [Nom de l'entreprise]
+Worker name : [ex: atelier-weber]      ← utilisé comme nom Cloudflare Workers + OPERATOR_SOURCE_INSTANCE
 Project ref Supabase : [ex: pyxnmohknxmbpbcuvudg]
 SUPABASE_URL : https://[ref].supabase.co
 ANON_KEY : eyJ...
 SERVICE_ROLE_KEY : eyJ...
-RESEND_API_KEY : re_...        ← laisser vide si pas de domaine (emails via Atelier)
+RESEND_API_KEY : re_...        ← laisser vide = clé Atelier partagée depuis .env.local
 Domaine : [ex: weber-tolerie.fr ou "aucun" → URL workers.dev]
 Nom affiché email : [ex: Weber Tôlerie]
 Adresse email expéditeur : [ex: contact@weber-tolerie.fr ou "noreply@atelier.orsayn.fr"]
@@ -119,9 +131,10 @@ Ces étapes nécessitent une interface web ou une action humaine irremplaçable.
 |---|-------|----|-------|-----------------|
 | T1 | Créer le projet Supabase (région `eu-west-1`) + copier les 3 clés | [supabase.com](https://supabase.com) → New project | 5 min | Pas d'API de création projet |
 | T2 | Créer le compte Resend + ajouter le domaine + poser les records DNS chez le registrar | [resend.com](https://resend.com) → Domains | 15 min | DNS = action humaine chez le registrar |
-| T3 | Lancer `./scripts/deploy-client.sh atelier-nomclient` depuis le terminal | Terminal | 2 min | Crée le Worker automatiquement au premier déploiement — le script patche wrangler.jsonc et restaure ensuite |
-| T4 | Injecter les variables d'env dans Cloudflare Workers (voir tableau §4) | `npm run cf:env` + dash.cloudflare.com → Workers & Pages → le projet → Settings → Variables and Secrets | 5-10 min | Les secrets peuvent être injectés via Wrangler ; les variables texte restent manuelles aujourd'hui |
+| T3 | Lancer `./scripts/deploy-client.sh atelier-nomclient` depuis le terminal → noter l'URL workers.dev générée | Terminal | 2 min | Crée le Worker automatiquement au premier déploiement — l'URL `NEXT_PUBLIC_APP_URL` n'est connue qu'après cette étape |
+| T4a | Remplir `NEXT_PUBLIC_APP_URL=https://atelier-nomclient.mbebourasam.workers.dev` dans `.env.client-nomclient` puis lancer `--apply-all` | `npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-all` | 2 min | URL workers.dev provisoire — suffisant pour tester avant domaine custom |
 | T5 | Ajouter le domaine custom + pointer DNS | Cloudflare Workers → Domains & Routes | 3 min | Dépend de la propagation DNS |
+| T4b | *(Si domaine custom)* Mettre à jour `NEXT_PUBLIC_APP_URL=https://domaine-client.fr` dans `.env.client-nomclient` + relancer `--apply-all` | `npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-all` | 1 min | Sans ça les liens devis/factures/formulaires publics pointent vers workers.dev |
 | T6 | *(Si WhatsApp propre uniquement)* Créer l'app Meta, générer le token permanent | [developers.facebook.com](https://developers.facebook.com) | 20 min | Formulaire Meta, pas d'API publique |
 | T7 | Onboarding owner : créer le compte, remplir les infos entreprise | App en production | 10 min | Action du client final |
 
@@ -170,13 +183,19 @@ NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33...
 ```
 → `deploy-edge-functions.sh` les lit automatiquement pour tous les clients présents et futurs. Ce n'est pas le mode cible pour Twilio classique.
 
-**Automatisation T4 disponible aujourd'hui :**
+**Automatisation T4 :**
 ```bash
+# Dry-run — affiche secrets + vars texte, n'écrit rien
 npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient
+
+# Secrets uniquement via wrangler secret put
 npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-secrets
+
+# Tout d'un coup — secrets via Wrangler + vars texte via API REST Cloudflare
+npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-all
 ```
 
-`--apply-secrets` injecte uniquement les secrets via `wrangler secret put`. Les variables texte (`SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, mentions légales, `B2BROUTER_*` non secrets, etc.) restent affichées pour contrôle et doivent être posées dans Cloudflare Dashboard tant que l'automatisation API Cloudflare n'est pas implémentée.
+`--apply-all` requiert `CLOUDFLARE_ACCOUNT_ID` et `CLOUDFLARE_API_TOKEN` dans `.env.local` (jamais dans un `.env.client-xxx`). Ces deux variables s'obtiennent dans le dashboard Cloudflare → My Profile → API Tokens (token "Edit Workers" ou équivalent) et Account ID (barre latérale de la page Workers). `--apply-secrets` reste utile si tu ne veux injecter que les secrets sans toucher aux vars texte.
 
 ---
 
@@ -192,12 +211,12 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 | C4 | Générer `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` uniques si non fournis | Terminal (`openssl rand -hex 32`) | — |
 | C5 | Déployer la Edge Function `whatsapp-webhook` | `supabase functions deploy` | `supabase login` ✅ |
 | C6 | Déployer la Edge Function + injecter les secrets (`OPENROUTER`, `MISTRAL`, `RESEND`, `APP_URL`; `SHARED_WABA_*` seulement en mode Meta/Graph-compatible) | `./scripts/deploy-edge-functions.sh <ref> --resend-key ... --resend-from ... --app-url ...` | `supabase login` ✅ |
-| C7 | Déployer le Cloudflare Worker relances + injecter `APP_URL` + `CRON_SECRET` | `wrangler deploy` | `wrangler login` ✅ |
+| C7 | Déployer les Workers cron (auto-reminder + embeddings) + injecter `APP_URL` + `CRON_SECRET` | `./scripts/deploy-cron-workers.sh atelier-nomclient --env-file=.env.client-nomclient` | `wrangler login` ✅ |
 | C8 | Peupler `company_memory` avec le contexte de l'entretien client + configurer `organization_modules` selon l'offre souscrite | Supabase MCP | MCP connecté ✅ |
 | C9 | Vérifier migrations, permissions, buckets, modules IA | Supabase MCP | MCP connecté ✅ |
 | C10 | Afficher récapitulatif final + URL app client + modules actifs ; WhatsApp mutualisé reste en attente tant que le routeur central n'est pas livré | — | — |
 
-**Note C4/T4 (variables Cloudflare Workers) :** aujourd'hui, le script `cf:env` prépare la liste complète et peut injecter les secrets. Il ne pose pas encore les variables texte via l'API Cloudflare.
+**Note C4/T4 (variables Cloudflare Workers) :** le script `cf:env --apply-all` injecte la liste complète — secrets via Wrangler et variables texte via l'API REST Cloudflare. Requiert `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` dans `.env.local`.
 
 **Note C8 — Configuration modules IA selon l'offre souscrite :**
 
@@ -338,6 +357,7 @@ Le cockpit Orsayn reste la source de vérité pour modifier tier, modules, quota
 105_setup_checklist_dismissed.sql         ← Dashboard : mémorise que l'owner a masqué la checklist de lancement
 106_chantier_task_assignments.sql         ← Assignations multiples des tâches chantier à des équipes ou membres terrain
 107_org_monthly_objectives.sql            ← Objectifs mensuels organisation : CA, marge, chantiers, heures, objectifs custom
+108_push_subscriptions.sql                ← Abonnements Web Push par user/device (notifications push navigateur)
 ```
 
 Note historique :
@@ -416,6 +436,7 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `105_setup_checklist_dismissed.sql`
 - `106_chantier_task_assignments.sql`
 - `107_org_monthly_objectives.sql`
+- `108_push_subscriptions.sql`
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`
@@ -568,6 +589,13 @@ Effets de ces migrations :
   - objectifs mensuels organisation distincts des objectifs annuels (`100_org_annual_objectives.sql`)
   - obligatoire avant d'utiliser les objectifs mensuels dans Rapports / Dashboard
 
+- `108` :
+  - nouvelle table `push_subscriptions` (endpoint, p256dh, auth par user/device)
+  - RLS : chaque utilisateur gère uniquement ses propres abonnements
+  - obligatoire avant que les notifications push navigateur fonctionnent (Web Push VAPID)
+  - **nouvelles variables d'env requises** : `NEXT_PUBLIC_VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY` (voir §3)
+  - après migration, les utilisateurs verront le bouton "Activer les pushs" dans le dropdown de la cloche
+
 Impact déploiement :
 - `059` : appliquer sur tous les clients existants avec WhatsApp avant de redéployer l'Edge Function — sans ça, le webhook ne peut pas lire `authorized_contacts` ni `use_shared_waba`
 - `067` + `068` : appliquer avant d'utiliser l'onglet Rentabilité, l'assistant IA chantier, les photos rapport et les nouveaux outils WhatsApp — sans ça les inserts sur `chantier_expenses` et `chantier_photos` échoueront
@@ -669,6 +697,8 @@ NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33700000000  ← Numéro affiché dans S
 # Mode Meta/Graph-compatible uniquement :
 # SHARED_WABA_PHONE_NUMBER_ID=...      ← Phone Number ID du numéro bot Atelier
 # SHARED_WABA_ACCESS_TOKEN=...         ← Token permanent du numéro bot Atelier
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=...            ← clé publique VAPID (partagée, identique sur toutes les instances)
+VAPID_PRIVATE_KEY=...                      ← clé privée VAPID (partagée, identique sur toutes les instances)
 OPERATOR_INGEST_URL=https://orsayn-cockpit.mbebourasam.workers.dev/api/operator/ingest  ← URL du cockpit Orsayn
 OPERATOR_INGEST_SECRET=...             ← secret HMAC partagé (identique sur toutes les instances + cockpit)
 OPERATOR_CONFIG_SYNC_SECRET=...        ← optionnel ; si absent, /api/operator/config-sync utilise OPERATOR_INGEST_SECRET
@@ -746,20 +776,27 @@ npm run preflight:client -- atelier-weber --with-open-next-build
 - `deploy-client.sh` : patche temporairement `wrangler.jsonc` avec le bon `name`, lance `npm run deploy`, puis restaure. Pas besoin de modifier le fichier à la main.
 - `deploy-all-clients.sh` : lit `scripts/clients.txt` (un worker-name par ligne) et déploie chacun séquentiellement. Affiche un résumé succès/échec à la fin.
 - `preflight-client.mjs` : vérifie worker-name, scripts, migrations, variables attendues et peut lancer le build OpenNext.
-- `prepare-cloudflare-env.mjs` : prépare les variables Cloudflare en dry-run ; `--apply-secrets` injecte uniquement les secrets via Wrangler, les variables texte restent affichées pour contrôle.
+- `prepare-cloudflare-env.mjs` : prépare les variables Cloudflare en dry-run ; `--apply-secrets` injecte les secrets via Wrangler ; `--apply-all` injecte secrets + variables texte via l'API REST Cloudflare (requiert `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` dans `.env.local`).
 - Ajouter chaque nouveau client dans `scripts/clients.txt` pour l'inclure dans les mises à jour futures.
 
 #### Automatisation contrôlée des variables Cloudflare
 
 ```bash
-# Dry-run : affiche ce qui sera configuré
+# Dry-run : affiche ce qui sera configuré, n'écrit rien
 npm run cf:env -- atelier-weber --env-file=.env.client-weber
 
-# Application contrôlée : injecte les secrets via wrangler secret put
+# Secrets uniquement via wrangler secret put
 npm run cf:env -- atelier-weber --env-file=.env.client-weber --apply-secrets
+
+# Tout en une commande — secrets (Wrangler) + vars texte (API REST Cloudflare)
+npm run cf:env -- atelier-weber --env-file=.env.client-weber --apply-all
 ```
 
-Les variables texte (`SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, mentions légales, etc.) sont listées par le script et restent à poser manuellement ou via une future automatisation API Cloudflare avec token.
+`--apply-all` requiert dans `.env.local` (jamais dans un `.env.client-xxx`) :
+```
+CLOUDFLARE_ACCOUNT_ID=<Account ID — barre latérale Workers dashboard>
+CLOUDFLARE_API_TOKEN=<Token API — My Profile → API Tokens, scope "Edit Workers">
+```
 
 #### Variables d'environnement
 
@@ -767,8 +804,8 @@ Les variables texte (`SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, mentions légales, e
 
 | Type | Variables |
 |------|-----------|
-| **Secret** | `OPERATOR_INGEST_SECRET`, `OPERATOR_CONFIG_SYNC_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET`; `B2BROUTER_API_KEY` et `B2BROUTER_WEBHOOK_SECRET` seulement en mode B2Brouter ; `SHARED_WABA_ACCESS_TOKEN` seulement en mode Meta/Graph-compatible |
-| **Text** | `SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `AI_RATE_LIMIT_PER_HOUR`, `PUBLIC_FORM_RATE_LIMIT_PER_HOUR`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE`, `B2BROUTER_ENV`, `B2BROUTER_API_VERSION`, `B2BROUTER_ACCOUNT_ID`, `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER`; `SHARED_WABA_PHONE_NUMBER_ID` seulement en mode Meta/Graph-compatible; et toutes les `NEXT_PUBLIC_LEGAL_*` |
+| **Secret** | `OPERATOR_INGEST_SECRET`, `OPERATOR_CONFIG_SYNC_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET`, `VAPID_PRIVATE_KEY`; `B2BROUTER_API_KEY` et `B2BROUTER_WEBHOOK_SECRET` seulement en mode B2Brouter ; `SHARED_WABA_ACCESS_TOKEN` seulement en mode Meta/Graph-compatible |
+| **Text** | `SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `AI_RATE_LIMIT_PER_HOUR`, `PUBLIC_FORM_RATE_LIMIT_PER_HOUR`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE`, `B2BROUTER_ENV`, `B2BROUTER_API_VERSION`, `B2BROUTER_ACCOUNT_ID`, `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER`; `SHARED_WABA_PHONE_NUMBER_ID` seulement en mode Meta/Graph-compatible; et toutes les `NEXT_PUBLIC_LEGAL_*` |
 
 Les variables `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_SUPABASE_SERVICE_ROLE_KEY` et `OPERATOR_USD_TO_EUR_RATE` sont réservées au Worker cockpit. Ne pas les poser sur un Worker client.
 
@@ -780,13 +817,14 @@ Les variables `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL
 
 Script de déploiement (lancé par Claude via terminal) :
 ```bash
-cd workers/auto-reminder
-wrangler secret put APP_URL          # → https://domaine-du-client.fr
-wrangler secret put CRON_SECRET      # → même valeur que dans l'app Workers
-wrangler deploy
+./scripts/deploy-cron-workers.sh atelier-weber --env-file=.env.client-weber
 ```
 
-Cron : `0 7 * * *` UTC (8h Paris hiver, 9h été) — défini dans `wrangler.toml`.
+Le script déploie les deux Workers cron en une passe — `auto-reminder-weber` et `atelier-embeddings-weber` — en patchant temporairement le `name` dans chaque `wrangler.toml`, injectant `APP_URL` + `CRON_SECRET` via secrets, puis restaurant le fichier.
+
+Crons : `auto-reminder` → `0 7 * * *` UTC (8h Paris hiver, 9h été) ; `embeddings` → `0 * * * *` (toutes les heures).
+
+> **Règle critique :** le `CRON_SECRET` des Workers cron doit être identique à celui injecté dans le Worker app via `--apply-all`. C'est garanti tant que tout passe par le même `.env.client-xxx`. Ne jamais modifier ce secret manuellement dans le dashboard d'un seul côté — toujours regénérer dans le fichier env et relancer `--apply-all` + `deploy-cron-workers.sh`.
 
 Le Worker déclenche **séquentiellement deux routes** à chaque exécution :
 
@@ -983,6 +1021,8 @@ Impact support appareils :
 - [ ] Edge Function `whatsapp-webhook` déployée
 - [ ] Worker Cloudflare déployé + cron actif
 - [ ] Variables d'env injectées dans Cloudflare Workers
+- [ ] `NEXT_PUBLIC_VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY` injectées (même paire pour toutes les instances)
+- [ ] Migration `108_push_subscriptions.sql` appliquée (`SELECT count(*) FROM push_subscriptions` → 0 OK)
 
 ### Checklist fonctionnelle (à tester manuellement après go-live)
 

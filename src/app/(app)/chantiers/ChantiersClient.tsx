@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   HardHat, Plus, X, Search, MapPin, Calendar,
   MoreVertical, Trash2, CheckCircle, PauseCircle, XCircle, PlayCircle,
-  RefreshCw, Copy, Clock, Users, ChevronLeft, ChevronRight,
+  RefreshCw, Copy, Clock, Users, ChevronLeft, ChevronRight, Euro,
 } from 'lucide-react'
 import type { Chantier, ChantierStats } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
@@ -18,6 +18,7 @@ import { createChantier, updateChantier, deleteChantier } from '@/lib/data/mutat
 type Status = Chantier['status']
 
 type RecurrenceType = 'none' | 'quotidien' | 'plurihebdomadaire' | 'hebdomadaire' | 'mensuel' | 'bimensuel' | 'trimestriel'
+type BillingPeriod = 'none' | 'mensuelle' | 'bimestrielle' | 'trimestrielle' | 'annuelle'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -45,6 +46,27 @@ const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string }[] = [
   { value: 'bimensuel',         label: 'Tous les 2 mois' },
   { value: 'trimestriel',       label: 'Tous les trimestres' },
 ]
+
+const BILLING_PERIOD_OPTIONS = [
+  { value: 'none', label: 'Pas de facturation périodique' },
+  { value: 'mensuelle', label: 'Mensuelle' },
+  { value: 'bimestrielle', label: 'Tous les 2 mois' },
+  { value: 'trimestrielle', label: 'Trimestrielle' },
+  { value: 'annuelle', label: 'Annuelle' },
+] as const
+
+const MONTH_NAMES = [
+  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+]
+
+function buildDateFromParts(year: string, month: string, day: string) {
+  const y = Number(year)
+  const m = Number(month)
+  const d = Number(day)
+  const lastDay = new Date(y, m, 0).getDate()
+  return `${y}-${String(m).padStart(2, '0')}-${String(Math.min(d, lastDay)).padStart(2, '0')}`
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -188,6 +210,8 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
 }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const now = new Date()
+  const yearOptions = Array.from({ length: 8 }, (_, i) => now.getFullYear() + i)
   const [form, setForm] = useState({
     title: '', clientId: '', addressLine1: '', postalCode: '', city: '',
     startDate: '', estimatedEndDate: '', budgetHt: '',
@@ -198,6 +222,12 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
     recurrenceTeamSize: '',
     recurrenceDurationSlots: [2] as number[], // durée par passage (h décimal)
     recurrenceNotes: '',
+    montantPeriodeHt: '',
+    libelleFacturationPeriode: '',
+    periodeFacturation: 'none' as BillingPeriod,
+    billingDay: '1',
+    billingMonth: String(now.getMonth() + 1),
+    billingYear: String(now.getFullYear()),
   })
 
   const set = (field: string, value: string) => setForm(f => ({ ...f, [field]: value }))
@@ -260,6 +290,13 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
       recurrenceDurationH: form.recurrenceDurationSlots[0] ?? null,
       recurrenceDurationSlots: form.recurrenceDurationSlots,
       recurrenceNotes: form.recurrenceNotes || null,
+      montantPeriodeHt: form.montantPeriodeHt ? parseFloat(form.montantPeriodeHt) : null,
+      libelleFacturationPeriode: form.libelleFacturationPeriode || null,
+      periodeFacturation: form.periodeFacturation,
+      jourFacturation: parseInt(form.billingDay),
+      prochaineFacturation: form.periodeFacturation === 'none' || !form.montantPeriodeHt
+        ? null
+        : buildDateFromParts(form.billingYear, form.billingMonth, form.billingDay),
     })
     setLoading(false)
     if (err) return setError(err)
@@ -367,6 +404,64 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
               onChange={e => set('budgetHt', e.target.value)}
             />
           </div>
+          </div>
+
+          <div className="card p-4 space-y-4 shadow-sm">
+            <div className="flex items-center gap-2">
+              <Euro className="w-4 h-4 text-accent flex-shrink-0" />
+              <p className="text-sm font-semibold text-primary">Facturation périodique</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-secondary mb-1.5">Montant HT par période</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="input w-full"
+                  placeholder="1500.00"
+                  value={form.montantPeriodeHt}
+                  onChange={e => set('montantPeriodeHt', e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-secondary mb-1.5">Fréquence</label>
+                <select
+                  className="input w-full"
+                  value={form.periodeFacturation}
+                  onChange={e => set('periodeFacturation', e.target.value)}
+                >
+                  {BILLING_PERIOD_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-secondary mb-1.5">Libellé de ligne</label>
+              <input
+                className="input w-full"
+                placeholder="Maintenance mensuelle"
+                value={form.libelleFacturationPeriode}
+                onChange={e => set('libelleFacturationPeriode', e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-secondary mb-1.5">Prochaine facture</label>
+              <div className="grid grid-cols-[0.8fr_1.2fr_1fr] gap-2">
+                <select className="input w-full" value={form.billingDay} onChange={e => set('billingDay', e.target.value)}>
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                    <option key={day} value={day}>{day}</option>
+                  ))}
+                </select>
+                <select className="input w-full" value={form.billingMonth} onChange={e => set('billingMonth', e.target.value)}>
+                  {MONTH_NAMES.map((name, idx) => (
+                    <option key={name} value={idx + 1}>{name}</option>
+                  ))}
+                </select>
+                <select className="input w-full" value={form.billingYear} onChange={e => set('billingYear', e.target.value)}>
+                  {yearOptions.map(year => <option key={year} value={year}>{year}</option>)}
+                </select>
+              </div>
+            </div>
           </div>
 
           <div className="card p-4 space-y-4 shadow-sm">

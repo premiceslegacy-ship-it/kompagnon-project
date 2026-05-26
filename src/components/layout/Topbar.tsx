@@ -18,6 +18,7 @@ import {
     Moon,
     Settings,
     Bell,
+    BellOff,
     User,
     LogOut,
     Inbox,
@@ -36,6 +37,13 @@ import type { OrganizationModules } from '@/lib/organization-modules';
 import type { NotificationsSummary } from '@/lib/data/queries/notifications';
 
 const routeKey = (href: string) => href.split(/[?#]/)[0] || '/';
+
+function urlBase64ToUint8Array(base64String: string) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+    const rawData = atob(base64)
+    return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)))
+}
 
 const NavChipLink = ({
     href,
@@ -189,15 +197,44 @@ const UserMenu = ({ profile }: { profile: UserProfile | null }) => {
 
 type NotificationsData = Partial<NotificationsSummary> & { overdueInvoices: number; expiringQuotes: number }
 
+type PushPermission = 'default' | 'granted' | 'denied'
+
 const NotificationBell = ({ notifications }: { notifications: NotificationsData }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [seenSignature, setSeenSignature] = useState<string | null>(null);
     const [mounted, setMounted] = useState(false);
+    const [pushPermission, setPushPermission] = useState<PushPermission>('granted');
     const buttonRef = useRef<HTMLButtonElement>(null);
     const [coords, setCoords] = useState({ top: 0, left: 0 });
     const router = useRouter();
 
-    useEffect(() => { setMounted(true); }, []);
+    useEffect(() => {
+        setMounted(true);
+        if ('Notification' in window) setPushPermission(Notification.permission as PushPermission);
+    }, []);
+
+    async function handleEnablePush() {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+        const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+        if (!vapidKey) return
+
+        const permission = await Notification.requestPermission()
+        setPushPermission(permission as PushPermission)
+        if (permission !== 'granted') return
+
+        const reg = await navigator.serviceWorker.register('/sw.js')
+        await navigator.serviceWorker.ready
+        const existing = await reg.pushManager.getSubscription()
+        const sub = existing ?? await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidKey),
+        })
+        await fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sub.toJSON()),
+        })
+    }
 
     const total = notifications.total ?? (
         notifications.overdueInvoices +
@@ -271,7 +308,22 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                     style={{ top: coords.top + 8, left: coords.left }}
                     onClick={e => e.stopPropagation()}
                 >
-                    <p className="px-4 py-2 text-xs font-bold text-secondary uppercase tracking-wider border-b border-[var(--elevation-border)]">Notifications</p>
+                    <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--elevation-border)]">
+                        <p className="text-xs font-bold text-secondary uppercase tracking-wider">Notifications</p>
+                        {pushPermission === 'default' && (
+                            <button
+                                onClick={handleEnablePush}
+                                className="text-xs font-semibold text-accent hover:underline"
+                            >
+                                Activer les pushs
+                            </button>
+                        )}
+                        {pushPermission === 'denied' && (
+                            <span className="flex items-center gap-1 text-xs text-secondary">
+                                <BellOff className="w-3 h-3" /> Pushs bloqués
+                            </span>
+                        )}
+                    </div>
                     {total === 0 ? (
                         <p className="px-4 py-4 text-sm text-secondary text-center">Aucune action requise</p>
                     ) : (

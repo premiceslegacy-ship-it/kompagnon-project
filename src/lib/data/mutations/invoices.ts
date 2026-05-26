@@ -18,6 +18,7 @@ import { sendEmail } from '@/lib/email'
 import { buildInvoicePaidEmail, buildDepositInvoiceEmail } from '@/lib/email/templates'
 import { getClientGreetingName } from '@/lib/client'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
+import { sendPushToOrg } from '@/lib/push'
 import InvoicePDF from '@/components/pdf/InvoicePDF'
 import { coerceLegalVatRate } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
@@ -297,6 +298,23 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
       }).catch(err => console.error('[markInvoicePaid] email error:', err))
     }
   }
+
+  const invoiceNum = invoiceBeforePayment.number ?? invoiceId.slice(0, 8)
+  const invoiceTitle = invoiceBeforePayment.title ?? null
+  const clientForPush = invoice?.client_id
+    ? await supabase.from('clients').select('company_name, contact_name').eq('id', invoice.client_id).maybeSingle().then(r => r.data)
+    : null
+  const clientLabel = clientForPush?.company_name ?? clientForPush?.contact_name ?? null
+  const bodyParts = [
+    clientLabel,
+    invoiceTitle,
+    `${totalPaid.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`,
+  ].filter(Boolean)
+  sendPushToOrg(orgId, {
+    title: `Facture ${invoiceNum} réglée`,
+    body: bodyParts.join(' · '),
+    url: '/finances',
+  }, user.id).catch(() => {})
 
   revalidatePath('/finances')
   revalidatePath('/clients')

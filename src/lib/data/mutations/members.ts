@@ -8,6 +8,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { canManageLaborRates, hasPermission } from '@/lib/data/queries/membership'
 import { sendEmail } from '@/lib/email'
+import { sendPushToOrg } from '@/lib/push'
 import {
   buildMemberSpaceInviteEmail,
   buildMemberMonthlyReportEmail,
@@ -390,7 +391,7 @@ export async function createPointageAsMember(input: {
   // Vérifier que le chantier appartient bien à la même org que le membre
   const { data: chantier } = await admin
     .from('chantiers')
-    .select('id, organization_id')
+    .select('id, organization_id, title')
     .eq('id', input.chantierId)
     .single()
 
@@ -407,7 +408,7 @@ export async function createPointageAsMember(input: {
       .single(),
     admin
       .from('chantier_equipe_membres')
-      .select('taux_horaire')
+      .select('taux_horaire, name')
       .eq('id', input.memberId)
       .single(),
   ])
@@ -438,6 +439,15 @@ export async function createPointageAsMember(input: {
     console.error('[createPointageAsMember]', error)
     return { error: "Impossible d'enregistrer le pointage." }
   }
+
+  const memberName = membreRes.data?.name ?? 'Un membre'
+  const chantierTitle = (chantier as any).title ?? 'Chantier'
+  sendPushToOrg(input.organizationId, {
+    title: 'Pointage enregistré',
+    body: `${memberName} a pointé ${input.hours}h — ${chantierTitle}`,
+    url: `/chantiers/${input.chantierId}`,
+  }).catch(() => {})
+
   return { error: null, id: inserted.id }
 }
 

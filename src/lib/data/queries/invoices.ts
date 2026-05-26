@@ -36,6 +36,10 @@ export type Invoice = {
   created_at: string
   quote_id: string | null
   chantier_id: string | null
+  period_from: string | null
+  period_to: string | null
+  billing_period_key?: string | null
+  generation_source?: string | null
   client: {
     id: string
     company_name: string | null
@@ -91,6 +95,8 @@ export type InvoiceWithItems = {
   retention_pct: number | null
   retention_amount: number | null
   market_reference: string | null
+  billing_period_key?: string | null
+  generation_source?: string | null
   quote_number: string | null
   client: {
     id: string
@@ -208,6 +214,7 @@ export async function getInvoices(): Promise<Invoice[]> {
     .select(`
       id, number, title, status, invoice_type, total_ht, total_ttc, total_paid, currency,
       issue_date, due_date, balance_due_date, sent_at, paid_at, created_at, quote_id, chantier_id,
+      period_from, period_to, billing_period_key, generation_source,
       client:clients(id, company_name, contact_name, email)
     `)
     .eq('organization_id', orgId)
@@ -234,6 +241,7 @@ export async function getInvoiceById(invoiceId: string): Promise<InvoiceWithItem
       issue_date, due_date, sent_at, paid_at, created_at,
       notes_client, payment_conditions, aid_label, aid_amount, quote_id, chantier_id, client_id,
       situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference,
+      billing_period_key, generation_source,
       client:clients(id, company_name, contact_name, first_name, last_name, email, phone,
         address_line1, postal_code, city, siret, siren, vat_number, type),
       items:invoice_items(id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, position, length_m, width_m, height_m, dim_quantity, is_internal, material_id),
@@ -263,6 +271,7 @@ export async function getClientInvoices(clientId: string): Promise<Invoice[]> {
     .select(`
       id, number, title, status, invoice_type, total_ht, total_ttc, total_paid, currency,
       issue_date, due_date, balance_due_date, sent_at, paid_at, created_at, quote_id, chantier_id,
+      period_from, period_to, billing_period_key, generation_source,
       client:clients(id, company_name, contact_name, email)
     `)
     .eq('organization_id', orgId)

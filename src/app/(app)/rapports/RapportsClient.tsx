@@ -5,7 +5,7 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import {
   TrendingUp, TrendingDown, Users, HardHat, Clock, Euro,
-  Target, ChevronRight, Plus, Trash2, BarChart2, FileDown, X, AlertTriangle,
+  Target, ChevronRight, Plus, Trash2, BarChart2, FileDown, X, AlertTriangle, Calendar,
 } from 'lucide-react'
 import type {
   MonthlyReport, AnnualReport, HoursReport,
@@ -688,6 +688,20 @@ export default function RapportsClient({
             <KpiCard label="Chantiers en cours" value={String(r.chantiersEnCours || '-')} icon={<HardHat className="w-4 h-4" />} />
             <KpiCard label="Heures travaillées" value={r.heuresTotal > 0 ? fmtH(r.heuresTotal) : '-'} delta={<Delta current={r.heuresTotal} prev={r.prevHeuresTotal} />} icon={<Clock className="w-4 h-4" />} />
             <KpiCard label="Factures émises" value={r.nouvellesFactures > 0 ? String(r.nouvellesFactures) : '-'} sub={r.facturesPayees > 0 ? `${r.facturesPayees} payée(s)` : undefined} icon={<ChevronRight className="w-4 h-4" />} />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <KpiCard
+              label="Contrats à facturer"
+              value={r.recurringContractsDue > 0 ? String(r.recurringContractsDue) : '-'}
+              sub={r.recurringExpectedHt > 0 ? `${fmt(r.recurringExpectedHt)} HT prévu ce mois` : 'Aucune facture de période à générer'}
+              icon={<Calendar className="w-4 h-4" />}
+            />
+            <KpiCard
+              label="Facturation périodique"
+              value={r.recurringBilledHt > 0 ? fmt(r.recurringBilledHt) : '-'}
+              sub="Factures de période déjà générées"
+              icon={<Euro className="w-4 h-4" />}
+            />
           </div>
         </>
       )}

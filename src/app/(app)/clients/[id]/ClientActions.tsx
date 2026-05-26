@@ -138,6 +138,8 @@ function EditModal({ client, onClose }: { client: Client; onClose: () => void })
                 <option value="active">Actif</option>
                 <option value="lead_hot">Lead Chaud</option>
                 <option value="lead_cold">Lead Froid</option>
+                <option value="prospect">Prospect</option>
+                <option value="subcontractor">Sous-traitant</option>
                 <option value="inactive">Inactif</option>
               </select>
             </div>

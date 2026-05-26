@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 const clientTypeSchema = z.enum(['company', 'individual'])
-const clientStatusSchema = z.enum(['active', 'prospect', 'lead_hot', 'lead_cold', 'inactive'])
+const clientStatusSchema = z.enum(['active', 'prospect', 'lead_hot', 'lead_cold', 'subcontractor', 'inactive'])
 
 export const CreateClientInlineSchema = z.object({
   type: clientTypeSchema,

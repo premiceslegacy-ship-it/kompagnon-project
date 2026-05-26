@@ -24,6 +24,9 @@ export type MonthlyReport = {
   heuresTotal: number
   nouvellesFactures: number
   facturesPayees: number
+  recurringExpectedHt: number
+  recurringBilledHt: number
+  recurringContractsDue: number
   prevCaHt: number
   prevCaTtc: number
   prevEncaisse: number
@@ -290,6 +293,8 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
     { data: pointages },
     { data: prevPointages },
     { data: expenses },
+    { data: periodicChantiers },
+    { data: periodicInvoices },
   ] = await Promise.all([
     supabase
       .from('invoices')
@@ -335,6 +340,25 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
           .gte('expense_date', firstDay)
           .lte('expense_date', lastDay)
       : Promise.resolve({ data: [] as Array<{ amount_ht: number | null }> }),
+
+    supabase
+      .from('chantiers')
+      .select('id, montant_periode_ht')
+      .eq('organization_id', orgId)
+      .eq('is_archived', false)
+      .neq('periode_facturation', 'none')
+      .not('montant_periode_ht', 'is', null)
+      .gte('prochaine_facturation', firstDay)
+      .lte('prochaine_facturation', lastDay),
+
+    supabase
+      .from('invoices')
+      .select('total_ht')
+      .eq('organization_id', orgId)
+      .eq('generation_source', 'chantier_period')
+      .neq('status', 'cancelled')
+      .gte('issue_date', firstDay)
+      .lte('issue_date', lastDay),
   ])
 
   const chantiersDuMois = (allOrgChantiers ?? []).filter(c =>
@@ -349,6 +373,9 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   const encaisse = validInvoices.reduce((s, i) => s + paidTtc(i), 0)
   const nouvellesFactures = validInvoices.length
   const facturesPayees = validInvoices.filter(i => i.status === 'paid').length
+  const recurringExpectedHt = (periodicChantiers ?? []).reduce((s, c) => s + (c.montant_periode_ht ?? 0), 0)
+  const recurringBilledHt = (periodicInvoices ?? []).reduce((s, i) => s + (i.total_ht ?? 0), 0)
+  const recurringContractsDue = periodicChantiers?.length ?? 0
 
   const prevValid = (prevInvoices ?? []).filter(i => i.invoice_type !== 'avoir')
   const prevCaHt = prevValid.reduce((s, i) => s + (i.total_ht ?? 0), 0)
@@ -372,7 +399,7 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   return {
     year, month, caHt, caTtc, encaisse, tvaDue, beneficeEstime, hasCostData,
     chantiersTermines, chantiersEnCours, heuresTotal,
-    nouvellesFactures, facturesPayees,
+    nouvellesFactures, facturesPayees, recurringExpectedHt, recurringBilledHt, recurringContractsDue,
     prevCaHt, prevCaTtc, prevEncaisse, prevTvaDue, prevHeuresTotal,
   }
 }

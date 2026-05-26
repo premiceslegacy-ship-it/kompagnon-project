@@ -6,8 +6,11 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { canManageLaborRates, hasPermission, requirePermission } from '@/lib/data/queries/membership'
 import { coerceLegalVatRate, todayParis } from '@/lib/utils'
+import { sendPushToOrg } from '@/lib/push'
 
 type Result = { error: string | null }
+
+type BillingPeriod = 'none' | 'mensuelle' | 'bimestrielle' | 'trimestrielle' | 'annuelle'
 
 type ProratedInvoiceRow = {
   invoice_id: string
@@ -46,6 +49,77 @@ function calculateInvoiceTotals(rows: ProratedInvoiceRow[]) {
     totalHt,
     totalTva,
     totalTtc: roundMoney(totalHt + totalTva),
+  }
+}
+
+function addMonthsClamped(date: Date, months: number, preferredDay?: number) {
+  const targetYear = date.getFullYear()
+  const targetMonth = date.getMonth() + months
+  const day = preferredDay ?? date.getDate()
+  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate()
+  return new Date(targetYear, targetMonth, Math.min(day, lastDay))
+}
+
+function dateKey(date: Date) {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+function addDays(dateKeyValue: string, days: number) {
+  const [year, month, day] = dateKeyValue.split('-').map(Number)
+  const date = new Date(year, month - 1, day)
+  date.setDate(date.getDate() + days)
+  return dateKey(date)
+}
+
+function monthsForBillingPeriod(period: BillingPeriod | string | null | undefined) {
+  switch (period) {
+    case 'mensuelle':
+      return 1
+    case 'bimestrielle':
+      return 2
+    case 'trimestrielle':
+      return 3
+    case 'annuelle':
+      return 12
+    default:
+      return 0
+  }
+}
+
+function periodLabel(period: BillingPeriod | string | null | undefined) {
+  switch (period) {
+    case 'mensuelle':
+      return 'mensuelle'
+    case 'bimestrielle':
+      return 'bimestrielle'
+    case 'trimestrielle':
+      return 'trimestrielle'
+    case 'annuelle':
+      return 'annuelle'
+    default:
+      return 'de période'
+  }
+}
+
+function computeBillingWindow(nextBillingDate: string, period: BillingPeriod | string | null | undefined, preferredDay?: number | null) {
+  const months = monthsForBillingPeriod(period)
+  if (!months) return null
+  const [year, month, day] = nextBillingDate.split('-').map(Number)
+  const start = new Date(year, month - 1, day)
+  const followingStart = addMonthsClamped(start, months, preferredDay ?? start.getDate())
+  const end = new Date(followingStart)
+  end.setDate(end.getDate() - 1)
+  const periodFrom = dateKey(start)
+  const periodTo = dateKey(end)
+  const nextDate = dateKey(followingStart)
+  return {
+    periodFrom,
+    periodTo,
+    nextDate,
+    billingPeriodKey: `${periodFrom}_${periodTo}`,
   }
 }
 
@@ -113,6 +187,11 @@ export async function createChantier(data: {
   recurrenceDurationH?: number | null
   recurrenceDurationSlots?: number[] | null
   recurrenceNotes?: string | null
+  montantPeriodeHt?: number | null
+  libelleFacturationPeriode?: string | null
+  periodeFacturation?: BillingPeriod | null
+  jourFacturation?: number | null
+  prochaineFacturation?: string | null
 }): Promise<{ chantierId: string | null; error: string | null }> {
   if (!await hasPermission('chantiers.create')) return { chantierId: null, error: 'Action non autorisée.' }
   const supabase = await createClient()
@@ -151,6 +230,11 @@ export async function createChantier(data: {
       recurrence_duration_h: data.recurrenceDurationH ?? null,
       recurrence_duration_slots: data.recurrenceDurationSlots ?? null,
       recurrence_notes: data.recurrenceNotes ?? null,
+      montant_periode_ht: data.montantPeriodeHt ?? null,
+      libelle_facturation_periode: data.libelleFacturationPeriode?.trim() || null,
+      periode_facturation: data.periodeFacturation ?? 'none',
+      jour_facturation: data.jourFacturation ?? 1,
+      prochaine_facturation: data.prochaineFacturation ?? null,
     })
     .select('id')
     .single()
@@ -254,6 +338,11 @@ export async function updateChantier(
     contactEmail?: string | null
     contactPhone?: string | null
     quoteId?: string | null
+    montantPeriodeHt?: number | null
+    libelleFacturationPeriode?: string | null
+    periodeFacturation?: BillingPeriod | null
+    jourFacturation?: number | null
+    prochaineFacturation?: string | null
   },
 ): Promise<Result> {
   if (!await hasPermission('chantiers.edit')) return { error: 'Action non autorisée.' }
@@ -279,6 +368,11 @@ export async function updateChantier(
       ...(data.contactEmail !== undefined && { contact_email: data.contactEmail }),
       ...(data.contactPhone !== undefined && { contact_phone: data.contactPhone }),
       ...(data.quoteId !== undefined && { quote_id: data.quoteId }),
+      ...(data.montantPeriodeHt !== undefined && { montant_periode_ht: data.montantPeriodeHt }),
+      ...(data.libelleFacturationPeriode !== undefined && { libelle_facturation_periode: data.libelleFacturationPeriode?.trim() || null }),
+      ...(data.periodeFacturation !== undefined && { periode_facturation: data.periodeFacturation ?? 'none' }),
+      ...(data.jourFacturation !== undefined && { jour_facturation: data.jourFacturation ?? 1 }),
+      ...(data.prochaineFacturation !== undefined && { prochaine_facturation: data.prochaineFacturation }),
     })
     .eq('id', chantierId)
     .eq('organization_id', orgId)
@@ -479,6 +573,8 @@ export async function updateMyAssignedTaskStatus(
       .select('full_name')
       .eq('id', user.id)
       .maybeSingle()
+    const chantierTitle = (task.chantier as any)?.title ?? null
+    const actorName = profile?.full_name ?? user.email ?? 'Collaborateur'
     await createAdminClient().from('activity_log').insert({
       organization_id: orgId,
       user_id: user.id,
@@ -488,10 +584,15 @@ export async function updateMyAssignedTaskStatus(
       metadata: {
         task_title: task.title,
         chantier_id: task.chantier_id,
-        chantier_title: (task.chantier as any)?.title ?? null,
-        actor_name: profile?.full_name ?? user.email ?? 'Collaborateur',
+        chantier_title: chantierTitle,
+        actor_name: actorName,
       },
     })
+    sendPushToOrg(orgId, {
+      title: 'Tâche terminée',
+      body: `${actorName} a terminé "${task.title}"${chantierTitle ? ` — ${chantierTitle}` : ''}`,
+      url: `/chantiers/${task.chantier_id}`,
+    }).catch(() => {})
   }
 
   revalidatePath('/dashboard')
@@ -1258,6 +1359,164 @@ export async function generateSituationInvoice(
 
   revalidatePath('/finances')
   revalidatePath(`/chantiers/${chantierId}`)
+  return { invoiceId: invoice.id, error: null }
+}
+
+// ─── Facture de période chantier ─────────────────────────────────────────────
+
+export async function generateChantierPeriodInvoice(
+  chantierId: string,
+): Promise<{ invoiceId: string | null; error: string | null }> {
+  if (!await hasPermission('invoices.create')) return { invoiceId: null, error: 'Action non autorisée.' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { invoiceId: null, error: 'Non authentifié.' }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { invoiceId: null, error: 'Organisation introuvable.' }
+
+  const result = await generateChantierPeriodInvoiceForOrg(supabase, orgId, chantierId, user.id)
+  if (!result.error) {
+    revalidatePath('/finances')
+    revalidatePath('/rapports')
+    revalidatePath('/chantiers')
+    revalidatePath(`/chantiers/${chantierId}`)
+  }
+  return result
+}
+
+export async function generateChantierPeriodInvoiceForOrg(
+  supabase: any,
+  orgId: string,
+  chantierId: string,
+  createdBy?: string | null,
+): Promise<{ invoiceId: string | null; error: string | null }> {
+  const { data: chantier } = await supabase
+    .from('chantiers')
+    .select(`
+      id, title, client_id, quote_id, montant_periode_ht, libelle_facturation_periode, periode_facturation,
+      jour_facturation, prochaine_facturation
+    `)
+    .eq('id', chantierId)
+    .eq('organization_id', orgId)
+    .single()
+
+  if (!chantier) return { invoiceId: null, error: 'Chantier introuvable.' }
+
+  const amountHt = roundMoney(chantier.montant_periode_ht ?? 0)
+  if (amountHt <= 0) return { invoiceId: null, error: 'Renseignez un montant périodique HT avant de générer la facture.' }
+  if (!chantier.periode_facturation || chantier.periode_facturation === 'none') {
+    return { invoiceId: null, error: 'Choisissez une période de facturation avant de générer la facture.' }
+  }
+  if (!chantier.prochaine_facturation) {
+    return { invoiceId: null, error: 'Choisissez la prochaine date de facturation.' }
+  }
+
+  const window = computeBillingWindow(
+    chantier.prochaine_facturation,
+    chantier.periode_facturation,
+    chantier.jour_facturation,
+  )
+  if (!window) return { invoiceId: null, error: 'Période de facturation invalide.' }
+
+  const { data: existing } = await supabase
+    .from('invoices')
+    .select('id')
+    .eq('organization_id', orgId)
+    .eq('chantier_id', chantier.id)
+    .eq('generation_source', 'chantier_period')
+    .eq('billing_period_key', window.billingPeriodKey)
+    .neq('status', 'cancelled')
+    .maybeSingle()
+
+  if (existing) {
+    await supabase
+      .from('chantiers')
+      .update({ prochaine_facturation: window.nextDate })
+      .eq('id', chantier.id)
+      .eq('organization_id', orgId)
+    return { invoiceId: existing.id, error: null }
+  }
+
+  const { data: org } = await supabase
+    .from('organizations')
+    .select('default_vat_rate')
+    .eq('id', orgId)
+    .single()
+
+  const { data: client } = chantier.client_id
+    ? await supabase
+        .from('clients')
+        .select('payment_terms_days')
+        .eq('id', chantier.client_id)
+        .eq('organization_id', orgId)
+        .single()
+    : { data: null }
+
+  const vatRate = coerceLegalVatRate(Number(org?.default_vat_rate), 20)
+  const paymentTermsDays = client?.payment_terms_days ?? 30
+  const totalTva = roundMoney(amountHt * (vatRate / 100))
+  const periodFromLabel = new Date(window.periodFrom).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })
+  const periodToLabel = new Date(window.periodTo).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })
+  const title = `Facture ${periodLabel(chantier.periode_facturation)} · ${chantier.title}`
+  const lineLabel = chantier.libelle_facturation_periode?.trim()
+    || `Prestation ${periodLabel(chantier.periode_facturation)} - ${chantier.title}`
+  const description = `${lineLabel} (${periodFromLabel} au ${periodToLabel})`
+
+  const { data: invoice, error: createErr } = await supabase
+    .from('invoices')
+    .insert({
+      organization_id: orgId,
+      client_id: chantier.client_id ?? null,
+      quote_id: chantier.quote_id ?? null,
+      chantier_id: chantier.id,
+      invoice_type: 'standard',
+      title,
+      currency: 'EUR',
+      status: 'draft',
+      created_by: createdBy ?? null,
+      issue_date: chantier.prochaine_facturation,
+      due_date: addDays(chantier.prochaine_facturation, paymentTermsDays),
+      payment_terms_days: paymentTermsDays,
+      period_from: window.periodFrom,
+      period_to: window.periodTo,
+      billing_period_key: window.billingPeriodKey,
+      generation_source: 'chantier_period',
+      total_ht: amountHt,
+      total_tva: totalTva,
+      total_ttc: roundMoney(amountHt + totalTva),
+    })
+    .select('id')
+    .single()
+
+  if (createErr || !invoice) {
+    console.error('[generateChantierPeriodInvoice]', createErr)
+    return { invoiceId: null, error: 'Erreur lors de la création de la facture de période.' }
+  }
+
+  const { error: itemErr } = await supabase.from('invoice_items').insert({
+    invoice_id: invoice.id,
+    description,
+    quantity: 1,
+    unit: 'forfait',
+    unit_price: amountHt,
+    vat_rate: vatRate,
+    total_ht: amountHt,
+    position: 0,
+  })
+
+  if (itemErr) {
+    console.error('[generateChantierPeriodInvoice:item]', itemErr)
+    return { invoiceId: invoice.id, error: 'Facture créée, mais la ligne de facturation n’a pas pu être ajoutée.' }
+  }
+
+  await supabase
+    .from('chantiers')
+    .update({ prochaine_facturation: window.nextDate })
+    .eq('id', chantier.id)
+    .eq('organization_id', orgId)
+
   return { invoiceId: invoice.id, error: null }
 }
 

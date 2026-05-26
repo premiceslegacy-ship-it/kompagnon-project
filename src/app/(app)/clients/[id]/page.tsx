@@ -67,12 +67,14 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
                                 client.status === 'prospect'  ? 'bg-accent/10 text-accent' :
                                 client.status === 'lead_hot'  ? 'bg-orange-500/10 text-orange-500' :
                                 client.status === 'lead_cold' ? 'bg-blue-400/10 text-blue-400' :
+                                client.status === 'subcontractor' ? 'bg-accent/10 text-accent' :
                                 'bg-secondary/10 text-secondary'
                             }`}>{
                                 client.status === 'active'    ? 'Actif' :
                                 client.status === 'prospect'  ? 'Prospect' :
                                 client.status === 'lead_hot'  ? 'Lead Chaud' :
                                 client.status === 'lead_cold' ? 'Lead Froid' :
+                                client.status === 'subcontractor' ? 'Sous-traitant' :
                                 client.status === 'inactive'  ? 'Inactif' : client.status
                             }</span>
                         )}
