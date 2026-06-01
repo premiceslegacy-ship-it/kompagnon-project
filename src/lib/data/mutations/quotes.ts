@@ -27,6 +27,8 @@ type AIQuoteDraftInput = {
   sections: Array<{
     title?: string | null
     items: Array<{
+      designation?: string | null
+      details?: string | null
       description?: string | null
       quantity: number
       unit?: string | null
@@ -35,8 +37,46 @@ type AIQuoteDraftInput = {
       vat_rate?: number
       is_internal?: boolean
       is_estimated?: boolean
+      dim_quantity?: number
+      length_m?: number | null
+      width_m?: number | null
+      height_m?: number | null
+      dimension_pricing_mode?: 'none' | 'linear' | 'area' | 'volume' | null
+      ai_confidence?: number | null
+      ai_source?: 'catalog' | 'recent_quote' | 'memory' | 'client_input' | 'ai_estimate' | 'document' | null
+      ai_warnings?: string[]
     }>
   }>
+}
+
+function buildStructuredDescription(designation: string | null | undefined, details: string | null | undefined, fallback?: string | null) {
+  const cleanDesignation = designation?.trim() || fallback?.split(/\n\n?Comprend\s*:\s*/i)[0]?.trim() || ''
+  const cleanDetails = details?.trim()
+  if (!cleanDetails) return cleanDesignation || fallback?.trim() || ''
+  return `${cleanDesignation}\n\nComprend :\n${cleanDetails}`
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function wrapHtml(orgName: string, bodyText: string): string {
+  const bodyHtml = escapeHtml(bodyText).replace(/\n/g, '<br>')
+  return [
+    '<div style="max-width:560px;margin:0 auto;font-family:sans-serif">',
+    '<div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0">',
+    '<p style="color:white;font-weight:bold;margin:0;font-size:16px">',
+    escapeHtml(orgName),
+    '</p></div>',
+    '<div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">',
+    bodyHtml,
+    '</div></div>',
+  ].join('')
 }
 
 function normalizeSearchText(value: string | null | undefined) {
@@ -143,7 +183,7 @@ async function findClientIdBySearch(searchRaw: string | null | undefined): Promi
     if (!best || score > best.score) best = { id: client.id, score }
   }
 
-  return best && best.score >= 45 ? best.id : null
+  return best && best.score >= 70 ? best.id : null
 }
 
 // ─── Create ───────────────────────────────────────────────────────────────────
@@ -199,8 +239,7 @@ export async function createQuoteFromAIResult(aiQuote: AIQuoteDraftInput): Promi
   }
 
   const quoteId = quoteRes.quoteId
-  for (let si = 0; si < aiQuote.sections.length; si++) {
-    const section = aiQuote.sections[si]
+  for (const [si, section] of aiQuote.sections.entries()) {
     const secRes = await upsertQuoteSection({
       quote_id: quoteId,
       title: section.title?.trim() || `Section ${si + 1}`,
@@ -208,20 +247,31 @@ export async function createQuoteFromAIResult(aiQuote: AIQuoteDraftInput): Promi
     })
     if (!secRes.sectionId) continue
 
-    for (let ii = 0; ii < section.items.length; ii++) {
-      const item = section.items[ii]
+    for (const [ii, item] of section.items.entries()) {
+      const designation = item.designation?.trim() || item.description?.split(/\n\n?Comprend\s*:\s*/i)[0]?.trim() || ''
+      const details = item.details?.trim() || null
+      const description = buildStructuredDescription(designation, details, item.description)
       await upsertQuoteItem({
         quote_id: quoteId,
         section_id: secRes.sectionId,
         type: 'custom',
-        description: item.description ?? '',
+        designation,
+        details,
+        description,
         quantity: item.quantity,
         unit: item.unit ?? 'u',
         unit_price: item.unit_price,
         unit_cost_ht: item.unit_cost_ht ?? null,
         vat_rate: item.vat_rate,
         position: ii + 1,
-        is_internal: item.is_internal === true || looksInternalLine(section.title, item.description),
+        ai_confidence: item.ai_confidence ?? null,
+        ai_source: item.ai_source ?? (item.is_estimated ? 'ai_estimate' : null),
+        ai_warnings: item.ai_warnings ?? [],
+        dim_quantity: item.dim_quantity ?? 1,
+        length_m: item.length_m ?? null,
+        width_m: item.width_m ?? null,
+        height_m: item.height_m ?? null,
+        is_internal: item.is_internal === true || looksInternalLine(section.title, description),
       })
     }
   }
@@ -336,11 +386,16 @@ export async function upsertQuoteItem(item: {
   type: 'material' | 'labor' | 'custom'
   material_id?: string | null
   labor_rate_id?: string | null
+  designation?: string | null
+  details?: string | null
   description?: string | null
   quantity: number
   unit?: string | null
   unit_price: number
   unit_cost_ht?: number | null
+  ai_confidence?: number | null
+  ai_source?: 'catalog' | 'recent_quote' | 'memory' | 'client_input' | 'ai_estimate' | 'document' | null
+  ai_warnings?: string[]
   vat_rate?: number
   position: number
   length_m?: number | null
@@ -366,13 +421,21 @@ export async function upsertQuoteItem(item: {
       return { itemId: null, error: 'Section introuvable pour ce devis.' }
     }
   }
+  const { data: orgVat } = await supabase
+    .from('organizations')
+    .select('is_vat_subject')
+    .eq('id', orgId)
+    .single()
+  const vatRate = orgVat?.is_vat_subject === false ? 0 : coerceLegalVatRate(item.vat_rate, 20)
 
   const total_ht = item.quantity * item.unit_price
 
+  const description = item.description ?? buildStructuredDescription(item.designation, item.details, null)
   const payload = {
     ...item,
+    description,
     total_ht,
-    vat_rate: coerceLegalVatRate(item.vat_rate, 20),
+    vat_rate: vatRate,
   }
 
   const { data, error } = await supabase
@@ -538,8 +601,7 @@ export async function sendQuote(quoteId: string, options?: { attachContractIds?:
         }
         const interpolate = (t: string) => Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), t)
         subject = interpolate(customTpl.subject ?? '')
-        const bodyHtml = interpolate(customTpl.body_text).replace(/\n/g, '<br>')
-        html = `<div style="max-width:560px;margin:0 auto;font-family:sans-serif"><div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0"><p style="color:white;font-weight:bold;margin:0;font-size:16px">${organization.name}</p></div><div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">${bodyHtml}</div></div>`
+        html = wrapHtml(organization.name, interpolate(customTpl.body_text))
       } else {
         const built = buildQuoteSentEmail({
           orgName: organization.name,
@@ -727,7 +789,7 @@ export async function duplicateQuote(quoteId: string): Promise<{ quoteId: string
   ])
 
   // Dupliquer les sections et construire un mapping old_id → new_id
-  const sectionMap: Record<string, string> = {}
+  const sectionMap = new Map<string, string>()
   if (sections && sections.length > 0) {
     for (const sec of sections) {
       const { data: newSec } = await supabase
@@ -735,7 +797,7 @@ export async function duplicateQuote(quoteId: string): Promise<{ quoteId: string
         .insert({ quote_id: newId, title: sec.title, position: sec.position })
         .select('id')
         .single()
-      if (newSec) sectionMap[sec.id] = newSec.id
+      if (newSec) sectionMap.set(sec.id, newSec.id)
     }
   }
 
@@ -744,7 +806,7 @@ export async function duplicateQuote(quoteId: string): Promise<{ quoteId: string
     const newItems = items.map(({ id: _id, quote_id: _qid, created_at: _ca, updated_at: _ua, ...rest }) => ({
       ...rest,
       quote_id: newId,
-      section_id: rest.section_id ? (sectionMap[rest.section_id] ?? null) : null,
+      section_id: rest.section_id ? (sectionMap.get(rest.section_id) ?? null) : null,
     }))
     await supabase.from('quote_items').insert(newItems)
     await recalcQuoteTotals(newId, orgId)

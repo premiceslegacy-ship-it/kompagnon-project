@@ -5,6 +5,8 @@ type SupabaseClientLike = {
 type DocumentType = 'invoice' | 'quote'
 
 type DocumentItem = {
+  designation?: string | null
+  details?: string | null
   description: string | null
   quantity: number | null
   unit: string | null
@@ -32,14 +34,14 @@ function normalizeClient(clientRaw: any) {
 }
 
 function buildItemsSummary(items: DocumentItem[]) {
-  const visibleItems = items.filter(item => !item.is_internal && (item.description ?? '').trim())
+  const visibleItems = items.filter(item => !item.is_internal && ((item.designation ?? item.description) ?? '').trim())
   if (visibleItems.length === 0) return 'aucune ligne renseignee'
 
   const listed = visibleItems.slice(0, 12).map(item => {
     const quantity = Number(item.quantity ?? 0) || 0
     const unit = item.unit || 'u'
     const unitPrice = formatAmount(item.unit_price)
-    return `${item.description?.trim()} (${quantity} ${unit} x ${unitPrice} EUR HT)`
+    return `${(item.designation ?? item.description)?.trim()} (${quantity} ${unit} x ${unitPrice} EUR HT)`
   })
   const remaining = visibleItems.length - listed.length
   return remaining > 0 ? `${listed.join(', ')} + ${remaining} autre(s) ligne(s)` : listed.join(', ')
@@ -132,7 +134,7 @@ export async function syncInvoiceMemoryEntry(supabase: SupabaseClientLike, orgId
         .maybeSingle(),
       supabase
         .from('invoice_items')
-        .select('description, quantity, unit, unit_price, is_internal')
+        .select('designation, details, description, quantity, unit, unit_price, is_internal')
         .eq('invoice_id', invoiceId)
         .order('position'),
       getActivityId(supabase, orgId),

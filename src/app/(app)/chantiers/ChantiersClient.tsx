@@ -6,8 +6,9 @@ import Link from 'next/link'
 import {
   HardHat, Plus, X, Search, MapPin, Calendar,
   MoreVertical, Trash2, CheckCircle, PauseCircle, XCircle, PlayCircle,
-  RefreshCw, Copy, Clock, Users, ChevronLeft, ChevronRight, Euro,
+  RefreshCw, Copy, Clock, Users, ChevronLeft, ChevronRight, Wrench,
 } from 'lucide-react'
+import { ActionButton } from '@/components/ui/ActionButton'
 import type { Chantier, ChantierStats } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
 import type { QuoteStub } from '@/lib/data/queries/quotes'
@@ -18,7 +19,6 @@ import { createChantier, updateChantier, deleteChantier } from '@/lib/data/mutat
 type Status = Chantier['status']
 
 type RecurrenceType = 'none' | 'quotidien' | 'plurihebdomadaire' | 'hebdomadaire' | 'mensuel' | 'bimensuel' | 'trimestriel'
-type BillingPeriod = 'none' | 'mensuelle' | 'bimestrielle' | 'trimestrielle' | 'annuelle'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -47,56 +47,7 @@ const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string }[] = [
   { value: 'trimestriel',       label: 'Tous les trimestres' },
 ]
 
-const BILLING_PERIOD_OPTIONS = [
-  { value: 'none', label: 'Pas de facturation périodique' },
-  { value: 'mensuelle', label: 'Mensuelle' },
-  { value: 'bimestrielle', label: 'Tous les 2 mois' },
-  { value: 'trimestrielle', label: 'Trimestrielle' },
-  { value: 'annuelle', label: 'Annuelle' },
-] as const
-
-const MONTH_NAMES = [
-  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
-  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
-]
-
-function buildDateFromParts(year: string, month: string, day: string) {
-  const y = Number(year)
-  const m = Number(month)
-  const d = Number(day)
-  const lastDay = new Date(y, m, 0).getDate()
-  return `${y}-${String(m).padStart(2, '0')}-${String(Math.min(d, lastDay)).padStart(2, '0')}`
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function DurationPicker({ value, onChange, label }: { value: number; onChange: (v: number) => void; label?: string }) {
-  const h = Math.floor(value)
-  const min = Math.round((value - h) * 60)
-  const HOURS = Array.from({ length: 17 }, (_, i) => i) // 0–16h
-  const MINUTES = [0, 15, 30, 45]
-  return (
-    <div>
-      {label && <label className="block text-xs font-semibold text-secondary mb-1">{label}</label>}
-      <div className="flex items-center gap-1">
-        <select
-          value={h}
-          onChange={e => onChange(parseInt(e.target.value) + min / 60)}
-          className="input py-1.5 px-2 text-sm"
-        >
-          {HOURS.map(i => <option key={i} value={i}>{i}h</option>)}
-        </select>
-        <select
-          value={min}
-          onChange={e => onChange(h + parseInt(e.target.value) / 60)}
-          className="input py-1.5 px-2 text-sm"
-        >
-          {MINUTES.map(m => <option key={m} value={m}>{String(m).padStart(2, '0')}min</option>)}
-        </select>
-      </div>
-    </div>
-  )
-}
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
@@ -200,6 +151,65 @@ function ActionMenu({ status, onReprendre, onTerminer, onSuspendre, onAnnuler, o
   )
 }
 
+function CreateChoiceModal({ onClose, onSelectChantier, onSelectEntretien }: {
+  onClose: () => void
+  onSelectChantier: () => void
+  onSelectEntretien: () => void
+}) {
+  return (
+    <div className="modal-overlay">
+      <div className="modal-panel sm:max-w-2xl">
+        <div className="flex items-center justify-between gap-3 px-6 pt-6 pb-4 border-b border-[var(--elevation-border)]">
+          <div>
+            <h2 className="text-base font-bold text-primary">Créer un suivi</h2>
+            <p className="text-xs text-secondary">Choisissez le bon type de dossier à ouvrir</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-base transition-colors"
+            title="Fermer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-6 grid gap-4 sm:grid-cols-2 bg-base/50">
+          <button
+            type="button"
+            onClick={onSelectChantier}
+            className="card p-5 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
+          >
+            <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
+              <HardHat className="w-5 h-5 text-accent" />
+            </div>
+            <p className="text-sm font-bold text-primary">Chantier / travaux</p>
+            <p className="text-xs text-secondary mt-1">Travaux avec devis, situations, planning, budget, photos, équipes et rentabilité.</p>
+            <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-accent">
+              Créer un chantier <Plus className="w-4 h-4" />
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onSelectEntretien}
+            className="card p-5 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
+          >
+            <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
+              <Wrench className="w-5 h-5 text-accent" />
+            </div>
+            <p className="text-sm font-bold text-primary">Entretien récurrent</p>
+            <p className="text-xs text-secondary mt-1">Contrat d'entretien avec interventions, équipements et facturation périodique.</p>
+            <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-accent">
+              Ouvrir l'entretien <Wrench className="w-4 h-4" />
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Modal création ───────────────────────────────────────────────────────────
 
 function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
@@ -210,24 +220,11 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
 }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const now = new Date()
-  const yearOptions = Array.from({ length: 8 }, (_, i) => now.getFullYear() + i)
   const [form, setForm] = useState({
     title: '', clientId: '', addressLine1: '', postalCode: '', city: '',
     startDate: '', estimatedEndDate: '', budgetHt: '',
     contactName: '', contactEmail: '', contactPhone: '',
     quoteId: '',
-    recurrence: 'none' as RecurrenceType,
-    recurrenceTimes: '1',
-    recurrenceTeamSize: '',
-    recurrenceDurationSlots: [2] as number[], // durée par passage (h décimal)
-    recurrenceNotes: '',
-    montantPeriodeHt: '',
-    libelleFacturationPeriode: '',
-    periodeFacturation: 'none' as BillingPeriod,
-    billingDay: '1',
-    billingMonth: String(now.getMonth() + 1),
-    billingYear: String(now.getFullYear()),
   })
 
   const set = (field: string, value: string) => setForm(f => ({ ...f, [field]: value }))
@@ -284,19 +281,6 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
       contactEmail: form.contactEmail || null,
       contactPhone: form.contactPhone || null,
       quoteId: form.quoteId || null,
-      recurrence: form.recurrence,
-      recurrenceTimes: form.recurrenceTimes ? parseInt(form.recurrenceTimes) : 1,
-      recurrenceTeamSize: form.recurrenceTeamSize ? parseInt(form.recurrenceTeamSize) : null,
-      recurrenceDurationH: form.recurrenceDurationSlots[0] ?? null,
-      recurrenceDurationSlots: form.recurrenceDurationSlots,
-      recurrenceNotes: form.recurrenceNotes || null,
-      montantPeriodeHt: form.montantPeriodeHt ? parseFloat(form.montantPeriodeHt) : null,
-      libelleFacturationPeriode: form.libelleFacturationPeriode || null,
-      periodeFacturation: form.periodeFacturation,
-      jourFacturation: parseInt(form.billingDay),
-      prochaineFacturation: form.periodeFacturation === 'none' || !form.montantPeriodeHt
-        ? null
-        : buildDateFromParts(form.billingYear, form.billingMonth, form.billingDay),
     })
     setLoading(false)
     if (err) return setError(err)
@@ -407,64 +391,6 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
           </div>
 
           <div className="card p-4 space-y-4 shadow-sm">
-            <div className="flex items-center gap-2">
-              <Euro className="w-4 h-4 text-accent flex-shrink-0" />
-              <p className="text-sm font-semibold text-primary">Facturation périodique</p>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-secondary mb-1.5">Montant HT par période</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  className="input w-full"
-                  placeholder="1500.00"
-                  value={form.montantPeriodeHt}
-                  onChange={e => set('montantPeriodeHt', e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-secondary mb-1.5">Fréquence</label>
-                <select
-                  className="input w-full"
-                  value={form.periodeFacturation}
-                  onChange={e => set('periodeFacturation', e.target.value)}
-                >
-                  {BILLING_PERIOD_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-secondary mb-1.5">Libellé de ligne</label>
-              <input
-                className="input w-full"
-                placeholder="Maintenance mensuelle"
-                value={form.libelleFacturationPeriode}
-                onChange={e => set('libelleFacturationPeriode', e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-secondary mb-1.5">Prochaine facture</label>
-              <div className="grid grid-cols-[0.8fr_1.2fr_1fr] gap-2">
-                <select className="input w-full" value={form.billingDay} onChange={e => set('billingDay', e.target.value)}>
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
-                    <option key={day} value={day}>{day}</option>
-                  ))}
-                </select>
-                <select className="input w-full" value={form.billingMonth} onChange={e => set('billingMonth', e.target.value)}>
-                  {MONTH_NAMES.map((name, idx) => (
-                    <option key={name} value={idx + 1}>{name}</option>
-                  ))}
-                </select>
-                <select className="input w-full" value={form.billingYear} onChange={e => set('billingYear', e.target.value)}>
-                  {yearOptions.map(year => <option key={year} value={year}>{year}</option>)}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="card p-4 space-y-4 shadow-sm">
             {/* Contact référent */}
           <div className="space-y-2">
             <label className="block text-xs font-semibold text-secondary">Personne référente <span className="font-normal">(optionnel)</span></label>
@@ -494,115 +420,6 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
 
           </div>
 
-          {/* ─── Section Récurrence ─── */}
-          <div className="rounded-xl p-4 space-y-3 bg-accent/10 border border-accent/20">
-            <div className="flex items-center gap-2">
-              <RefreshCw className="w-4 h-4 text-accent flex-shrink-0" />
-              <p className="text-sm font-semibold text-primary">Récurrence</p>
-            </div>
-            <p className="text-xs text-secondary">
-              Pour les chantiers qui reviennent régulièrement (entretien mensuel, nettoyage…), définissez ici la fréquence.
-            </p>
-            <select
-              className="input w-full"
-              value={form.recurrence}
-              onChange={e => set('recurrence', e.target.value)}
-            >
-              {RECURRENCE_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-
-            {/* Équipe */}
-            <div>
-              <label className="block text-xs font-semibold text-secondary mb-1">Nombre de personnes</label>
-              <input
-                type="number" min="1" className="input w-full"
-                placeholder="2" value={form.recurrenceTeamSize}
-                onChange={e => set('recurrenceTeamSize', e.target.value)}
-              />
-            </div>
-
-            {/* Pour plurihebdomadaire : nb fois/semaine pilote les slots */}
-            {form.recurrence === 'plurihebdomadaire' && (
-              <div>
-                <label className="block text-xs font-semibold text-secondary mb-1">Fois/semaine</label>
-                <input
-                  type="number" min="2" max="7" className="input w-full"
-                  placeholder="3" value={form.recurrenceTimes}
-                  onChange={e => {
-                    const n = Math.max(2, Math.min(7, parseInt(e.target.value) || 2))
-                    setForm(f => {
-                      const slots = [...f.recurrenceDurationSlots]
-                      while (slots.length < n) slots.push(slots[slots.length - 1] ?? 2)
-                      return { ...f, recurrenceTimes: String(n), recurrenceDurationSlots: slots.slice(0, n) }
-                    })
-                  }}
-                />
-              </div>
-            )}
-
-            {/* ─── Passages (toujours visible) ─── */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-secondary">Durée par passage</label>
-                {form.recurrence !== 'plurihebdomadaire' && (
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, recurrenceDurationSlots: [...f.recurrenceDurationSlots, f.recurrenceDurationSlots[f.recurrenceDurationSlots.length - 1] ?? 2] }))}
-                    className="flex items-center gap-1 text-xs font-semibold text-accent hover:text-accent/80 transition-colors"
-                  >
-                    <Plus className="w-3 h-3" /> Ajouter un passage
-                  </button>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {form.recurrenceDurationSlots.map((dur, idx) => (
-                  <div key={idx} className="flex items-end gap-1">
-                    <DurationPicker
-                      label={form.recurrenceDurationSlots.length > 1 ? `Passage ${idx + 1}` : undefined}
-                      value={dur}
-                      onChange={v => setForm(f => {
-                        const slots = [...f.recurrenceDurationSlots]
-                        slots[idx] = v
-                        return { ...f, recurrenceDurationSlots: slots }
-                      })}
-                    />
-                    {form.recurrenceDurationSlots.length > 1 && form.recurrence !== 'plurihebdomadaire' && (
-                      <button
-                        type="button"
-                        onClick={() => setForm(f => ({ ...f, recurrenceDurationSlots: f.recurrenceDurationSlots.filter((_, i) => i !== idx) }))}
-                        className="w-8 h-8 mb-0.5 flex items-center justify-center rounded-lg text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                        title="Supprimer ce passage"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {form.recurrenceDurationSlots.length > 1 && (
-                <p className="text-xs text-secondary/70">
-                  Total : {fmtHours(form.recurrenceDurationSlots.reduce((a, b) => a + b, 0))} par {form.recurrence === 'none' ? 'intervention' : 'passage'}
-                </p>
-              )}
-            </div>
-
-            {/* Notes libres */}
-            <div>
-              <label className="block text-xs font-semibold text-secondary mb-1">
-                Consignes / accès / matériel <span className="font-normal text-secondary/70">(optionnel)</span>
-              </label>
-              <textarea
-                className="input w-full resize-none"
-                rows={2}
-                placeholder="Ex : Clé boîte à clés code 1234 · Produits fournis · Laisser les fenêtres ouvertes…"
-                value={form.recurrenceNotes}
-                onChange={e => set('recurrenceNotes', e.target.value)}
-              />
-            </div>
-          </div>
-
           {error && <p className="text-sm text-red-500 font-medium">{error}</p>}
 
           {/* Actions */}
@@ -614,13 +431,15 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
             >
               Annuler
             </button>
-            <button
+            <ActionButton
               type="submit"
-              disabled={loading || !form.title.trim()}
+              loading={loading}
+              loadingText="Création..."
+              disabled={!form.title.trim()}
               className="btn-primary flex-1"
             >
-              {loading ? 'Création...' : 'Créer le chantier'}
-            </button>
+              Créer le chantier
+            </ActionButton>
           </div>
         </form>
       </div>
@@ -649,8 +468,9 @@ export default function ChantiersClient({
   const [chantiers, setChantiers] = useState(initialChantiers)
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState<Status | 'tous'>('tous')
-  const [showCreate, setShowCreate] = useState(false)
+  const [createStep, setCreateStep] = useState<'choice' | 'form' | null>(null)
   const [isNavigating, setIsNavigating] = useState(false)
+  const [navigationLabel, setNavigationLabel] = useState('Ouverture du chantier...')
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 10
 
@@ -734,7 +554,7 @@ export default function ChantiersClient({
           </Link>
           {canCreate && (
             <button
-              onClick={() => setShowCreate(true)}
+              onClick={() => setCreateStep('choice')}
               className="btn-primary flex items-center gap-2 px-5 py-2.5 whitespace-nowrap"
             >
               <Plus className="w-5 h-5" /> Créer un chantier
@@ -883,18 +703,32 @@ export default function ChantiersClient({
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-base/80 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-4">
             <div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin" />
-            <p className="text-sm text-secondary">Ouverture du chantier...</p>
+            <p className="text-sm text-secondary">{navigationLabel}</p>
           </div>
         </div>
       )}
 
-      {showCreate && (
+      {createStep === 'choice' && (
+        <CreateChoiceModal
+          onClose={() => setCreateStep(null)}
+          onSelectChantier={() => setCreateStep('form')}
+          onSelectEntretien={() => {
+            setCreateStep(null)
+            setNavigationLabel("Ouverture de l'entretien...")
+            setIsNavigating(true)
+            router.push('/chantiers/entretien')
+          }}
+        />
+      )}
+
+      {createStep === 'form' && (
         <CreateModal
           clients={clients}
           linkableQuotes={linkableQuotes}
-          onClose={() => setShowCreate(false)}
+          onClose={() => setCreateStep(null)}
           onCreated={id => {
-            setShowCreate(false)
+            setCreateStep(null)
+            setNavigationLabel('Ouverture du chantier...')
             setIsNavigating(true)
             router.push(`/chantiers/${id}`)
           }}

@@ -7,14 +7,19 @@ import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { fetchRAGContext } from '@/lib/ai/rag'
-import { hasPermission } from '@/lib/data/queries/membership'
+import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/membership'
 
 export type AIQuoteItem = {
+  designation: string
+  details?: string | null
   description: string
   quantity: number
   unit: string
   unit_price: number
   unit_cost_ht?: number | null  // coût interne unitaire (jamais affiché au client)
+  ai_confidence?: number | null
+  ai_source?: 'catalog' | 'recent_quote' | 'memory' | 'client_input' | 'ai_estimate' | 'document' | null
+  ai_warnings?: string[]
   vat_rate: number
   is_estimated: boolean  // true = prix estimé par l'IA (absent du catalogue)
   is_internal?: boolean  // true = coût interne masqué du devis client
@@ -42,6 +47,20 @@ export type AIQuoteMultiResult = {
 
 const TEXT_MODEL = 'google/gemini-2.5-flash-lite'
 const VISION_MODEL = 'google/gemini-2.5-flash-lite'
+const FALLBACK_MODEL = 'anthropic/claude-sonnet-4-6'
+const FAST_MODEL_TIMEOUT_MS = 35_000
+const FALLBACK_MODEL_TIMEOUT_MS = 45_000
+const AI_CONTEXT_CACHE_MS = 5 * 60 * 1000
+
+type QuoteAIContext = {
+  context: string
+  sector: string
+  activityId: string | null
+  activityDescription: string | null
+  clientsContext: string
+}
+
+const aiContextCache = new Map<string, { expiresAt: number; value: QuoteAIContext }>()
 
 function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -107,6 +126,29 @@ function appendIncludedDetails(description: string, details: string[]): string {
   return nextDescription.length <= 500
     ? nextDescription
     : `${nextDescription.slice(0, 497).trimEnd()}...`
+}
+
+function splitStructuredDescription(value: string | null | undefined): { designation: string; details: string | null } {
+  const raw = value?.replace(/\r\n/g, '\n').trim()
+  if (!raw) return { designation: '', details: null }
+  const parts = raw.split(/\n\n?Comprend\s*:\s*/i)
+  return {
+    designation: parts[0]?.trim() ?? '',
+    details: parts.length > 1 ? parts.slice(1).join('\nComprend : ').trim() : null,
+  }
+}
+
+function composeStructuredDescription(designation: string | null | undefined, details: string | null | undefined, fallback?: string | null): string {
+  const fallbackParts = splitStructuredDescription(fallback)
+  const cleanDesignation = designation?.trim() || fallbackParts.designation
+  const cleanDetails = details?.trim() || fallbackParts.details
+  return cleanDetails ? `${cleanDesignation}\n\nComprend :\n${cleanDetails}` : cleanDesignation
+}
+
+function clampConfidence(value: unknown): number | null {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  return Math.max(0, Math.min(1, Math.round(n * 100) / 100))
 }
 
 function compactIncludedZeroPriceItems(quote: AIQuoteResult): AIQuoteResult {
@@ -231,11 +273,21 @@ function normalizeAIQuote(quote: AIQuoteResult): AIQuoteResult {
     sections: quote.sections.map(section => ({
       ...section,
       title: normalizeFrenchSentenceCase(section.title) || section.title,
-      items: section.items.map(item => ({
-        ...item,
-        description: normalizeFrenchSentenceCase(item.description) || item.description,
-        is_internal: item.is_internal === true || looksInternalLine(section.title, item.description),
-      })),
+      items: section.items.map(item => {
+        const designation = normalizeFrenchSentenceCase(item.designation) || normalizeFrenchSentenceCase(splitStructuredDescription(item.description).designation) || item.designation || item.description
+        const details = item.details?.trim() || splitStructuredDescription(item.description).details
+        const description = composeStructuredDescription(designation, details, item.description)
+        return {
+          ...item,
+          designation,
+          details,
+          description,
+          ai_confidence: clampConfidence(item.ai_confidence),
+          ai_source: item.ai_source ?? (item.is_estimated ? 'ai_estimate' : 'client_input'),
+          ai_warnings: Array.isArray(item.ai_warnings) ? item.ai_warnings.filter(Boolean).slice(0, 5) : [],
+          is_internal: item.is_internal === true || looksInternalLine(section.title, description),
+        }
+      }),
     })),
   }
 
@@ -353,13 +405,54 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
   return { context: lines.join('\n'), sector, activityId: org?.business_activity_id ?? null, activityDescription }
 }
 
-function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string, activityDescription: string | null): string {
+async function loadClientsContext(orgId: string): Promise<string> {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('clients')
+    .select('company_name, contact_name, first_name, last_name, email, phone, status, source, city')
+    .eq('organization_id', orgId)
+    .eq('is_archived', false)
+    .in('status', ['active', 'prospect', 'lead_hot', 'lead_cold'])
+    .order('created_at', { ascending: false })
+    .limit(120)
+
+  if (!data?.length) return ''
+
+  const lines = data.map(client => {
+    const fullName = [client.first_name, client.last_name].filter(Boolean).join(' ')
+    const label = client.company_name || client.contact_name || fullName || client.email || 'Client sans nom'
+    const contact = [client.contact_name, fullName !== label ? fullName : null, client.email, client.phone].filter(Boolean).join(' | ')
+    return `- ${label} | statut: ${client.status ?? 'non renseigne'}${client.city ? ` | ville: ${client.city}` : ''}${contact ? ` | contact: ${contact}` : ''}${client.source ? ` | source: ${client.source}` : ''}`
+  })
+
+  return lines.join('\n')
+}
+
+async function loadQuoteAIContext(orgId: string): Promise<QuoteAIContext> {
+  const cached = aiContextCache.get(orgId)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  const [catalog, clientsContext] = await Promise.all([
+    loadCatalogContext(orgId),
+    loadClientsContext(orgId),
+  ])
+
+  const value: QuoteAIContext = { ...catalog, clientsContext }
+  aiContextCache.set(orgId, { expiresAt: Date.now() + AI_CONTEXT_CACHE_MS, value })
+  return value
+}
+
+function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string, activityDescription: string | null, clientsContext: string): string {
   const hasCatalog = catalogContext.trim().length > 0
   const activityContext = activityDescription ? `\nSpécificité métier : ${activityDescription}` : ''
+  const clientContextBlock = clientsContext.trim()
+    ? `\n## Clients, prospects et leads connus\nUtilise cette liste uniquement pour associer \`clientName\` quand la correspondance est forte (nom, société, email ou téléphone très proche). En cas d'ambiguïté, garde le nom détecté mais ajoute un warning sur les lignes concernées ou au devis.\n${clientsContext}\n`
+    : ''
 
   return `Tu t'appelles Sarah. Tu es chiffreuse et experte devis chez ATELIER by Orsayn. Tu travailles pour une entreprise française du métier : **${sector}**.${activityContext} À partir d'une description de travaux, tu extrais et structures les postes en sections et lignes de devis, et tu estimes la main-d'oeuvre nécessaire.
 
 Tu parles comme un pro du terrain : direct, précis, sans jargon inutile. Tu connais ton métier sur le bout des doigts.
+${clientContextBlock}
 ${hasCatalog ? `
 ${catalogContext}
 
@@ -400,11 +493,16 @@ Retourne UNIQUEMENT un objet JSON valide avec cette structure exacte :
           "title": "Nom de la section (ex: Maçonnerie, Électricité, Plomberie...)",
           "items": [
             {
-              "description": "Description précise du poste de travaux",
+              "designation": "Désignation courte du produit, service ou poste",
+              "details": "Précisions utiles, inclusions, contraintes techniques ou null",
+              "description": "Fallback lisible : designation + détails inclus",
               "quantity": 20,
               "unit": "m²",
               "unit_price": 100,
               "unit_cost_ht": 60,
+              "ai_confidence": 0.86,
+              "ai_source": "catalog",
+              "ai_warnings": [],
               "vat_rate": 20,
               "is_estimated": false,
               "is_internal": false,
@@ -436,6 +534,11 @@ ${ragContext ? `\n## Mémoire de l'entreprise (devis et tarifs de référence is
 - Si un nom de client, entreprise, particulier, adresse email ou contact est mentionné, renseigne \`clientName\` avec la chaîne la plus précise. Pour plusieurs devis avec plusieurs clients, renseigne le bon \`clientName\` sur chaque devis.
 - Le champ \`title\` doit synthétiser le projet en un titre court et professionnel. Si un titre ou nom de chantier est explicitement mentionné dans le document, utilise-le. Sinon, forge un titre clair (ex: "Bardage acier façade entrepôt B", "Rénovation cuisine appartement 3e étage").
 - Typographie française obligatoire : pas de Title Case / majuscule à chaque mot dans les titres, sections et descriptions. Utilise la casse phrase ("Pose de tableau électrique", pas "Pose De Tableau Électrique"). Garde les majuscules uniquement pour les noms propres, marques, acronymes et références techniques (PVC, TIG, S235).
+- Chaque ligne doit distinguer \`designation\` et \`details\` : la designation est courte et commerciale ("Pose de carrelage mural"), details contient les précisions ("Comprend préparation support, colle, joints, nettoyage"). Ne mets pas toute la ligne dans \`details\`.
+- \`description\` doit rester un fallback compatible : reprends la designation, puis si details existe ajoute "Comprend :" et les détails.
+- \`ai_confidence\` vaut 0 à 1. Baisse la confiance si quantité absente, plan peu lisible, prix estimé, client ambigu ou document incomplet.
+- \`ai_source\` vaut exactement "catalog", "recent_quote", "memory", "client_input", "ai_estimate" ou "document".
+- \`ai_warnings\` contient des messages courts uniquement si une vérification humaine est utile.
 - Regroupe les postes par corps de métier ou par zone (ex: Cuisine, Salle de bain)
 - TVA : 10% pour rénovation logement existant, 20% par défaut (neuf, travaux neufs)
 - Unités courantes : u (unité), m² (mètre carré), ml (mètre linéaire), m³ (mètre cube), h (heure), forfait
@@ -450,15 +553,49 @@ ${ragContext ? `\n## Mémoire de l'entreprise (devis et tarifs de référence is
 - Minimum 1 section avec au moins 1 ligne`
 }
 
+function parseQuotesFromAIRaw(raw: string): AIQuoteResult[] | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(extractJson(raw))
+  } catch {
+    console.error('[ai/analyze-quote] JSON parse error', { responseLength: raw.length })
+    return null
+  }
+
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const obj = parsed as Record<string, unknown>
+    if (Array.isArray(obj.quotes)) return obj.quotes as AIQuoteResult[]
+    if (Array.isArray(obj.sections)) return [parsed as AIQuoteResult]
+    return null
+  }
+  if (Array.isArray(parsed)) return parsed as AIQuoteResult[]
+  return null
+}
+
+function quoteNeedsFallback(quotes: AIQuoteResult[]): boolean {
+  if (quotes.length === 0) return true
+  const items = quotes.flatMap(quote => quote.sections?.flatMap(section => section.items ?? []) ?? [])
+  if (items.length === 0) return true
+  const missingStructuredFields = items.filter(item => !item.designation?.trim()).length
+  const lowConfidence = items.filter(item => typeof item.ai_confidence === 'number' && item.ai_confidence < 0.55).length
+  return missingStructuredFields > Math.max(1, items.length * 0.25) || lowConfidence > Math.max(2, items.length * 0.4)
+}
+
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
   }
+  const userId = user.id
 
   if (!await hasPermission('quotes.create')) {
     return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
+  }
+
+  const membership = await getCurrentMembershipContext()
+  if (membership?.roleSlug !== 'owner' && membership?.roleSlug !== 'admin') {
+    return NextResponse.json({ error: 'Action réservée aux administrateurs.' }, { status: 403 })
   }
 
   if (!process.env.OPENROUTER_API_KEY) {
@@ -484,16 +621,13 @@ export async function POST(req: NextRequest) {
     if (bodyCache?.text?.trim()) queryText = bodyCache.text.trim()
   }
 
-  // Catalogue + RAG en parallèle
-  const [{ context: catalogContext, sector, activityId, activityDescription }, ragContext_] = await Promise.all([
-    orgId ? loadCatalogContext(orgId) : Promise.resolve({ context: '', sector: 'BTP', activityId: null, activityDescription: null }),
-    orgId ? fetchRAGContext(orgId, queryText) : Promise.resolve(''),
-  ])
-  // Re-fetch RAG avec le filtre activityId maintenant qu'on l'a (best-effort, pas bloquant)
-  const ragContext = activityId && orgId
-    ? await fetchRAGContext(orgId, queryText, { activityId })
-    : ragContext_
-  const systemPrompt = buildSystemPrompt(catalogContext, sector, ragContext, activityDescription)
+  const context = orgId
+    ? await loadQuoteAIContext(orgId)
+    : { context: '', sector: 'BTP', activityId: null, activityDescription: null, clientsContext: '' }
+  const ragContext = orgId
+    ? await fetchRAGContext(orgId, queryText, { activityId: context.activityId })
+    : ''
+  const systemPrompt = buildSystemPrompt(context.context, context.sector, ragContext, context.activityDescription, context.clientsContext)
 
   if (contentType.includes('multipart/form-data')) {
     const formData = formDataCache!
@@ -535,51 +669,47 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { data } = await callAI<any>({
-      organizationId: orgId ?? user.id,
-      provider: 'openrouter',
-      feature: 'quote_analysis',
-      model,
-      inputKind: contentType.includes('multipart/form-data') ? 'mixed' : 'text',
-      request: {
-        body: {
-          messages,
-          temperature: 0.2,
-          max_tokens: 4096,
+    async function callQuoteModel(modelName: string, timeoutMs: number): Promise<AIQuoteResult[] | null> {
+      const { data } = await callAI<any>({
+        organizationId: orgId ?? userId,
+        provider: 'openrouter',
+        feature: 'quote_analysis',
+        model: modelName,
+        inputKind: contentType.includes('multipart/form-data') ? 'mixed' : 'text',
+        request: {
+          body: {
+            messages,
+            temperature: modelName === FALLBACK_MODEL ? 0.1 : 0.2,
+            max_tokens: 4096,
+          },
+          timeoutMs,
         },
-      },
-      metadata: {
-        route: 'api/ai/analyze-quote',
-        app_name: APP_NAME,
-      },
-    })
+        metadata: {
+          route: 'api/ai/analyze-quote',
+          app_name: APP_NAME,
+          fallback: modelName === FALLBACK_MODEL,
+        },
+      })
 
-    const raw = data.choices?.[0]?.message?.content ?? ''
-
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(extractJson(raw))
-    } catch {
-      console.error('[ai/analyze-quote] JSON parse error', { responseLength: raw.length })
-      return NextResponse.json({ error: 'Réponse IA invalide, veuillez réessayer' }, { status: 500 })
+      return parseQuotesFromAIRaw(data.choices?.[0]?.message?.content ?? '')
     }
 
-    // Normalise : accepte { quotes: [...] } ou { title, sections } (rétrocompat) ou [{...}, ...]
-    let quotes: AIQuoteResult[]
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const obj = parsed as Record<string, unknown>
-      if (Array.isArray(obj.quotes)) {
-        quotes = obj.quotes as AIQuoteResult[]
-      } else if (Array.isArray(obj.sections)) {
-        // Ancien format mono-devis
-        quotes = [parsed as AIQuoteResult]
-      } else {
-        return NextResponse.json({ error: 'Structure IA invalide' }, { status: 500 })
+    let quotes: AIQuoteResult[] | null = null
+    try {
+      quotes = await callQuoteModel(model, FAST_MODEL_TIMEOUT_MS)
+    } catch (fastErr) {
+      if (fastErr instanceof AIQuotaExceededError || fastErr instanceof AIModuleDisabledError || fastErr instanceof AIRateLimitError) {
+        throw fastErr
       }
-    } else if (Array.isArray(parsed)) {
-      quotes = parsed as AIQuoteResult[]
-    } else {
-      return NextResponse.json({ error: 'Structure IA invalide' }, { status: 500 })
+      console.warn('[ai/analyze-quote] fast model error, trying fallback', fastErr instanceof Error ? fastErr.message : fastErr)
+    }
+    if (!quotes || quoteNeedsFallback(quotes)) {
+      console.warn('[ai/analyze-quote] fast model insufficient, trying fallback')
+      quotes = await callQuoteModel(FALLBACK_MODEL, FALLBACK_MODEL_TIMEOUT_MS)
+    }
+
+    if (!quotes) {
+      return NextResponse.json({ error: 'Réponse IA invalide, veuillez réessayer' }, { status: 500 })
     }
 
     quotes = quotes

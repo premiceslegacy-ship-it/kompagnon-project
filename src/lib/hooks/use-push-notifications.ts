@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react'
 
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!
-const POLL_INTERVAL_MS = 5_000
+const POLL_INTERVAL_MS = 60_000
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -53,7 +53,10 @@ async function saveSub(sub: PushSubscription) {
 
 export function usePushNotifications(onPoll?: () => void) {
   const onPollRef = useRef(onPoll)
-  onPollRef.current = onPoll
+
+  useEffect(() => {
+    onPollRef.current = onPoll
+  }, [onPoll])
 
   // Enregistre le SW et sauvegarde l'abonnement existant si déjà accordé,
   // sans jamais déclencher le prompt (le clic utilisateur s'en charge)

@@ -1,11 +1,16 @@
+import { redirect } from 'next/navigation'
 import { getMaterials, getLaborRates, getPrestationTypes } from '@/lib/data/queries/catalog'
 import { getSuppliers } from '@/lib/data/queries/suppliers'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { isModuleEnabled } from '@/lib/data/queries/organization-modules'
 import { resolveCatalogContext } from '@/lib/catalog-context'
+import { hasPermission } from '@/lib/data/queries/membership'
 import CatalogClient from './CatalogClient'
 
 export default async function CatalogPage() {
+  const canView = await hasPermission('catalog.view')
+  if (!canView) redirect('/dashboard')
+
   const [materials, laborRates, prestationTypes, suppliers, organization, catalogAIEnabled] = await Promise.all([
     getMaterials(),
     getLaborRates(),

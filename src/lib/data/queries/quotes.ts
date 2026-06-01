@@ -35,11 +35,16 @@ export type QuoteItem = {
   type: 'material' | 'labor' | 'custom'
   material_id: string | null
   labor_rate_id: string | null
+  designation: string | null
+  details: string | null
   description: string | null
   quantity: number
   unit: string | null
   unit_price: number
   unit_cost_ht: number | null
+  ai_confidence: number | null
+  ai_source: 'catalog' | 'recent_quote' | 'memory' | 'client_input' | 'ai_estimate' | 'document' | null
+  ai_warnings: string[] | null
   vat_rate: number
   total_ht: number | null
   position: number
@@ -86,6 +91,10 @@ export type QuoteStub = {
   client_contact_name: string | null
   client_contact_email: string | null
   client_contact_phone: string | null
+  internal_cost_labor_ht: number
+  internal_cost_parts_ht: number
+  internal_cost_other_ht: number
+  internal_cost_total_ht: number
 }
 
 export async function getQuotesForLinking(): Promise<QuoteStub[]> {
@@ -107,9 +116,29 @@ export async function getQuotesForLinking(): Promise<QuoteStub[]> {
 
   if (error) { console.error('[getQuotesForLinking]', error); return [] }
 
+  const quoteIds = (data ?? []).map((q: any) => q.id)
+  const items = quoteIds.length > 0
+    ? await fetchQuoteItemsForLinking(supabase, quoteIds)
+    : []
+
+  const materialCostById = await fetchMaterialCostsForQuoteItems(supabase, orgId, items)
+  const laborCostById = await fetchLaborCostsForQuoteItems(supabase, orgId, items)
+
+  // Même formule que le Récap marge interne du devis editor :
+  // unit_cost_ht sur toutes les lignes + fallback catalogue si l'ancien devis ne l'avait pas persisté
+  // + unit_price pour les lignes is_internal sans coût dédié (transport, équipement, saisie libre).
+  const totalInternalByQuote: Record<string, number> = {}
+  for (const item of items) {
+    const qty = Number(item.quantity) || 0
+    const unitCost = resolveQuoteItemInternalUnitCost(item, materialCostById, laborCostById)
+    const cost = qty * unitCost
+    if (!cost) continue
+    totalInternalByQuote[item.quote_id] = (totalInternalByQuote[item.quote_id] ?? 0) + cost
+  }
+
   return (data ?? []).map((q: any) => {
     const c = q.client
-    // Nom contact : contact_name (société) > first_name + last_name (particulier)
+    const totalInternal = totalInternalByQuote[q.id] ?? 0
     const contactName = c?.contact_name
       ?? (c?.first_name || c?.last_name ? [c?.first_name, c?.last_name].filter(Boolean).join(' ') : null)
     return {
@@ -125,8 +154,119 @@ export async function getQuotesForLinking(): Promise<QuoteStub[]> {
       client_contact_name: contactName,
       client_contact_email: c?.email ?? null,
       client_contact_phone: c?.phone ?? null,
+      internal_cost_labor_ht: 0,
+      internal_cost_parts_ht: 0,
+      internal_cost_other_ht: roundMoney(totalInternal),
+      internal_cost_total_ht: roundMoney(totalInternal),
     }
   })
+}
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100
+}
+
+async function fetchQuoteItemsForLinking(
+  supabase: Awaited<ReturnType<typeof import('@/lib/supabase/server').createClient>>,
+  quoteIds: string[],
+) {
+  const pageSize = 1000
+  const chunkSize = 40
+  const allItems: Array<{
+    quote_id: string
+    type: string | null
+    material_id: string | null
+    labor_rate_id: string | null
+    quantity: number | null
+    unit_cost_ht: number | null
+    unit_price: number | null
+    is_internal: boolean | null
+  }> = []
+
+  for (let i = 0; i < quoteIds.length; i += chunkSize) {
+    const chunk = quoteIds.slice(i, i + chunkSize)
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('quote_items')
+        .select('quote_id, type, material_id, labor_rate_id, quantity, unit_cost_ht, unit_price, is_internal')
+        .in('quote_id', chunk)
+        .order('quote_id', { ascending: true })
+        .range(from, from + pageSize - 1)
+
+      if (error) {
+        console.error('[fetchQuoteItemsForLinking]', error)
+        break
+      }
+
+      allItems.push(...((data ?? []) as typeof allItems))
+      if (!data || data.length < pageSize) break
+      from += pageSize
+    }
+  }
+
+  return allItems
+}
+
+function resolveQuoteItemInternalUnitCost(
+  item: {
+    material_id: string | null
+    labor_rate_id: string | null
+    unit_cost_ht: number | null
+    unit_price: number | null
+    is_internal: boolean | null
+  },
+  materialCostById: Record<string, number>,
+  laborCostById: Record<string, number>,
+) {
+  if (item.unit_cost_ht != null) return Number(item.unit_cost_ht) || 0
+  if (item.material_id && materialCostById[item.material_id] != null) return materialCostById[item.material_id]
+  if (item.labor_rate_id && laborCostById[item.labor_rate_id] != null) return laborCostById[item.labor_rate_id]
+  return item.is_internal ? (Number(item.unit_price) || 0) : 0
+}
+
+async function fetchMaterialCostsForQuoteItems(
+  supabase: Awaited<ReturnType<typeof import('@/lib/supabase/server').createClient>>,
+  orgId: string,
+  items: Array<{ material_id: string | null }>,
+) {
+  const ids = [...new Set(items.map(i => i.material_id).filter(Boolean))] as string[]
+  if (!ids.length) return {} as Record<string, number>
+
+  const { data, error } = await supabase
+    .from('materials')
+    .select('id, purchase_price')
+    .eq('organization_id', orgId)
+    .in('id', ids)
+
+  if (error) {
+    console.error('[fetchMaterialCostsForQuoteItems]', error)
+    return {}
+  }
+
+  return Object.fromEntries((data ?? []).map(row => [row.id, Number(row.purchase_price) || 0]))
+}
+
+async function fetchLaborCostsForQuoteItems(
+  supabase: Awaited<ReturnType<typeof import('@/lib/supabase/server').createClient>>,
+  orgId: string,
+  items: Array<{ labor_rate_id: string | null }>,
+) {
+  const ids = [...new Set(items.map(i => i.labor_rate_id).filter(Boolean))] as string[]
+  if (!ids.length) return {} as Record<string, number>
+
+  const { data, error } = await supabase
+    .from('labor_rates')
+    .select('id, cost_rate, rate')
+    .eq('organization_id', orgId)
+    .in('id', ids)
+
+  if (error) {
+    console.error('[fetchLaborCostsForQuoteItems]', error)
+    return {}
+  }
+
+  return Object.fromEntries((data ?? []).map(row => [row.id, Number(row.cost_rate ?? row.rate) || 0]))
 }
 
 export async function getQuotes(): Promise<Quote[]> {
@@ -213,7 +353,7 @@ export async function getAcceptedQuotesWithItems(): Promise<QuoteWithItems[]> {
       .order('position'),
     supabase
       .from('quote_items')
-      .select('id, quote_id, section_id, type, material_id, labor_rate_id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal')
+      .select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal')
       .in('quote_id', quoteIds)
       .order('position'),
   ])
@@ -272,7 +412,7 @@ export async function getQuoteById(id: string): Promise<QuoteWithItems | null> {
 
   const { data: items } = await supabase
     .from('quote_items')
-    .select('id, quote_id, section_id, type, material_id, labor_rate_id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal')
+    .select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal')
     .eq('quote_id', id)
     .order('position')
 

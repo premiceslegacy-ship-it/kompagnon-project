@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { todayParis, dateParis } from '@/lib/utils'
+import type { BusinessActivityId } from '@/lib/catalog-context'
 
 const FOLLOW_UP_DELAY_DAYS = 2
 const RECENT_ACTIVITY_DAYS = 7
@@ -43,6 +44,7 @@ export type DashboardStats = {
 
 export type DashboardSetupReadiness = {
   organizationName: string | null
+  businessActivityId: BusinessActivityId | null
   companyIdentityReady: boolean
   documentDetailsReady: boolean
   paymentReady: boolean
@@ -621,6 +623,7 @@ export async function getDashboardSetupReadiness(): Promise<DashboardSetupReadin
 
   return {
     organizationName: org.name ?? null,
+    businessActivityId: org.business_activity_id ?? null,
     companyIdentityReady: Boolean(org.name && org.email && org.business_activity_id),
     documentDetailsReady: Boolean(
       org.address_line1 &&

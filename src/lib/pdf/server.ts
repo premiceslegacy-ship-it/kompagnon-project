@@ -65,7 +65,7 @@ export async function renderQuotePdfBufferById(quoteId: string, orgId: string): 
 
   const [{ data: sections }, { data: items }, { data: client }, organization] = await Promise.all([
     admin.from('quote_sections').select('id, quote_id, title, position').eq('quote_id', quoteId).order('position', { ascending: true }),
-    admin.from('quote_items').select('id, quote_id, section_id, type, material_id, labor_rate_id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal, dimension_values, variant_label, catalog_variant_id').eq('quote_id', quoteId).order('position', { ascending: true }),
+    admin.from('quote_items').select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal, dimension_values, variant_label, catalog_variant_id').eq('quote_id', quoteId).order('position', { ascending: true }),
     quoteClient?.id
       ? admin.from('clients').select('*').eq('id', quoteClient.id).single()
       : Promise.resolve({ data: null as Record<string, unknown> | null }),

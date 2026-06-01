@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
+import { getCurrentMembershipContext } from '@/lib/data/queries/membership'
 
 const MISTRAL_MODEL = 'voxtral-mini-latest'
 
@@ -10,13 +11,16 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
+  const currentMembership = await getCurrentMembershipContext()
+  if (currentMembership?.roleSlug !== 'owner' && currentMembership?.roleSlug !== 'admin') {
+    return NextResponse.json({ error: 'Action réservée aux administrateurs.' }, { status: 403 })
+  }
+
   if (!process.env.MISTRAL_API_KEY) {
     return NextResponse.json({ error: 'Transcription non configurée' }, { status: 500 })
   }
 
-  const { data: membership } = await supabase
-    .from('memberships').select('organization_id').eq('user_id', user.id).single()
-  const orgId = membership?.organization_id ?? user.id
+  const orgId = currentMembership.organizationId ?? user.id
 
   const formData = await req.formData()
   const audio = formData.get('audio')

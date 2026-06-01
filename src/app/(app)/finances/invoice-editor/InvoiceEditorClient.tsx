@@ -26,6 +26,7 @@ import { createClientInline } from '@/lib/data/mutations/clients'
 import { getClientDisplayName } from '@/lib/client'
 import { UnitSelect } from '@/components/ui/UnitSelect'
 import { NumericInput } from '@/components/ui/NumericInput'
+import { ActionButton } from '@/components/ui/ActionButton'
 import {
   ArrowLeft, Eye, Send, Plus, Trash2, FileText, Search, X, Loader2, Save, EyeOff, Truck, ChevronDown, ChevronUp, Ruler, Package, CalendarClock, BookmarkPlus, LayoutGrid,
 } from 'lucide-react'
@@ -40,6 +41,7 @@ type LocalItem = {
   qty: number
   unit: string
   pu: number
+  unit_cost_ht: number | null
   vat: number
   length_m: number | null
   width_m: number | null
@@ -112,6 +114,37 @@ function getTransportMeta(item: {
 
 function isEquipmentLine(item: Pick<LocalItem, 'is_internal' | 'unit' | 'transport_prix_l'>) {
   return item.is_internal && item.unit === 'usage' && item.transport_prix_l == null
+}
+
+function parseEquipmentAmortization(description: string, unitPrice: number) {
+  const match = description.match(/Amortissement\s*:\s*([\d.,]*)\s*€\s*\/\s*([\d.,]*)\s*usages?/i)
+  const name = (description.split(/\n/)[0] ?? '').trim() || 'Équipement amorti'
+  const rawPurchasePrice = match?.[1]?.trim() ?? ''
+  const rawLifetimeUses = match?.[2]?.trim() ?? ''
+  const purchasePrice = rawPurchasePrice ? Number(rawPurchasePrice.replace(',', '.')) : null
+  const lifetimeUses = rawLifetimeUses ? Number(rawLifetimeUses.replace(',', '.')) : null
+
+  return {
+    name,
+    purchasePrice: purchasePrice != null && Number.isFinite(purchasePrice) ? purchasePrice : null,
+    lifetimeUses: lifetimeUses != null && Number.isFinite(lifetimeUses) ? lifetimeUses : null,
+    costPerUse: unitPrice,
+  }
+}
+
+function buildEquipmentDescription(name: string, purchasePrice: number | null, lifetimeUses: number | null) {
+  const label = name.trim() || 'Équipement amorti'
+  if (purchasePrice != null || lifetimeUses != null) {
+    return `${label}\n\nAmortissement : ${purchasePrice ?? ''} € / ${lifetimeUses ?? ''} usages`
+  }
+  return label
+}
+
+function computeEquipmentCostPerUse(purchasePrice: number | null, lifetimeUses: number | null, fallback: number) {
+  if (purchasePrice != null && purchasePrice > 0 && lifetimeUses != null && lifetimeUses > 0) {
+    return Math.round((purchasePrice / lifetimeUses) * 100) / 100
+  }
+  return fallback
 }
 
 function computeDimensionQuantity(
@@ -323,6 +356,7 @@ export default function InvoiceEditorClient({
           qty: i.quantity,
           unit: i.unit ?? '',
           pu: i.unit_price,
+          unit_cost_ht: i.unit_cost_ht ?? null,
           vat: i.vat_rate,
           length_m: i.length_m ?? null,
           width_m: i.width_m ?? null,
@@ -353,13 +387,14 @@ export default function InvoiceEditorClient({
     return [...prev, ...newItems]
   }
 
-  function addFromCatalog(name: string, unit: string | null, price: number, vat: number, isInternal = false) {
+  function addFromCatalog(name: string, unit: string | null, price: number, vat: number, isInternal = false, unitCostHt: number | null = null) {
     const newItem = {
       id: Date.now(),
       desc: name,
       qty: 1,
       unit: unit ?? '',
       pu: price,
+      unit_cost_ht: unitCostHt,
       vat,
       length_m: null,
       width_m: null,
@@ -385,6 +420,7 @@ export default function InvoiceEditorClient({
       qty: pricing.quantity,
       unit: pricing.unit,
       pu: pricing.unitPrice,
+      unit_cost_ht: material.purchase_price ?? null,
       vat: defaultVatRate,
       length_m: pricing.lengthM,
       width_m: pricing.widthM,
@@ -403,28 +439,34 @@ export default function InvoiceEditorClient({
   }
 
   function addPrestationToItems(p: PrestationType) {
-    const newItems = p.items.map(item => ({
-      id: Date.now() + Math.random(),
-      desc: item.designation,
-      qty: item.quantity,
-      unit: item.unit,
-      pu: item.unit_price_ht,
-      vat: defaultVatRate,
-      length_m: null,
-      width_m: null,
-      height_m: null,
-      dimension_pricing_mode: null,
-      dim_quantity: 1,
-      is_internal: item.is_internal,
-      material_id: null,
-      ...getTransportMeta({
-        description: item.designation,
-        quantity: item.quantity,
-        unit: item.unit,
-        unit_price: item.unit_price_ht,
-        is_internal: item.is_internal,
-      }),
-    }))
+    const newItems = p.items.map(item => {
+      const isEquipment = item.item_type === 'equipment'
+      const equipmentCostPerUse = item.unit_cost_ht > 0 ? item.unit_cost_ht : item.unit_price_ht
+
+      return {
+        id: Date.now() + Math.random(),
+        desc: item.designation,
+        qty: isEquipment ? (item.quantity || 1) : item.quantity,
+        unit: isEquipment ? 'usage' : item.unit,
+        pu: isEquipment ? equipmentCostPerUse : item.unit_price_ht,
+        unit_cost_ht: isEquipment ? null : item.unit_cost_ht,
+        vat: defaultVatRate,
+        length_m: null,
+        width_m: null,
+        height_m: null,
+        dimension_pricing_mode: null,
+        dim_quantity: 1,
+        is_internal: item.is_internal || isEquipment,
+        material_id: null,
+        ...getTransportMeta({
+          description: item.designation,
+          quantity: item.quantity,
+          unit: item.unit,
+          unit_price: item.unit_price_ht,
+          is_internal: item.is_internal,
+        }),
+      }
+    })
     setItems(prev => replaceOrAppend(prev, newItems))
     setIsCatalogModalOpen(false)
     setCatalogSearch('')
@@ -445,6 +487,7 @@ export default function InvoiceEditorClient({
       qty: transportLiters,
       unit: 'L',
       pu: transportPrixL,
+      unit_cost_ht: null,
       vat: defaultVatRate,
       length_m: null,
       width_m: null,
@@ -494,6 +537,7 @@ export default function InvoiceEditorClient({
       qty: 1,
       unit: 'usage',
       pu: equipmentCostPerUse,
+      unit_cost_ht: null,
       vat: defaultVatRate,
       length_m: null,
       width_m: null,
@@ -524,11 +568,11 @@ export default function InvoiceEditorClient({
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
   function makeBlankItem(): LocalItem {
-    return { id: Date.now() + Math.random(), desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_internal: false, material_id: null, transport_km: null, transport_conso: null, transport_prix_l: null }
+    return { id: Date.now() + Math.random(), desc: '', qty: 1, unit: '', pu: 0, unit_cost_ht: null, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_internal: false, material_id: null, transport_km: null, transport_conso: null, transport_prix_l: null }
   }
 
   function makeSectionItem(title: string): LocalItem {
-    return { id: Date.now() + Math.random(), desc: title, qty: 1, unit: INVOICE_SECTION_UNIT, pu: 0, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_internal: false, material_id: null, transport_km: null, transport_conso: null, transport_prix_l: null }
+    return { id: Date.now() + Math.random(), desc: title, qty: 1, unit: INVOICE_SECTION_UNIT, pu: 0, unit_cost_ht: null, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_internal: false, material_id: null, transport_km: null, transport_conso: null, transport_prix_l: null }
   }
 
   function addSection() {
@@ -575,7 +619,33 @@ export default function InvoiceEditorClient({
         qty: liters,
         unit: 'L',
         pu: prixL,
+        unit_cost_ht: null,
         is_internal: true,
+      }
+    }))
+  }
+
+  function handleEquipmentAmortizationChange(
+    id: number,
+    field: 'name' | 'purchasePrice' | 'lifetimeUses',
+    value: string | number | null,
+  ) {
+    setItems(prev => prev.map(item => {
+      if (item.id !== id) return item
+      const current = parseEquipmentAmortization(item.desc, item.pu)
+      const name = field === 'name' ? String(value ?? '') : current.name
+      const purchasePrice = field === 'purchasePrice' ? (typeof value === 'number' ? value : null) : current.purchasePrice
+      const lifetimeUses = field === 'lifetimeUses' ? (typeof value === 'number' ? value : null) : current.lifetimeUses
+      const unitPrice = computeEquipmentCostPerUse(purchasePrice, lifetimeUses, item.pu)
+
+      return {
+        ...item,
+        desc: buildEquipmentDescription(name, purchasePrice, lifetimeUses),
+        unit: 'usage',
+        pu: unitPrice,
+        unit_cost_ht: null,
+        is_internal: true,
+        transport_prix_l: null,
       }
     }))
   }
@@ -647,6 +717,7 @@ export default function InvoiceEditorClient({
             qty: item.quantity,
             unit: (item as any).unit ?? '',
             pu: item.unit_price,
+            unit_cost_ht: item.unit_cost_ht ?? null,
             vat: item.vat_rate ?? defaultVatRate,
             length_m: item.length_m ?? null,
             width_m: item.width_m ?? null,
@@ -671,6 +742,7 @@ export default function InvoiceEditorClient({
         qty: item.quantity,
         unit: (item as any).unit ?? '',
         pu: item.unit_price,
+        unit_cost_ht: item.unit_cost_ht ?? null,
         vat: item.vat_rate ?? defaultVatRate,
         length_m: item.length_m ?? null,
         width_m: item.width_m ?? null,
@@ -690,7 +762,7 @@ export default function InvoiceEditorClient({
     ]
     if (quote.client?.id) setClientId(quote.client.id)
     if (quote.title) setTitle(quote.title)
-    setItems(newItems.length > 0 ? newItems : [{ id: Date.now(), desc: '', qty: 1, unit: '', pu: 0, vat: defaultVatRate, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_internal: false, material_id: null, transport_km: null, transport_conso: null, transport_prix_l: null }])
+    setItems(newItems.length > 0 ? newItems : [makeBlankItem()])
     setImportedQuoteId(quote.id)
     setIsQuoteModalOpen(false)
   }
@@ -717,6 +789,7 @@ export default function InvoiceEditorClient({
       quantity: Number(i.qty),
       unit: i.unit,
       unit_price: Number(i.pu),
+      unit_cost_ht: i.unit_cost_ht,
       vat_rate: Number(i.vat),
       length_m: i.length_m,
       width_m: i.width_m,
@@ -816,7 +889,7 @@ export default function InvoiceEditorClient({
   const isEditing = !!existingInvoice
 
   return (
-    <main className="page-container space-y-6 md:space-y-8">
+    <main className="page-container pb-28 space-y-6 md:space-y-8">
 
       {/* ── Modal Catalogue ── */}
       {isCatalogModalOpen && (
@@ -1063,20 +1136,20 @@ export default function InvoiceEditorClient({
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={handlePreview} disabled={isSaving || isSending}
+          <ActionButton onClick={handlePreview} loading={isSaving} disabled={isSending}
             className="px-4 py-2.5 rounded-full text-secondary hover:text-primary hover:bg-base/50 transition-colors font-semibold flex items-center gap-2 disabled:opacity-50 whitespace-nowrap">
-            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+            <Eye className="w-4 h-4" />
             <span className="hidden sm:inline">Aperçu PDF</span>
-          </button>
-          <button onClick={handleSaveDraft} disabled={isSaving || isSending}
+          </ActionButton>
+          <ActionButton onClick={handleSaveDraft} disabled={isSaving || isSending}
             className="px-4 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold flex items-center gap-2 disabled:opacity-50 whitespace-nowrap">
             <Save className="w-4 h-4" /><span className="hidden sm:inline">Brouillon</span>
-          </button>
-          <button onClick={handleSend} disabled={isSaving || isSending}
+          </ActionButton>
+          <ActionButton onClick={handleSend} loading={isSending} disabled={isSaving}
             className="px-4 sm:px-6 py-2.5 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 disabled:scale-100 whitespace-nowrap">
-            {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            <Send className="w-4 h-4" />
             <span className="hidden sm:inline">Valider &</span> Envoyer
-          </button>
+          </ActionButton>
         </div>
       </div>
 
@@ -1121,9 +1194,9 @@ export default function InvoiceEditorClient({
         </div>
 
         {/* Import depuis devis */}
-        <div className="p-4 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-accent/10 border border-accent/20 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <FileText className="w-5 h-5 text-accent" />
+            <FileText className="w-5 h-5 text-accent shrink-0" />
             <div>
               <span className="font-semibold text-primary">Facturer depuis un devis existant ?</span>
               {importedQuoteId && <span className="ml-3 text-xs text-accent font-bold">Devis importé ✓</span>}
@@ -1131,7 +1204,7 @@ export default function InvoiceEditorClient({
           </div>
           {acceptedQuotes.length > 0 ? (
             <button onClick={() => setIsQuoteModalOpen(true)}
-              className="px-4 py-2 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-sm font-bold text-primary hover:bg-base transition-colors">
+              className="px-4 py-2 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-sm font-bold text-primary hover:bg-base transition-colors whitespace-nowrap">
               Sélectionner un devis
             </button>
           ) : (
@@ -1211,9 +1284,10 @@ export default function InvoiceEditorClient({
 	              const widthMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'width', dimensionMode)
 	              const heightMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'height', dimensionMode)
 	              const isEquipment = isEquipmentLine(item)
+              const equipmentMeta = isEquipment ? parseEquipmentAmortization(item.desc, item.pu) : null
               return (
                 <React.Fragment key={item.id}>
-	                  <div className={`rounded-xl border transition-all sm:min-w-[760px] ${isEquipment ? 'border-l-2 border-purple-400/60 bg-purple-500/5' : item.is_internal ? 'border-l-2 border-amber-400/50 bg-amber-500/5' : 'border-transparent hover:border-[var(--elevation-border)] hover:bg-base/30'}`}>
+	                  <div className={`rounded-xl border transition-all ${isEquipment ? 'border-l-2 border-purple-400/60 bg-purple-500/5' : item.is_internal ? 'border-l-2 border-amber-400/50 bg-amber-500/5' : 'border-transparent hover:border-[var(--elevation-border)] hover:bg-base/30'}`}>
 
                     {/* ── Badge + désignation ── */}
                     <div className="flex items-start gap-2 px-3 pt-3 pb-1">
@@ -1223,14 +1297,19 @@ export default function InvoiceEditorClient({
                           {isEquipment ? 'Équip.' : 'Coût'}
                         </span>
                       )}
-                      <textarea value={item.desc} onChange={e => updateItem(item.id, 'desc', e.target.value)}
-                        placeholder={item.is_internal ? 'Coût interne (non visible client)...' : 'Description...'}
-                        rows={Math.min(6, Math.max(2, item.desc.split('\n').length))}
-                        className="flex-1 min-h-16 p-2 bg-transparent border border-transparent rounded-lg focus:border-accent focus:bg-base/50 outline-none text-primary text-sm leading-6 transition-colors resize-none" />
+                      <textarea
+                        value={equipmentMeta ? equipmentMeta.name : item.desc}
+                        onChange={e => equipmentMeta ? handleEquipmentAmortizationChange(item.id, 'name', e.target.value) : updateItem(item.id, 'desc', e.target.value)}
+                        placeholder={item.is_internal ? "Coût interne (non visible client)..." : 'Description...'}
+                        rows={equipmentMeta ? Math.min(3, Math.max(1, equipmentMeta.name.split('\n').length)) : Math.min(6, Math.max(2, item.desc.split('\n').length))}
+                        className={`flex-1 min-h-16 p-2 border rounded-lg outline-none text-primary text-sm leading-6 transition-colors resize-none ${equipmentMeta ? 'bg-base/40 border-purple-300/50 dark:border-purple-500/30 focus:border-purple-400 focus:bg-base/60 font-semibold' : 'bg-transparent border-transparent focus:border-accent focus:bg-base/50'}`}
+                      />
                       {/* Actions mobile */}
                       <div className="flex flex-col gap-1 sm:hidden pt-0.5">
-	                        <button type="button" onClick={() => updateItem(item.id, 'is_internal', !item.is_internal)}
-                          className={`p-1.5 rounded-full transition-all ${item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10'}`}>
+	                        <button type="button" onClick={() => { if (!isEquipment) updateItem(item.id, 'is_internal', !item.is_internal) }}
+                          disabled={isEquipment}
+                          title={isEquipment ? 'Équipement toujours interne' : undefined}
+                          className={`p-1.5 rounded-full transition-all ${isEquipment ? 'text-purple-600 bg-purple-500/10 cursor-not-allowed' : item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10'}`}>
                           {item.is_internal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                         {!item.material_id && !isEquipment && item.transport_prix_l === null && (
@@ -1257,29 +1336,52 @@ export default function InvoiceEditorClient({
                       {/* Desktop */}
 	                      <div className="hidden sm:grid sm:grid-cols-[minmax(220px,1fr)_72px_80px_100px_60px_88px_112px] gap-x-2 items-center">
                         <div />
-                        {isDimensioned ? (
+                        {isEquipment ? (
+                          <p className="p-2 text-right text-sm font-bold tabular-nums text-purple-700 dark:text-purple-300 bg-purple-500/8 border border-purple-400/30 rounded-lg">{item.qty}</p>
+                        ) : isDimensioned ? (
                           <p className="p-2 text-right text-sm font-bold tabular-nums text-accent">{item.qty}</p>
                         ) : (
                           <NumericInput value={item.qty} min={0} onChange={v => updateItem(item.id, 'qty', v ?? 0)}
                             className="w-full p-2 bg-transparent border border-transparent rounded-lg focus:border-accent focus:bg-base/50 outline-none text-primary tabular-nums text-right text-sm transition-colors" />
                         )}
-                        <UnitSelect value={item.unit} onChange={v => updateItem(item.id, 'unit', v)}
-                          allowedUnits={catalogContext.unitSet} compact className="w-full" />
+                        {isEquipment ? (
+                          <div className="h-9 flex items-center px-2 bg-purple-500/8 border border-purple-400/30 rounded-lg">
+                            <span className="text-sm font-semibold text-purple-700 dark:text-purple-300">usage</span>
+                          </div>
+                        ) : (
+                          <UnitSelect value={item.unit} onChange={v => updateItem(item.id, 'unit', v)}
+                            allowedUnits={catalogContext.unitSet} compact className="w-full" />
+                        )}
                         <div className="relative">
-                          <NumericInput value={item.pu} min={0} decimals={2} onChange={v => updateItem(item.id, 'pu', v ?? 0)}
-                            className={`w-full p-2 pr-5 bg-transparent border rounded-lg outline-none text-sm tabular-nums text-right transition-colors ${isEquipment ? 'border-purple-400/30 text-purple-700 dark:text-purple-300 focus:border-purple-400 focus:bg-purple-500/5' : 'border-transparent text-primary focus:border-accent focus:bg-base/50'}`} />
-                          <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-secondary pointer-events-none text-xs">€</span>
+                          {isEquipment ? (
+                            <div className="h-9 flex items-center px-2 bg-purple-500/8 border border-purple-400/30 rounded-lg">
+                              <span className="font-bold text-purple-700 dark:text-purple-300 tabular-nums text-sm w-full text-right">{fmt(Number(item.pu))}</span>
+                            </div>
+                          ) : (
+                            <>
+                              <NumericInput value={item.pu} min={0} decimals={2} onChange={v => updateItem(item.id, 'pu', v ?? 0)}
+                                className="w-full p-2 pr-5 bg-transparent border border-transparent rounded-lg outline-none text-sm tabular-nums text-right transition-colors text-primary focus:border-accent focus:bg-base/50" />
+                              <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-secondary pointer-events-none text-xs">€</span>
+                            </>
+                          )}
                         </div>
-                        <select value={item.vat} onChange={e => updateItem(item.id, 'vat', Number(e.target.value))}
-                          className="w-full p-2 bg-transparent border border-transparent rounded-lg focus:border-accent focus:bg-base/50 outline-none text-primary text-sm text-right appearance-none">
-                          {LEGAL_VAT_RATES.map(r => <option key={r} value={r}>{r}%</option>)}
-                        </select>
+                        {isEquipment ? (
+                          <div className="h-9 flex items-center px-2 bg-purple-500/8 border border-purple-400/30 rounded-lg">
+                            <span className="text-xs font-semibold text-purple-700 dark:text-purple-300 w-full text-right">Interne</span>
+                          </div>
+                        ) : (
+                          <select value={item.vat} onChange={e => updateItem(item.id, 'vat', Number(e.target.value))}
+                            className="w-full p-2 bg-transparent border border-transparent rounded-lg focus:border-accent focus:bg-base/50 outline-none text-primary text-sm text-right appearance-none">
+                            {LEGAL_VAT_RATES.map(r => <option key={r} value={r}>{r}%</option>)}
+                          </select>
+                        )}
                         <span className={`font-semibold tabular-nums text-sm text-right pr-1 ${isEquipment ? 'text-purple-700 dark:text-purple-300' : item.is_internal ? 'text-amber-500' : 'text-primary'}`}>
                           {fmt(Number(item.qty) * Number(item.pu))}
                         </span>
 	                        <div className="flex items-center gap-1 justify-end shrink-0 relative z-10">
-	                          <button type="button" onClick={() => updateItem(item.id, 'is_internal', !item.is_internal)}
-                            title={item.is_internal ? 'Ligne interne (cliquer pour rendre visible)' : 'Rendre interne'}
+	                          <button type="button" onClick={() => { if (!isEquipment) updateItem(item.id, 'is_internal', !item.is_internal) }}
+                            disabled={isEquipment}
+                            title={isEquipment ? 'Équipement toujours interne' : item.is_internal ? 'Ligne interne (cliquer pour rendre visible)' : 'Rendre interne'}
                             className={`p-1.5 rounded-full transition-all ${isEquipment ? 'text-purple-600 bg-purple-500/10' : item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-secondary/40 hover:text-secondary'}`}>
                             {item.is_internal ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
@@ -1307,7 +1409,9 @@ export default function InvoiceEditorClient({
                         <div className="grid grid-cols-2 gap-2">
                           <div className="space-y-0.5">
                             <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Qté</p>
-                            {isDimensioned ? (
+                            {isEquipment ? (
+                              <p className="p-2 text-sm font-bold tabular-nums text-purple-700 dark:text-purple-300 bg-purple-500/8 border border-purple-400/30 rounded-lg">{item.qty}</p>
+                            ) : isDimensioned ? (
                               <p className="p-2 text-sm font-bold tabular-nums text-accent">{item.qty}</p>
                             ) : (
                               <NumericInput value={item.qty} min={0} onChange={v => updateItem(item.id, 'qty', v ?? 0)}
@@ -1316,23 +1420,37 @@ export default function InvoiceEditorClient({
                           </div>
                           <div className="space-y-0.5">
                             <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Unité</p>
-                            <UnitSelect value={item.unit} onChange={v => updateItem(item.id, 'unit', v)}
-                              allowedUnits={catalogContext.unitSet} compact className="w-full" />
+                            {isEquipment ? (
+                              <p className="p-2 text-sm font-semibold text-purple-700 dark:text-purple-300 bg-purple-500/8 border border-purple-400/30 rounded-lg">usage</p>
+                            ) : (
+                              <UnitSelect value={item.unit} onChange={v => updateItem(item.id, 'unit', v)}
+                                allowedUnits={catalogContext.unitSet} compact className="w-full" />
+                            )}
                           </div>
                           <div className="space-y-0.5">
                             <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">PU HT</p>
                             <div className="relative">
-                              <NumericInput value={item.pu} min={0} decimals={2} onChange={v => updateItem(item.id, 'pu', v ?? 0)}
-                                className={`w-full p-2 pr-6 border rounded-lg outline-none tabular-nums text-sm ${isEquipment ? 'bg-purple-500/5 border-purple-400/30 text-purple-700 dark:text-purple-300' : 'bg-base/50 border-[var(--elevation-border)] text-primary focus:border-accent'}`} />
-                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-secondary pointer-events-none text-xs">€</span>
+                              {isEquipment ? (
+                                <p className="p-2 text-sm font-bold tabular-nums text-purple-700 dark:text-purple-300 text-right bg-purple-500/8 border border-purple-400/30 rounded-lg">{fmt(Number(item.pu))}</p>
+                              ) : (
+                                <>
+                                  <NumericInput value={item.pu} min={0} decimals={2} onChange={v => updateItem(item.id, 'pu', v ?? 0)}
+                                    className="w-full p-2 pr-6 border rounded-lg outline-none tabular-nums text-sm bg-base/50 border-[var(--elevation-border)] text-primary focus:border-accent" />
+                                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-secondary pointer-events-none text-xs">€</span>
+                                </>
+                              )}
                             </div>
                           </div>
                           <div className="space-y-0.5">
                             <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">TVA</p>
-                            <select value={item.vat} onChange={e => updateItem(item.id, 'vat', Number(e.target.value))}
-                              className="w-full p-2 bg-base/50 border border-[var(--elevation-border)] rounded-lg focus:border-accent outline-none text-primary text-sm appearance-none">
-                              {LEGAL_VAT_RATES.map(r => <option key={r} value={r}>{r}%</option>)}
-                            </select>
+                            {isEquipment ? (
+                              <p className="p-2 text-sm font-semibold text-purple-700 dark:text-purple-300 text-right bg-purple-500/8 border border-purple-400/30 rounded-lg">Interne</p>
+                            ) : (
+                              <select value={item.vat} onChange={e => updateItem(item.id, 'vat', Number(e.target.value))}
+                                className="w-full p-2 bg-base/50 border border-[var(--elevation-border)] rounded-lg focus:border-accent outline-none text-primary text-sm appearance-none">
+                                {LEGAL_VAT_RATES.map(r => <option key={r} value={r}>{r}%</option>)}
+                              </select>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center justify-between pt-1 border-t border-[var(--elevation-border)]/50">
@@ -1374,16 +1492,70 @@ export default function InvoiceEditorClient({
                         </div>
                       </div>
 	                    )}
-	                    {isEquipment && (
-	                      <div className="px-3 pb-3 pt-2 border-t border-purple-200/60 dark:border-purple-500/20 rounded-b-xl bg-purple-500/3">
-	                        <p className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
-	                          <Package className="w-3 h-3" />Équipement amorti
-	                        </p>
-	                        <p className="text-xs text-secondary mt-1">
-	                          Coût par usage : <span className="font-bold text-purple-700 dark:text-purple-300 tabular-nums">{fmt(Number(item.pu))}</span>. Ajustez la quantité si plusieurs usages sont nécessaires.
-	                        </p>
-	                      </div>
-	                    )}
+	                    {isEquipment && equipmentMeta && (
+                      <div className="px-3 pb-3 pt-3 border-t border-purple-200/60 dark:border-purple-500/20 rounded-b-xl bg-purple-500/3 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
+                            <Package className="w-3 h-3" />Amortissement équipement
+                          </p>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-purple-500/10 px-2 py-1 text-[11px] font-semibold text-purple-700 dark:text-purple-300">
+                            <EyeOff className="w-3 h-3 shrink-0" />Interne, absent du PDF client
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+                          <label className="flex flex-col gap-1 text-xs text-secondary sm:col-span-1">
+                            Prix d&apos;achat HT
+                            <div className="relative">
+                              <NumericInput
+                                value={equipmentMeta.purchasePrice}
+                                min={0}
+                                decimals={2}
+                                placeholder="500"
+                                onChange={v => handleEquipmentAmortizationChange(item.id, 'purchasePrice', v)}
+                                className="w-full h-9 px-2 pr-6 bg-base border border-purple-300/50 dark:border-purple-500/30 rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-purple-400"
+                              />
+                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-secondary pointer-events-none text-xs">€</span>
+                            </div>
+                          </label>
+                          <label className="flex flex-col gap-1 text-xs text-secondary sm:col-span-1">
+                            Usages sur la vie
+                            <NumericInput
+                              value={equipmentMeta.lifetimeUses}
+                              min={1}
+                              decimals={0}
+                              placeholder="100"
+                              onChange={v => handleEquipmentAmortizationChange(item.id, 'lifetimeUses', v)}
+                              className="w-full h-9 px-2 bg-base border border-purple-300/50 dark:border-purple-500/30 rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-purple-400"
+                            />
+                          </label>
+                          <div className="flex flex-col gap-1 text-xs text-secondary sm:col-span-1">
+                            Coût final / usage
+                            <div className="h-9 flex items-center justify-end rounded-lg border border-purple-300/50 dark:border-purple-500/30 bg-purple-500/10 px-2">
+                              <span className="font-bold text-purple-700 dark:text-purple-300 tabular-nums text-sm">{fmt(Number(item.pu))}</span>
+                            </div>
+                          </div>
+                          <label className="flex flex-col gap-1 text-xs text-secondary sm:col-span-1">
+                            Usages comptés
+                            <NumericInput
+                              value={item.qty}
+                              min={0}
+                              decimals={2}
+                              onChange={v => updateItem(item.id, 'qty', v ?? 0)}
+                              className="w-full h-9 px-2 bg-base border border-purple-300/50 dark:border-purple-500/30 rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-purple-400"
+                            />
+                          </label>
+                          <div className="flex flex-col gap-1 text-xs text-secondary sm:col-span-1">
+                            Coût interne total
+                            <div className="h-9 flex items-center justify-end rounded-lg border border-purple-300/50 dark:border-purple-500/30 bg-base px-2">
+                              <span className="font-bold text-purple-700 dark:text-purple-300 tabular-nums text-sm">{fmt(Number(item.qty) * Number(item.pu))}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-secondary">
+                          Calcul : prix d&apos;achat ÷ usages sur la vie = coût amorti par usage, puis multiplié par les usages comptés sur cette ligne.
+                        </p>
+                      </div>
+                    )}
 
                     {/* ── Mode dim + dimensions ── */}
                     {isExpanded && canExpand && (

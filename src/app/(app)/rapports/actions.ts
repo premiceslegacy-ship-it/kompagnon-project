@@ -9,6 +9,7 @@ import {
   getHoursReport,
   getTopClients,
   getTopChantiers,
+  getMaintenanceReport,
   getAnnualObjectives,
   getMonthlyObjectives,
 } from '@/lib/data/queries/reporting'
@@ -39,23 +40,25 @@ export async function saveMonthlyObjectivesAction(
 
 export async function fetchMonthlyDataAction(year: number, month: number) {
   const hoursMonth = month
-  const [monthlyReport, hoursReport, topClients, topChantiers, objectives] = await Promise.all([
+  const [monthlyReport, hoursReport, topClients, topChantiers, maintenanceReport, objectives] = await Promise.all([
     getMonthlyReport(year, month),
     getHoursReport(year, hoursMonth),
     getTopClients(year, hoursMonth),
     getTopChantiers(year, hoursMonth),
+    getMaintenanceReport(year, hoursMonth),
     getMonthlyObjectives(year, month),
   ])
-  return { monthlyReport, hoursReport, topClients, topChantiers, objectives }
+  return { monthlyReport, hoursReport, topClients, topChantiers, maintenanceReport, objectives }
 }
 
 export async function fetchAnnualDataAction(year: number) {
-  const [annualReport, hoursReport, topClients, topChantiers, objectives] = await Promise.all([
+  const [annualReport, hoursReport, topClients, topChantiers, maintenanceReport, objectives] = await Promise.all([
     getAnnualReport(year),
     getHoursReport(year),
     getTopClients(year),
     getTopChantiers(year),
+    getMaintenanceReport(year),
     getAnnualObjectives(year),
   ])
-  return { annualReport, hoursReport, topClients, topChantiers, objectives }
+  return { annualReport, hoursReport, topClients, topChantiers, maintenanceReport, objectives }
 }

@@ -30,14 +30,30 @@ function clientDisplayName(client: Client): string {
   return client.company_name || [client.first_name, client.last_name].filter(Boolean).join(' ') || client.email || ''
 }
 
-function ItemDescription({ value, dimDetail, S }: { value: string | null | undefined; dimDetail?: string | null; S: ReturnType<typeof makePageStyles> }) {
-  const parts = splitItemDescription(value)
+function ItemDescription({
+  designation,
+  details,
+  value,
+  dimDetail,
+  S,
+}: {
+  designation?: string | null
+  details?: string | null
+  value: string | null | undefined
+  dimDetail?: string | null
+  S: ReturnType<typeof makePageStyles>
+}) {
+  const legacyParts = splitItemDescription(value)
+  const title = pdfText(designation?.trim() || legacyParts.title)
+  const detailLines = details?.trim()
+    ? details.split('\n').map(line => pdfText(line.replace(/^\s*[-•]\s*/, '').trim())).filter(Boolean)
+    : legacyParts.details
 
   return (
     <View style={S.colDesc}>
-      <Text style={S.itemText}>{parts.title}</Text>
-      {parts.details.length > 0 && (
-        <Text style={S.itemDetailText}>Comprend : {parts.details.join(' · ')}</Text>
+      <Text style={S.itemText}>{title}</Text>
+      {detailLines.length > 0 && (
+        <Text style={S.itemDetailText}>Comprend : {detailLines.join(' · ')}</Text>
       )}
       {dimDetail && (
         <Text style={S.itemDetailText}>{dimDetail}</Text>
@@ -258,7 +274,7 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
             )}
             {section.items.map(item => (
               <View key={item.id} style={S.itemRow} wrap={false}>
-                <ItemDescription value={item.description} dimDetail={formatDimDetail(item)} S={S} />
+                <ItemDescription designation={item.designation} details={item.details} value={item.description} dimDetail={formatDimDetail(item)} S={S} />
                 <Text style={[S.itemTextRight, S.colQty]}>{item.quantity}</Text>
                 <Text style={[S.itemText, S.colUnit, { textAlign: 'center' }]}>{item.unit ?? ''}</Text>
                 <Text style={[S.itemTextRight, S.colPu]}>{fmt(item.unit_price, quote.currency)}</Text>
@@ -271,7 +287,7 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
 
         {visibleUnsectioned.map(item => (
           <View key={item.id} style={S.itemRow} wrap={false}>
-            <ItemDescription value={item.description} dimDetail={formatDimDetail(item)} S={S} />
+            <ItemDescription designation={item.designation} details={item.details} value={item.description} dimDetail={formatDimDetail(item)} S={S} />
             <Text style={[S.itemTextRight, S.colQty]}>{item.quantity}</Text>
             <Text style={[S.itemText, S.colUnit, { textAlign: 'center' }]}>{item.unit ?? ''}</Text>
             <Text style={[S.itemTextRight, S.colPu]}>{fmt(item.unit_price, quote.currency)}</Text>

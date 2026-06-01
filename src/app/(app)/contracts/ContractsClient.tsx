@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Archive, CheckCircle, ChevronLeft, ChevronRight, CopyPlus, Download, Edit3, FileText, LayoutTemplate, Plus, RefreshCw, Save, Search, Send, ShieldAlert, Trash2, X } from 'lucide-react'
+import { ActionButton as SubmitActionButton } from '@/components/ui/ActionButton'
 import type { Chantier } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
 import type { ContractListItem, ContractTemplateOption } from '@/lib/data/queries/contracts'
@@ -452,10 +453,10 @@ function ContractFormModal({ mode, contract, clients, chantiers, templates, quot
 
         <div className="mt-6 flex justify-end gap-3">
           <button type="button" onClick={onClose} className="btn-secondary">Annuler</button>
-          <button type="submit" disabled={loading || !form.templateKey} className="btn-primary inline-flex items-center gap-2">
+          <SubmitActionButton type="submit" loading={loading} disabled={!form.templateKey} className="btn-primary inline-flex items-center gap-2">
             {mode === 'edit' ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-            {loading ? 'Enregistrement...' : mode === 'edit' ? 'Enregistrer' : 'Créer le brouillon'}
-          </button>
+            {mode === 'edit' ? 'Enregistrer' : 'Créer le brouillon'}
+          </SubmitActionButton>
         </div>
       </form>
     </div>
@@ -678,10 +679,10 @@ function TemplateModal({ templates, canDelete, onClose, onSaved }: {
 
             <div className="mt-6 flex justify-end gap-3">
               <button type="button" onClick={onClose} className="btn-secondary">Annuler</button>
-              <button type="submit" disabled={loading} className="btn-primary inline-flex items-center gap-2">
+              <SubmitActionButton type="submit" loading={loading} className="btn-primary inline-flex items-center gap-2">
                 <Save className="w-4 h-4" />
-                {loading ? 'Création...' : 'Créer le template'}
-              </button>
+                Créer le template
+              </SubmitActionButton>
             </div>
           </form>
         )}

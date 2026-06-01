@@ -6,6 +6,7 @@ import {
   getMemberPlannings,
   getMemberTasks,
 } from '@/lib/data/queries/members'
+import { getMemberGoalsWithProgressAdmin } from '@/lib/data/queries/member-goals'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { computeMemberIcalToken } from '@/lib/auth/member-ical-token'
 import MonEspaceDashboardClient from './MonEspaceDashboardClient'
@@ -26,12 +27,26 @@ export default async function MonEspaceDashboardPage() {
   const today = now.toISOString().slice(0, 10)
   const in3Weeks = new Date(now.getTime() + 21 * 86_400_000).toISOString().slice(0, 10)
 
-  const [pointages, plannings, tasks, orgRow, icalToken] = await Promise.all([
+  const [pointages, plannings, tasks, orgRow, icalToken, memberGoals, interventionsRows] = await Promise.all([
     getMemberPointages(session.memberId, { dateFrom: monthStart, dateTo: monthEnd, useAdmin: true }),
     getMemberPlannings(session.memberId, { dateFrom: today, dateTo: in3Weeks, useAdmin: true }),
     getMemberTasks(session.memberId, { useAdmin: true }),
     createAdminClient().from('organizations').select('name').eq('id', member.organization_id).single(),
     computeMemberIcalToken(session.memberId),
+    getMemberGoalsWithProgressAdmin({
+      memberId: session.memberId,
+      organizationId: member.organization_id,
+      year: now.getFullYear(),
+      month: now.getMonth() + 1,
+    }),
+    createAdminClient()
+      .from('maintenance_interventions')
+      .select('id, date_intervention, statut, start_time, end_time, duration_hours, rapport, observations, contract:maintenance_contracts(id, title, frequence)')
+      .or(`intervenant_member_id.eq.${session.memberId},intervenant_id.eq.${session.memberId}`)
+      .eq('organization_id', member.organization_id)
+      .gte('date_intervention', today)
+      .lte('date_intervention', in3Weeks)
+      .order('date_intervention', { ascending: true }),
   ])
 
   // Liste des chantiers ouverts pour le formulaire de pointage
@@ -45,6 +60,18 @@ export default async function MonEspaceDashboardPage() {
   const chantiers = (chantiersRows ?? []).map(c => ({ id: c.id, title: c.title }))
   const icalUrl = `/api/planning/ical-member?memberId=${session.memberId}&token=${icalToken}`
 
+  const upcomingInterventions = (interventionsRows.data ?? []).map((iv: any) => ({
+    id: iv.id as string,
+    date_intervention: iv.date_intervention as string,
+    statut: iv.statut as string,
+    start_time: iv.start_time as string | null,
+    end_time: iv.end_time as string | null,
+    duration_hours: iv.duration_hours as number | null,
+    rapport: iv.rapport as string | null,
+    observations: iv.observations as string | null,
+    contract: Array.isArray(iv.contract) ? iv.contract[0] : iv.contract as { id: string; title: string; frequence: string } | null,
+  }))
+
   return (
     <MonEspaceDashboardClient
       member={member}
@@ -56,6 +83,8 @@ export default async function MonEspaceDashboardPage() {
       monthStart={monthStart}
       monthEnd={monthEnd}
       icalUrl={icalUrl}
+      memberGoals={memberGoals}
+      upcomingInterventions={upcomingInterventions}
     />
   )
 }

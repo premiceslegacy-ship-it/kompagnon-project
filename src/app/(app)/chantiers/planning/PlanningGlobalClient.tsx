@@ -17,6 +17,7 @@ import {
   Check,
   X,
   Clock,
+  Wrench,
 } from 'lucide-react'
 import type { GlobalPlanning, Chantier, Equipe } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
@@ -390,6 +391,10 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   }
 
   async function handleDeletePlanning(planning: GlobalPlanning) {
+    if (planning.source === 'maintenance') {
+      router.push('/chantiers/entretien')
+      return
+    }
     if (!confirm(`Supprimer le créneau "${planning.label}" du ${planning.planned_date} ?`)) return
     setPlannings(prev => prev.filter(p => p.id !== planning.id))
     const { error } = await deletePlanningSlot(planning.id)
@@ -419,11 +424,10 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
     () =>
       plannings.filter(p => {
         if (filterChantier !== 'tous' && p.chantier_id !== filterChantier) return false
-        const chantier = chantiers.find(c => c.id === p.chantier_id)
-        if (filterStatus !== 'tous' && chantier?.status !== filterStatus) return false
+        if (filterStatus !== 'tous' && p.chantier_status !== filterStatus) return false
         return true
       }),
-    [plannings, filterChantier, filterStatus, chantiers]
+    [plannings, filterChantier, filterStatus]
   )
 
   const weekPlannings = useMemo(
@@ -585,7 +589,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
       {/* ── Stats ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
-          label="Chantiers actifs cette semaine"
+          label="Sites actifs cette semaine"
           value={weekStats.chantiersActifs}
         />
         <StatCard
@@ -767,7 +771,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
       {/* ── Contenu principal ── */}
       {effectiveView === 'tournee' ? (
         <TourneeView
-          dayPlannings={filteredPlannings.filter(p => p.planned_date === getLocalDateStr(selectedDate))}
+          dayPlannings={filteredPlannings.filter(p => p.planned_date === getLocalDateStr(selectedDate) && p.source === 'chantier')}
           chantiers={chantiers}
           equipes={equipes}
           individualMembers={individualMembers}
@@ -780,7 +784,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
           onPlanningsChange={(updated) => {
             const dateStr = getLocalDateStr(selectedDate)
             setPlannings(prev => [
-              ...prev.filter(p => p.planned_date !== dateStr),
+              ...prev.filter(p => p.planned_date !== dateStr || p.source === 'maintenance'),
               ...updated,
             ])
           }}
@@ -1447,7 +1451,15 @@ function SemaineView({
                         hasOverlap ? 'ring-1 ring-white/70 dark:ring-black/40' : ''
                       }`}
                     >
-                      {onDeletePlanning && (
+                      {p.source === 'maintenance' ? (
+                        <a
+                          href="/chantiers/entretien"
+                          className="absolute top-1 right-1 rounded bg-white/80 p-0.5 opacity-0 transition-opacity hover:text-accent group-hover/slot:opacity-100 dark:bg-black/50"
+                          title="Ouvrir l'entretien"
+                        >
+                          <Wrench className="w-2.5 h-2.5" />
+                        </a>
+                      ) : onDeletePlanning && (
                         <button
                           onClick={() => onDeletePlanning(p)}
                           className="absolute top-1 right-1 rounded bg-white/80 p-0.5 text-red-500 opacity-0 transition-opacity hover:text-red-600 group-hover/slot:opacity-100 dark:bg-black/50"
@@ -1465,6 +1477,12 @@ function SemaineView({
                       <p className={`text-[9px] leading-tight truncate ${col.text} opacity-75`}>
                         {p.label}
                       </p>
+                      {p.source === 'maintenance' && heightPx > 44 && (
+                        <p className={`mt-0.5 flex items-center gap-0.5 text-[9px] font-semibold leading-tight ${col.text}`}>
+                          <Wrench className="w-2.5 h-2.5" />
+                          Entretien
+                        </p>
+                      )}
                       {heightPx > 52 && (
                         <div className={`text-[9px] leading-tight ${col.text} flex flex-col mt-1 overflow-hidden gap-0.5`}>
                           {p.end_time && (
@@ -1500,7 +1518,15 @@ function SemaineView({
                           <p className={`text-[9px] font-semibold truncate ${col.text}`}>
                             {p.chantier_title}
                           </p>
-                          {onDeletePlanning && (
+                          {p.source === 'maintenance' ? (
+                            <a
+                              href="/chantiers/entretien"
+                              className="ml-auto text-secondary transition-colors hover:text-accent"
+                              title="Ouvrir l'entretien"
+                            >
+                              <Wrench className="w-2.5 h-2.5" />
+                            </a>
+                          ) : onDeletePlanning && (
                             <button
                               onClick={() => onDeletePlanning(p)}
                               className="ml-auto text-red-500 opacity-0 transition-opacity hover:text-red-600 group-hover/slot:opacity-100"
@@ -1616,6 +1642,12 @@ function ListeView({ days, todayStr, byDay, onDeletePlanning }: ListeViewProps) 
                         {p.chantier_title}
                       </p>
                       <p className="text-xs text-secondary truncate">{p.label}</p>
+                      {p.source === 'maintenance' && (
+                        <span className="mt-1 inline-flex w-fit items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent">
+                          <Wrench className="w-3 h-3" />
+                          Entretien
+                        </span>
+                      )}
                     </div>
 
                     {/* Méta */}
@@ -1630,7 +1662,15 @@ function ListeView({ days, todayStr, byDay, onDeletePlanning }: ListeViewProps) 
                           {p.chantier_city}
                         </span>
                       )}
-                      {onDeletePlanning && (
+                      {p.source === 'maintenance' ? (
+                        <a
+                          href="/chantiers/entretien"
+                          className="rounded-lg p-1 text-secondary transition-colors hover:bg-accent/10 hover:text-accent"
+                          title="Ouvrir l'entretien"
+                        >
+                          <Wrench className="w-4 h-4" />
+                        </a>
+                      ) : onDeletePlanning && (
                         <button
                           onClick={() => onDeletePlanning(p)}
                           className="rounded-lg p-1 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"

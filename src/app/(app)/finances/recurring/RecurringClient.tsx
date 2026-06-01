@@ -1,8 +1,8 @@
 'use client'
 
-import React, { useState, useTransition, useEffect } from 'react'
+import React, { useState, useTransition, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeft, Plus, Repeat, Pause, Play, Trash2, ChevronRight,
   Clock, AlertCircle, Check, Loader2, X, Search, EyeOff, Truck,
@@ -15,7 +15,7 @@ import { buildMaterialSelectionPricing } from '@/lib/catalog-pricing'
 import { frequencyLabel } from '@/lib/data/recurring-utils'
 import {
   createRecurringInvoice, toggleRecurringActive,
-  cancelRecurringInvoice, skipSchedule,
+  cancelRecurringInvoice, skipSchedule, prepareNextRecurringDraft,
 } from '@/lib/data/mutations/recurring'
 import { createClientInline } from '@/lib/data/mutations/clients'
 import { getClientDisplayName } from '@/lib/client'
@@ -29,6 +29,16 @@ const fmt = (n: number) =>
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })
+
+function isReadyToPrepare(inv: RecurringInvoice) {
+  if (!inv.is_active) return false
+  const nextDate = new Date(`${inv.next_send_date}T00:00:00`)
+  const triggerDate = new Date(nextDate)
+  triggerDate.setDate(triggerDate.getDate() - (inv.requires_confirmation ? inv.confirmation_delay_days ?? 3 : 0))
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return today >= triggerDate
+}
 
 function clientDisplayName(c: Client): string {
   return getClientDisplayName(c)
@@ -80,6 +90,9 @@ export default function RecurringClient({
   vatConfig,
 }: Props) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const highlightId = searchParams.get('highlight')
+  const highlightRef = useRef<HTMLDivElement>(null)
   const [, startTransition] = useTransition()
   const defaultVatRate = getCatalogDocumentVatRate(vatConfig)
 
@@ -91,6 +104,7 @@ export default function RecurringClient({
   const [showCatalog, setShowCatalog] = useState(false)
   const [catalogSearch, setCatalogSearch] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
+  const [pageError, setPageError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
 
@@ -99,6 +113,12 @@ export default function RecurringClient({
     setSchedules(initialSchedules)
     setIsRefreshing(false)
   }, [initial, initialSchedules])
+
+  useEffect(() => {
+    if (highlightId && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [highlightId, invoices.length])
 
   // ── Inline client creation ─────────────────────────────────────────────────
   const [newClientOpen, setNewClientOpen] = useState(false)
@@ -348,6 +368,21 @@ export default function RecurringClient({
     })
   }
 
+  function handlePrepareDraft(inv: RecurringInvoice) {
+    setLoadingId(`prepare-${inv.id}`)
+    setPageError(null)
+    startTransition(async () => {
+      const res = await prepareNextRecurringDraft(inv.id)
+      setLoadingId(null)
+      if (res.error) { setPageError(res.error); return }
+      if (res.invoiceId) {
+        router.push(`/finances/invoice-editor?id=${res.invoiceId}&returnTo=${encodeURIComponent('/finances/recurring')}`)
+        return
+      }
+      router.refresh()
+    })
+  }
+
   function handleSkip(scheduleId: string) {
     setLoadingId(`skip-${scheduleId}`)
     startTransition(async () => {
@@ -389,10 +424,17 @@ export default function RecurringClient({
         </button>
       </div>
 
+      {pageError && (
+        <div className="p-4 rounded-2xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-600 text-sm flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          {pageError}
+        </div>
+      )}
+
       {/* ── À confirmer ── */}
       {schedules.length > 0 && (
-        <div className={`${cardCls} p-8`}>
-          <div className="flex items-center gap-3 mb-6">
+        <div className={`${cardCls} p-4 sm:p-8`}>
+          <div className="flex items-center gap-3 mb-4 sm:mb-6">
             <AlertCircle className="w-5 h-5 text-amber-500" />
             <h2 className="text-lg font-bold text-primary">
               À confirmer avant envoi
@@ -403,24 +445,26 @@ export default function RecurringClient({
           </div>
           <div className="flex flex-col gap-3">
             {schedules.map(s => (
-              <div key={s.id} className="flex items-center justify-between p-4 rounded-2xl bg-amber-50 dark:bg-amber-500/5 border border-amber-200 dark:border-amber-500/20">
+              <div key={s.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-2xl bg-amber-50 dark:bg-amber-500/5 border border-amber-200 dark:border-amber-500/20">
                 <div className="min-w-0">
-                  <p className="font-semibold text-primary truncate">{s.recurring_invoice?.title ?? '-'}</p>
-                  <p className="text-sm text-secondary mt-0.5">
+                  <p className="font-semibold text-primary truncate" title={s.recurring_invoice?.title ?? '-'}>{s.recurring_invoice?.title ?? '-'}</p>
+                  <p className="text-sm text-secondary mt-0.5 truncate" title={s.recurring_invoice?.client?.company_name || [s.recurring_invoice?.client?.first_name, s.recurring_invoice?.client?.last_name].filter(Boolean).join(' ') || '-'}>
                     {s.recurring_invoice?.client?.company_name
                       || [s.recurring_invoice?.client?.first_name, s.recurring_invoice?.client?.last_name].filter(Boolean).join(' ')
                       || '-'}
-                    {s.scheduled_date ? ` · Envoi prévu le ${fmtDate(s.scheduled_date)}` : ''}
+                  </p>
+                  <p className="text-xs text-secondary/80 mt-1 truncate">
+                    {s.scheduled_date ? `Envoi prévu le ${fmtDate(s.scheduled_date)}` : 'Date non définie'}
                     {s.amount_ht != null ? ` · ${fmt(s.amount_ht)} HT` : ''}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 ml-4 shrink-0">
+                <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:ml-4 shrink-0">
                   {s.invoice_id && (
                     <Link
                       href={`/finances/invoice-editor?id=${s.invoice_id}&returnTo=${encodeURIComponent('/finances/recurring')}`}
-                      className="px-4 py-2 rounded-full bg-accent text-black font-bold text-sm flex items-center gap-1.5 hover:scale-105 transition-all"
+                      className="px-4 py-2 rounded-full bg-accent text-black font-bold text-sm flex items-center gap-1.5 hover:scale-105 transition-all min-w-0"
                     >
-                      Vérifier & Envoyer
+                      <span className="truncate">Vérifier & Envoyer</span>
                       <ChevronRight className="w-3.5 h-3.5" />
                     </Link>
                   )}
@@ -440,7 +484,7 @@ export default function RecurringClient({
       )}
 
       {/* ── Liste des modèles ── */}
-      <div className={`${cardCls} p-8`}>
+      <div className={`${cardCls} p-4 sm:p-8`}>
         <h2 className="text-lg font-bold text-primary mb-6">Modèles actifs</h2>
         {isRefreshing ? (
           <div className="flex flex-col gap-3 animate-pulse">
@@ -458,32 +502,46 @@ export default function RecurringClient({
           <div className="flex flex-col gap-3">
             {invoices.map(inv => {
               const totalHtInv = (inv.items ?? []).reduce((s, i) => s + i.quantity * i.unit_price, 0)
+              const isHighlighted = highlightId === inv.id
+              const clientName = inv.client?.company_name || [inv.client?.first_name, inv.client?.last_name].filter(Boolean).join(' ') || '-'
               return (
                 <div
                   key={inv.id}
-                  className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${
+                  ref={isHighlighted ? highlightRef : undefined}
+                  className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-2xl border transition-all ${
+                    isHighlighted ? 'ring-2 ring-accent border-accent bg-accent/5' :
                     inv.is_active ? 'bg-surface dark:bg-white/[0.03] border-[var(--elevation-border)]' : 'bg-base/30 border-[var(--elevation-border)] opacity-60'
                   }`}
                 >
-                  <div className="flex items-center gap-4 min-w-0">
+                  <div className="flex items-start sm:items-center gap-3 sm:gap-4 min-w-0">
                     <div className={`w-2 h-2 rounded-full flex-shrink-0 ${inv.is_active ? 'bg-accent-green' : 'bg-secondary/30'}`} />
                     <div className="min-w-0">
-                      <p className="font-semibold text-primary truncate">{inv.title}</p>
-                      <p className="text-sm text-secondary mt-0.5">
-                        {inv.client?.company_name || [inv.client?.first_name, inv.client?.last_name].filter(Boolean).join(' ') || '-'}
-                        {' · '}{frequencyLabel(inv.frequency)}
-                        {inv.frequency === 'monthly' && inv.send_day ? ` (le ${inv.send_day})` : ''}
-                        {inv.frequency === 'custom' && inv.custom_interval_days ? ` (${inv.custom_interval_days}j)` : ''}
+                      <p className="font-semibold text-primary truncate" title={inv.title}>{inv.title}</p>
+                      <p className="text-sm text-secondary mt-0.5 truncate" title={clientName}>{clientName}</p>
+                      <p className="text-xs text-secondary/80 mt-1 truncate">
+                        {frequencyLabel(inv.frequency)}
+                        {inv.frequency === 'monthly' && inv.send_day ? ` · le ${inv.send_day}` : ''}
+                        {inv.frequency === 'custom' && inv.custom_interval_days ? ` · ${inv.custom_interval_days}j` : ''}
                         {totalHtInv > 0 ? ` · ${fmt(totalHtInv)} HT` : ''}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 ml-4 shrink-0">
+                  <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-3 sm:ml-4 shrink-0">
                     {inv.is_active && (
-                      <div className="flex items-center gap-1.5 text-xs text-secondary">
+                      <div className="flex items-center gap-1.5 text-xs text-secondary min-w-0">
                         <Clock className="w-3.5 h-3.5" />
-                        <span>{fmtDate(inv.next_send_date)}</span>
+                        <span className="truncate">{fmtDate(inv.next_send_date)}</span>
                       </div>
+                    )}
+                    {isReadyToPrepare(inv) && (
+                      <button
+                        onClick={() => handlePrepareDraft(inv)}
+                        disabled={!!loadingId}
+                        className="px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs font-bold flex items-center gap-1.5 hover:bg-amber-500/15 transition-colors disabled:opacity-50 whitespace-nowrap"
+                      >
+                        {loadingId === `prepare-${inv.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                        Préparer la facture
+                      </button>
                     )}
                     <button onClick={() => handleToggle(inv)} disabled={!!loadingId} title={inv.is_active ? 'Mettre en pause' : 'Reprendre'} className="p-1.5 text-secondary hover:text-primary transition-colors disabled:opacity-50 rounded-lg hover:bg-black/5 dark:hover:bg-white/5">
                       {loadingId === `toggle-${inv.id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : inv.is_active ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}

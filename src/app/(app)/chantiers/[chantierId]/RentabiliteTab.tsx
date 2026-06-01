@@ -69,15 +69,15 @@ function catIcon(v: ChantierExpense['category']) {
 
 function recalc(prev: ChantierProfitability, newLaborByMember?: LaborByMemberEntry[]): ChantierProfitability {
   const members = newLaborByMember ?? prev.laborByMember
-  const { expenses, collectedRevenueHt } = prev
+  const { expenses, revenueHt } = prev
   const costMaterial    = expenses.filter(e => e.category === 'materiel').reduce((s, e) => s + e.amount_ht, 0)
   const costSubcontract = expenses.filter(e => e.category === 'sous_traitance').reduce((s, e) => s + e.amount_ht, 0)
   const costOther       = expenses.filter(e => ['location','transport','autre'].includes(e.category)).reduce((s, e) => s + e.amount_ht, 0)
   const costLabor       = members.reduce((s, e) => s + e.cost, 0)
   const hoursLogged     = members.reduce((s, e) => s + e.hours, 0)
   const costTotal       = costMaterial + costLabor + costSubcontract + costOther
-  const marginEur       = collectedRevenueHt - costTotal
-  const marginPct       = collectedRevenueHt > 0 ? marginEur / collectedRevenueHt : 0
+  const marginEur       = revenueHt - costTotal
+  const marginPct       = revenueHt > 0 ? marginEur / revenueHt : 0
   return { ...prev, laborByMember: members, costMaterial, costSubcontract, costOther, costLabor, hoursLogged, costTotal, marginEur, marginPct }
 }
 
@@ -996,9 +996,9 @@ export default function RentabiliteTab({
         </div>
         <KpiCard label="Coût total HT" value={fmtMoney(costTotal)} sub={hoursLogged > 0 ? `${fmtHours(hoursLogged)} main-d'œuvre` : undefined} />
         <div className="card p-4">
-          <p className="text-xs text-secondary font-semibold uppercase tracking-wider mb-1">Marge encaissée</p>
+          <p className="text-xs text-secondary font-semibold uppercase tracking-wider mb-1">Marge facturée</p>
           <p className="text-xl font-bold">
-            {collectedRevenueHt > 0 ? <MarginBadge pct={marginPct} /> : <span className="text-secondary">–</span>}
+            {revenueHt > 0 ? <MarginBadge pct={marginPct} /> : <span className="text-secondary">–</span>}
           </p>
           <p className="text-xs text-secondary mt-0.5">{fmtMoney(marginEur)}</p>
         </div>
@@ -1020,7 +1020,7 @@ export default function RentabiliteTab({
                   <th className="text-right font-semibold px-4 py-2">Facturé HT</th>
                   <th className="text-right font-semibold px-4 py-2">Encaissé HT</th>
                   <th className="text-right font-semibold px-4 py-2">Coûts HT</th>
-                  <th className="text-right font-semibold px-4 py-2">Marge encaissée</th>
+                  <th className="text-right font-semibold px-4 py-2">Marge facturée</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
@@ -1035,7 +1035,7 @@ export default function RentabiliteTab({
                     </td>
                     <td className={`px-4 py-3 text-right tabular-nums font-semibold ${period.marginEur >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                       {fmtMoney(period.marginEur)}
-                      {period.collectedRevenueHt > 0 && <span className="block text-xs text-secondary">{fmtPct(period.marginPct)}</span>}
+                      {period.revenueHt > 0 && <span className="block text-xs text-secondary">{fmtPct(period.marginPct)}</span>}
                     </td>
                   </tr>
                 ))}

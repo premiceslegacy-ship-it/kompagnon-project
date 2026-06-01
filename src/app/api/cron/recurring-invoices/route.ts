@@ -140,6 +140,36 @@ export async function POST(req: NextRequest) {
         .update({ next_send_date: dateParis(nextDate.getTime()) })
         .eq('id', model.id)
 
+      // Lier la facture à l'intervention planifiée du contrat d'entretien associé
+      const { data: linkedContract } = await admin
+        .from('maintenance_contracts')
+        .select('id, chantier_id')
+        .eq('recurring_invoice_id', model.id)
+        .single()
+      if (linkedContract) {
+        if (linkedContract.chantier_id) {
+          await admin
+            .from('invoices')
+            .update({ chantier_id: linkedContract.chantier_id, generation_source: 'maintenance_recurring' })
+            .eq('id', invoiceRow.id)
+        }
+        const { data: nextIntervention } = await admin
+          .from('maintenance_interventions')
+          .select('id')
+          .eq('maintenance_contract_id', linkedContract.id)
+          .eq('statut', 'planifiée')
+          .is('invoice_id', null)
+          .order('date_intervention', { ascending: true })
+          .limit(1)
+          .single()
+        if (nextIntervention) {
+          await admin
+            .from('maintenance_interventions')
+            .update({ invoice_id: invoiceRow.id })
+            .eq('id', nextIntervention.id)
+        }
+      }
+
       // Notifier l'artisan si confirmation requise
       if (model.requires_confirmation) {
         await notifyArtisan(admin, model.organization_id, {

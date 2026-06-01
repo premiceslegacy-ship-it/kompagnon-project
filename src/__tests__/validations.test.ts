@@ -222,6 +222,24 @@ describe('UpsertQuoteItemSchema', () => {
     const result = UpsertQuoteItemSchema.safeParse({ ...validItem, type: 'unknown' })
     expect(result.success).toBe(false)
   })
+
+  it('accepts structured AI quote item metadata', () => {
+    const result = UpsertQuoteItemSchema.safeParse({
+      ...validItem,
+      designation: 'Pose de carrelage mural',
+      details: 'Comprend préparation du support, colle, joints et nettoyage.',
+      description: 'Pose de carrelage mural\n\nComprend :\nPréparation du support, colle, joints et nettoyage.',
+      ai_confidence: 0.82,
+      ai_source: 'catalog',
+      ai_warnings: ['Quantité à confirmer sur site'],
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects invalid AI confidence and source', () => {
+    expect(UpsertQuoteItemSchema.safeParse({ ...validItem, ai_confidence: 1.5 }).success).toBe(false)
+    expect(UpsertQuoteItemSchema.safeParse({ ...validItem, ai_source: 'random' }).success).toBe(false)
+  })
 })
 
 // ─── Organization formatters and validators ──────────────────────────────────

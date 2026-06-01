@@ -15,6 +15,7 @@ export type MyTask = {
 
 export type MyPlanningSlot = {
   id: string
+  source?: 'chantier' | 'maintenance'
   chantier_id: string
   chantier_title: string
   chantier_address: string | null
@@ -126,6 +127,7 @@ export const getCollaborateurDashboard = cache(async (userId: string): Promise<C
     { data: oldAssignedTasks },
     { data: assignedTasks },
     { data: planningByMember },
+    { data: maintenanceToday },
     { data: pointagesByMember },
     { data: pointagesByUser },
   ] = await Promise.all([
@@ -146,6 +148,22 @@ export const getCollaborateurDashboard = cache(async (userId: string): Promise<C
           .eq('member_id', memberId)
           .order('start_time', { ascending: true })
       : Promise.resolve({ data: [] as any[] }),
+
+    supabase
+      .from('maintenance_interventions')
+      .select(`
+        id, date_intervention, start_time, end_time, duration_hours, rapport,
+        contract:maintenance_contracts!inner(title, chantier_id, organization_id)
+      `)
+      .eq('contract.organization_id', orgId)
+      .eq('date_intervention', today)
+      .eq('statut', 'planifiée')
+      .or([
+        `intervenant_user_id.eq.${userId}`,
+        memberId ? `intervenant_member_id.eq.${memberId}` : null,
+        memberId ? `intervenant_id.eq.${memberId}` : null,
+      ].filter(Boolean).join(','))
+      .order('start_time', { ascending: true, nullsFirst: false }),
 
     // Pointages via profil terrain (member_id) — pour membres avec fiche intervenant
     memberId
@@ -184,6 +202,7 @@ export const getCollaborateurDashboard = cache(async (userId: string): Promise<C
     const parts = [c?.address_line1, c?.city].filter(Boolean)
     return {
       id: p.id,
+      source: 'chantier' as const,
       chantier_id: p.chantier_id,
       chantier_title: c?.title ?? '',
       chantier_address: parts.length ? parts.join(', ') : null,
@@ -193,6 +212,23 @@ export const getCollaborateurDashboard = cache(async (userId: string): Promise<C
       notes: p.notes ?? null,
     }
   })
+
+  todayPlanning.push(...(maintenanceToday ?? []).map((iv: any) => {
+    const contract = Array.isArray(iv.contract) ? iv.contract[0] : iv.contract
+    return {
+      id: `maintenance:${iv.id}`,
+      source: 'maintenance' as const,
+      chantier_id: contract?.chantier_id ?? '',
+      chantier_title: contract?.title ? `Entretien - ${contract.title}` : 'Entretien',
+      chantier_address: null,
+      start_time: iv.start_time ?? null,
+      end_time: iv.end_time ?? null,
+      label: 'Intervention entretien',
+      notes: iv.rapport ?? null,
+    }
+  }))
+
+  todayPlanning.sort((a, b) => (a.start_time ?? '99:99').localeCompare(b.start_time ?? '99:99'))
 
   // Fusionne pointages terrain + pointages compte app (déduplique par date+hours si besoin)
   const allPointages = [
@@ -218,22 +254,39 @@ export const getTodayPlanningDigest = cache(async (): Promise<MyPlanningSlot[]> 
 
   const today = todayParis()
 
-  const { data } = await supabase
-    .from('chantier_plannings')
-    .select(`
-      id, chantier_id, start_time, end_time, label, notes,
-      chantier:chantiers!inner(title, organization_id, address_line1, city)
-    `)
-    .eq('chantiers.organization_id', orgId)
-    .eq('planned_date', today)
-    .order('start_time', { ascending: true, nullsFirst: false })
-    .limit(20)
+  const [{ data }, { data: maintenanceToday }] = await Promise.all([
+    supabase
+      .from('chantier_plannings')
+      .select(`
+        id, chantier_id, start_time, end_time, label, notes,
+        chantier:chantiers!inner(title, organization_id, address_line1, city)
+      `)
+      .eq('chantiers.organization_id', orgId)
+      .eq('planned_date', today)
+      .order('start_time', { ascending: true, nullsFirst: false })
+      .limit(20),
+    supabase
+      .from('maintenance_interventions')
+      .select(`
+        id, start_time, end_time, rapport, observations,
+        contract:maintenance_contracts!inner(
+          title, chantier_id, organization_id, site_address_line1, site_city,
+          chantier:chantiers!maintenance_contracts_chantier_id_fkey(address_line1, city)
+        )
+      `)
+      .eq('organization_id', orgId)
+      .eq('date_intervention', today)
+      .in('statut', ['planifiée', 'réalisée'])
+      .order('start_time', { ascending: true, nullsFirst: false })
+      .limit(20),
+  ])
 
-  return (data ?? []).map((p: any) => {
+  const chantierSlots = (data ?? []).map((p: any) => {
     const c = p.chantier
     const parts = [c?.address_line1, c?.city].filter(Boolean)
     return {
       id: p.id,
+      source: 'chantier' as const,
       chantier_id: p.chantier_id,
       chantier_title: c?.title ?? '',
       chantier_address: parts.length ? parts.join(', ') : null,
@@ -243,4 +296,27 @@ export const getTodayPlanningDigest = cache(async (): Promise<MyPlanningSlot[]> 
       notes: p.notes ?? null,
     }
   })
+
+  const maintenanceSlots = (maintenanceToday ?? []).map((iv: any) => {
+    const contract = Array.isArray(iv.contract) ? iv.contract[0] : iv.contract
+    const chantier = Array.isArray(contract?.chantier) ? contract.chantier[0] : contract?.chantier
+    const parts = [
+      chantier?.address_line1 ?? contract?.site_address_line1,
+      chantier?.city ?? contract?.site_city,
+    ].filter(Boolean)
+    return {
+      id: `maintenance:${iv.id}`,
+      source: 'maintenance' as const,
+      chantier_id: contract?.chantier_id ?? '',
+      chantier_title: contract?.title ? `Entretien - ${contract.title}` : 'Entretien',
+      chantier_address: parts.length ? parts.join(', ') : null,
+      start_time: iv.start_time ? String(iv.start_time).slice(0, 5) : null,
+      end_time: iv.end_time ? String(iv.end_time).slice(0, 5) : null,
+      label: 'Intervention entretien',
+      notes: iv.rapport ?? iv.observations ?? null,
+    }
+  })
+
+  return [...chantierSlots, ...maintenanceSlots]
+    .sort((a, b) => (a.start_time ?? '99:99').localeCompare(b.start_time ?? '99:99'))
 })

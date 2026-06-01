@@ -1,9 +1,9 @@
 import { Footer } from '@/components/layout/Footer';
 import NextTopLoader from 'nextjs-toploader';
 import { getCurrentUserProfile } from '@/lib/data/queries/user';
-import { getOrganization } from '@/lib/data/queries/organization';
+import { getOrganizationShell } from '@/lib/data/queries/organization';
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules';
-import { getUserPermissions } from '@/lib/data/queries/membership';
+import { getCurrentMembershipContext, getUserPermissions } from '@/lib/data/queries/membership';
 import { AppShell } from '@/components/layout/AppShell';
 
 export default async function AppLayout({
@@ -11,11 +11,12 @@ export default async function AppLayout({
 }: {
     children: React.ReactNode;
 }) {
-    const [profile, org, modules, permissions] = await Promise.all([
+    const [profile, org, modules, permissions, membership] = await Promise.all([
         getCurrentUserProfile(),
-        getOrganization(),
+        getOrganizationShell(),
         getOrganizationModules(),
         getUserPermissions(),
+        getCurrentMembershipContext(),
     ]);
 
     return (
@@ -32,6 +33,7 @@ export default async function AppLayout({
                     logoUrl={org?.logo_url ?? null}
                     modules={modules}
                     permissionKeys={[...permissions]}
+                    currentRoleSlug={membership?.roleSlug ?? null}
                 >
                     {children}
                 </AppShell>

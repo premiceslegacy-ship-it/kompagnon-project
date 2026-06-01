@@ -1,11 +1,13 @@
 import { redirect } from 'next/navigation'
 import { getUserPermissions } from '@/lib/data/queries/membership'
+import { getOrganization } from '@/lib/data/queries/organization'
 import {
   getMonthlyReport,
   getAnnualReport,
   getHoursReport,
   getTopClients,
   getTopChantiers,
+  getMaintenanceReport,
   getAnnualObjectives,
   getMonthlyObjectives,
   getMembersWithoutRate,
@@ -42,15 +44,17 @@ export default async function RapportsPage({
 
   const hoursMonth = vue === 'mois' ? month : undefined
 
-  const [monthlyReport, annualReport, hoursReport, topClients, topChantiers, annualObjectives, monthlyObjectives, membersWithoutRate] = await Promise.all([
+  const [monthlyReport, annualReport, hoursReport, topClients, topChantiers, maintenanceReport, annualObjectives, monthlyObjectives, membersWithoutRate, organization] = await Promise.all([
     vue === 'mois' ? getMonthlyReport(year, month) : Promise.resolve(null),
     vue === 'annee' ? getAnnualReport(year) : Promise.resolve(null),
     getHoursReport(year, hoursMonth),
     getTopClients(year, hoursMonth),
     getTopChantiers(year, hoursMonth),
+    getMaintenanceReport(year, hoursMonth),
     getAnnualObjectives(year),
     vue === 'mois' ? getMonthlyObjectives(year, month) : Promise.resolve(null),
     getMembersWithoutRate(),
+    getOrganization(),
   ])
 
   return (
@@ -63,9 +67,11 @@ export default async function RapportsPage({
       initialHoursReport={hoursReport}
       initialTopClients={topClients}
       initialTopChantiers={topChantiers}
+      initialMaintenanceReport={maintenanceReport}
       initialAnnualObjectives={annualObjectives}
       initialMonthlyObjectives={monthlyObjectives}
       membersWithoutRate={membersWithoutRate ?? []}
+      isVatSubject={organization?.is_vat_subject ?? true}
     />
   )
 }

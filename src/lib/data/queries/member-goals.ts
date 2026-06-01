@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { cache } from 'react'
 
@@ -31,10 +32,11 @@ export type MemberGoalWithProgress = MemberGoal & {
 export const getMemberGoalsWithProgress = cache(async (params: {
   memberId?: string
   membershipId?: string
+  userId?: string
   year: number
   month: number
 }): Promise<MemberGoalWithProgress[]> => {
-  const { memberId, membershipId, year, month } = params
+  const { memberId, membershipId, userId, year, month } = params
   if (!memberId && !membershipId) return []
 
   const supabase = await createClient()
@@ -60,34 +62,77 @@ export const getMemberGoalsWithProgress = cache(async (params: {
     ? `${year + 1}-01-01`
     : `${year}-${String(month + 1).padStart(2, '0')}-01`
 
+  const { data: memberRow } = memberId
+    ? await supabase
+        .from('chantier_equipe_membres')
+        .select('equipe_id, profile_id')
+        .eq('id', memberId)
+        .maybeSingle()
+    : { data: null as { equipe_id: string | null; profile_id: string | null } | null }
+
+  const authUserId = userId ?? memberRow?.profile_id ?? null
+  const assignmentFilters = [
+    memberId ? `member_id.eq.${memberId}` : null,
+    memberRow?.equipe_id ? `equipe_id.eq.${memberRow.equipe_id}` : null,
+  ].filter(Boolean).join(',')
+
+  const { data: assignmentRows } = assignmentFilters
+    ? await supabase
+        .from('chantier_task_assignments')
+        .select('tache_id')
+        .or(assignmentFilters)
+    : { data: [] as any[] }
+
+  const assignedTaskIds = [...new Set((assignmentRows ?? []).map((row: any) => row.tache_id).filter(Boolean))]
+
   // La progression se calcule différemment selon le type de membre
-  const [{ data: pointagesByMember }, { data: pointagesByUser }, { data: taches }, { data: chantierWork }] = await Promise.all([
+  const [{ data: pointagesByMember }, { data: pointagesByUser }, { data: tasksByAssignment }, { data: tasksByUser }, { data: chantierWork }] = await Promise.all([
     // Heures pointées — par member_id (intervenant)
     memberId
       ? supabase.from('chantier_pointages').select('hours, chantier_id').eq('member_id', memberId).gte('date', firstOfMonth).lt('date', firstOfNext)
       : Promise.resolve({ data: [] as any[] }),
 
-    // Heures pointées — par user_id (membre org via membership)
-    membershipId
-      ? supabase.from('chantier_pointages').select('hours, chantier_id').eq('user_id', membershipId).gte('date', firstOfMonth).lt('date', firstOfNext)
+    // Heures pointées — par user_id (membre org via compte auth)
+    authUserId
+      ? supabase.from('chantier_pointages').select('hours, chantier_id').eq('user_id', authUserId).gte('date', firstOfMonth).lt('date', firstOfNext)
       : Promise.resolve({ data: [] as any[] }),
 
-    // Tâches complétées (assigned_to = auth user id)
-    membershipId
-      ? supabase.from('chantier_taches').select('id').eq('assigned_to', membershipId).eq('status', 'termine').gte('updated_at', firstOfMonth).lt('updated_at', firstOfNext)
+    // Tâches complétées — nouvelles assignations multiples
+    assignedTaskIds.length > 0
+      ? supabase
+          .from('chantier_taches')
+          .select('id, completed_at, updated_at, chantier:chantiers!inner(organization_id)')
+          .eq('chantier.organization_id', orgId)
+          .eq('status', 'termine')
+          .in('id', assignedTaskIds)
+      : Promise.resolve({ data: [] as any[] }),
+
+    // Tâches complétées — ancienne colonne assigned_to = auth user id
+    authUserId
+      ? supabase
+          .from('chantier_taches')
+          .select('id, completed_at, updated_at, chantier:chantiers!inner(organization_id)')
+          .eq('chantier.organization_id', orgId)
+          .eq('assigned_to', authUserId)
+          .eq('status', 'termine')
       : Promise.resolve({ data: [] as any[] }),
 
     // Chantiers distincts — via pointages
     memberId
       ? supabase.from('chantier_pointages').select('chantier_id').eq('member_id', memberId).gte('date', firstOfMonth).lt('date', firstOfNext)
-      : membershipId
-        ? supabase.from('chantier_pointages').select('chantier_id').eq('user_id', membershipId).gte('date', firstOfMonth).lt('date', firstOfNext)
+      : authUserId
+        ? supabase.from('chantier_pointages').select('chantier_id').eq('user_id', authUserId).gte('date', firstOfMonth).lt('date', firstOfNext)
         : Promise.resolve({ data: [] as any[] }),
   ])
 
   const allPointages = [...(pointagesByMember ?? []), ...(pointagesByUser ?? [])]
   const heuresTerrain = allPointages.reduce((sum: number, p: any) => sum + (p.hours ?? 0), 0)
-  const tachesCount = taches?.length ?? 0
+  const completedTasks = [...(tasksByAssignment ?? []), ...(tasksByUser ?? [])]
+    .filter((task: any) => {
+      const completedAt = task.completed_at ?? task.updated_at
+      return completedAt >= firstOfMonth && completedAt < firstOfNext
+    })
+  const tachesCount = new Set(completedTasks.map((task: any) => task.id)).size
   const chantiersCount = new Set([...(chantierWork ?? []).map((p: any) => p.chantier_id)]).size
 
   const currentByMetric: Record<string, number> = {
@@ -103,6 +148,96 @@ export const getMemberGoalsWithProgress = cache(async (params: {
     return { ...g, current, percent }
   })
 })
+
+/**
+ * Objectifs d'un intervenant avec progression — version admin (sans RLS).
+ * Utilisée dans /mon-espace où l'utilisateur n'est pas authentifié via Supabase Auth.
+ */
+export async function getMemberGoalsWithProgressAdmin(params: {
+  memberId: string
+  organizationId: string
+  year: number
+  month: number
+}): Promise<MemberGoalWithProgress[]> {
+  const { memberId, organizationId, year, month } = params
+  const admin = createAdminClient()
+
+  const { data: goals } = await admin
+    .from('member_goals')
+    .select('id, member_id, membership_id, period_year, period_month, metric, label, target, unit, note')
+    .eq('organization_id', organizationId)
+    .eq('period_year', year)
+    .eq('period_month', month)
+    .eq('member_id', memberId)
+
+  if (!goals?.length) return []
+
+  const firstOfMonth = `${year}-${String(month).padStart(2, '0')}-01`
+  const firstOfNext = month === 12
+    ? `${year + 1}-01-01`
+    : `${year}-${String(month + 1).padStart(2, '0')}-01`
+
+  const { data: memberRow } = await admin
+    .from('chantier_equipe_membres')
+    .select('equipe_id, profile_id')
+    .eq('id', memberId)
+    .maybeSingle()
+
+  const assignmentFilters = [
+    `member_id.eq.${memberId}`,
+    memberRow?.equipe_id ? `equipe_id.eq.${memberRow.equipe_id}` : null,
+  ].filter(Boolean).join(',')
+
+  const { data: assignmentRows } = await admin
+    .from('chantier_task_assignments')
+    .select('tache_id')
+    .or(assignmentFilters)
+
+  const assignedTaskIds = [...new Set((assignmentRows ?? []).map((row: any) => row.tache_id).filter(Boolean))]
+
+  const [{ data: pointages }, { data: chantierWork }, { data: tasksByAssignment }, { data: tasksByProfile }] = await Promise.all([
+    admin.from('chantier_pointages').select('hours, chantier_id').eq('member_id', memberId).gte('date', firstOfMonth).lt('date', firstOfNext),
+    admin.from('chantier_pointages').select('chantier_id').eq('member_id', memberId).gte('date', firstOfMonth).lt('date', firstOfNext),
+    assignedTaskIds.length > 0
+      ? admin
+          .from('chantier_taches')
+          .select('id, completed_at, updated_at, chantier:chantiers!inner(organization_id)')
+          .eq('chantier.organization_id', organizationId)
+          .eq('status', 'termine')
+          .in('id', assignedTaskIds)
+      : Promise.resolve({ data: [] as any[] }),
+    memberRow?.profile_id
+      ? admin
+          .from('chantier_taches')
+          .select('id, completed_at, updated_at, chantier:chantiers!inner(organization_id)')
+          .eq('chantier.organization_id', organizationId)
+          .eq('assigned_to', memberRow.profile_id)
+          .eq('status', 'termine')
+      : Promise.resolve({ data: [] as any[] }),
+  ])
+
+  const heuresTerrain = (pointages ?? []).reduce((sum: number, p: any) => sum + (p.hours ?? 0), 0)
+  const chantiersCount = new Set((chantierWork ?? []).map((p: any) => p.chantier_id)).size
+  const completedTasks = [...(tasksByAssignment ?? []), ...(tasksByProfile ?? [])]
+    .filter((task: any) => {
+      const completedAt = task.completed_at ?? task.updated_at
+      return completedAt >= firstOfMonth && completedAt < firstOfNext
+    })
+  const tachesCount = new Set(completedTasks.map((task: any) => task.id)).size
+
+  const currentByMetric: Record<string, number> = {
+    heures_terrain: heuresTerrain,
+    taches_completees: tachesCount,
+    chantiers_traites: chantiersCount,
+    custom: 0,
+  }
+
+  return goals.map(g => {
+    const current = currentByMetric[g.metric] ?? 0
+    const percent = g.target > 0 ? Math.min(100, Math.round((current / g.target) * 100)) : 0
+    return { ...g, current, percent }
+  })
+}
 
 /** Objectifs de tous les membres pour un mois — pour l'UI admin. */
 export async function getAllMemberGoals(year: number, month: number): Promise<(MemberGoal & {

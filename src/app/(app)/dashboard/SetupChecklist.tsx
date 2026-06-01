@@ -19,6 +19,7 @@ import {
   Users,
 } from 'lucide-react'
 import type { DashboardSetupReadiness } from '@/lib/data/queries/dashboard'
+import { getBusinessActivityById } from '@/lib/catalog-context'
 import { dismissSetupChecklist } from './actions'
 
 type SetupItem = {
@@ -75,6 +76,37 @@ function ChecklistItem({ item }: { item: SetupItem }) {
       <ArrowRight className="mt-2 h-4 w-4 shrink-0 text-secondary transition-transform group-hover:translate-x-0.5 group-hover:text-accent" />
     </Link>
   )
+}
+
+function getCatalogSetupCopy(activityId: DashboardSetupReadiness['businessActivityId']) {
+  const activity = getBusinessActivityById(activityId)
+
+  if (!activity) {
+    return {
+      title: 'Vérifier le catalogue',
+      description: "Un catalogue de départ a été préparé selon votre activité. Ajustez les tarifs et les libellés pour qu'ils reflètent votre réalité.",
+    }
+  }
+
+  const profileCopy = {
+    cleaning: {
+      title: 'Vérifier les prestations de nettoyage',
+      focus: 'produits, prestations, passages et ressources',
+    },
+    btp: {
+      title: 'Vérifier les ouvrages et fournitures',
+      focus: "ouvrages, fournitures, main-d'œuvre et modèles de devis",
+    },
+    industry: {
+      title: 'Vérifier les opérations atelier',
+      focus: 'matières, opérations, temps machine et modèles de fabrication',
+    },
+  }[activity.businessProfile]
+
+  return {
+    title: profileCopy.title,
+    description: `Le catalogue préparé pour l'activité ${activity.label.toLowerCase()} contient déjà des ${profileCopy.focus}. Ajustez les tarifs, unités et libellés pour coller à votre façon de travailler.`,
+  }
 }
 
 function SetupCompleteCard({ organizationName, earnedPoints }: { organizationName: string; earnedPoints: number }) {
@@ -145,6 +177,7 @@ function SetupCompleteCard({ organizationName, earnedPoints }: { organizationNam
 export default function SetupChecklist({ readiness }: { readiness: DashboardSetupReadiness | null }) {
   if (!readiness) return null
   const organizationName = readiness.organizationName?.trim() || 'votre entreprise'
+  const catalogCopy = getCatalogSetupCopy(readiness.businessActivityId)
 
   const requiredItems: SetupItem[] = [
     {
@@ -184,8 +217,8 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
       icon: ClipboardSignature,
     },
     {
-      title: 'Vérifier le catalogue',
-      description: "Un catalogue de départ a été préparé selon votre activité. Ajustez les tarifs et les libellés pour qu'ils reflètent votre réalité.",
+      title: catalogCopy.title,
+      description: catalogCopy.description,
       href: '/catalog',
       done: readiness.catalogReady,
       metric: readiness.counts.catalogItems > 0 ? `${readiness.counts.catalogItems} élément${readiness.counts.catalogItems > 1 ? 's' : ''} prêt${readiness.counts.catalogItems > 1 ? 's' : ''}` : undefined,

@@ -30,12 +30,14 @@ function SituationCreatorModal({
   mode,
   returnTo,
   onClose,
+  defaultRetentionPct = 0,
 }: {
   chantierId: string
   summary: SituationsSummary
   mode: ModalMode
   returnTo: string
   onClose: () => void
+  defaultRetentionPct?: number
 }) {
   const router = useRouter()
   const prevPct = summary.cumulativePct
@@ -47,7 +49,7 @@ function SituationCreatorModal({
   })
   const [periodFrom, setPeriodFrom] = useState('')
   const [periodTo, setPeriodTo] = useState('')
-  const [retentionPct, setRetentionPct] = useState(0)
+  const [retentionPct, setRetentionPct] = useState(defaultRetentionPct)
   const [marketRef, setMarketRef] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -236,12 +238,14 @@ export default function SituationsSection({
   canCreateSituation,
   canCreateSolde,
   returnTo,
+  defaultRetentionPct = 0,
 }: {
   chantierId: string
   summary: SituationsSummary
   canCreateSituation: boolean
   canCreateSolde: boolean
   returnTo: string
+  defaultRetentionPct?: number
 }) {
   const [modalMode, setModalMode] = useState<ModalMode | null>(null)
   const router = useRouter()
@@ -363,6 +367,7 @@ export default function SituationsSection({
           mode={modalMode}
           returnTo={returnTo}
           onClose={() => setModalMode(null)}
+          defaultRetentionPct={defaultRetentionPct}
         />,
         document.body
       )}

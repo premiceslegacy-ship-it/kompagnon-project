@@ -149,11 +149,12 @@ export async function getMemberPlannings(
   // 1. Trouver les équipes auxquelles ce membre appartient
   const { data: memberRow } = await supabase
     .from('chantier_equipe_membres')
-    .select('equipe_id')
+    .select('equipe_id, profile_id')
     .eq('id', memberId)
     .single()
 
   const equipeId = memberRow?.equipe_id ?? null
+  const profileId = memberRow?.profile_id ?? null
 
   let q = supabase
     .from('chantier_plannings')
@@ -180,8 +181,33 @@ export async function getMemberPlannings(
     return []
   }
 
+  const maintenanceFilters = [
+    `intervenant_member_id.eq.${memberId}`,
+    `intervenant_id.eq.${memberId}`,
+    profileId ? `intervenant_user_id.eq.${profileId}` : null,
+  ].filter(Boolean).join(',')
+
+  const { data: maintenanceRows, error: maintenanceError } = await supabase
+    .from('maintenance_interventions')
+    .select(`
+      id, date_intervention, start_time, end_time, duration_hours, rapport, observations,
+      contract:maintenance_contracts!inner(
+        title,
+        chantier:chantiers!maintenance_contracts_chantier_id_fkey(id, title, address_line1, postal_code, city)
+      )
+    `)
+    .or(maintenanceFilters)
+    .in('statut', ['planifiée', 'réalisée'])
+    .gte('date_intervention', opts?.dateFrom ?? new Date().toISOString().slice(0, 10))
+    .lte('date_intervention', opts?.dateTo ?? '9999-12-31')
+    .order('date_intervention', { ascending: true })
+
+  if (maintenanceError) {
+    console.error('[getMemberPlannings maintenance]', maintenanceError)
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (data ?? []).map((r: any) => ({
+  const chantierPlannings = (data ?? []).map((r: any) => ({
     id:             r.id,
     chantier_id:    r.chantier_id,
     chantier_title: r.chantiers?.title ?? '',
@@ -198,6 +224,31 @@ export async function getMemberPlannings(
     duration_min:   r.duration_min ?? null,
     travel_from_prev_min: r.travel_from_prev_min ?? null,
   })) as MemberPlanning[]
+
+  const maintenancePlannings = (maintenanceRows ?? []).map((r: any) => {
+    const contract = Array.isArray(r.contract) ? r.contract[0] : r.contract
+    const chantier = Array.isArray(contract?.chantier) ? contract.chantier[0] : contract?.chantier
+    return {
+      id:             `maintenance:${r.id}`,
+      chantier_id:    chantier?.id ?? '',
+      chantier_title: contract?.title ? `Entretien - ${contract.title}` : 'Entretien',
+      chantier_city:  chantier?.city ?? null,
+      chantier_address_line1: chantier?.address_line1 ?? null,
+      chantier_postal_code: chantier?.postal_code ?? null,
+      planned_date:   r.date_intervention,
+      start_time:     r.start_time ?? null,
+      end_time:       r.end_time ?? null,
+      label:          'Intervention entretien',
+      notes:          r.rapport ?? r.observations ?? null,
+      route_id:       null,
+      route_order:    null,
+      duration_min:   r.duration_hours ? Math.round(Number(r.duration_hours) * 60) : null,
+      travel_from_prev_min: null,
+    }
+  }) as MemberPlanning[]
+
+  return [...chantierPlannings, ...maintenancePlannings]
+    .sort((a, b) => `${a.planned_date} ${a.start_time ?? '99:99'}`.localeCompare(`${b.planned_date} ${b.start_time ?? '99:99'}`))
 }
 
 /** Tâches assignées au membre, directement ou via son équipe. */

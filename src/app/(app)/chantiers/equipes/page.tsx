@@ -18,11 +18,18 @@ export default async function EquipesPage() {
     getCurrentMembershipContext(),
   ])
 
+  const visibleSoloMembers = canEditRates
+    ? soloMembers
+    : soloMembers.map(member => ({ ...member, taux_horaire: null }))
+  const visibleAppMembers = canEditRates
+    ? appMembers
+    : appMembers.map(member => ({ ...member, labor_cost_per_hour: null }))
+
   return (
     <EquipesClient
       equipes={equipes}
-      soloMembers={soloMembers}
-      appMembers={appMembers}
+      soloMembers={visibleSoloMembers}
+      appMembers={visibleAppMembers}
       canManageTeam={canManageTeam}
       canEditRates={canEditRates}
       canEditGoals={canEditGoals}

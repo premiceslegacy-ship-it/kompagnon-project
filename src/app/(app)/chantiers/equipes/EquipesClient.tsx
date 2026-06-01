@@ -7,6 +7,7 @@ import {
   ChevronRight, Mail, Euro, Shield, UserCheck, UserMinus,
   Check, ArrowLeft,
 } from 'lucide-react'
+import { ActionButton } from '@/components/ui/ActionButton'
 import type { Equipe, EquipeMembre } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
 import type { TeamMember } from '@/lib/data/queries/team'
@@ -728,11 +729,6 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
                         </button>
                       )
                     )}
-                    {!canEditRates && m.labor_cost_per_hour != null && (
-                      <span className="flex items-center gap-1 rounded-md border border-[var(--elevation-border)] bg-interactive px-2 py-0.5 text-xs text-secondary dark:bg-white/[0.04]">
-                        <Euro className="h-3 w-3" />{m.labor_cost_per_hour} €/h
-                      </span>
-                    )}
                   </div>
                 </div>
               )
@@ -816,11 +812,10 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
                 className="flex-1 py-2 rounded-xl border border-[var(--elevation-border)] text-sm font-medium text-secondary hover:bg-interactive transition-colors dark:hover:bg-white/[0.08]">
                 Annuler
               </button>
-              <button onClick={handleSaveMembre} disabled={saving}
+              <ActionButton onClick={handleSaveMembre} loading={saving}
                 className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-accent text-black text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50">
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
                 {membreModal.mode === 'edit' ? 'Enregistrer' : 'Ajouter'}
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -866,11 +861,10 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
                 className="flex-1 py-2 rounded-xl border border-[var(--elevation-border)] text-sm font-medium text-secondary hover:bg-interactive transition-colors dark:hover:bg-white/[0.08]">
                 Annuler
               </button>
-              <button onClick={handleSaveEquipe} disabled={saving}
+              <ActionButton onClick={handleSaveEquipe} loading={saving}
                 className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-accent text-black text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50">
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
                 {equipeModal.mode === 'create' ? 'Créer' : 'Enregistrer'}
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -892,18 +886,17 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
                 className="flex-1 py-2 rounded-xl border border-[var(--elevation-border)] text-sm font-medium text-secondary hover:bg-interactive transition-colors dark:hover:bg-white/[0.08]">
                 Annuler
               </button>
-              <button
+              <ActionButton
                 onClick={() => {
                   if (confirmDelete.type === 'equipe') handleDeleteEquipe(confirmDelete.id)
                   else if (confirmDelete.soloMembre) handleDeleteSoloMembre(confirmDelete.id)
                   else handleDeleteEquipeMembre(confirmDelete.id)
                 }}
-                disabled={saving}
+                loading={saving}
                 className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-rose-500 text-white text-sm font-semibold hover:bg-rose-600 transition-colors disabled:opacity-50"
               >
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
                 Supprimer
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>

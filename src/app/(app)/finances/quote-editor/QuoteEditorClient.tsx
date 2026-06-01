@@ -30,6 +30,7 @@ import { fetchClientContractsForAttachment } from '@/lib/data/mutations/contract
 import AttachmentPickerModal, { type AttachmentGroup } from '@/components/AttachmentPickerModal'
 import { UnitSelect } from '@/components/ui/UnitSelect'
 import { NumericInput } from '@/components/ui/NumericInput'
+import { ActionButton } from '@/components/ui/ActionButton'
 import {
   ArrowLeft, Send, Plus, Trash2, Search, X,
   Loader2, CheckCircle2, Package, Wrench, FileDown, Bot, Ruler, ChevronDown, ChevronUp, Sparkles, Eye, EyeOff, Layers, Truck, MessageSquare, BookmarkPlus, LayoutGrid,
@@ -523,6 +524,71 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
   function isEquipmentLine(item: Pick<LocalItem, 'is_internal' | 'unit' | 'transport_prix_l'>) {
     return item.is_internal && item.unit === 'usage' && item.transport_prix_l == null
+  }
+
+  function parseEquipmentAmortization(description: string, unitPrice: number) {
+    const match = description.match(/Amortissement\s*:\s*([\d.,]*)\s*€\s*\/\s*([\d.,]*)\s*usages?/i)
+    const name = (description.split(/\n/)[0] ?? '').trim() || 'Équipement amorti'
+    const rawPurchasePrice = match?.[1]?.trim() ?? ''
+    const rawLifetimeUses = match?.[2]?.trim() ?? ''
+    const purchasePrice = rawPurchasePrice ? Number(rawPurchasePrice.replace(',', '.')) : null
+    const lifetimeUses = rawLifetimeUses ? Number(rawLifetimeUses.replace(',', '.')) : null
+
+    return {
+      name,
+      purchasePrice: purchasePrice != null && Number.isFinite(purchasePrice) ? purchasePrice : null,
+      lifetimeUses: lifetimeUses != null && Number.isFinite(lifetimeUses) ? lifetimeUses : null,
+      costPerUse: unitPrice,
+    }
+  }
+
+  function buildEquipmentDescription(name: string, purchasePrice: number | null, lifetimeUses: number | null) {
+    const label = name.trim() || 'Équipement amorti'
+    if (purchasePrice != null || lifetimeUses != null) {
+      return `${label}\n\nAmortissement : ${purchasePrice ?? ''} € / ${lifetimeUses ?? ''} usages`
+    }
+    return label
+  }
+
+  function computeEquipmentCostPerUse(purchasePrice: number | null, lifetimeUses: number | null, fallback: number) {
+    if (purchasePrice != null && purchasePrice > 0 && lifetimeUses != null && lifetimeUses > 0) {
+      return Math.round((purchasePrice / lifetimeUses) * 100) / 100
+    }
+    return fallback
+  }
+
+  function handleEquipmentAmortizationChange(
+    sectionTempId: string,
+    itemTempId: string,
+    field: 'name' | 'purchasePrice' | 'lifetimeUses',
+    value: string | number | null,
+  ) {
+    setSectionsSynced(prev => prev.map(section => {
+      if (section._tempId !== sectionTempId) return section
+      return {
+        ...section,
+        items: section.items.map(item => {
+          if (item._tempId !== itemTempId) return item
+          const current = parseEquipmentAmortization(item.description, item.unit_price)
+          const name = field === 'name' ? String(value ?? '') : current.name
+          const purchasePrice = field === 'purchasePrice' ? (typeof value === 'number' ? value : null) : current.purchasePrice
+          const lifetimeUses = field === 'lifetimeUses' ? (typeof value === 'number' ? value : null) : current.lifetimeUses
+          const unitPrice = computeEquipmentCostPerUse(purchasePrice, lifetimeUses, item.unit_price)
+
+          return {
+            ...item,
+            description: buildEquipmentDescription(name, purchasePrice, lifetimeUses),
+            unit: 'usage',
+            unit_price: unitPrice,
+            unit_cost_ht: unitPrice,
+            is_internal: true,
+            is_estimated: false,
+            transport_prix_l: null,
+          }
+        }),
+      }
+    }))
+    scheduleItemSave(sectionTempId, itemTempId)
   }
 
   async function handleAddEquipment() {
@@ -1338,17 +1404,63 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
     const sectionEntries = [...sectionMap.entries()]
     const basePos = sectionsRef.current.length
+    const now = Date.now()
+
+    // 1. Construire toutes les sections + items localement en une seule mise à jour
+    //    pour que l'UI s'affiche instantanément sans attendre les awaits.
+    type PendingSection = { secTempId: string; secTitle: string; secPos: number; tempIds: string[]; newItems: LocalItem[] }
+    const pending: PendingSection[] = []
 
     for (let sIdx = 0; sIdx < sectionEntries.length; sIdx++) {
       const [sectionTitle, pItems] = sectionEntries[sIdx]
       const secPos = basePos + sIdx + 1
-      const secTempId = `sec_${Date.now()}_${sIdx}`
+      const secTempId = `sec_${now}_${sIdx}`
       deletedSectionTempIds.current.delete(secTempId)
       const secTitle = sectionTitle || prestation.name || `Section ${secPos}`
+      const tempIds = pItems.map((_, i) => `item_${now}_${sIdx}_${i}`)
+      for (const tempId of tempIds) deletedItemKeys.current.delete(`${secTempId}_${tempId}`)
 
-      // Ajouter la section localement
-      setSectionsSynced(prev => [...prev, { _tempId: secTempId, id: null, title: secTitle, position: secPos, items: [] }])
+      const newItems: LocalItem[] = pItems.map((pItem, i) => {
+        const isTransport = pItem.item_type === 'transport'
+        const isEquipment = pItem.item_type === 'equipment'
+        const prixL = pItem.unit_price_ht > 0 ? pItem.unit_price_ht : DEFAULT_FUEL_PRICE_EUR_PER_L
+        const conso = DEFAULT_CONSUMPTION_L_PER_100KM
+        const estimatedKm = isTransport && pItem.quantity > 0
+          ? Math.round(pItem.quantity / conso * 100)
+          : 100
+        const liters = isTransport ? computeFuel({ km: estimatedKm, consumption: conso, pricePerLiter: prixL }).liters : pItem.quantity
+        const equipmentCostPerUse = pItem.unit_cost_ht > 0 ? pItem.unit_cost_ht : pItem.unit_price_ht
+        return {
+          _tempId: tempIds[i], id: null,
+          description: isTransport ? `Carburant - trajet ${estimatedKm} km` : pItem.designation,
+          quantity: isTransport ? liters : isEquipment ? (pItem.quantity || 1) : pItem.quantity,
+          unit: isTransport ? 'L' : isEquipment ? 'usage' : pItem.unit,
+          unit_price: isTransport ? prixL : isEquipment ? equipmentCostPerUse : pItem.unit_price_ht,
+          vat_rate: defaultVatRate,
+          type: pItem.item_type === 'material' || pItem.item_type === 'service' ? 'material' : pItem.item_type === 'labor' ? 'labor' : 'custom' as const,
+          material_id: pItem.material_id,
+          labor_rate_id: pItem.labor_rate_id,
+          position: i + 1,
+          length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
+          unit_cost_ht: isEquipment ? equipmentCostPerUse : pItem.unit_cost_ht ?? null,
+          is_estimated: false,
+          is_internal: pItem.is_internal || isTransport || isEquipment,
+          transport_km: isTransport ? estimatedKm : null,
+          transport_conso: isTransport ? conso : null,
+          transport_prix_l: isTransport ? prixL : null,
+        }
+      })
+      pending.push({ secTempId, secTitle, secPos, tempIds, newItems })
+    }
 
+    // Ajouter toutes les sections + items en une seule mise à jour React
+    setSectionsSynced(prev => [
+      ...prev,
+      ...pending.map(p => ({ _tempId: p.secTempId, id: null, title: p.secTitle, position: p.secPos, items: p.newItems })),
+    ])
+
+    // 2. Persister en arrière-plan section par section
+    for (const { secTempId, secTitle, secPos, tempIds, newItems } of pending) {
       const res = await upsertQuoteSection({ quote_id: qId, title: secTitle, position: secPos })
       const sectionId = res.sectionId
       if (!sectionId) continue
@@ -1358,46 +1470,13 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       }
       setSectionsSynced(prev => prev.map(s => s._tempId === secTempId ? { ...s, id: sectionId } : s))
 
-      const tempIds = pItems.map((_, i) => `item_${Date.now()}_${sIdx}_${i}`)
-      for (const tempId of tempIds) deletedItemKeys.current.delete(`${secTempId}_${tempId}`)
-      const newItems: LocalItem[] = pItems.map((pItem, i) => {
-        const isTransport = pItem.item_type === 'transport'
-        const prixL = pItem.unit_price_ht > 0 ? pItem.unit_price_ht : DEFAULT_FUEL_PRICE_EUR_PER_L
-        const conso = DEFAULT_CONSUMPTION_L_PER_100KM
-        // Reconstituer km estimé depuis les litres stockés dans quantity
-        const estimatedKm = isTransport && pItem.quantity > 0
-          ? Math.round(pItem.quantity / conso * 100)
-          : 100
-        const liters = isTransport ? computeFuel({ km: estimatedKm, consumption: conso, pricePerLiter: prixL }).liters : pItem.quantity
-        return {
-          _tempId: tempIds[i], id: null,
-          description: isTransport ? `Carburant - trajet ${estimatedKm} km` : pItem.designation,
-          quantity: isTransport ? liters : pItem.quantity,
-          unit: isTransport ? 'L' : pItem.unit,
-          unit_price: isTransport ? prixL : pItem.unit_price_ht,
-          vat_rate: defaultVatRate,
-          type: pItem.item_type === 'material' || pItem.item_type === 'service' ? 'material' : pItem.item_type === 'labor' ? 'labor' : 'custom' as const,
-          material_id: pItem.material_id,
-          labor_rate_id: pItem.labor_rate_id,
-          position: i + 1,
-          length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
-          unit_cost_ht: pItem.unit_cost_ht ?? null,
-          is_estimated: false,
-          is_internal: pItem.is_internal || isTransport,
-          transport_km: isTransport ? estimatedKm : null,
-          transport_conso: isTransport ? conso : null,
-          transport_prix_l: isTransport ? prixL : null,
-        }
-      })
-
-      setSectionsSynced(prev => prev.map(s => s._tempId === secTempId ? { ...s, items: newItems } : s))
-
       for (let i = 0; i < newItems.length; i++) {
         const item = newItems[i]
         await createQuoteItemAndFinalize(secTempId, tempIds[i], qId, sectionId, {
           quote_id: qId, section_id: sectionId,
           type: item.type, description: item.description,
           quantity: item.quantity, unit: item.unit, unit_price: item.unit_price,
+          unit_cost_ht: item.unit_cost_ht ?? undefined,
           vat_rate: item.vat_rate, position: item.position,
           material_id: item.material_id ?? undefined,
           labor_rate_id: item.labor_rate_id ?? undefined,
@@ -1596,43 +1675,45 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       )}
 
       {/* Topbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.replace(returnTo)} className="w-10 h-10 rounded-full bg-surface border border-[var(--elevation-border)] flex items-center justify-center text-secondary hover:text-primary transition-colors dark:bg-white/5 flex-shrink-0">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        {/* Titre + statut sauvegarde */}
+        <div className="flex items-center gap-3 min-w-0">
+          <button onClick={() => router.replace(returnTo)} className="w-10 h-10 rounded-full bg-surface border border-[var(--elevation-border)] flex items-center justify-center text-secondary hover:text-primary transition-colors dark:bg-white/5 shrink-0">
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-primary">
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-xl font-bold text-primary truncate">
               {initialQuote?.number ? `Devis ${initialQuote.number}` : quoteId ? 'Édition du devis' : 'Nouveau devis'}
             </h1>
             {saveStatus === 'saving' && (
-              <p className="text-xs text-secondary flex items-center gap-1 mt-0.5">
-                <Loader2 className="w-3 h-3 animate-spin" />Sauvegarde...
+              <p className="text-xs text-secondary flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin shrink-0" />Sauvegarde...
               </p>
             )}
             {saveStatus === 'saved' && (
-              <p className="text-xs text-accent-green flex items-center gap-1 mt-0.5">
-                <CheckCircle2 className="w-3 h-3" />Sauvegardé
+              <p className="text-xs text-accent-green flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3 shrink-0" />Sauvegardé
               </p>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* Actions */}
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
           {isPending && <Loader2 className="w-4 h-4 text-secondary animate-spin" />}
           {modules.quote_ai && (
             <button
               onClick={() => setMoaPanelOpen(true)}
-              className="btn-secondary flex items-center gap-2 whitespace-nowrap"
+              className="btn-secondary flex items-center gap-2 whitespace-nowrap text-sm px-3 py-2"
             >
               <Wrench className="w-4 h-4" />
-              <span className="hidden md:inline">Estimer les ressources internes</span>
-              <span className="md:hidden">Ressources</span>
+              <span className="hidden lg:inline">Estimer les ressources internes</span>
+              <span className="lg:hidden">Ressources</span>
             </button>
           )}
           {modules.quote_ai && (
             <button
               onClick={() => setAIPanelOpen(true)}
-              className="btn-primary flex items-center gap-2 whitespace-nowrap"
+              className="btn-primary flex items-center gap-2 whitespace-nowrap text-sm px-3 py-2"
             >
               <Bot className="w-4 h-4" />
               {AI_NAME}
@@ -1641,23 +1722,24 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           {quoteId ? (
             <button
               onClick={handlePreviewPdf}
-              className="px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:bg-base hover:border-[var(--elevation-border-strong,_theme(colors.neutral.400))] hover:text-accent transition-all whitespace-nowrap"
+              className="px-3 py-2 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:bg-base hover:text-accent transition-all whitespace-nowrap text-sm"
             >
               <FileDown className="w-4 h-4" /><span className="hidden sm:inline">Aperçu PDF</span>
             </button>
           ) : (
-            <span className="px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center gap-2 opacity-40 cursor-not-allowed whitespace-nowrap" title="Ajoutez une ligne pour générer le PDF">
+            <span className="px-3 py-2 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center gap-2 opacity-40 cursor-not-allowed whitespace-nowrap text-sm" title="Ajoutez une ligne pour générer le PDF">
               <FileDown className="w-4 h-4" /><span className="hidden sm:inline">Aperçu PDF</span>
             </span>
           )}
-          <button
+          <ActionButton
             onClick={handleSend}
-            disabled={isSending || isPending}
-            className="btn-primary flex items-center gap-2 whitespace-nowrap"
+            loading={isSending}
+            disabled={isPending}
+            className="btn-primary flex items-center gap-2 whitespace-nowrap text-sm px-3 py-2"
           >
-            {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            Envoyer
-          </button>
+            <Send className="w-4 h-4" />
+            <span className="hidden sm:inline">Envoyer</span>
+          </ActionButton>
         </div>
       </div>
 
@@ -1666,8 +1748,8 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       {/* Main layout */}
       <div className="grid grid-cols-1 md:grid-cols-5 lg:grid-cols-12 gap-6 lg:gap-8">
 
-        {/* Left panel */}
-        <div className="md:col-span-2 lg:col-span-4 space-y-6">
+        {/* Left panel — order-2 on mobile (Infos + Totaux après les sections) */}
+        <div className="md:col-span-2 lg:col-span-4 space-y-6 order-2 md:order-1">
           <div className="rounded-3xl card p-5 sm:p-8 space-y-5">
             <h3 className="text-lg font-bold text-primary border-b border-[var(--elevation-border)] pb-3">Informations</h3>
             <div className="space-y-4">
@@ -1880,8 +1962,8 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           </div>
         </div>
 
-        {/* Right: sections */}
-        <div className="md:col-span-3 lg:col-span-8 space-y-6">
+        {/* Right: sections — order-1 on mobile (sections en premier) */}
+        <div className="md:col-span-3 lg:col-span-8 space-y-6 order-1 md:order-2">
 
           {/* Demande du client (formulaire public) */}
           {clientRequestDescription && (
@@ -1979,6 +2061,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 	                  const widthMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'width', dimensionMode)
 	                  const heightMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'height', dimensionMode)
 	                  const isEquipment = isEquipmentLine(item)
+                    const equipmentMeta = isEquipment ? parseEquipmentAmortization(item.description, item.unit_price) : null
 	                  return (
 	                    <div key={item._tempId} className={`rounded-xl border transition-all ${isEquipment ? 'border-purple-400/40 bg-purple-500/5' : item.is_internal ? 'border-amber-400/40 bg-amber-500/5' : item.is_estimated ? 'border-amber-400/40 bg-amber-500/5' : 'border-[var(--elevation-border)] bg-base/20 hover:bg-base/40'}`}>
 
@@ -1991,7 +2074,15 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                           </span>
                         )}
                         <div className="flex-1 flex flex-col gap-1">
-                          {(() => {
+                          {isEquipment && equipmentMeta ? (
+                            <textarea
+                              value={equipmentMeta.name}
+                              onChange={e => handleEquipmentAmortizationChange(sec._tempId, item._tempId, 'name', e.target.value)}
+                              placeholder="Nom de l'équipement..."
+                              rows={Math.min(3, Math.max(1, equipmentMeta.name.split('\n').length))}
+                              className="w-full p-2 bg-base/40 border-2 border-purple-300/50 dark:border-purple-500/30 rounded-lg focus:border-purple-400 focus:bg-base/60 outline-none text-primary text-sm font-semibold leading-6 transition-colors resize-none"
+                            />
+                          ) : (() => {
                             const descParts = item.description.split(/\n\n?Comprend\s*:\s*/i)
                             const titleVal = descParts[0] ?? ''
                             const detailVal = descParts.length > 1 ? descParts.slice(1).join('\nComprend : ') : ''
@@ -2025,9 +2116,10 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                         </div>
                         <div className="flex flex-col gap-1 pt-0.5">
                           {item.is_estimated && <span title="Prix estimé par l'IA" className="p-1.5 text-amber-500"><Sparkles className="w-3.5 h-3.5" /></span>}
-                          <button onClick={() => handleItemChange(sec._tempId, item._tempId, 'is_internal', !item.is_internal)}
-                            title={item.is_internal ? 'Ligne interne (cliquer pour rendre visible)' : 'Rendre interne'}
-                            className={`p-1.5 rounded-full transition-all ${item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10 hover:bg-emerald-500/15'}`}>
+                          <button onClick={() => { if (!isEquipment) handleItemChange(sec._tempId, item._tempId, 'is_internal', !item.is_internal) }}
+                            disabled={isEquipment}
+                            title={isEquipment ? 'Équipement toujours interne' : item.is_internal ? 'Ligne interne (cliquer pour rendre visible)' : 'Rendre interne'}
+                            className={`p-1.5 rounded-full transition-all ${isEquipment ? 'text-purple-600 bg-purple-500/10 cursor-not-allowed' : item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10 hover:bg-emerald-500/15'}`}>
                             {item.is_internal ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
                           {canUseDimensions && (
@@ -2036,7 +2128,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                               {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                             </button>
                           )}
-                          {item.type === 'custom' && !item.material_id && !item.labor_rate_id && (
+                          {item.type === 'custom' && !item.material_id && !item.labor_rate_id && !isEquipment && (
                             <button onClick={() => openSaveCatalog(item)} title="Enregistrer dans le catalogue"
                               className="p-1.5 rounded-full text-secondary hover:text-accent hover:bg-accent/10 transition-all">
                               <BookmarkPlus className="w-3.5 h-3.5" />
@@ -2055,7 +2147,11 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                         <div className="hidden sm:flex items-end gap-3 flex-wrap">
                           <div className="flex flex-col gap-1 w-20">
                             <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Qté</span>
-                            {isDimensioned ? (
+                            {isEquipment ? (
+                              <div className="h-9 flex items-center px-2 bg-purple-500/8 border border-purple-400/30 rounded-lg">
+                                <span className="text-sm font-bold tabular-nums text-purple-700 dark:text-purple-300 w-full text-right">{item.quantity}</span>
+                              </div>
+                            ) : isDimensioned ? (
                               <div className="h-9 flex items-center px-2 bg-accent/8 border border-accent/30 rounded-lg">
                                 <span className="text-sm font-bold tabular-nums text-accent w-full text-right">{item.quantity}</span>
                               </div>
@@ -2067,15 +2163,27 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                           </div>
                           <div className="flex flex-col gap-1 w-24">
                             <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Unité</span>
-                            <UnitSelect value={item.unit} onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit', v)}
-                              allowedUnits={catalogContext.unitSet} compact className="w-full h-9" />
+                            {isEquipment ? (
+                              <div className="h-9 flex items-center px-2 bg-purple-500/8 border border-purple-400/30 rounded-lg">
+                                <span className="text-sm font-semibold text-purple-700 dark:text-purple-300">usage</span>
+                              </div>
+                            ) : (
+                              <UnitSelect value={item.unit} onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit', v)}
+                                allowedUnits={catalogContext.unitSet} compact className="w-full h-9" />
+                            )}
                           </div>
                           <div className="flex flex-col gap-1 w-28">
                             <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Prix unit. HT</span>
-                            <NumericInput value={item.unit_price} min={0} decimals={2}
-                              onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_price', v ?? 0)}
-                              className={`w-full h-9 px-2 border rounded-lg outline-none tabular-nums text-right text-sm transition-colors ${isEquipment ? 'bg-purple-500/5 border-purple-400/40 text-purple-700 dark:text-purple-300 focus:border-purple-400' : item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400 focus:border-amber-400' : 'bg-base border-[var(--elevation-border)] text-primary focus:border-accent'}`}
-                              title={isEquipment ? 'Coût interne équipement par usage' : item.is_estimated ? "Prix estimé par l'IA" : undefined} />
+                            {isEquipment ? (
+                              <div className="h-9 flex items-center px-2 bg-purple-500/8 border border-purple-400/30 rounded-lg">
+                                <span className="font-bold text-purple-700 dark:text-purple-300 tabular-nums text-sm w-full text-right">{fmt(item.unit_price)}</span>
+                              </div>
+                            ) : (
+                              <NumericInput value={item.unit_price} min={0} decimals={2}
+                                onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_price', v ?? 0)}
+                                className={`w-full h-9 px-2 border rounded-lg outline-none tabular-nums text-right text-sm transition-colors ${item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400 focus:border-amber-400' : 'bg-base border-[var(--elevation-border)] text-primary focus:border-accent'}`}
+                                title={item.is_estimated ? "Prix estimé par l'IA" : undefined} />
+                            )}
                             {!item.material_id && !item.labor_rate_id && !isEquipment ? (
                               <NumericInput
                                 value={item.unit_cost_ht ?? undefined}
@@ -2092,10 +2200,16 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                           </div>
                           <div className="flex flex-col gap-1 w-20">
                             <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">TVA</span>
-                            <select value={item.vat_rate} onChange={e => handleItemChange(sec._tempId, item._tempId, 'vat_rate', Number(e.target.value))}
-                              className="w-full h-9 px-2 bg-base border border-[var(--elevation-border)] rounded-lg focus:border-accent outline-none text-primary text-sm transition-colors appearance-none">
-                              {LEGAL_VAT_RATES.map(rate => <option key={rate} value={rate}>{rate}%</option>)}
-                            </select>
+                            {isEquipment ? (
+                              <div className="h-9 flex items-center px-2 bg-purple-500/8 border border-purple-400/30 rounded-lg">
+                                <span className="text-xs font-semibold text-purple-700 dark:text-purple-300 w-full text-right">Interne</span>
+                              </div>
+                            ) : (
+                              <select value={item.vat_rate} onChange={e => handleItemChange(sec._tempId, item._tempId, 'vat_rate', Number(e.target.value))}
+                                className="w-full h-9 px-2 bg-base border border-[var(--elevation-border)] rounded-lg focus:border-accent outline-none text-primary text-sm transition-colors appearance-none">
+                                {LEGAL_VAT_RATES.map(rate => <option key={rate} value={rate}>{rate}%</option>)}
+                              </select>
+                            )}
                           </div>
                           <div className="flex flex-col gap-1 flex-1 min-w-24">
                             <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Total HT</span>
@@ -2121,7 +2235,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                           <div className="grid grid-cols-2 gap-2">
                             <div className="space-y-0.5">
                               <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Qté</p>
-                              {isDimensioned ? (
+                              {isEquipment ? (
+                                <p className="p-2 text-left text-sm font-bold tabular-nums text-purple-700 dark:text-purple-300 bg-purple-500/8 border border-purple-400/30 rounded-lg">{item.quantity}</p>
+                              ) : isDimensioned ? (
                                 <p className="p-2 text-left text-sm font-bold tabular-nums text-accent">{item.quantity}</p>
                               ) : (
                                 <NumericInput value={item.quantity} min={0}
@@ -2131,14 +2247,22 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                             </div>
                             <div className="space-y-0.5">
                               <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">Unité</p>
-                              <UnitSelect value={item.unit} onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit', v)}
-                                allowedUnits={catalogContext.unitSet} compact className="w-full" />
+                              {isEquipment ? (
+                                <p className="p-2 text-sm font-semibold text-purple-700 dark:text-purple-300 bg-purple-500/8 border border-purple-400/30 rounded-lg">usage</p>
+                              ) : (
+                                <UnitSelect value={item.unit} onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit', v)}
+                                  allowedUnits={catalogContext.unitSet} compact className="w-full" />
+                              )}
                             </div>
                             <div className="space-y-0.5">
                               <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">PU HT</p>
-                              <NumericInput value={item.unit_price} min={0} decimals={2}
-                                onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_price', v ?? 0)}
-                                className={`w-full p-2 border rounded-lg outline-none tabular-nums text-sm ${isEquipment ? 'bg-purple-500/5 border-purple-400/30 text-purple-700 dark:text-purple-300' : item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400' : 'bg-base/50 border-[var(--elevation-border)] text-primary focus:border-accent'}`} />
+                              {isEquipment ? (
+                                <p className="p-2 text-sm font-bold tabular-nums text-purple-700 dark:text-purple-300 text-right bg-purple-500/8 border border-purple-400/30 rounded-lg">{fmt(item.unit_price)}</p>
+                              ) : (
+                                <NumericInput value={item.unit_price} min={0} decimals={2}
+                                  onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_price', v ?? 0)}
+                                  className={`w-full p-2 border rounded-lg outline-none tabular-nums text-sm ${item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400' : 'bg-base/50 border-[var(--elevation-border)] text-primary focus:border-accent'}`} />
+                              )}
                               {!item.material_id && !item.labor_rate_id && !isEquipment ? (
                                 <NumericInput
                                   value={item.unit_cost_ht ?? undefined}
@@ -2155,18 +2279,26 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                             </div>
                             <div className="space-y-0.5">
                               <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">TVA</p>
-                              <select value={item.vat_rate} onChange={e => handleItemChange(sec._tempId, item._tempId, 'vat_rate', Number(e.target.value))}
-                                className="w-full p-2 bg-base/50 border border-[var(--elevation-border)] rounded-lg focus:border-accent outline-none text-primary text-sm appearance-none">
-                                {LEGAL_VAT_RATES.map(rate => <option key={rate} value={rate}>{rate}%</option>)}
-                              </select>
+                              {isEquipment ? (
+                                <p className="p-2 text-sm font-semibold text-purple-700 dark:text-purple-300 text-right bg-purple-500/8 border border-purple-400/30 rounded-lg">Interne</p>
+                              ) : (
+                                <select value={item.vat_rate} onChange={e => handleItemChange(sec._tempId, item._tempId, 'vat_rate', Number(e.target.value))}
+                                  className="w-full p-2 bg-base/50 border border-[var(--elevation-border)] rounded-lg focus:border-accent outline-none text-primary text-sm appearance-none">
+                                  {LEGAL_VAT_RATES.map(rate => <option key={rate} value={rate}>{rate}%</option>)}
+                                </select>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center justify-between pt-1 border-t border-[var(--elevation-border)]/50">
                             <span className={`font-bold tabular-nums text-sm ${isEquipment ? 'text-purple-700 dark:text-purple-300' : 'text-primary'}`}>{fmt(item.quantity * item.unit_price)}</span>
-                            <button onClick={() => handleItemChange(sec._tempId, item._tempId, 'is_internal', !item.is_internal)}
-                              className={`text-xs font-semibold px-2.5 py-1 rounded-full transition-all ${item.is_internal ? 'text-amber-600 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10'}`}>
-                              {item.is_internal ? 'Interne' : 'Visible'}
-                            </button>
+                            {isEquipment ? (
+                              <span className="text-xs font-semibold px-2.5 py-1 rounded-full text-purple-700 dark:text-purple-300 bg-purple-500/10">Interne</span>
+                            ) : (
+                              <button onClick={() => handleItemChange(sec._tempId, item._tempId, 'is_internal', !item.is_internal)}
+                                className={`text-xs font-semibold px-2.5 py-1 rounded-full transition-all ${item.is_internal ? 'text-amber-600 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10'}`}>
+                                {item.is_internal ? 'Interne' : 'Visible'}
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -2202,16 +2334,70 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                           </div>
                         </div>
 	                      )}
-	                      {isEquipment && (
-	                        <div className="px-3 pb-3 pt-2 border-t border-purple-200/60 dark:border-purple-500/20 rounded-b-xl bg-purple-500/3">
-	                          <p className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
-	                            <Package className="w-3 h-3" />Équipement amorti
-	                          </p>
-	                          <p className="text-xs text-secondary mt-1">
-	                            Coût par usage : <span className="font-bold text-purple-700 dark:text-purple-300 tabular-nums">{fmt(item.unit_price)}</span>. Ajustez la quantité si plusieurs usages sont nécessaires.
-	                          </p>
-	                        </div>
-	                      )}
+	                      {isEquipment && equipmentMeta && (
+                          <div className="px-3 pb-3 pt-3 border-t border-purple-200/60 dark:border-purple-500/20 rounded-b-xl bg-purple-500/3 space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
+                                <Package className="w-3 h-3" />Amortissement équipement
+                              </p>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-purple-500/10 px-2 py-1 text-[11px] font-semibold text-purple-700 dark:text-purple-300">
+                                <EyeOff className="w-3 h-3 shrink-0" />Interne, absent du PDF client
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+                              <label className="flex flex-col gap-1 text-xs text-secondary sm:col-span-1">
+                                Prix d&apos;achat HT
+                                <div className="relative">
+                                  <NumericInput
+                                    value={equipmentMeta.purchasePrice}
+                                    min={0}
+                                    decimals={2}
+                                    placeholder="500"
+                                    onChange={v => handleEquipmentAmortizationChange(sec._tempId, item._tempId, 'purchasePrice', v)}
+                                    className="w-full h-9 px-2 pr-6 bg-base border border-purple-300/50 dark:border-purple-500/30 rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-purple-400"
+                                  />
+                                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-secondary pointer-events-none text-xs">€</span>
+                                </div>
+                              </label>
+                              <label className="flex flex-col gap-1 text-xs text-secondary sm:col-span-1">
+                                Usages sur la vie
+                                <NumericInput
+                                  value={equipmentMeta.lifetimeUses}
+                                  min={1}
+                                  decimals={0}
+                                  placeholder="100"
+                                  onChange={v => handleEquipmentAmortizationChange(sec._tempId, item._tempId, 'lifetimeUses', v)}
+                                  className="w-full h-9 px-2 bg-base border border-purple-300/50 dark:border-purple-500/30 rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-purple-400"
+                                />
+                              </label>
+                              <div className="flex flex-col gap-1 text-xs text-secondary sm:col-span-1">
+                                Coût final / usage
+                                <div className="h-9 flex items-center justify-end rounded-lg border border-purple-300/50 dark:border-purple-500/30 bg-purple-500/10 px-2">
+                                  <span className="font-bold text-purple-700 dark:text-purple-300 tabular-nums text-sm">{fmt(item.unit_price)}</span>
+                                </div>
+                              </div>
+                              <label className="flex flex-col gap-1 text-xs text-secondary sm:col-span-1">
+                                Usages comptés
+                                <NumericInput
+                                  value={item.quantity}
+                                  min={0}
+                                  decimals={2}
+                                  onChange={v => handleItemChange(sec._tempId, item._tempId, 'quantity', v ?? 0)}
+                                  className="w-full h-9 px-2 bg-base border border-purple-300/50 dark:border-purple-500/30 rounded-lg outline-none text-primary tabular-nums text-right text-sm focus:border-purple-400"
+                                />
+                              </label>
+                              <div className="flex flex-col gap-1 text-xs text-secondary sm:col-span-1">
+                                Coût interne total
+                                <div className="h-9 flex items-center justify-end rounded-lg border border-purple-300/50 dark:border-purple-500/30 bg-base px-2">
+                                  <span className="font-bold text-purple-700 dark:text-purple-300 tabular-nums text-sm">{fmt(item.quantity * item.unit_price)}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <p className="text-[11px] text-secondary">
+                              Calcul : prix d&apos;achat ÷ usages sur la vie = coût amorti par usage, puis multiplié par les usages comptés sur cette ligne.
+                            </p>
+                          </div>
+                        )}
 
                       {/* ── Panneau mode dim + dimensions ── */}
                       {isExpanded && (

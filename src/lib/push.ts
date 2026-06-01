@@ -33,6 +33,33 @@ export type PushPayload = {
   url?: string
 }
 
+export async function sendPushToUser(userId: string, payload: PushPayload) {
+  if (!ensureVapidConfigured()) return
+
+  const admin = createAdminClient()
+  const { data: subs } = await admin
+    .from('push_subscriptions')
+    .select('endpoint, p256dh, auth')
+    .eq('user_id', userId)
+
+  if (!subs || subs.length === 0) return
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
+
+  await Promise.allSettled(
+    subs.map((sub) =>
+      webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        JSON.stringify({
+          ...payload,
+          icon: `${appUrl}/icon-192.png`,
+          url: payload.url ? `${appUrl}${payload.url}` : appUrl,
+        })
+      )
+    )
+  )
+}
+
 export async function sendPushToOrg(orgId: string, payload: PushPayload, excludeUserId?: string) {
   if (!ensureVapidConfigured()) return
 

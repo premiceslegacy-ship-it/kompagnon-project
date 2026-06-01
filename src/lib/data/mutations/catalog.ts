@@ -852,7 +852,7 @@ export async function importPrestationTypes(
         unit: line.unit?.trim() || 'u',
         unit_price_ht: parseFloat(line.unit_price_ht) || 0,
         unit_cost_ht: parseFloat(line.unit_cost_ht) || 0,
-        is_internal: false,
+        is_internal: line.item_type === 'equipment' || line.item_type === 'transport' || line.item_type === 'labor',
       }))
 
       await supabase.from('prestation_type_items').insert(itemsToInsert)

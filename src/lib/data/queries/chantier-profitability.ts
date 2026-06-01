@@ -54,8 +54,8 @@ export type ChantierProfitability = {
   costSubcontract: number     // sous_traitance
   costOther: number           // location + transport + autre
   costTotal: number
-  marginEur: number           // collectedRevenueHt - costTotal
-  marginPct: number           // marginEur / collectedRevenueHt (0 si encaissé = 0)
+  marginEur: number           // revenueHt - costTotal
+  marginPct: number           // marginEur / revenueHt (0 si facturé = 0)
   hoursLogged: number
   expenses: ChantierExpense[]
   laborByMember: LaborByMemberEntry[]
@@ -387,8 +387,8 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   }
 
   const costTotal = costMaterial + costLabor + costSubcontract + costOther
-  const marginEur = collectedRevenueHt - costTotal
-  const marginPct = collectedRevenueHt > 0 ? marginEur / collectedRevenueHt : 0
+  const marginEur = revenueHt - costTotal
+  const marginPct = revenueHt > 0 ? marginEur / revenueHt : 0
   const periodMap: Record<string, ChantierProfitabilityPeriod> = {}
   const ensurePeriod = (key: string) => {
     periodMap[key] ??= {
@@ -441,12 +441,12 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   const periods = Object.values(periodMap)
     .map(p => {
       const costTotal = p.expensesHt + p.laborCost
-      const marginEur = p.collectedRevenueHt - costTotal
+      const marginEur = p.revenueHt - costTotal
       return {
         ...p,
         costTotal,
         marginEur,
-        marginPct: p.collectedRevenueHt > 0 ? marginEur / p.collectedRevenueHt : 0,
+        marginPct: p.revenueHt > 0 ? marginEur / p.revenueHt : 0,
       }
     })
     .sort((a, b) => b.period.localeCompare(a.period))
