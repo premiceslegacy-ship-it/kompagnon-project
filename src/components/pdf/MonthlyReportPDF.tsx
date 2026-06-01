@@ -20,7 +20,7 @@ export type ReportInvoice = {
   paid_at: string | null
   created_at: string
   client_name: string | null
-  items_internal_total: number
+  items_cost_total: number
   payments: Array<{
     id: string
     amount: number
@@ -70,6 +70,7 @@ const STATUS_LABELS: Record<string, string> = {
 const QUOTE_STATUS_LABELS: Record<string, string> = {
   draft: 'Brouillon', sent: 'Envoyé', viewed: 'Consulté',
   accepted: 'Accepté', refused: 'Refusé', expired: 'Expiré', converted: 'Converti',
+  fully_invoiced: 'Facturé',
 }
 
 export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) {
@@ -103,7 +104,7 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
   const encaisseHt = invoices.reduce((s, inv) => s + htFromTtc(inv, paidTtcInMonth(inv)), 0)
   const encaisseTtc = invoices.reduce((s, inv) => s + paidTtcInMonth(inv), 0)
   const resteHt = invoicesIssuedInMonth.reduce((s, inv) => s + remainingHt(inv), 0)
-  const totalInternalCost = invoicesIssuedInMonth.reduce((s, inv) => s + inv.items_internal_total, 0)
+  const totalInternalCost = invoicesIssuedInMonth.reduce((s, inv) => s + inv.items_cost_total, 0)
   const margeHt = caHt - totalInternalCost
   const margePct = caHt > 0 ? Math.round((margeHt / caHt) * 100) : 0
 
@@ -242,9 +243,9 @@ export default function MonthlyReportPDF({ data }: { data: MonthlyReportData }) 
               </View>
               {hasMargin && (
                 <View style={S.kpiBoxLast}>
-                  <Text style={S.kpiLabel}>Marge brute</Text>
+                  <Text style={S.kpiLabel}>Bénéfice prévu</Text>
                   <Text style={[S.kpiValue, { color: margePct >= 30 ? '#16A34A' : margePct >= 15 ? DS.color.accent : '#DC2626' }]}>{margePct}%</Text>
-                  <Text style={S.kpiSub}>{fmt(margeHt, currency)} HT</Text>
+                  <Text style={S.kpiSub}>{fmt(margeHt, currency)} HT · coûts lignes</Text>
                 </View>
               )}
             </View>

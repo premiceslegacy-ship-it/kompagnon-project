@@ -43,7 +43,7 @@ export default function PlanningDigestWidget({ slots }: { slots: MyPlanningSlot[
           {slots.map(slot => (
             <Link
               key={slot.id}
-              href={`/chantiers/${slot.chantier_id}`}
+              href={slot.source === 'maintenance' ? '/chantiers/entretien' : `/chantiers/${slot.chantier_id}`}
               className="flex items-start gap-3 p-3 rounded-2xl hover:bg-black/3 dark:hover:bg-white/5 transition-colors group"
             >
               {/* Heure */}

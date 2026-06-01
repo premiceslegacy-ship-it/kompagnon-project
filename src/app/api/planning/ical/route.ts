@@ -66,27 +66,42 @@ export async function GET(req: NextRequest) {
     .eq('organization_id', orgId)
     .eq('is_archived', false)
 
-  if (!chantierRows || chantierRows.length === 0) {
-    return buildCalendarResponse([])
+  const chantierMap: Record<string, string> = {}
+  for (const c of chantierRows ?? []) chantierMap[c.id] = c.title
+
+  const slotsResult = chantierRows && chantierRows.length > 0
+    ? await supabase
+        .from('chantier_plannings')
+        .select('id, chantier_id, planned_date, start_time, end_time, label, team_size, notes')
+        .in('chantier_id', chantierRows.map(c => c.id))
+        .order('planned_date', { ascending: true })
+    : { data: [], error: null }
+
+  if (slotsResult.error) {
+    return new NextResponse('Internal error', { status: 500 })
   }
 
-  const chantierMap: Record<string, string> = {}
-  for (const c of chantierRows) chantierMap[c.id] = c.title
+  const { data: maintenanceRows, error: maintenanceError } = await supabase
+    .from('maintenance_interventions')
+    .select(`
+      id, date_intervention, start_time, end_time, duration_hours, rapport, observations, statut,
+      contract:maintenance_contracts!inner(
+        title, organization_id, site_address_line1, site_postal_code, site_city,
+        chantier:chantiers!maintenance_contracts_chantier_id_fkey(title, address_line1, postal_code, city)
+      )
+    `)
+    .eq('organization_id', orgId)
+    .in('statut', ['planifiée', 'réalisée'])
+    .order('date_intervention', { ascending: true })
 
-  const { data: slots, error } = await supabase
-    .from('chantier_plannings')
-    .select('id, chantier_id, planned_date, start_time, end_time, label, team_size, notes')
-    .in('chantier_id', chantierRows.map(c => c.id))
-    .order('planned_date', { ascending: true })
-
-  if (error) {
+  if (maintenanceError) {
     return new NextResponse('Internal error', { status: 500 })
   }
 
   const uid_base = `planning-${orgId}`
   const now = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z'
 
-  const events = (slots ?? []).map((slot: any) => {
+  const chantierEvents = (slotsResult.data ?? []).map((slot: any) => {
     const chantierTitle = chantierMap[slot.chantier_id] ?? 'Chantier'
     const summary = escapeIcal(`${slot.label} - ${chantierTitle}`)
     const allDay = !slot.start_time
@@ -109,5 +124,38 @@ export async function GET(req: NextRequest) {
     ].join('\r\n')
   })
 
-  return buildCalendarResponse(events)
+  const maintenanceEvents = (maintenanceRows ?? []).map((row: any) => {
+    const contract = Array.isArray(row.contract) ? row.contract[0] : row.contract
+    const chantier = Array.isArray(contract?.chantier) ? contract.chantier[0] : contract?.chantier
+    const title = contract?.title ? `Intervention entretien - ${contract.title}` : 'Intervention entretien'
+    const allDay = !row.start_time
+    const startTime = row.start_time ? String(row.start_time).slice(0, 5) : null
+    const endTime = row.end_time ? String(row.end_time).slice(0, 5) : null
+    const dtstart = formatIcalDate(row.date_intervention, startTime, allDay)
+    const dtend = endTime ? formatIcalDate(row.date_intervention, endTime, false) : dtstart
+    const addr = [
+      chantier?.address_line1 ?? contract?.site_address_line1,
+      chantier?.postal_code ?? contract?.site_postal_code,
+      chantier?.city ?? contract?.site_city,
+    ].filter(Boolean).join(', ')
+    const descParts: string[] = ['Entretien']
+    if (row.statut) descParts.push(row.statut)
+    if (row.duration_hours) descParts.push(`${row.duration_hours} h`)
+    if (row.rapport) descParts.push(row.rapport)
+    if (row.observations) descParts.push(row.observations)
+
+    return [
+      'BEGIN:VEVENT',
+      `UID:${uid_base}-maintenance-${row.id}@kompagnon`,
+      `DTSTAMP:${now}`,
+      `DTSTART${allDay ? ';VALUE=DATE' : ''}:${dtstart}`,
+      `DTEND${allDay ? ';VALUE=DATE' : ''}:${dtend}`,
+      `SUMMARY:${escapeIcal(title)}`,
+      ...(addr ? [`LOCATION:${escapeIcal(addr)}`] : []),
+      ...(descParts.length > 0 ? [`DESCRIPTION:${escapeIcal(descParts.join(' - '))}`] : []),
+      'END:VEVENT',
+    ].join('\r\n')
+  })
+
+  return buildCalendarResponse([...chantierEvents, ...maintenanceEvents])
 }

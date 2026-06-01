@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 import { dateParis, todayParis } from '@/lib/utils'
 
 const FOLLOW_UP_DELAY_DAYS = 2
@@ -12,6 +13,8 @@ export type NotificationsSummary = {
   expiringQuotes: number
   pendingQuotes: number
   pendingRecurring: number
+  recurringReady: number
+  chantierPeriodDrafts: number
   recentAutoReminders: number
   dueTasks: number
   planningToday: number
@@ -20,6 +23,8 @@ export type NotificationsSummary = {
   newRequests: number
   decennaleExpiringDays: number | null
   chantiersAtRisk: number
+  maintenanceDue: number
+  maintenanceBillingPending: number
 }
 
 export const EMPTY_NOTIFICATIONS: NotificationsSummary = {
@@ -29,6 +34,8 @@ export const EMPTY_NOTIFICATIONS: NotificationsSummary = {
   expiringQuotes: 0,
   pendingQuotes: 0,
   pendingRecurring: 0,
+  recurringReady: 0,
+  chantierPeriodDrafts: 0,
   recentAutoReminders: 0,
   dueTasks: 0,
   planningToday: 0,
@@ -37,6 +44,8 @@ export const EMPTY_NOTIFICATIONS: NotificationsSummary = {
   newRequests: 0,
   decennaleExpiringDays: null,
   chantiersAtRisk: 0,
+  maintenanceDue: 0,
+  maintenanceBillingPending: 0,
 }
 
 export async function getNotificationsSummary(): Promise<NotificationsSummary> {
@@ -50,6 +59,13 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
   const in3days = dateParis(now + 3 * 24 * 60 * 60 * 1000)
   const followUpCutoff = new Date(now - FOLLOW_UP_DELAY_DAYS * 24 * 60 * 60 * 1000).toISOString()
   const recentActivityCutoff = new Date(now - RECENT_ACTIVITY_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  const [canSeeInvoices, canSeeQuotes, canSeeReminders, canSeeChantiers, canSeeLeads] = await Promise.all([
+    hasPermission('invoices.view'),
+    hasPermission('quotes.view'),
+    hasPermission('reminders.view'),
+    hasPermission('chantiers.view'),
+    hasPermission('leads.view'),
+  ])
 
   const [
     { count: overdueInvoices },
@@ -57,6 +73,7 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     { count: expiringQuotes },
     { count: pendingQuotes },
     { count: pendingRecurring },
+    { count: chantierPeriodDrafts },
     { count: recentAutoReminders },
     { count: dueTasks },
     { count: planningToday },
@@ -101,6 +118,13 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       .select('id', { count: 'exact', head: true })
       .eq('organization_id', orgId)
       .eq('status', 'pending_confirmation'),
+    supabase
+      .from('invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', orgId)
+      .eq('is_archived', false)
+      .eq('status', 'draft')
+      .eq('generation_source', 'chantier_period'),
     supabase
       .from('reminders')
       .select('id', { count: 'exact', head: true })
@@ -201,20 +225,76 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     if (daysLeft <= 60) decennaleExpiringDays = daysLeft
   }
 
+  let recurringReady = 0
+  if (canSeeInvoices) {
+    const { data: recurringModels } = await supabase
+      .from('recurring_invoices')
+      .select('id, next_send_date, requires_confirmation, confirmation_delay_days')
+      .eq('organization_id', orgId)
+      .eq('is_active', true)
+      .is('cancelled_at', null)
+
+    const readyModels = (recurringModels ?? []).filter(model => {
+      const nextDate = new Date(`${model.next_send_date}T00:00:00`)
+      const triggerDate = new Date(nextDate)
+      triggerDate.setDate(triggerDate.getDate() - (model.requires_confirmation ? model.confirmation_delay_days ?? 3 : 0))
+      return triggerDate <= new Date(`${today}T00:00:00`)
+    })
+
+    if (readyModels.length > 0) {
+      const { data: existingSchedules } = await supabase
+        .from('invoice_schedules')
+        .select('recurring_invoice_id, scheduled_date')
+        .eq('organization_id', orgId)
+        .in('recurring_invoice_id', readyModels.map(model => model.id))
+        .in('status', ['pending_confirmation', 'confirmed', 'sent'])
+
+      const existingKeys = new Set((existingSchedules ?? []).map(schedule => `${schedule.recurring_invoice_id}:${schedule.scheduled_date}`))
+      recurringReady = readyModels.filter(model => !existingKeys.has(`${model.id}:${model.next_send_date}`)).length
+    }
+  }
+
+  let maintenanceDue = 0
+  let maintenanceBillingPending = 0
+  if (canSeeChantiers) {
+    const [{ count: dueCount }, { data: billingRows }] = await Promise.all([
+      supabase
+        .from('maintenance_interventions')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', orgId)
+        .eq('statut', 'planifiée')
+        .lte('date_intervention', today),
+      supabase
+        .from('maintenance_interventions')
+        .select('id, billable_amount_ht, billable_notes')
+        .eq('organization_id', orgId)
+        .eq('statut', 'réalisée')
+        .is('invoice_id', null),
+    ])
+    maintenanceDue = dueCount ?? 0
+    maintenanceBillingPending = (billingRows ?? []).filter(row =>
+      (row.billable_amount_ht ?? 0) > 0 || Boolean(row.billable_notes?.trim()),
+    ).length
+  }
+
   const summary = {
-    overdueInvoices: overdueInvoices ?? 0,
-    invoiceFollowups: invoiceFollowups ?? 0,
-    expiringQuotes: expiringQuotes ?? 0,
-    pendingQuotes: pendingQuotes ?? 0,
-    pendingRecurring: pendingRecurring ?? 0,
-    recentAutoReminders: recentAutoReminders ?? 0,
-    dueTasks: dueTasks ?? 0,
-    planningToday: planningToday ?? 0,
-    missingPointages,
-    completedTasks: completedTasks ?? 0,
-    newRequests: newRequests ?? 0,
+    overdueInvoices: canSeeInvoices ? overdueInvoices ?? 0 : 0,
+    invoiceFollowups: canSeeInvoices && canSeeReminders ? invoiceFollowups ?? 0 : 0,
+    expiringQuotes: canSeeQuotes ? expiringQuotes ?? 0 : 0,
+    pendingQuotes: canSeeQuotes && canSeeReminders ? pendingQuotes ?? 0 : 0,
+    pendingRecurring: canSeeInvoices ? pendingRecurring ?? 0 : 0,
+    recurringReady,
+    chantierPeriodDrafts: canSeeInvoices ? chantierPeriodDrafts ?? 0 : 0,
+    recentAutoReminders: canSeeReminders ? recentAutoReminders ?? 0 : 0,
+    dueTasks: canSeeChantiers ? dueTasks ?? 0 : 0,
+    planningToday: canSeeChantiers ? planningToday ?? 0 : 0,
+    missingPointages: canSeeChantiers ? missingPointages : 0,
+    completedTasks: canSeeChantiers ? completedTasks ?? 0 : 0,
+    newRequests: canSeeLeads ? newRequests ?? 0 : 0,
     decennaleExpiringDays,
-    chantiersAtRisk,
+    chantiersAtRisk: canSeeChantiers ? chantiersAtRisk : 0,
+    maintenanceDue,
+    maintenanceBillingPending,
   }
 
   return {
@@ -224,12 +304,16 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       summary.invoiceFollowups +
       summary.pendingQuotes +
       summary.pendingRecurring +
+      summary.recurringReady +
+      summary.chantierPeriodDrafts +
       summary.recentAutoReminders +
       summary.dueTasks +
       summary.planningToday +
       summary.missingPointages +
       summary.completedTasks +
       summary.newRequests +
-      summary.chantiersAtRisk,
+      summary.chantiersAtRisk +
+      summary.maintenanceDue +
+      summary.maintenanceBillingPending,
   }
 }

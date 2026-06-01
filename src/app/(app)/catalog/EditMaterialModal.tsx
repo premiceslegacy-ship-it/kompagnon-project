@@ -2,6 +2,7 @@
 
 import React, { useState, useTransition } from 'react'
 import { X, AlertCircle, Loader2 } from 'lucide-react'
+import { ActionButton } from '@/components/ui/ActionButton'
 import { type CatalogMaterial } from '@/lib/data/queries/catalog'
 import { updateMaterial } from '@/lib/data/mutations/catalog'
 import { UnitSelect } from '@/components/ui/UnitSelect'
@@ -413,11 +414,10 @@ export function EditMaterialModal({ material, categories, catalogContext, suppli
           </div>
           <div className="px-8 py-5 border-t border-[var(--elevation-border)] shrink-0 flex justify-end gap-4">
             <button type="button" onClick={onClose} className="px-6 py-3 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
-            <button type="submit" disabled={isPending}
+            <ActionButton type="submit" loading={isPending}
               className="px-8 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60 disabled:scale-100">
-              {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               Enregistrer
-            </button>
+            </ActionButton>
           </div>
         </form>
       </div>

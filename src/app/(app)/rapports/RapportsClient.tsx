@@ -5,12 +5,13 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import {
   TrendingUp, TrendingDown, Users, HardHat, Clock, Euro,
-  Target, ChevronRight, Plus, Trash2, BarChart2, FileDown, X, AlertTriangle, Calendar,
+  Target, ChevronRight, Plus, Trash2, BarChart2, FileDown, X, AlertTriangle, Calendar, Wrench,
 } from 'lucide-react'
+import { ActionButton } from '@/components/ui/ActionButton'
 import type {
   MonthlyReport, AnnualReport, HoursReport,
   TopClientEntry, TopChantierEntry, AnnualObjectives, MonthlyObjectives, CustomObjective,
-  MemberWithoutRate,
+  MemberWithoutRate, MaintenanceReport,
 } from '@/lib/data/queries/reporting'
 import {
   saveObjectivesAction,
@@ -108,7 +109,7 @@ type StandardKey =
   | 'hours_target'
 
 const ANNUAL_STANDARD_OPTS: { key: StandardKey; label: string; unit: string; placeholder: string; step: string }[] = [
-  { key: 'revenue_ht_target',      label: 'Facturé HT',         unit: '€',  placeholder: '100000', step: '1000' },
+  { key: 'revenue_ht_target',      label: 'Facturé',            unit: '€',  placeholder: '100000', step: '1000' },
   { key: 'margin_eur_target',      label: 'Marge (EUR)',         unit: '€',  placeholder: '30000',  step: '1000' },
   { key: 'margin_pct_target',      label: 'Marge (%)',           unit: '%',  placeholder: '30',     step: '0.5'  },
   { key: 'chantiers_count_target', label: 'Chantiers terminés', unit: '',   placeholder: '20',     step: '1'    },
@@ -117,7 +118,7 @@ const ANNUAL_STANDARD_OPTS: { key: StandardKey; label: string; unit: string; pla
 ]
 
 const MONTHLY_STANDARD_OPTS: { key: Exclude<StandardKey, 'new_clients_target'>; label: string; unit: string; placeholder: string; step: string }[] = [
-  { key: 'revenue_ht_target',      label: 'Facturé HT',         unit: '€',  placeholder: '10000',  step: '500'  },
+  { key: 'revenue_ht_target',      label: 'Facturé',            unit: '€',  placeholder: '10000',  step: '500'  },
   { key: 'margin_eur_target',      label: 'Marge (EUR)',         unit: '€',  placeholder: '3000',   step: '500'  },
   { key: 'margin_pct_target',      label: 'Marge (%)',           unit: '%',  placeholder: '30',     step: '0.5'  },
   { key: 'chantiers_count_target', label: 'Chantiers terminés', unit: '',   placeholder: '2',      step: '1'    },
@@ -363,9 +364,9 @@ function ObjectivesModalAnnual({ year, objectives, onClose, onSaved }: {
             <button onClick={onClose} className="flex-1 py-3 rounded-pill border border-secondary/30 text-secondary text-sm font-semibold hover:bg-secondary/10 transition-colors">
               Annuler
             </button>
-            <button onClick={handleSave} disabled={pending} className="flex-1 py-3 rounded-pill bg-accent text-black text-sm font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
-              {pending ? 'Enregistrement…' : 'Enregistrer'}
-            </button>
+            <ActionButton onClick={handleSave} loading={pending} className="flex-1 py-3 rounded-pill bg-accent text-black text-sm font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
+              Enregistrer
+            </ActionButton>
           </div>
         </div>
       </div>
@@ -445,9 +446,9 @@ function ObjectivesModalMonthly({ year, month, objectives, onClose, onSaved }: {
             <button onClick={onClose} className="flex-1 py-3 rounded-pill border border-secondary/30 text-secondary text-sm font-semibold hover:bg-secondary/10 transition-colors">
               Annuler
             </button>
-            <button onClick={handleSave} disabled={pending} className="flex-1 py-3 rounded-pill bg-accent text-black text-sm font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
-              {pending ? 'Enregistrement…' : 'Enregistrer'}
-            </button>
+            <ActionButton onClick={handleSave} loading={pending} className="flex-1 py-3 rounded-pill bg-accent text-black text-sm font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
+              Enregistrer
+            </ActionButton>
           </div>
         </div>
       </div>
@@ -464,17 +465,20 @@ type Props = {
   initialHoursReport: HoursReport | null
   initialTopClients: TopClientEntry[]
   initialTopChantiers: TopChantierEntry[]
+  initialMaintenanceReport: MaintenanceReport | null
   initialAnnualObjectives: AnnualObjectives | null
   initialMonthlyObjectives: MonthlyObjectives | null
   membersWithoutRate: MemberWithoutRate[]
+  isVatSubject: boolean
 }
 
 export default function RapportsClient({
   initialVue, initialYear, initialMonth,
   initialMonthlyReport, initialAnnualReport,
-  initialHoursReport, initialTopClients, initialTopChantiers,
+  initialHoursReport, initialTopClients, initialTopChantiers, initialMaintenanceReport,
   initialAnnualObjectives, initialMonthlyObjectives,
   membersWithoutRate,
+  isVatSubject,
 }: Props) {
   const [vue, setVue] = useState(initialVue)
   const [year, setYear] = useState(initialYear)
@@ -485,6 +489,7 @@ export default function RapportsClient({
   const [hoursReport, setHoursReport] = useState(initialHoursReport)
   const [topClients, setTopClients] = useState(initialTopClients)
   const [topChantiers, setTopChantiers] = useState(initialTopChantiers)
+  const [maintenanceReport, setMaintenanceReport] = useState(initialMaintenanceReport)
   const [annualObjectives, setAnnualObjectives] = useState(initialAnnualObjectives)
   const [monthlyObjectives, setMonthlyObjectives] = useState(initialMonthlyObjectives)
 
@@ -503,6 +508,7 @@ export default function RapportsClient({
       setHoursReport(data.hoursReport)
       setTopClients(data.topClients)
       setTopChantiers(data.topChantiers)
+      setMaintenanceReport(data.maintenanceReport)
       setMonthlyObjectives(data.objectives)
     })
   }, [])
@@ -516,6 +522,7 @@ export default function RapportsClient({
       setHoursReport(data.hoursReport)
       setTopClients(data.topClients)
       setTopChantiers(data.topChantiers)
+      setMaintenanceReport(data.maintenanceReport)
       setAnnualObjectives(data.objectives)
     })
   }, [])
@@ -531,10 +538,21 @@ export default function RapportsClient({
 
   const r = monthlyReport
   const ar = annualReport
+  const mr = maintenanceReport
   const objectives = vue === 'mois' ? monthlyObjectives : annualObjectives
+  const maintenanceActualCost = mr ? mr.laborCost + mr.partsCost + mr.travelCost + mr.otherCost : 0
+  const maintenanceActualMarginPct = mr && mr.revenueHt > 0 ? mr.marginEur / mr.revenueHt : 0
+  const maintenanceExpectedMarginPct = mr && mr.expectedRevenueHt > 0 ? mr.expectedMarginHt / mr.expectedRevenueHt : 0
+  const monthlyActualMarginPct = r && r.caHt > 0 ? r.beneficeEstime / r.caHt : 0
+  const annualActualMarginPct = ar && ar.caHt > 0 ? ar.beneficeEstime / ar.caHt : 0
+  const billedLabel = isVatSubject ? 'Facturé HT' : 'Facturé'
+  const billedSub = (ttc: number) => isVatSubject && ttc > 0 ? `${fmt(ttc)} TTC facturé` : 'Factures émises, non forcément encaissées'
+  const collectedLabel = isVatSubject ? 'Encaissé TTC' : 'Encaissé'
+  const vatLabel = isVatSubject ? 'TVA facturée' : 'TVA non applicable'
 
   const objectivesEmpty = !objectives ||
     (!objectives.revenue_ht_target && !objectives.margin_eur_target &&
+     !objectives.margin_pct_target &&
      !objectives.chantiers_count_target && !objectives.hours_target &&
      objectives.customs.length === 0)
 
@@ -678,16 +696,16 @@ export default function RapportsClient({
       {vue === 'mois' && r && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KpiCard label="Facturé HT" value={r.caHt > 0 ? fmt(r.caHt) : '-'} sub={r.caTtc > 0 ? `${fmt(r.caTtc)} TTC facturé` : 'Factures émises, non forcément encaissées'} delta={<Delta current={r.caHt} prev={r.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
-            <KpiCard label="Encaissé TTC" value={r.encaisse > 0 ? fmt(r.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={r.encaisse} prev={r.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
-            <KpiCard label="TVA facturée" value={r.tvaDue > 0 ? fmt(r.tvaDue) : '-'} delta={<Delta current={r.tvaDue} prev={r.prevTvaDue} />} icon={<BarChart2 className="w-4 h-4" />} />
-            <KpiCard label="Bénéfice estimé" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} sub={r.hasCostData ? 'Facturé HT - dépenses - MO' : 'Aucun coût saisi ce mois'} icon={<Target className="w-4 h-4" />} />
+            <KpiCard label={billedLabel} value={r.caHt > 0 ? fmt(r.caHt) : '-'} sub={billedSub(r.caTtc)} delta={<Delta current={r.caHt} prev={r.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
+            <KpiCard label={collectedLabel} value={r.encaisse > 0 ? fmt(r.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={r.encaisse} prev={r.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
+            <KpiCard label={vatLabel} value={isVatSubject && r.tvaDue > 0 ? fmt(r.tvaDue) : '-'} delta={isVatSubject ? <Delta current={r.tvaDue} prev={r.prevTvaDue} /> : undefined} icon={<BarChart2 className="w-4 h-4" />} />
+            <KpiCard label="Bénéfice estimé" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} sub={r.hasCostData ? `${fmtPct(monthlyActualMarginPct)} · avant impôts et charges fixes` : 'Aucun coût réel saisi ce mois'} icon={<Target className="w-4 h-4" />} />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <KpiCard label="Bénéfice prévu sur factures" value={r.hasProjectedCostData ? fmt(r.projectedMarginHt) : '-'} sub={r.hasProjectedCostData ? `${fmtPct(r.projectedMarginPct)} · coûts des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
             <KpiCard label="Chantiers terminés" value={String(r.chantiersTermines || '-')} icon={<HardHat className="w-4 h-4 text-amber-500" />} />
             <KpiCard label="Chantiers en cours" value={String(r.chantiersEnCours || '-')} icon={<HardHat className="w-4 h-4" />} />
             <KpiCard label="Heures travaillées" value={r.heuresTotal > 0 ? fmtH(r.heuresTotal) : '-'} delta={<Delta current={r.heuresTotal} prev={r.prevHeuresTotal} />} icon={<Clock className="w-4 h-4" />} />
-            <KpiCard label="Factures émises" value={r.nouvellesFactures > 0 ? String(r.nouvellesFactures) : '-'} sub={r.facturesPayees > 0 ? `${r.facturesPayees} payée(s)` : undefined} icon={<ChevronRight className="w-4 h-4" />} />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <KpiCard
@@ -709,12 +727,13 @@ export default function RapportsClient({
       {vue === 'annee' && ar && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KpiCard label="Facturé HT" value={ar.caHt > 0 ? fmt(ar.caHt) : '-'} sub={ar.caTtc > 0 ? `${fmt(ar.caTtc)} TTC facturé` : 'Factures émises, non forcément encaissées'} delta={<Delta current={ar.caHt} prev={ar.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
-            <KpiCard label="Encaissé TTC" value={ar.encaisse > 0 ? fmt(ar.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={ar.encaisse} prev={ar.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
-            <KpiCard label="TVA facturée" value={ar.tvaDue > 0 ? fmt(ar.tvaDue) : '-'} icon={<BarChart2 className="w-4 h-4" />} />
-            <KpiCard label="Bénéfice estimé" value={ar.hasCostData ? fmt(ar.beneficeEstime) : '-'} sub={ar.hasCostData ? 'Facturé HT - dépenses - MO' : 'Aucun coût saisi cette année'} icon={<Target className="w-4 h-4" />} />
+            <KpiCard label={billedLabel} value={ar.caHt > 0 ? fmt(ar.caHt) : '-'} sub={billedSub(ar.caTtc)} delta={<Delta current={ar.caHt} prev={ar.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
+            <KpiCard label={collectedLabel} value={ar.encaisse > 0 ? fmt(ar.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={ar.encaisse} prev={ar.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
+            <KpiCard label={vatLabel} value={isVatSubject && ar.tvaDue > 0 ? fmt(ar.tvaDue) : '-'} icon={<BarChart2 className="w-4 h-4" />} />
+            <KpiCard label="Bénéfice estimé" value={ar.hasCostData ? fmt(ar.beneficeEstime) : '-'} sub={ar.hasCostData ? `${fmtPct(annualActualMarginPct)} · avant impôts et charges fixes` : 'Aucun coût réel saisi cette année'} icon={<Target className="w-4 h-4" />} />
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <KpiCard label="Bénéfice prévu sur factures" value={ar.hasProjectedCostData ? fmt(ar.projectedMarginHt) : '-'} sub={ar.hasProjectedCostData ? `${fmtPct(ar.projectedMarginPct)} · coûts des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
             <KpiCard label="Chantiers terminés" value={String(ar.chantiersTermines || '-')} icon={<HardHat className="w-4 h-4 text-amber-500" />} />
             <KpiCard label="Nouveaux clients" value={String(ar.nouveauxClients || '-')} icon={<Users className="w-4 h-4 text-blue-500" />} />
             <KpiCard label="Heures travaillées" value={ar.heuresTotal > 0 ? fmtH(ar.heuresTotal) : '-'} icon={<Clock className="w-4 h-4" />} />
@@ -723,6 +742,53 @@ export default function RapportsClient({
             <RevenueChart series={ar.series} prevSeries={ar.prevSeries} />
           </div>
         </>
+      )}
+
+      {mr && (mr.interventionsDone > 0 || mr.hoursTotal > 0 || mr.revenueHt > 0 || mr.partsCost > 0 || mr.travelCost > 0 || mr.expectedRevenueHt > 0 || mr.expectedCostHt > 0) && (
+        <section className="card rounded-3xl p-6 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-primary">Entretien / Maintenance</h2>
+              <p className="text-xs text-secondary mt-0.5">Production récurrente issue des contrats d&apos;entretien</p>
+            </div>
+            <Link href="/chantiers/entretien" className="text-sm font-semibold text-accent hover:opacity-80">
+              Voir le module
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <KpiCard label="Interventions" value={mr.interventionsDone > 0 ? String(mr.interventionsDone) : '-'} icon={<Wrench className="w-4 h-4" />} />
+            <KpiCard label="Heures entretien" value={mr.hoursTotal > 0 ? fmtH(mr.hoursTotal) : '-'} sub={mr.laborCost > 0 ? `${fmt(mr.laborCost)} coût MO` : undefined} icon={<Clock className="w-4 h-4" />} />
+            <KpiCard label="Coûts terrain" value={fmt(mr.partsCost + mr.travelCost + mr.otherCost)} sub={`Pièces ${fmt(mr.partsCost)} · déplacement ${fmt(mr.travelCost)}`} icon={<HardHat className="w-4 h-4" />} />
+            <KpiCard label="CA entretien" value={mr.revenueHt > 0 ? fmt(mr.revenueHt) : '-'} sub={`Marge estimée ${fmt(mr.marginEur)}`} icon={<Euro className="w-4 h-4" />} />
+          </div>
+          {(mr.expectedRevenueHt > 0 || mr.expectedCostHt > 0) && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <KpiCard label="Prévu / période" value={mr.expectedRevenueHt > 0 ? fmt(mr.expectedRevenueHt) : '-'} sub="Prix récurrents actifs" icon={<Calendar className="w-4 h-4" />} />
+                <KpiCard label="Coût prévu / période" value={mr.expectedCostHt > 0 ? fmt(mr.expectedCostHt) : '-'} sub="Référence catalogue entretien" icon={<HardHat className="w-4 h-4" />} />
+                <KpiCard label="Marge prévue / période" value={fmt(mr.expectedMarginHt)} sub={`${fmtPct(maintenanceExpectedMarginPct)} prévu`} icon={<Target className="w-4 h-4" />} />
+              </div>
+              <div className="rounded-2xl bg-secondary/5 border border-secondary/10 p-4 space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-semibold text-primary">Jauge marge entretien</span>
+                  <span className="text-secondary">
+                    Réel {fmt(mr.marginEur)} · Prévu {fmt(mr.expectedMarginHt)}
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-secondary/15 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${maintenanceActualMarginPct >= 0.2 ? 'bg-accent-green' : maintenanceActualMarginPct >= 0.05 ? 'bg-accent' : 'bg-red-500'}`}
+                    style={{ width: `${Math.max(0, Math.min(100, maintenanceActualMarginPct * 100))}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-xs text-secondary">
+                  <span>CA réel {fmt(mr.revenueHt || mr.expectedRevenueHt)}</span>
+                  <span>Coûts réels {fmt(maintenanceActualCost)}</span>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
       )}
 
       {/* Objectifs */}
@@ -747,10 +813,13 @@ export default function RapportsClient({
         ) : vue === 'mois' && monthlyObjectives ? (
           <div className="space-y-4">
             {monthlyObjectives.revenue_ht_target && (
-              <ProgressBar label="Facturé HT" current={r?.caHt ?? 0} target={monthlyObjectives.revenue_ht_target} format={fmt} onClear={() => clearMonthlyField('revenue_ht_target')} />
+              <ProgressBar label={billedLabel} current={r?.caHt ?? 0} target={monthlyObjectives.revenue_ht_target} format={fmt} onClear={() => clearMonthlyField('revenue_ht_target')} />
             )}
             {monthlyObjectives.margin_eur_target && (
-              <ProgressBar label="Marge (EUR)" current={r?.beneficeEstime ?? 0} target={monthlyObjectives.margin_eur_target} format={fmt} onClear={() => clearMonthlyField('margin_eur_target')} />
+              <ProgressBar label="Bénéfice estimé (EUR)" current={r?.beneficeEstime ?? 0} target={monthlyObjectives.margin_eur_target} format={fmt} onClear={() => clearMonthlyField('margin_eur_target')} />
+            )}
+            {monthlyObjectives.margin_pct_target && (
+              <ProgressBar label="Bénéfice estimé (%)" current={monthlyActualMarginPct * 100} target={monthlyObjectives.margin_pct_target} format={n => `${n.toFixed(1)} %`} onClear={() => clearMonthlyField('margin_pct_target')} />
             )}
             {monthlyObjectives.chantiers_count_target && (
               <ProgressBar label="Chantiers terminés" current={r?.chantiersTermines ?? 0} target={monthlyObjectives.chantiers_count_target} format={n => String(Math.round(n))} onClear={() => clearMonthlyField('chantiers_count_target')} />
@@ -765,10 +834,13 @@ export default function RapportsClient({
         ) : vue === 'annee' && annualObjectives ? (
           <div className="space-y-4">
             {annualObjectives.revenue_ht_target && (
-              <ProgressBar label="Facturé HT" current={ar?.caHt ?? 0} target={annualObjectives.revenue_ht_target} format={fmt} onClear={() => clearAnnualField('revenue_ht_target')} />
+              <ProgressBar label={billedLabel} current={ar?.caHt ?? 0} target={annualObjectives.revenue_ht_target} format={fmt} onClear={() => clearAnnualField('revenue_ht_target')} />
             )}
             {annualObjectives.margin_eur_target && (
-              <ProgressBar label="Marge (EUR)" current={ar?.beneficeEstime ?? 0} target={annualObjectives.margin_eur_target} format={fmt} onClear={() => clearAnnualField('margin_eur_target')} />
+              <ProgressBar label="Bénéfice estimé (EUR)" current={ar?.beneficeEstime ?? 0} target={annualObjectives.margin_eur_target} format={fmt} onClear={() => clearAnnualField('margin_eur_target')} />
+            )}
+            {annualObjectives.margin_pct_target && (
+              <ProgressBar label="Bénéfice estimé (%)" current={annualActualMarginPct * 100} target={annualObjectives.margin_pct_target} format={n => `${n.toFixed(1)} %`} onClear={() => clearAnnualField('margin_pct_target')} />
             )}
             {annualObjectives.chantiers_count_target && (
               <ProgressBar label="Chantiers terminés" current={ar?.chantiersTermines ?? 0} target={annualObjectives.chantiers_count_target} format={n => String(Math.round(n))} onClear={() => clearAnnualField('chantiers_count_target')} />
@@ -827,7 +899,7 @@ export default function RapportsClient({
           <div className="flex justify-between items-center mb-4">
             <div>
               <h2 className="text-lg font-bold text-primary">Meilleurs clients</h2>
-              <p className="text-xs text-secondary mt-0.5">Classés par CA HT sur {vue === 'mois' ? `${MONTH_LABELS[month - 1]} ${year}` : `l'année ${year}`}</p>
+              <p className="text-xs text-secondary mt-0.5">Classés par facturé sur {vue === 'mois' ? `${MONTH_LABELS[month - 1]} ${year}` : `l'année ${year}`}</p>
             </div>
             <Link href="/clients" className="text-xs text-accent font-semibold hover:underline">Voir tous</Link>
           </div>
@@ -876,8 +948,8 @@ export default function RapportsClient({
                     </div>
                     <div className="flex gap-3 mt-0.5 text-xs text-secondary">
                       {c.clientName && <span>{c.clientName}</span>}
-                      <span>Facturé HT : {fmt(c.caHt)}</span>
-                      <span>Encaissé TTC : {fmt(c.encaisseTtc)}</span>
+                      <span>{billedLabel} : {fmt(c.caHt)}</span>
+                      <span>{collectedLabel} : {fmt(c.encaisseTtc)}</span>
                       <span>Marge HT : {fmtPct(c.marginPct)}</span>
                     </div>
                   </div>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { sendPushToOrg, sendPushToUser } from '@/lib/push'
 
 export const dynamic = 'force-dynamic';
 import { sendEmail } from '@/lib/email'
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
 
   const { data: orgs } = await admin
     .from('organizations')
-    .select('id, name, email, email_from_address, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc')
+    .select('id, name, email, email_from_address, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, reminder_first_delay_days')
     .eq('auto_reminder_enabled', true)
 
   if (!orgs || orgs.length === 0) {
@@ -56,7 +57,9 @@ export async function GET(req: NextRequest) {
     const orgHour = (org.reminder_hour_utc as number) ?? 8
     if (currentHour !== orgHour) continue
 
-    const invoiceDays: number[] = ((org.invoice_reminder_days as number[]) ?? [3, 7]).map((day, index) => index === 0 ? Math.max(3, day) : day)
+    const baseInvoiceDays = ((org.invoice_reminder_days as number[]) ?? [3, 7]).map((day, index) => index === 0 ? Math.max(3, day) : day)
+    const firstDelay = org.reminder_first_delay_days != null ? Math.max(3, org.reminder_first_delay_days as number) : null
+    const invoiceDays: number[] = firstDelay != null ? [firstDelay, ...baseInvoiceDays.slice(1)] : baseInvoiceDays
     const quoteDays: number[] = (org.quote_reminder_days as number[]) ?? [2, 7, 10]
 
     // ── Charger les templates personnalisés de l'org ──────────────────────────
@@ -252,10 +255,79 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Notifs J-1 : interventions planifiées pour demain ────────────────────────
+  const tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  const tomorrowStr = tomorrow.toISOString().split('T')[0]
+
+  let interventionNotifsSent = 0
+  try {
+    const { data: upcomingInterventions } = await admin
+      .from('maintenance_interventions')
+      .select(`
+        id, date_intervention, organization_id, intervenant_id, intervenant_user_id, intervenant_member_id,
+        contract:maintenance_contracts(title),
+        intervenant:chantier_equipe_membres!maintenance_interventions_intervenant_member_id_fkey(id, prenom, name, profile_id)
+      `)
+      .eq('statut', 'planifiée')
+      .eq('date_intervention', tomorrowStr)
+
+    for (const iv of upcomingInterventions ?? []) {
+      const contract = Array.isArray(iv.contract) ? iv.contract[0] : iv.contract
+      if (!contract) continue
+
+      const pushPayload = {
+        title: 'Intervention demain',
+        body: contract.title,
+        url: '/chantiers/entretien',
+      }
+
+      try {
+        const intervenant = Array.isArray(iv.intervenant) ? iv.intervenant[0] : iv.intervenant
+        // Récupérer l'owner de l'org pour toujours le notifier
+        const { data: ownerMembership } = await admin
+          .from('memberships')
+          .select('user_id, roles!inner(slug)')
+          .eq('organization_id', iv.organization_id)
+          .eq('is_active', true)
+          .eq('roles.slug', 'owner')
+          .limit(1)
+          .maybeSingle()
+
+        const sentUserIds = new Set<string>()
+
+        // Notifier l'intervenant compte app ou le profil lié au membre terrain.
+        const targetUserId = iv.intervenant_user_id ?? intervenant?.profile_id ?? null
+        if (targetUserId) {
+          await sendPushToUser(targetUserId, pushPayload)
+          sentUserIds.add(targetUserId)
+        }
+
+        // Notifier l'owner s'il n'a pas déjà reçu la notif
+        if (ownerMembership?.user_id && !sentUserIds.has(ownerMembership.user_id)) {
+          await sendPushToUser(ownerMembership.user_id, pushPayload)
+        }
+
+        // Fallback : si personne de ciblé, envoyer à toute l'org
+        if (!targetUserId && !ownerMembership?.user_id) {
+          await sendPushToOrg(iv.organization_id, pushPayload)
+        }
+
+        interventionNotifsSent++
+      } catch (err) {
+        console.error(`[cron/reminders] push intervention ${iv.id}:`, err)
+      }
+    }
+  } catch (err) {
+    console.error('[cron/reminders] interventions J-1:', err)
+    errors++
+  }
+
   return NextResponse.json({
     success: true,
     invoicesSent,
     quotesSent,
+    interventionNotifsSent,
     errors,
     processedOrgs: orgs.length,
   })

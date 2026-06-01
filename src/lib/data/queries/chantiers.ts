@@ -25,6 +25,7 @@ export type Chantier = {
   periode_facturation: 'none' | 'mensuelle' | 'bimestrielle' | 'trimestrielle' | 'annuelle' | null
   jour_facturation: number | null
   prochaine_facturation: string | null
+  default_retention_pct: number
   quote_id: string | null
   created_at: string
   // Contact référent
@@ -189,7 +190,7 @@ export async function getChantiers(): Promise<Chantier[]> {
       address_line1, postal_code, city,
       start_date, end_date, estimated_end_date,
       budget_ht, target_margin_pct, quote_id, created_at,
-      montant_periode_ht, libelle_facturation_periode, periode_facturation, jour_facturation, prochaine_facturation,
+      montant_periode_ht, libelle_facturation_periode, periode_facturation, jour_facturation, prochaine_facturation, default_retention_pct,
       contact_name, contact_email, contact_phone,
       recurrence, recurrence_times, recurrence_team_size,
       recurrence_duration_h, recurrence_notes,
@@ -197,6 +198,7 @@ export async function getChantiers(): Promise<Chantier[]> {
     `)
     .eq('organization_id', orgId)
     .eq('is_archived', false)
+    .eq('is_maintenance', false)
     .order('created_at', { ascending: false })
     .limit(200)
 
@@ -222,7 +224,7 @@ export async function getChantierById(chantierId: string): Promise<ChantierDetai
           address_line1, postal_code, city,
           start_date, end_date, estimated_end_date,
           budget_ht, target_margin_pct, quote_id, created_at,
-          montant_periode_ht, libelle_facturation_periode, periode_facturation, jour_facturation, prochaine_facturation,
+          montant_periode_ht, libelle_facturation_periode, periode_facturation, jour_facturation, prochaine_facturation, default_retention_pct,
           contact_name, contact_email, contact_phone,
           recurrence, recurrence_times, recurrence_team_size,
           recurrence_duration_h, recurrence_notes,
@@ -492,28 +494,26 @@ export async function getChantierStats(): Promise<ChantierStats> {
   const ny = cm === 12 ? cy + 1 : cy
   const firstOfNextMonth = `${ny}-${String(nm).padStart(2, '0')}-01`
 
-  const [{ data: chantiers }] = await Promise.all([
+  const [{ data: chantiers }, { data: activeMaintenanceContracts }] = await Promise.all([
     supabase
       .from('chantiers')
-      .select('id, status, end_date')
+      .select('id, status, end_date, is_maintenance, maintenance_contract_id')
       .eq('organization_id', orgId)
       .eq('is_archived', false),
-
     supabase
-      .from('chantier_pointages')
-      .select('hours, date, chantier_id')
-      .in(
-        'chantier_id',
-        // sous-requête simulée : on filtre côté JS pour les chantiers de cette org
-        // (RLS garantit déjà l'isolation)
-        [],
-      )
-      .gte('date', firstOfMonth)
-      .lt('date', firstOfNextMonth),
+      .from('maintenance_contracts')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('status', 'actif'),
   ])
 
   // Pour les heures du mois, on refait une requête simple car sous-requête non dispo directement
-  const chantierIds = (chantiers ?? []).map(c => c.id)
+  const activeMaintenanceIds = new Set((activeMaintenanceContracts ?? []).map(c => c.id))
+  const reportableChantiers = (chantiers ?? []).filter(c =>
+    !c.is_maintenance || !c.maintenance_contract_id || activeMaintenanceIds.has(c.maintenance_contract_id)
+  )
+
+  const chantierIds = reportableChantiers.map(c => c.id)
   let heuresCeMois = 0
   if (chantierIds.length > 0) {
     const { data: pointagesMois } = await supabase
@@ -525,9 +525,9 @@ export async function getChantierStats(): Promise<ChantierStats> {
     heuresCeMois = pointagesMois?.reduce((s, p) => s + (p.hours ?? 0), 0) ?? 0
   }
 
-  const total = chantiers?.length ?? 0
-  const enCours = chantiers?.filter(c => c.status === 'en_cours').length ?? 0
-  const terminesCeMois = chantiers?.filter(c =>
+  const total = reportableChantiers.length
+  const enCours = reportableChantiers.filter(c => c.status === 'en_cours').length
+  const terminesCeMois = reportableChantiers.filter(c =>
     c.status === 'termine' &&
     c.end_date &&
     c.end_date >= firstOfMonth &&
@@ -585,6 +585,9 @@ export async function getChantierEquipes(chantierId: string): Promise<Equipe[]> 
 }
 
 export type GlobalPlanning = ChantierPlanning & {
+  source?: 'chantier' | 'maintenance'
+  maintenance_intervention_id?: string | null
+  maintenance_contract_id?: string | null
   chantier_title: string
   chantier_city: string | null
   chantier_status: ChantierStatus
@@ -633,8 +636,11 @@ export async function getAllPlannings(opts?: {
     return Math.abs(h) % 12
   }
 
-  return (data ?? []).map((row: any) => ({
+  const chantierPlannings = (data ?? []).map((row: any) => ({
     id: row.id,
+    source: 'chantier' as const,
+    maintenance_intervention_id: null,
+    maintenance_contract_id: null,
     chantier_id: row.chantier_id,
     planned_date: row.planned_date,
     start_time: row.start_time,
@@ -656,6 +662,70 @@ export async function getAllPlannings(opts?: {
     chantier_address_line1: row.chantier?.address_line1 ?? null,
     chantier_postal_code: row.chantier?.postal_code ?? null,
   }))
+
+  let maintenanceQuery = supabase
+    .from('maintenance_interventions')
+    .select(`
+      id, date_intervention, start_time, end_time, duration_hours,
+      rapport, observations, statut, intervenant_member_id, intervenant_id, intervenant_user_id, created_at,
+      contract:maintenance_contracts!inner(
+        id, title, chantier_id, organization_id, site_address_line1, site_postal_code, site_city,
+        chantier:chantiers!maintenance_contracts_chantier_id_fkey(id, title, city, status, address_line1, postal_code)
+      )
+    `)
+    .eq('organization_id', orgId)
+    .in('statut', ['planifiée', 'réalisée'])
+    .order('date_intervention', { ascending: true })
+    .order('start_time', { ascending: true, nullsFirst: false })
+
+  if (opts?.from) maintenanceQuery = maintenanceQuery.gte('date_intervention', opts.from)
+  if (opts?.to) maintenanceQuery = maintenanceQuery.lte('date_intervention', opts.to)
+
+  const { data: maintenanceRows, error: maintenanceError } = await maintenanceQuery
+
+  if (maintenanceError) {
+    console.error('[getAllPlannings maintenance]', maintenanceError)
+  }
+
+  const maintenancePlannings = (maintenanceRows ?? []).map((row: any) => {
+    const contract = Array.isArray(row.contract) ? row.contract[0] : row.contract
+    const chantier = Array.isArray(contract?.chantier) ? contract.chantier[0] : contract?.chantier
+    const supportId = chantier?.id ?? contract?.chantier_id ?? `maintenance:${contract?.id ?? row.id}`
+    const notes = row.rapport ?? row.observations ?? null
+    return {
+      id: `maintenance:${row.id}`,
+      source: 'maintenance' as const,
+      maintenance_intervention_id: row.id,
+      maintenance_contract_id: contract?.id ?? null,
+      chantier_id: supportId,
+      planned_date: row.date_intervention,
+      start_time: row.start_time ? String(row.start_time).slice(0, 5) : null,
+      end_time: row.end_time ? String(row.end_time).slice(0, 5) : null,
+      equipe_id: null,
+      member_id: row.intervenant_member_id ?? row.intervenant_id ?? null,
+      label: 'Intervention entretien',
+      team_size: 1,
+      notes,
+      created_at: row.created_at,
+      route_id: null,
+      route_order: null,
+      duration_min: row.duration_hours ? Math.round(Number(row.duration_hours) * 60) : null,
+      travel_from_prev_min: null,
+      chantier_title: contract?.title ? `Entretien - ${contract.title}` : 'Entretien',
+      chantier_city: chantier?.city ?? contract?.site_city ?? null,
+      chantier_status: chantier?.status ?? 'en_cours',
+      chantier_color_idx: colorIdx(supportId),
+      chantier_address_line1: chantier?.address_line1 ?? contract?.site_address_line1 ?? null,
+      chantier_postal_code: chantier?.postal_code ?? contract?.site_postal_code ?? null,
+    }
+  })
+
+  return [...chantierPlannings, ...maintenancePlannings]
+    .sort((a, b) =>
+      a.planned_date.localeCompare(b.planned_date)
+      || (a.start_time ?? '99:99').localeCompare(b.start_time ?? '99:99')
+      || a.chantier_title.localeCompare(b.chantier_title, 'fr')
+    )
 }
 
 export async function getChantierPlannings(chantierId: string): Promise<ChantierPlanning[]> {

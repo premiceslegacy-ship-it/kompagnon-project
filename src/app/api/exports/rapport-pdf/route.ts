@@ -9,6 +9,7 @@ import {
   getTopClients,
   getTopChantiers,
   getAnnualObjectives,
+  getMonthlyObjectives,
 } from '@/lib/data/queries/reporting'
 import RapportKpiPDF from '@/components/pdf/RapportKpiPDF'
 import { assertSafeExternalFetchUrl } from '@/lib/security'
@@ -28,6 +29,24 @@ async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
     return `data:${ct};base64,${Buffer.from(buf).toString('base64')}`
   } catch {
     return null
+  }
+}
+
+function monthLabelForFileName(month: number): string | null {
+  switch (month) {
+    case 1: return 'Janvier'
+    case 2: return 'Fevrier'
+    case 3: return 'Mars'
+    case 4: return 'Avril'
+    case 5: return 'Mai'
+    case 6: return 'Juin'
+    case 7: return 'Juillet'
+    case 8: return 'Aout'
+    case 9: return 'Septembre'
+    case 10: return 'Octobre'
+    case 11: return 'Novembre'
+    case 12: return 'Decembre'
+    default: return null
   }
 }
 
@@ -85,6 +104,11 @@ export async function GET(req: Request) {
     year = parseInt(periode)
   }
 
+  const monthLabel = monthLabelForFileName(month)
+  if (vue === 'mois' && !monthLabel) {
+    return new NextResponse('Mois invalide', { status: 400 })
+  }
+
   const { data: orgData } = await supabase
     .from('organizations')
     .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, is_vat_subject, default_vat_rate, primary_color, iban, bic, payment_terms_days, signatory_name, signatory_role, signature_image')
@@ -99,15 +123,14 @@ export async function GET(req: Request) {
     getHoursReport(year, vue === 'mois' ? month : undefined),
     getTopClients(year, vue === 'mois' ? month : undefined),
     getTopChantiers(year, vue === 'mois' ? month : undefined),
-    getAnnualObjectives(year),
+    vue === 'mois' ? getMonthlyObjectives(year, month) : getAnnualObjectives(year),
   ])
 
   const logoDataUrl = await fetchLogoAsDataUrl(orgData.logo_url)
   const orgWithLogo = { ...orgData, logo_url: logoDataUrl ?? orgData.logo_url }
 
-  const MONTHS_FR = ['Janvier', 'Fevrier', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Aout', 'Septembre', 'Octobre', 'Novembre', 'Decembre']
   const fileName = vue === 'mois'
-    ? `rapport-${MONTHS_FR[month - 1]}-${year}.pdf`
+    ? `rapport-${monthLabel}-${year}.pdf`
     : `rapport-annuel-${year}.pdf`
 
   const stream = await renderToStream(

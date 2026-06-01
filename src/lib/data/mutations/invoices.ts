@@ -33,9 +33,27 @@ function interpolate(template: string, vars: Record<string, string>): string {
   return Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), template)
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
 function wrapHtml(orgName: string, bodyText: string): string {
-  const bodyHtml = bodyText.replace(/\n/g, '<br>')
-  return `<div style="max-width:560px;margin:0 auto;font-family:sans-serif"><div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0"><p style="color:white;font-weight:bold;margin:0;font-size:16px">${orgName}</p></div><div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">${bodyHtml}</div></div>`
+  const bodyHtml = escapeHtml(bodyText).replace(/\n/g, '<br>')
+  return [
+    '<div style="max-width:560px;margin:0 auto;font-family:sans-serif">',
+    '<div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0">',
+    '<p style="color:white;font-weight:bold;margin:0;font-size:16px">',
+    escapeHtml(orgName),
+    '</p></div>',
+    '<div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">',
+    bodyHtml,
+    '</div></div>',
+  ].join('')
 }
 
 type ProratedInvoiceRow = {
@@ -104,13 +122,22 @@ export async function saveInvoiceItems(
   if (!orgId) return { error: 'Non authentifié.' }
 
   // Vérifier que la facture appartient à l'org
-  const { data: inv } = await supabase
-    .from('invoices')
-    .select('id')
-    .eq('id', invoiceId)
-    .eq('organization_id', orgId)
-    .single()
+  const [{ data: inv }, { data: orgVat }] = await Promise.all([
+    supabase
+      .from('invoices')
+      .select('id')
+      .eq('id', invoiceId)
+      .eq('organization_id', orgId)
+      .single(),
+    supabase
+      .from('organizations')
+      .select('is_vat_subject')
+      .eq('id', orgId)
+      .single(),
+  ])
   if (!inv) return { error: 'Facture introuvable.' }
+  const isVatSubject = orgVat?.is_vat_subject !== false
+  const normalizeVatRate = (rate: number) => isVatSubject ? coerceLegalVatRate(rate, 20) : 0
 
   // Supprimer les lignes existantes
   await supabase.from('invoice_items').delete().eq('invoice_id', invoiceId)
@@ -124,7 +151,7 @@ export async function saveInvoiceItems(
       unit: item.unit || null,
       unit_price: item.unit_price,
       unit_cost_ht: item.unit_cost_ht ?? null,
-      vat_rate: coerceLegalVatRate(item.vat_rate, 20),
+      vat_rate: normalizeVatRate(item.vat_rate),
       is_internal: item.is_internal ?? false,
       length_m: item.length_m ?? null,
       width_m: item.width_m ?? null,
@@ -138,7 +165,7 @@ export async function saveInvoiceItems(
   }
 
   // Recalculer les totaux (lignes internes exclues du total client)
-  const normalizedItems = items.map(item => ({ ...item, vat_rate: coerceLegalVatRate(item.vat_rate, 20) }))
+  const normalizedItems = items.map(item => ({ ...item, vat_rate: normalizeVatRate(item.vat_rate) }))
   const clientItems = normalizedItems.filter(i => !i.is_internal)
   const totalHt = clientItems.reduce((sum, i) => sum + i.quantity * i.unit_price, 0)
   const totalTva = clientItems.reduce((sum, i) => sum + i.quantity * i.unit_price * (i.vat_rate / 100), 0)
@@ -272,8 +299,7 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
         }
         const interpolate = (t: string) => Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), t)
         subject = interpolate(customTpl.subject ?? '')
-        const bodyHtml = interpolate(customTpl.body_text).replace(/\n/g, '<br>')
-        html = `<div style="max-width:560px;margin:0 auto;font-family:sans-serif"><div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0"><p style="color:white;font-weight:bold;margin:0;font-size:16px">${org.name}</p></div><div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">${bodyHtml}</div></div>`
+        html = wrapHtml(org.name, interpolate(customTpl.body_text))
       } else {
         const built = buildInvoicePaidEmail({
           orgName: org.name,
@@ -617,8 +643,17 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
     .eq('organization_id', orgId)
 
   if (error) return { error: error.message }
+
+  await supabase
+    .from('invoice_schedules')
+    .update({ status: 'sent', confirmed_at: new Date().toISOString() })
+    .eq('invoice_id', invoiceId)
+    .eq('organization_id', orgId)
+    .eq('status', 'pending_confirmation')
+
   await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
   revalidatePath('/finances')
+  revalidatePath('/finances/recurring')
   return { error: null }
 }
 

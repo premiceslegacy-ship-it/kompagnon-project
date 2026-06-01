@@ -343,6 +343,7 @@ export async function updateChantier(
     periodeFacturation?: BillingPeriod | null
     jourFacturation?: number | null
     prochaineFacturation?: string | null
+    defaultRetentionPct?: number
   },
 ): Promise<Result> {
   if (!await hasPermission('chantiers.edit')) return { error: 'Action non autorisée.' }
@@ -373,6 +374,7 @@ export async function updateChantier(
       ...(data.periodeFacturation !== undefined && { periode_facturation: data.periodeFacturation ?? 'none' }),
       ...(data.jourFacturation !== undefined && { jour_facturation: data.jourFacturation ?? 1 }),
       ...(data.prochaineFacturation !== undefined && { prochaine_facturation: data.prochaineFacturation }),
+      ...(data.defaultRetentionPct !== undefined && { default_retention_pct: data.defaultRetentionPct }),
     })
     .eq('id', chantierId)
     .eq('organization_id', orgId)

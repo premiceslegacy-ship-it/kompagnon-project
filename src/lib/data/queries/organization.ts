@@ -90,6 +90,27 @@ export type Organization = {
   departure_city?: string | null
 }
 
+export type OrganizationShell = Pick<Organization, 'id' | 'name' | 'logo_url'>
+
+export const getOrganizationShell = cache(async (): Promise<OrganizationShell | null> => {
+  const orgId = await getCachedOrganizationId()
+  if (!orgId) return null
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('id, name, logo_url')
+    .eq('id', orgId)
+    .single()
+
+  if (error) {
+    console.error('[getOrganizationShell]', error)
+    return null
+  }
+
+  return data as OrganizationShell
+})
+
 export const getOrganization = cache(async (): Promise<Organization | null> => {
   const orgId = await getCachedOrganizationId()
   if (!orgId) return null

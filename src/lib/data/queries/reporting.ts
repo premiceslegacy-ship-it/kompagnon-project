@@ -19,6 +19,10 @@ export type MonthlyReport = {
   tvaDue: number
   beneficeEstime: number
   hasCostData: boolean
+  projectedCostHt: number
+  projectedMarginHt: number
+  projectedMarginPct: number
+  hasProjectedCostData: boolean
   chantiersTermines: number
   chantiersEnCours: number
   heuresTotal: number
@@ -42,6 +46,10 @@ export type AnnualReport = {
   tvaDue: number
   beneficeEstime: number
   hasCostData: boolean
+  projectedCostHt: number
+  projectedMarginHt: number
+  projectedMarginPct: number
+  hasProjectedCostData: boolean
   chantiersTermines: number
   nouveauxClients: number
   heuresTotal: number
@@ -62,6 +70,20 @@ export type HoursReportEntry = {
 export type HoursReport = {
   total: number
   byPerson: HoursReportEntry[]
+}
+
+export type MaintenanceReport = {
+  interventionsDone: number
+  hoursTotal: number
+  laborCost: number
+  partsCost: number
+  travelCost: number
+  otherCost: number
+  revenueHt: number
+  marginEur: number
+  expectedRevenueHt: number
+  expectedCostHt: number
+  expectedMarginHt: number
 }
 
 export type TopClientEntry = {
@@ -138,6 +160,24 @@ function paidHt(inv: InvoicePaymentLike): number {
   const totalTtc = inv.total_ttc ?? 0
   if (totalTtc <= 0) return inv.status === 'paid' ? totalHt : 0
   return (paidTtc(inv) / totalTtc) * totalHt
+}
+
+type InvoiceLineCost = {
+  invoice_id: string
+  quantity: number | null
+  unit_price: number | null
+  unit_cost_ht: number | null
+  is_internal: boolean | null
+}
+
+function invoiceLineInternalCost(line: InvoiceLineCost): number {
+  const quantity = Number(line.quantity) || 0
+  const unitCost = line.unit_cost_ht != null
+    ? Number(line.unit_cost_ht) || 0
+    : line.is_internal
+      ? Number(line.unit_price) || 0
+      : 0
+  return quantity * unitCost
 }
 
 function periodRange(year: number, month?: number): { firstDay: string; lastDay: string } {
@@ -269,21 +309,32 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   const prevLastDay = new Date(prevYear, prevMonth, 0).toISOString().split('T')[0]
 
   // Tous les chantiers de l'org (pour filtrer pointages qui n'ont pas organization_id)
-  const { data: allOrgChantiers } = await supabase
-    .from('chantiers')
-    .select('id, status, end_date')
-    .eq('organization_id', orgId)
+  const [{ data: allOrgChantiers }, { data: activeMaintenanceContracts }] = await Promise.all([
+    supabase
+      .from('chantiers')
+      .select('id, status, end_date, is_maintenance, maintenance_contract_id')
+      .eq('organization_id', orgId),
+    supabase
+      .from('maintenance_contracts')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('status', 'actif'),
+  ])
 
-  const orgChantierIds = (allOrgChantiers ?? []).map(c => c.id)
+  const activeMaintenanceIds = new Set((activeMaintenanceContracts ?? []).map(c => c.id))
+  const reportableChantiers = (allOrgChantiers ?? []).filter(c =>
+    !c.is_maintenance || !c.maintenance_contract_id || activeMaintenanceIds.has(c.maintenance_contract_id)
+  )
+  const orgChantierIds = reportableChantiers.map(c => c.id)
 
-  const chantiersTerminesIds = (allOrgChantiers ?? [])
+  const chantiersTerminesIds = reportableChantiers
     .filter(c => c.status === 'termine' && c.end_date && c.end_date >= firstDay && c.end_date <= lastDay)
     .map(c => c.id)
-  const chantiersEnCoursIds = (allOrgChantiers ?? [])
+  const chantiersEnCoursIds = reportableChantiers
     .filter(c => c.status === 'en_cours')
     .map(c => c.id)
 
-  const prevChantiersTerminesIds = (allOrgChantiers ?? [])
+  const prevChantiersTerminesIds = reportableChantiers
     .filter(c => c.status === 'termine' && c.end_date && c.end_date >= prevFirstDay && c.end_date <= prevLastDay)
     .map(c => c.id)
 
@@ -298,7 +349,7 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   ] = await Promise.all([
     supabase
       .from('invoices')
-      .select('total_ht, total_ttc, total_tva, total_paid, status, invoice_type')
+      .select('id, total_ht, total_ttc, total_tva, total_paid, status, invoice_type')
       .eq('organization_id', orgId)
       .in('status', ['sent', 'partial', 'paid'])
       .gte('issue_date', firstDay)
@@ -306,7 +357,7 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
 
     supabase
       .from('invoices')
-      .select('total_ht, total_ttc, total_tva, total_paid, status, invoice_type')
+      .select('id, total_ht, total_ttc, total_tva, total_paid, status, invoice_type')
       .eq('organization_id', orgId)
       .in('status', ['sent', 'partial', 'paid'])
       .gte('issue_date', prevFirstDay)
@@ -361,7 +412,7 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
       .lte('issue_date', lastDay),
   ])
 
-  const chantiersDuMois = (allOrgChantiers ?? []).filter(c =>
+  const chantiersDuMois = reportableChantiers.filter(c =>
     c.status === 'en_cours' ||
     (c.status === 'termine' && c.end_date && c.end_date >= firstDay && c.end_date <= lastDay)
   )
@@ -371,6 +422,17 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   const caTtc = validInvoices.reduce((s, i) => s + (i.total_ttc ?? 0), 0)
   const tvaDue = validInvoices.reduce((s, i) => s + (i.total_tva ?? 0), 0)
   const encaisse = validInvoices.reduce((s, i) => s + paidTtc(i), 0)
+  const validInvoiceIds = validInvoices.map((i: any) => i.id).filter(Boolean)
+  const { data: projectedCostLines } = validInvoiceIds.length > 0
+    ? await supabase
+        .from('invoice_items')
+        .select('invoice_id, quantity, unit_price, unit_cost_ht, is_internal')
+        .in('invoice_id', validInvoiceIds)
+    : { data: [] as InvoiceLineCost[] }
+  const projectedCostHt = (projectedCostLines ?? []).reduce((s, line) => s + invoiceLineInternalCost(line as InvoiceLineCost), 0)
+  const hasProjectedCostData = projectedCostHt > 0
+  const projectedMarginHt = caHt - projectedCostHt
+  const projectedMarginPct = caHt > 0 ? projectedMarginHt / caHt : 0
   const nouvellesFactures = validInvoices.length
   const facturesPayees = validInvoices.filter(i => i.status === 'paid').length
   const recurringExpectedHt = (periodicChantiers ?? []).reduce((s, c) => s + (c.montant_periode_ht ?? 0), 0)
@@ -398,6 +460,7 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
 
   return {
     year, month, caHt, caTtc, encaisse, tvaDue, beneficeEstime, hasCostData,
+    projectedCostHt, projectedMarginHt, projectedMarginPct, hasProjectedCostData,
     chantiersTermines, chantiersEnCours, heuresTotal,
     nouvellesFactures, facturesPayees, recurringExpectedHt, recurringBilledHt, recurringContractsDue,
     prevCaHt, prevCaTtc, prevEncaisse, prevTvaDue, prevHeuresTotal,
@@ -415,14 +478,25 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
   const prevLastDay = `${year - 1}-12-31`
 
   // Tous les chantiers de l'org (pour filtrer pointages qui n'ont pas organization_id)
-  const { data: allChantiers } = await supabase
-    .from('chantiers')
-    .select('id, status, end_date, created_at')
-    .eq('organization_id', orgId)
+  const [{ data: allChantiers }, { data: activeMaintenanceContracts }] = await Promise.all([
+    supabase
+      .from('chantiers')
+      .select('id, status, end_date, created_at, is_maintenance, maintenance_contract_id')
+      .eq('organization_id', orgId),
+    supabase
+      .from('maintenance_contracts')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('status', 'actif'),
+  ])
 
-  const allChantierIds = (allChantiers ?? []).map(c => c.id)
+  const activeMaintenanceIds = new Set((activeMaintenanceContracts ?? []).map(c => c.id))
+  const reportableChantiers = (allChantiers ?? []).filter(c =>
+    !c.is_maintenance || !c.maintenance_contract_id || activeMaintenanceIds.has(c.maintenance_contract_id)
+  )
+  const allChantierIds = reportableChantiers.map(c => c.id)
 
-  const chantiersAnnee = (allChantiers ?? []).filter(c =>
+  const chantiersAnnee = reportableChantiers.filter(c =>
     (c.created_at && c.created_at >= firstDay && c.created_at <= lastDay) ||
     (c.end_date && c.end_date >= firstDay && c.end_date <= lastDay) ||
     c.status === 'en_cours'
@@ -437,7 +511,7 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
   ] = await Promise.all([
     supabase
       .from('invoices')
-      .select('total_ht, total_ttc, total_tva, total_paid, status, invoice_type, issue_date')
+      .select('id, total_ht, total_ttc, total_tva, total_paid, status, invoice_type, issue_date')
       .eq('organization_id', orgId)
       .in('status', ['sent', 'partial', 'paid'])
       .gte('issue_date', firstDay)
@@ -445,7 +519,7 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
 
     supabase
       .from('invoices')
-      .select('total_ht, total_ttc, total_tva, total_paid, status, invoice_type, issue_date')
+      .select('id, total_ht, total_ttc, total_tva, total_paid, status, invoice_type, issue_date')
       .eq('organization_id', orgId)
       .in('status', ['sent', 'partial', 'paid'])
       .gte('issue_date', prevFirstDay)
@@ -484,6 +558,17 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
   const caTtc = validInv.reduce((s, i) => s + (i.total_ttc ?? 0), 0)
   const tvaDue = validInv.reduce((s, i) => s + (i.total_tva ?? 0), 0)
   const encaisse = validInv.reduce((s, i) => s + paidTtc(i), 0)
+  const validInvoiceIds = validInv.map((i: any) => i.id).filter(Boolean)
+  const { data: projectedCostLines } = validInvoiceIds.length > 0
+    ? await supabase
+        .from('invoice_items')
+        .select('invoice_id, quantity, unit_price, unit_cost_ht, is_internal')
+        .in('invoice_id', validInvoiceIds)
+    : { data: [] as InvoiceLineCost[] }
+  const projectedCostHt = (projectedCostLines ?? []).reduce((s, line) => s + invoiceLineInternalCost(line as InvoiceLineCost), 0)
+  const hasProjectedCostData = projectedCostHt > 0
+  const projectedMarginHt = caHt - projectedCostHt
+  const projectedMarginPct = caHt > 0 ? projectedMarginHt / caHt : 0
 
   const prevValid = (prevInvoices ?? []).filter(i => i.invoice_type !== 'avoir')
   const prevCaHt = prevValid.reduce((s, i) => s + (i.total_ht ?? 0), 0)
@@ -507,6 +592,7 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
 
   return {
     year, caHt, caTtc, encaisse, tvaDue, beneficeEstime, hasCostData,
+    projectedCostHt, projectedMarginHt, projectedMarginPct, hasProjectedCostData,
     chantiersTermines,
     nouveauxClients: newClients?.length ?? 0,
     heuresTotal,
@@ -578,6 +664,127 @@ export async function getHoursReport(year: number, month?: number): Promise<Hour
 
   const total = byPerson.reduce((s, e) => s + e.hours, 0)
   return { total, byPerson }
+}
+
+export async function getMaintenanceReport(year: number, month?: number): Promise<MaintenanceReport | null> {
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return null
+
+  const { firstDay, lastDay } = periodRange(year, month)
+
+  // Seuls les contrats actifs entrent dans le rapport — résiliés/suspendus/terminés exclus
+  const { data: activeContracts } = await supabase
+    .from('maintenance_contracts')
+    .select('id, recurring_invoice_id, chantier_id')
+    .eq('organization_id', orgId)
+    .eq('status', 'actif')
+
+  const activeContractIds = (activeContracts ?? []).map(c => c.id)
+  const activeChantierIds = (activeContracts ?? [])
+    .map(c => c.chantier_id)
+    .filter(Boolean) as string[]
+  const activeRecurringIds = (activeContracts ?? [])
+    .map(c => c.recurring_invoice_id)
+    .filter(Boolean) as string[]
+
+  if (!activeContractIds.length) {
+    const expected = await getMaintenanceExpectedPeriod(supabase, orgId)
+    return { interventionsDone: 0, hoursTotal: 0, laborCost: 0, partsCost: 0, travelCost: 0, otherCost: 0, revenueHt: 0, marginEur: 0, ...expected }
+  }
+
+  const [{ data: interventions }, { data: schedules }, expected] = await Promise.all([
+    supabase
+      .from('maintenance_interventions')
+      .select('id, statut, date_intervention, invoice_id')
+      .eq('organization_id', orgId)
+      .in('maintenance_contract_id', activeContractIds),
+    activeRecurringIds.length ? supabase
+      .from('invoice_schedules')
+      .select('invoice_id')
+      .eq('organization_id', orgId)
+      .in('recurring_invoice_id', activeRecurringIds)
+      .not('invoice_id', 'is', null) : Promise.resolve({ data: [] }),
+    getMaintenanceExpectedPeriod(supabase, orgId),
+  ])
+
+  const interventionIds = (interventions ?? []).map(iv => iv.id)
+  const invoiceIds = [...new Set([
+    ...(interventions ?? []).map(iv => iv.invoice_id).filter(Boolean),
+    ...(schedules ?? []).map(s => s.invoice_id).filter(Boolean),
+  ])] as string[]
+
+  const [{ data: pointages }, { data: expenses }, { data: invoices }] = await Promise.all([
+    interventionIds.length ? supabase
+      .from('chantier_pointages')
+      .select('hours, user_id, member_id, rate_snapshot')
+      .in('maintenance_intervention_id', interventionIds)
+      .gte('date', firstDay)
+      .lte('date', lastDay) : Promise.resolve({ data: [] }),
+
+    activeChantierIds.length ? supabase
+      .from('chantier_expenses')
+      .select('amount_ht, category')
+      .in('chantier_id', activeChantierIds)
+      .gte('expense_date', firstDay)
+      .lte('expense_date', lastDay) : Promise.resolve({ data: [] }),
+
+    invoiceIds.length ? supabase
+      .from('invoices')
+      .select('total_ht, invoice_type')
+      .eq('organization_id', orgId)
+      .in('id', invoiceIds)
+      .in('status', ['sent', 'partial', 'paid'])
+      .gte('issue_date', firstDay)
+      .lte('issue_date', lastDay) : Promise.resolve({ data: [] }),
+  ])
+
+  const hoursTotal = (pointages ?? []).reduce((s, p) => s + (p.hours ?? 0), 0)
+  const laborCost = await calcLaborCost(supabase, orgId, pointages ?? [])
+  const partsCost = (expenses ?? []).filter(e => e.category === 'materiel').reduce((s, e) => s + (e.amount_ht ?? 0), 0)
+  const travelCost = (expenses ?? []).filter(e => e.category === 'transport').reduce((s, e) => s + (e.amount_ht ?? 0), 0)
+  const otherCost = (expenses ?? []).filter(e => e.category !== 'materiel' && e.category !== 'transport').reduce((s, e) => s + (e.amount_ht ?? 0), 0)
+  const revenueHt = (invoices ?? [])
+    .filter(i => i.invoice_type !== 'avoir')
+    .reduce((s, i) => s + (i.total_ht ?? 0), 0)
+
+  return {
+    interventionsDone: (interventions ?? []).filter(iv => (
+      iv.statut === 'réalisée' &&
+      (iv.date_intervention ?? '') >= firstDay &&
+      (iv.date_intervention ?? '') <= lastDay
+    )).length,
+    hoursTotal,
+    laborCost,
+    partsCost,
+    travelCost,
+    otherCost,
+    revenueHt,
+    marginEur: revenueHt - laborCost - partsCost - travelCost - otherCost,
+    ...expected,
+  }
+}
+
+async function getMaintenanceExpectedPeriod(
+  supabase: Awaited<ReturnType<typeof import('@/lib/supabase/server').createClient>>,
+  orgId: string,
+): Promise<Pick<MaintenanceReport, 'expectedRevenueHt' | 'expectedCostHt' | 'expectedMarginHt'>> {
+  const { data: contracts } = await supabase
+    .from('maintenance_contracts')
+    .select('montant_ht, period_cost_labor_ht, period_cost_parts_ht, period_cost_travel_ht, period_cost_other_ht')
+    .eq('organization_id', orgId)
+    .eq('status', 'actif')
+
+  const expectedRevenueHt = (contracts ?? []).reduce((s, c) => s + (c.montant_ht ?? 0), 0)
+  const expectedCostHt = (contracts ?? []).reduce(
+    (s, c) => s + (c.period_cost_labor_ht ?? 0) + (c.period_cost_parts_ht ?? 0) + (c.period_cost_travel_ht ?? 0) + (c.period_cost_other_ht ?? 0),
+    0,
+  )
+  return {
+    expectedRevenueHt,
+    expectedCostHt,
+    expectedMarginHt: expectedRevenueHt - expectedCostHt,
+  }
 }
 
 export async function getTopClients(year: number, month?: number, limit = 10): Promise<TopClientEntry[]> {
@@ -799,8 +1006,8 @@ export async function getTopChantiers(year: number, month?: number, limit = 10):
       const caHt = caByChantier[c.id] ?? 0
       const encaisseHt = encaisseHtByChantier[c.id] ?? 0
       const costTotal = (expCostByChantier[c.id] ?? 0) + (laborCostByChantier[c.id] ?? 0)
-      const marginEur = encaisseHt - costTotal
-      const marginPct = encaisseHt > 0 ? marginEur / encaisseHt : 0
+      const marginEur = caHt - costTotal
+      const marginPct = caHt > 0 ? marginEur / caHt : 0
       return {
         chantierId: c.id,
         chantierTitle: c.title ?? 'Sans titre',

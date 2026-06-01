@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Calendar, Clock, FileDown, LogOut, Plus, Loader2, Check, X, Mail, MapPin, Navigation, Timer, LogIn, AlertTriangle, PlayCircle, ChevronDown, ChevronUp, CalendarDays } from 'lucide-react'
+import { Calendar, Clock, FileDown, LogOut, Plus, Loader2, Check, X, Mail, MapPin, Navigation, Timer, LogIn, AlertTriangle, PlayCircle, ChevronDown, ChevronUp, CalendarDays, Target, Wrench } from 'lucide-react'
 import type { IndividualMember, MemberPointage, MemberPlanning, MemberTask } from '@/lib/data/queries/members'
+import type { MemberGoalWithProgress } from '@/lib/data/queries/member-goals'
 import {
   pointMyHoursFromSpace,
   sendMyHoursReportFromSpace,
@@ -111,6 +112,8 @@ export default function MonEspaceDashboardClient({
   monthStart,
   monthEnd,
   icalUrl,
+  memberGoals,
+  upcomingInterventions = [],
 }: {
   member: IndividualMember
   organizationName: string
@@ -121,6 +124,18 @@ export default function MonEspaceDashboardClient({
   monthStart: string
   monthEnd: string
   icalUrl: string
+  memberGoals: MemberGoalWithProgress[]
+  upcomingInterventions?: Array<{
+    id: string
+    date_intervention: string
+    statut: string
+    start_time: string | null
+    end_time: string | null
+    duration_hours: number | null
+    rapport: string | null
+    observations: string | null
+    contract: { id: string; title: string; frequence: string } | null
+  }>
 }) {
   const router = useRouter()
   const fullName = [member.prenom, member.name].filter(Boolean).join(' ') || member.name
@@ -540,6 +555,73 @@ export default function MonEspaceDashboardClient({
           </div>
         )}
       </section>
+
+      {/* Objectifs du mois */}
+      {memberGoals.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-bold text-primary flex items-center gap-2">
+            <Target className="w-4 h-4 text-accent" /> Mes objectifs du mois
+          </h2>
+          <div className="card divide-y divide-[var(--elevation-border)] overflow-hidden">
+            {memberGoals.map(goal => (
+              <div key={goal.id} className="px-4 py-3 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-primary">
+                    {goal.label ?? (goal.metric === 'heures_terrain' ? 'Heures terrain' : goal.metric === 'taches_completees' ? 'Tâches complétées' : goal.metric === 'chantiers_traites' ? 'Chantiers traités' : 'Objectif')}
+                  </p>
+                  <p className="text-sm font-semibold text-primary tabular-nums shrink-0">
+                    {goal.current}{goal.unit ?? ''} / {goal.target}{goal.unit ?? ''}
+                  </p>
+                </div>
+                <div className="h-2 rounded-full bg-black/8 dark:bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-accent transition-all"
+                    style={{ width: `${goal.percent}%` }}
+                  />
+                </div>
+                <p className="text-xs text-secondary text-right">{goal.percent}%</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Interventions d'entretien à venir */}
+      {upcomingInterventions.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-bold text-primary flex items-center gap-2">
+            <Wrench className="w-4 h-4 text-accent" /> Mes interventions d&apos;entretien
+          </h2>
+          <div className="card divide-y divide-[var(--elevation-border)] overflow-hidden">
+            {upcomingInterventions.map(iv => {
+              const dateLabel = new Date(iv.date_intervention + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'long' })
+              const isToday = iv.date_intervention === new Date().toISOString().slice(0, 10)
+              return (
+                <div key={iv.id} className="px-4 py-3 flex items-center gap-3">
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${iv.statut === 'réalisée' ? 'bg-green-500' : 'bg-blue-500'}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-primary truncate">
+                      {iv.contract?.title ?? 'Entretien'}
+                    </p>
+                    <p className="text-xs text-secondary">
+                      {isToday ? "Aujourd'hui" : dateLabel}
+                      {iv.start_time ? ` · ${iv.start_time.slice(0, 5)}` : ''}
+                      {iv.duration_hours ? ` · ${iv.duration_hours}h` : ''}
+                    </p>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold flex-shrink-0 ${
+                    iv.statut === 'réalisée' ? 'bg-green-500/15 text-green-600 dark:text-green-400' :
+                    iv.statut === 'planifiée' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' :
+                    'bg-secondary/20 text-secondary'
+                  }`}>
+                    {iv.statut === 'planifiée' ? 'Planifiée' : iv.statut === 'réalisée' ? 'Réalisée' : 'Annulée'}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Pointages du mois — accordéon par jour */}
       <section className="space-y-2">

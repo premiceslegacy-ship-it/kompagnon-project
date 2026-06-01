@@ -31,6 +31,7 @@ import {
     CheckSquare,
     CalendarCheck,
     AlertCircle,
+    Wrench,
 } from 'lucide-react';
 import type { UserProfile } from '@/lib/data/queries/user';
 import type { OrganizationModules } from '@/lib/organization-modules';
@@ -241,13 +242,17 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
         (notifications.invoiceFollowups ?? 0) +
         (notifications.pendingQuotes ?? 0) +
         (notifications.pendingRecurring ?? 0) +
+        (notifications.recurringReady ?? 0) +
+        (notifications.chantierPeriodDrafts ?? 0) +
         (notifications.recentAutoReminders ?? 0) +
         (notifications.dueTasks ?? 0) +
         (notifications.planningToday ?? 0) +
         (notifications.missingPointages ?? 0) +
         (notifications.completedTasks ?? 0) +
         (notifications.newRequests ?? 0) +
-        (notifications.chantiersAtRisk ?? 0)
+        (notifications.chantiersAtRisk ?? 0) +
+        (notifications.maintenanceDue ?? 0) +
+        (notifications.maintenanceBillingPending ?? 0)
     );
     const notificationSignature = [
         total,
@@ -255,6 +260,8 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
         notifications.invoiceFollowups ?? 0,
         notifications.pendingQuotes ?? 0,
         notifications.pendingRecurring ?? 0,
+        notifications.recurringReady ?? 0,
+        notifications.chantierPeriodDrafts ?? 0,
         notifications.recentAutoReminders ?? 0,
         notifications.dueTasks ?? 0,
         notifications.planningToday ?? 0,
@@ -262,6 +269,8 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
         notifications.completedTasks ?? 0,
         notifications.newRequests ?? 0,
         notifications.chantiersAtRisk ?? 0,
+        notifications.maintenanceDue ?? 0,
+        notifications.maintenanceBillingPending ?? 0,
     ].join(':');
     const badgeTotal = seenSignature === notificationSignature ? 0 : total;
 
@@ -354,13 +363,37 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.pendingRecurring ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/dashboard'); }}
+                                    onClick={() => { setIsOpen(false); router.push('/finances/recurring'); }}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <Repeat className="w-4 h-4 text-violet-500 mt-0.5 flex-shrink-0" />
                                     <div>
                                         <p className="text-sm font-semibold text-primary">{notifications.pendingRecurring} facture{(notifications.pendingRecurring ?? 0) > 1 ? 's' : ''} récurrente{(notifications.pendingRecurring ?? 0) > 1 ? 's' : ''}</p>
                                         <p className="text-xs text-secondary mt-0.5">Brouillon disponible, à envoyer ou modifier</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.recurringReady ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/finances/recurring'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <Repeat className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.recurringReady} facture{(notifications.recurringReady ?? 0) > 1 ? 's' : ''} à préparer</p>
+                                        <p className="text-xs text-secondary mt-0.5">Modèle récurrent dans sa fenêtre d'envoi</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.chantierPeriodDrafts ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/finances'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <FileText className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.chantierPeriodDrafts} facture{(notifications.chantierPeriodDrafts ?? 0) > 1 ? 's' : ''} de chantier à valider</p>
+                                        <p className="text-xs text-secondary mt-0.5">Brouillon périodique généré, à contrôler puis envoyer</p>
                                     </div>
                                 </button>
                             )}
@@ -433,6 +466,30 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                                     <div>
                                         <p className="text-sm font-semibold text-primary">{notifications.missingPointages} pointage{(notifications.missingPointages ?? 0) > 1 ? 's' : ''} à vérifier</p>
                                         <p className="text-xs text-secondary mt-0.5">Créneau passé sans heure pointée</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.maintenanceDue ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/chantiers/entretien'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <Wrench className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.maintenanceDue} entretien{(notifications.maintenanceDue ?? 0) > 1 ? 's' : ''} à réaliser</p>
+                                        <p className="text-xs text-secondary mt-0.5">Intervention planifiée aujourd'hui ou en retard</p>
+                                    </div>
+                                </button>
+                            )}
+                            {(notifications.maintenanceBillingPending ?? 0) > 0 && (
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/chantiers/entretien'); }}
+                                    className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
+                                >
+                                    <FileText className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-primary">{notifications.maintenanceBillingPending} entretien{(notifications.maintenanceBillingPending ?? 0) > 1 ? 's' : ''} à facturer</p>
+                                        <p className="text-xs text-secondary mt-0.5">Intervention réalisée avec montant facturable</p>
                                     </div>
                                 </button>
                             )}
@@ -626,13 +683,17 @@ const MobileDrawer = ({
         (notifications.invoiceFollowups ?? 0) +
         (notifications.pendingQuotes ?? 0) +
         (notifications.pendingRecurring ?? 0) +
+        (notifications.recurringReady ?? 0) +
+        (notifications.chantierPeriodDrafts ?? 0) +
         (notifications.recentAutoReminders ?? 0) +
         (notifications.dueTasks ?? 0) +
         (notifications.planningToday ?? 0) +
         (notifications.missingPointages ?? 0) +
         (notifications.completedTasks ?? 0) +
         (notifications.newRequests ?? 0) +
-        (notifications.chantiersAtRisk ?? 0)
+        (notifications.chantiersAtRisk ?? 0) +
+        (notifications.maintenanceDue ?? 0) +
+        (notifications.maintenanceBillingPending ?? 0)
     );
 
     return createPortal(
@@ -734,10 +795,10 @@ const MobileDrawer = ({
     );
 };
 
-export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifications = { overdueInvoices: 0, expiringQuotes: 0 }, modules, permissionKeys = [] }: { profile: UserProfile | null; orgName?: string | null; logoUrl?: string | null; notifications?: NotificationsData; modules?: OrganizationModules; permissionKeys?: string[] }) => {
+export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifications = { overdueInvoices: 0, expiringQuotes: 0 }, modules, permissionKeys = [], currentRoleSlug = null }: { profile: UserProfile | null; orgName?: string | null; logoUrl?: string | null; notifications?: NotificationsData; modules?: OrganizationModules; permissionKeys?: string[]; currentRoleSlug?: string | null }) => {
     const pathname = usePathname() || '/dashboard';
     const router = useRouter();
-    const showAtelierAi = !!(modules?.quote_ai || modules?.document_import_ai || modules?.voice_input);
+    const showAtelierAi = (currentRoleSlug === 'owner' || currentRoleSlug === 'admin') && !!(modules?.quote_ai || modules?.document_import_ai || modules?.voice_input);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [pendingHref, setPendingHref] = useState<string | null>(null);
     const permissionSet = new Set(permissionKeys);
@@ -791,6 +852,12 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                     label: 'Planning global',
                     icon: <Calendar className="w-3.5 h-3.5" />,
                     active: pathname.startsWith('/chantiers/planning'),
+                },
+                {
+                    href: '/chantiers/entretien',
+                    label: 'Entretien',
+                    icon: <Wrench className="w-3.5 h-3.5" />,
+                    active: pathname.startsWith('/chantiers/entretien'),
                 },
             ],
         }] : []),
@@ -894,6 +961,17 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                             label=""
                             active={pathname.startsWith('/chantiers/planning')}
                             pending={pendingHref === '/chantiers/planning'}
+                            onNavigate={handleNavigate}
+                            onPrefetch={prefetchRoute}
+                            className="px-2.5"
+                        />
+                        <NavChipLink
+                            href="/chantiers/entretien"
+                            title="Entretien"
+                            icon={<Wrench className="w-3.5 h-3.5" />}
+                            label=""
+                            active={pathname.startsWith('/chantiers/entretien')}
+                            pending={pendingHref === '/chantiers/entretien'}
                             onNavigate={handleNavigate}
                             onPrefetch={prefetchRoute}
                             className="px-2.5"

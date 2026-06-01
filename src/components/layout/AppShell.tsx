@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Topbar } from '@/components/layout/Topbar'
 import type { UserProfile } from '@/lib/data/queries/user'
 import type { OrganizationModules } from '@/lib/organization-modules'
@@ -14,6 +14,8 @@ const EMPTY: NotificationsSummary = {
   expiringQuotes: 0,
   pendingQuotes: 0,
   pendingRecurring: 0,
+  recurringReady: 0,
+  chantierPeriodDrafts: 0,
   recentAutoReminders: 0,
   dueTasks: 0,
   planningToday: 0,
@@ -22,6 +24,8 @@ const EMPTY: NotificationsSummary = {
   newRequests: 0,
   decennaleExpiringDays: null,
   chantiersAtRisk: 0,
+  maintenanceDue: 0,
+  maintenanceBillingPending: 0,
 }
 
 export function AppShell({
@@ -30,6 +34,7 @@ export function AppShell({
   logoUrl,
   modules,
   permissionKeys,
+  currentRoleSlug,
   children,
 }: {
   profile: UserProfile | null
@@ -37,18 +42,19 @@ export function AppShell({
   logoUrl: string | null
   modules: OrganizationModules
   permissionKeys: string[]
+  currentRoleSlug: string | null
   children: React.ReactNode
 }) {
   const [notifications, setNotifications] = useState<NotificationsSummary>(EMPTY)
 
-  function refreshNotifications() {
+  const refreshNotifications = useCallback(() => {
     fetch('/api/notifications')
       .then(r => r.json())
       .then(setNotifications)
       .catch(() => {})
-  }
+  }, [])
 
-  useEffect(() => { refreshNotifications() }, [])
+  useEffect(() => { refreshNotifications() }, [refreshNotifications])
 
   usePushNotifications(() => refreshNotifications())
 
@@ -63,6 +69,7 @@ export function AppShell({
         notifications={notifications}
         modules={modules}
         permissionKeys={permissionKeys}
+        currentRoleSlug={currentRoleSlug}
       />
       {decennaleExpiringDays !== null && (
         <div

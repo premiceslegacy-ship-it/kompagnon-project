@@ -3,6 +3,7 @@
 import React, { useState, useTransition, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Target, Plus, Trash2, Loader2, Users, Check } from 'lucide-react'
+import { ActionButton } from '@/components/ui/ActionButton'
 import { upsertMemberGoal, bulkUpsertMemberGoals, deleteMemberGoal, fetchMemberGoalsByMonth } from '@/lib/data/mutations/member-goals'
 import type { BulkTarget, GoalDisplayRow } from '@/lib/data/mutations/member-goals'
 import type { IndividualMember } from '@/lib/data/queries/members'
@@ -387,17 +388,14 @@ export default function MemberGoalsSettings({ intervenants, orgMembers, initialG
           {error && <p className="text-sm text-red-500">{error}</p>}
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center pt-1">
-            <button
+            <ActionButton
               onClick={handleSubmit}
-              disabled={isPending}
+              loading={isPending}
               className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-accent text-black font-semibold text-sm hover:opacity-90 transition-opacity disabled:opacity-60"
             >
-              {isPending
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Target className="w-4 h-4" />
-              }
-              {isPending ? 'Enregistrement...' : bulkAll ? 'Appliquer à tous' : 'Enregistrer'}
-            </button>
+              <Target className="w-4 h-4" />
+              {bulkAll ? 'Appliquer à tous' : 'Enregistrer'}
+            </ActionButton>
             <button
               type="button"
               onClick={() => { setShowForm(false); setError(null) }}

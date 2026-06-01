@@ -10,6 +10,7 @@ import MonthlyReportPDF, { type MonthlyReportData, type ReportInvoice, type Repo
 import { assertSafeExternalFetchUrl } from '@/lib/security'
 
 const REPORTABLE_INVOICE_STATUSES = ['sent', 'viewed', 'partial', 'paid', 'overdue'] as const
+const REPORTABLE_QUOTE_STATUSES = ['sent', 'viewed', 'accepted', 'refused', 'expired', 'converted', 'fully_invoiced'] as const
 
 function isReportableInvoiceStatus(status: string | null | undefined): boolean {
   return REPORTABLE_INVOICE_STATUSES.includes(status as typeof REPORTABLE_INVOICE_STATUSES[number])
@@ -66,7 +67,7 @@ export async function GET(req: Request) {
       id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
       issue_date, due_date, paid_at, created_at,
       client:clients(company_name, contact_name, first_name, last_name, email),
-      items:invoice_items(unit_price, quantity, is_internal),
+      items:invoice_items(unit_price, unit_cost_ht, quantity, is_internal),
       payments:payments(id, amount, payment_date)
     `)
     .eq('organization_id', orgId)
@@ -85,7 +86,7 @@ export async function GET(req: Request) {
         id, number, title, status, invoice_type, is_archived, total_ht, total_tva, total_ttc, total_paid, currency,
         issue_date, due_date, paid_at, created_at,
         client:clients(company_name, contact_name, first_name, last_name, email),
-        items:invoice_items(unit_price, quantity, is_internal)
+        items:invoice_items(unit_price, unit_cost_ht, quantity, is_internal)
       )
     `)
     .eq('organization_id', orgId)
@@ -99,7 +100,7 @@ export async function GET(req: Request) {
       id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
       issue_date, due_date, paid_at, created_at,
       client:clients(company_name, contact_name, first_name, last_name, email),
-      items:invoice_items(unit_price, quantity, is_internal),
+      items:invoice_items(unit_price, unit_cost_ht, quantity, is_internal),
       payments:payments(id, amount, payment_date)
     `)
     .eq('organization_id', orgId)
@@ -117,6 +118,7 @@ export async function GET(req: Request) {
     `)
     .eq('organization_id', orgId)
     .eq('is_archived', false)
+    .in('status', REPORTABLE_QUOTE_STATUSES)
     .gte('created_at', monthStart)
     .lt('created_at', monthEnd)
     .order('created_at', { ascending: true })
@@ -129,8 +131,11 @@ export async function GET(req: Request) {
 
   function normalizeInvoice(inv: any): ReportInvoice {
     const c = Array.isArray(inv.client) ? inv.client[0] : inv.client
-    const items = (Array.isArray(inv.items) ? inv.items : []) as Array<{ unit_price: number; quantity: number; is_internal: boolean }>
-    const internalTotal = items.filter(i => i.is_internal).reduce((s, i) => s + i.unit_price * i.quantity, 0)
+    const items = (Array.isArray(inv.items) ? inv.items : []) as Array<{ unit_price: number; unit_cost_ht: number | null; quantity: number; is_internal: boolean }>
+    const internalTotal = items.reduce((s, i) => {
+      const unitCost = i.unit_cost_ht != null ? i.unit_cost_ht : i.is_internal ? i.unit_price : 0
+      return s + unitCost * i.quantity
+    }, 0)
     return {
       id: inv.id,
       number: inv.number,
@@ -147,7 +152,7 @@ export async function GET(req: Request) {
       paid_at: inv.paid_at,
       created_at: inv.created_at,
       client_name: clientName(c),
-      items_internal_total: internalTotal,
+      items_cost_total: internalTotal,
       payments: (Array.isArray(inv.payments) ? inv.payments : []).map((p: any) => ({
         id: p.id,
         amount: p.amount ?? 0,

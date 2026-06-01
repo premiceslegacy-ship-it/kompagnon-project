@@ -15,6 +15,7 @@ import {
 import { importSuppliers, createSupplier, updateSupplier, deleteSupplier, type ImportSuppliersState } from '@/lib/data/mutations/suppliers'
 import type { Supplier } from '@/lib/data/queries/suppliers'
 import { Search, Plus, Trash2, X, Package, AlertCircle, AlertTriangle, Loader2, FileUp, Download, CheckCircle2, Layers, Pencil, ToggleLeft, ToggleRight, Eye, EyeOff, Wrench, Truck, Tag, Copy, Bot, Building2, Mail, Phone, MapPin, Cog, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ActionButton } from '@/components/ui/ActionButton'
 import { EditMaterialModal } from './EditMaterialModal'
 import { UnitSelect } from '@/components/ui/UnitSelect'
 import DimensionConfigEditor, { type EditableDimensionSchemaState, type EditableVariantState } from '@/components/catalog/DimensionConfigEditor'
@@ -536,6 +537,27 @@ const ITEM_TYPE_CONFIG: Record<PrestationItemType, { color: string; defaultInter
   equipment: { color: 'bg-purple-500/15 text-purple-500 border-purple-500/30',   defaultInternal: true  },
 }
 
+function parseEquipmentAmortizationLabel(designation: string) {
+  const match = designation.match(/Amortissement\s*:\s*([\d.,]+)\s*€\s*\/\s*([\d.,]+)\s*usages?/i)
+  const name = (designation.split(/\n/)[0] ?? '').trim()
+  const purchasePrice = match ? Number(match[1].replace(',', '.')) : null
+  const lifetimeUses = match ? Number(match[2].replace(',', '.')) : null
+
+  return {
+    name,
+    purchasePrice: purchasePrice != null && Number.isFinite(purchasePrice) ? purchasePrice : null,
+    lifetimeUses: lifetimeUses != null && Number.isFinite(lifetimeUses) ? lifetimeUses : null,
+  }
+}
+
+function buildEquipmentAmortizationLabel(name: string, purchasePrice: number, lifetimeUses: number) {
+  const label = name.trim() || 'Équipement amorti'
+  if (purchasePrice > 0 && lifetimeUses > 0) {
+    return `${label}\n\nAmortissement : ${purchasePrice} € / ${lifetimeUses} usages`
+  }
+  return label
+}
+
 const emptyPrestationHeader = (): PrestationHeaderForm => ({
   name: '', description: '', is_active: true,
 })
@@ -596,16 +618,22 @@ function ItemRow({
   const transLiters = Math.round(transKm * transConso / 100 * 100) / 100
 
   // ── Calculateur amortissement (equipment uniquement) ──────────────────────
-  const [equipPurchase, setEquipPurchase] = React.useState(() => item.item_type === 'equipment' ? parseFloat(item.unit_cost_ht) * (parseFloat(item.quantity) || 1) || 0 : 0)
-  const [equipUses, setEquipUses] = React.useState(() => item.item_type === 'equipment' ? Math.round(1 / (parseFloat(item.unit_cost_ht) / equipPurchase || 1)) || 100 : 100)
+  const equipmentMeta = parseEquipmentAmortizationLabel(item.designation)
+  const storedEquipmentCost = item.item_type === 'equipment' ? parseFloat(item.unit_cost_ht) || 0 : 0
+  const [equipPurchase, setEquipPurchase] = React.useState(() => item.item_type === 'equipment' ? equipmentMeta.purchasePrice ?? storedEquipmentCost * 100 : 0)
+  const [equipUses, setEquipUses] = React.useState(() => item.item_type === 'equipment' ? equipmentMeta.lifetimeUses ?? 100 : 100)
   const equipCostPerUse = equipUses > 0 ? Math.round((equipPurchase / equipUses) * 100) / 100 : 0
 
   React.useEffect(() => {
     if (item.item_type !== 'equipment' || equipPurchase <= 0 || equipUses <= 0) return
+    const currentName = parseEquipmentAmortizationLabel(item.designation).name
     patch({
+      designation: buildEquipmentAmortizationLabel(currentName, equipPurchase, equipUses),
+      quantity: '1',
       unit_cost_ht: String(equipCostPerUse),
       unit_price_ht: '0',
       unit: 'usage',
+      is_internal: true,
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [equipPurchase, equipUses])
@@ -712,7 +740,13 @@ function ItemRow({
           </div>
         ) : item.item_type === 'equipment' ? (
           <div className="space-y-1.5">
-            <input type="text" value={item.designation} onChange={e => patch({ designation: e.target.value })} placeholder="ex: Aspirateur industriel" className="w-full px-2 py-1 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-lg text-primary text-sm outline-none" />
+            <input
+              type="text"
+              value={parseEquipmentAmortizationLabel(item.designation).name}
+              onChange={e => patch({ designation: buildEquipmentAmortizationLabel(e.target.value, equipPurchase, equipUses) })}
+              placeholder="ex: Aspirateur industriel"
+              className="w-full px-2 py-1 bg-base dark:bg-white/5 border border-transparent focus:border-accent rounded-lg text-primary text-sm outline-none"
+            />
             <div className="flex items-center gap-1.5 flex-wrap">
               <label className="flex items-center gap-1 text-xs text-secondary whitespace-nowrap">
                 Prix achat
@@ -903,20 +937,29 @@ function NewPrestationModal({
 
       let position = 0
       const itemsPayload = sections.flatMap(section =>
-        section.items.map(item => ({
-          position: position++,
-          section_title: section.title.trim(),
-          item_type: item.item_type,
-          material_id: item.material_id,
-          labor_rate_id: item.labor_rate_id,
-          designation: item.designation.trim() || '-',
-          quantity: parseFloat(item.quantity) || 1,
-          unit: item.unit || 'u',
-          unit_price_ht: parseFloat(item.unit_price_ht) || 0,
-          unit_cost_ht: parseFloat(item.unit_cost_ht) || 0,
-          is_internal: item.is_internal,
-          save_to_catalog: item.save_to_catalog,
-        }))
+        section.items.map(item => {
+          const isEquipment = item.item_type === 'equipment'
+          const equipmentMeta = isEquipment ? parseEquipmentAmortizationLabel(item.designation) : null
+          const unitCost = parseFloat(item.unit_cost_ht) || 0
+          const designation = isEquipment && equipmentMeta?.purchasePrice && equipmentMeta.lifetimeUses
+            ? buildEquipmentAmortizationLabel(equipmentMeta.name, equipmentMeta.purchasePrice, equipmentMeta.lifetimeUses)
+            : item.designation.trim() || '-'
+
+          return {
+            position: position++,
+            section_title: section.title.trim(),
+            item_type: item.item_type,
+            material_id: item.material_id,
+            labor_rate_id: item.labor_rate_id,
+            designation,
+            quantity: isEquipment ? 1 : parseFloat(item.quantity) || 1,
+            unit: isEquipment ? 'usage' : item.unit || 'u',
+            unit_price_ht: isEquipment ? 0 : parseFloat(item.unit_price_ht) || 0,
+            unit_cost_ht: unitCost,
+            is_internal: isEquipment ? true : item.is_internal,
+            save_to_catalog: item.save_to_catalog,
+          }
+        })
       )
 
       const res = await setPrestationTypeItems(prestationId, itemsPayload)
@@ -1090,14 +1133,14 @@ function NewPrestationModal({
           </div>
           <div className="flex items-center gap-3">
             <button type="button" onClick={onClose} className="px-6 py-2.5 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
-            <button
+            <ActionButton
               type="button"
               onClick={handleSubmit}
-              disabled={isPending}
+              loading={isPending}
               className="px-8 py-2.5 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
             >
-              {isPending ? <><Loader2 className="w-4 h-4 animate-spin" />Enregistrement...</> : (editing ? 'Mettre à jour' : catalogContext.labelSet.bundleTemplate.createLabel)}
-            </button>
+              {editing ? 'Mettre à jour' : catalogContext.labelSet.bundleTemplate.createLabel}
+            </ActionButton>
           </div>
         </div>
       </div>
@@ -1417,13 +1460,13 @@ function ImportModal({ isOpen, onClose, title, fields, templateFilename, serverA
 
             <div className="flex justify-end gap-4 pt-2">
               <button onClick={() => setStep(1)} className="px-6 py-3 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Retour</button>
-              <button
+              <ActionButton
                 onClick={handleImport}
-                disabled={isPending}
+                loading={isPending}
                 className="px-8 py-3 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
               >
-                {isPending ? <><Loader2 className="w-4 h-4 animate-spin" />Import...</> : <>Importer {dataRows.length} ligne(s)</>}
-              </button>
+                Importer {dataRows.length} ligne(s)
+              </ActionButton>
             </div>
           </div>
         )}
@@ -2138,7 +2181,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                         <td className="px-3 md:px-6 py-3 md:py-4 text-right">
                           <InlineNumber id={item.id} field="purchase_price" value={item.purchase_price} onSave={v => saveMaterialField(item, 'purchase_price', v)} />
                         </td>
-                        <td className="px-3 md:px-6 py-3 md:py-4 text-right">
+                        <td className="px-3 md:px-6 py-3 md:py-4 text-right whitespace-nowrap">
                           <InlinePercent id={item.id} field="margin_rate" value={item.margin_rate} onSave={v => saveMaterialField(item, 'margin_rate', v)} />
                         </td>
                         <td className="px-3 md:px-6 py-3 md:py-4 text-right">
@@ -2283,9 +2326,9 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                     <td className="px-6 py-4 text-right">
                       <span className="text-sm text-secondary tabular-nums">{formatCurrency(item.base_cost_ht)}</span>
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <span className="px-2 py-1 rounded-md bg-base/50 text-xs font-bold text-secondary tabular-nums border border-[var(--elevation-border)]">
-                        {item.base_margin_pct ?? 0} %
+                    <td className="px-6 py-4 text-right whitespace-nowrap">
+                      <span className="px-2 py-1 rounded-md bg-base/50 text-xs font-bold text-secondary tabular-nums border border-[var(--elevation-border)] whitespace-nowrap">
+                        {item.base_margin_pct ?? 0}%
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
@@ -2647,14 +2690,13 @@ function ImportPrestationsModal({ isOpen, onClose, onSuccess, bundleTemplateLabe
 
             <div className="flex justify-end gap-3">
               <button onClick={() => setStep(1)} className="px-6 py-2.5 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Retour</button>
-              <button
+              <ActionButton
                 onClick={handleImport}
-                disabled={parsing || isPending}
+                loading={parsing || isPending}
                 className="px-8 py-2.5 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2"
               >
-                {(parsing || isPending) && <Loader2 className="w-4 h-4 animate-spin" />}
                 Importer
-              </button>
+              </ActionButton>
             </div>
           </div>
         )}
@@ -2781,9 +2823,9 @@ function NewSupplierModal({ isOpen, onClose, onSaved }: { isOpen: boolean; onClo
 
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="px-6 py-2.5 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
-            <button type="submit" disabled={saving} className="px-8 py-2.5 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 flex items-center gap-2">
-              {saving && <Loader2 className="w-4 h-4 animate-spin" />}Créer
-            </button>
+            <ActionButton type="submit" loading={saving} className="px-8 py-2.5 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 flex items-center gap-2">
+              Créer
+            </ActionButton>
           </div>
         </form>
       </div>
@@ -2881,9 +2923,9 @@ function EditSupplierModal({ supplier, onClose, onSaved }: { supplier: Supplier;
           )}
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="px-6 py-2.5 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
-            <button type="submit" disabled={saving} className="px-8 py-2.5 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 flex items-center gap-2">
-              {saving && <Loader2 className="w-4 h-4 animate-spin" />}Enregistrer
-            </button>
+            <ActionButton type="submit" loading={saving} className="px-8 py-2.5 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-50 flex items-center gap-2">
+              Enregistrer
+            </ActionButton>
           </div>
         </form>
       </div>

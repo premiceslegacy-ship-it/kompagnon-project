@@ -1900,6 +1900,23 @@ export default function ChantierDetailClient({
   const [billingGenerating, setBillingGenerating] = useState(false)
   const [billingError, setBillingError] = useState<string | null>(null)
 
+  // Retenue de garantie par défaut
+  const [editRetention, setEditRetention] = useState(false)
+  const [retentionPct, setRetentionPct] = useState(String(chantier.default_retention_pct ?? 0))
+  const [retentionSaving, setRetentionSaving] = useState(false)
+  const [retentionError, setRetentionError] = useState<string | null>(null)
+
+  const handleSaveRetention = async () => {
+    const val = parseFloat(retentionPct)
+    if (isNaN(val) || val < 0 || val > 100) { setRetentionError('Taux invalide (0-100).'); return }
+    setRetentionSaving(true)
+    setRetentionError(null)
+    const res = await updateChantier(chantier.id, { defaultRetentionPct: val })
+    setRetentionSaving(false)
+    if (res.error) { setRetentionError(res.error); return }
+    setEditRetention(false)
+  }
+
   // Devis lié
   const [linkedQuoteId, setLinkedQuoteId] = useState<string | null>(chantier.quote_id)
   const [editQuoteLink, setEditQuoteLink] = useState(false)
@@ -2880,6 +2897,57 @@ export default function ChantierDetailClient({
                 </div>
               )}
             </div>
+            {/* Retenue de garantie par défaut */}
+            <div className="rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)] p-3 space-y-2">
+              {!editRetention ? (
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-secondary">Retenue de garantie par défaut</p>
+                    {(chantier.default_retention_pct ?? 0) > 0 ? (
+                      <p className="text-sm text-primary font-semibold">{retentionPct} %</p>
+                    ) : (
+                      <p className="text-sm text-secondary">Non configurée</p>
+                    )}
+                    {(chantier.default_retention_pct ?? 0) > 0 && (
+                      <p className="text-xs text-secondary">Pré-remplie automatiquement sur les nouvelles factures</p>
+                    )}
+                  </div>
+                  {canEditChantier && (
+                    <button
+                      onClick={() => { setEditRetention(true); setRetentionError(null) }}
+                      className="p-1 text-secondary hover:text-primary transition-colors flex-shrink-0"
+                      title="Modifier la retenue de garantie"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-semibold text-secondary block">Taux de retenue (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    className="input input-sm w-full"
+                    value={retentionPct}
+                    onChange={e => setRetentionPct(e.target.value)}
+                    autoFocus
+                    placeholder="Ex : 5"
+                  />
+                  {retentionError && <p className="text-xs text-red-500">{retentionError}</p>}
+                  <div className="flex gap-2">
+                    <button onClick={() => setEditRetention(false)} className="btn-secondary text-xs py-1 px-2 flex-1">Annuler</button>
+                    <button onClick={handleSaveRetention} disabled={retentionSaving} className="btn-primary text-xs py-1 px-2 flex-1 flex items-center justify-center gap-1.5">
+                      {retentionSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      Enregistrer
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Progression */}
             <div className="space-y-1">
               <div className="flex justify-between text-xs text-secondary">
@@ -3013,6 +3081,7 @@ export default function ChantierDetailClient({
             canCreateSituation={canCreateSituation}
             canCreateSolde={canCreateSolde}
             returnTo={`/chantiers/${chantier.id}`}
+            defaultRetentionPct={chantier.default_retention_pct ?? 0}
           />
         </div>
       )}

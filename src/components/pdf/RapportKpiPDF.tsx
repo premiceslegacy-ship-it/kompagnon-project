@@ -3,7 +3,7 @@ import { Document, Page, View, Text, Image } from '@react-pdf/renderer'
 import { registerFonts, DS, pdfText } from '@/lib/pdf/pdf-design-system'
 import { APP_NAME } from '@/lib/brand'
 import type { Organization } from '@/lib/data/queries/organization'
-import type { MonthlyReport, AnnualReport, HoursReport, TopClientEntry, TopChantierEntry, AnnualObjectives } from '@/lib/data/queries/reporting'
+import type { MonthlyReport, AnnualReport, HoursReport, TopClientEntry, TopChantierEntry, AnnualObjectives, MonthlyObjectives } from '@/lib/data/queries/reporting'
 
 const MONTHS_FR = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre']
 
@@ -30,7 +30,7 @@ type Props = {
   hoursReport: HoursReport | null
   topClients: TopClientEntry[]
   topChantiers: TopChantierEntry[]
-  objectives: AnnualObjectives | null
+  objectives: AnnualObjectives | MonthlyObjectives | null
 }
 
 export default function RapportKpiPDF({
@@ -110,6 +110,15 @@ export default function RapportKpiPDF({
 
   const r = monthlyReport
   const ar = annualReport
+  const actualMargin = r?.beneficeEstime ?? ar?.beneficeEstime ?? 0
+  const actualMarginPct = (r?.caHt ?? ar?.caHt ?? 0) > 0 ? actualMargin / (r?.caHt ?? ar?.caHt ?? 1) : 0
+  const projectedMargin = r?.projectedMarginHt ?? ar?.projectedMarginHt ?? 0
+  const projectedMarginPct = r?.projectedMarginPct ?? ar?.projectedMarginPct ?? 0
+  const hasProjectedMargin = r?.hasProjectedCostData ?? ar?.hasProjectedCostData ?? false
+  const isVatSubject = organization.is_vat_subject
+  const billedLabel = isVatSubject ? 'CA HT' : 'Facturé'
+  const billedSub = isVatSubject ? `${fmt(r?.caTtc ?? ar?.caTtc ?? 0)} TTC` : 'TVA non applicable'
+  const collectedLabel = isVatSubject ? 'Encaissé TTC' : 'Encaissé'
 
   return (
     <Document title={`${titre} - ${organization.name}`} author={organization.name} creator={APP_NAME} language="fr-FR">
@@ -142,26 +151,34 @@ export default function RapportKpiPDF({
         <Text style={S.sectionTitle}>Synthèse</Text>
         <View style={S.kpiRow}>
           <View style={S.kpiBoxAccent}>
-            <Text style={S.kpiLabelAccent}>CA HT</Text>
+            <Text style={S.kpiLabelAccent}>{billedLabel}</Text>
             <Text style={[S.kpiValue, { color: DS.color.black }]}>{fmt(r?.caHt ?? ar?.caHt ?? 0)}</Text>
-            <Text style={S.kpiSubAccent}>{fmt(r?.caTtc ?? ar?.caTtc ?? 0)} TTC</Text>
+            <Text style={S.kpiSubAccent}>{billedSub}</Text>
           </View>
           <View style={S.kpiBox}>
-            <Text style={S.kpiLabel}>Encaissé TTC</Text>
+            <Text style={S.kpiLabel}>{collectedLabel}</Text>
             <Text style={S.kpiValue}>{fmt(r?.encaisse ?? ar?.encaisse ?? 0)}</Text>
           </View>
           <View style={S.kpiBox}>
-            <Text style={S.kpiLabel}>TVA facturée</Text>
-            <Text style={S.kpiValue}>{fmt(r?.tvaDue ?? ar?.tvaDue ?? 0)}</Text>
+            <Text style={S.kpiLabel}>{isVatSubject ? 'TVA facturée' : 'TVA non applicable'}</Text>
+            <Text style={S.kpiValue}>{isVatSubject ? fmt(r?.tvaDue ?? ar?.tvaDue ?? 0) : '-'}</Text>
           </View>
           <View style={S.kpiBoxLast}>
             <Text style={S.kpiLabel}>Bénéfice estimé</Text>
-            <Text style={[S.kpiValue, { color: (r?.beneficeEstime ?? ar?.beneficeEstime ?? 0) >= 0 ? '#16A34A' : '#DC2626' }]}>
-              {fmt(r?.beneficeEstime ?? ar?.beneficeEstime ?? 0)}
+            <Text style={[S.kpiValue, { color: actualMargin >= 0 ? '#16A34A' : '#DC2626' }]}>
+              {fmt(actualMargin)}
             </Text>
+            <Text style={S.kpiSub}>{fmtPct(actualMarginPct)} · avant impôts et charges fixes</Text>
           </View>
         </View>
         <View style={[S.kpiRow, { marginBottom: 0 }]}>
+          <View style={S.kpiBox}>
+            <Text style={S.kpiLabel}>Bénéfice prévu sur factures</Text>
+            <Text style={[S.kpiValue, { color: projectedMargin >= 0 ? '#16A34A' : '#DC2626' }]}>
+              {hasProjectedMargin ? fmt(projectedMargin) : '-'}
+            </Text>
+            <Text style={S.kpiSub}>{hasProjectedMargin ? `${fmtPct(projectedMarginPct)} · coûts lignes` : 'Aucun coût interne'}</Text>
+          </View>
           <View style={S.kpiBox}>
             <Text style={S.kpiLabel}>Chantiers terminés</Text>
             <Text style={S.kpiValue}>{String(r?.chantiersTermines ?? ar?.chantiersTermines ?? 0)}</Text>
@@ -186,11 +203,13 @@ export default function RapportKpiPDF({
         </View>
 
         {/* Objectifs */}
-        {objectives && (objectives.revenue_ht_target || objectives.hours_target || objectives.chantiers_count_target) && (
+        {objectives && (objectives.revenue_ht_target || objectives.margin_eur_target || objectives.margin_pct_target || objectives.hours_target || objectives.chantiers_count_target) && (
           <>
             <Text style={S.sectionTitle}>Objectifs {year}</Text>
             {[
-              objectives.revenue_ht_target && { label: 'CA HT', current: r?.caHt ?? ar?.caHt ?? 0, target: objectives.revenue_ht_target, format: fmt },
+              objectives.revenue_ht_target && { label: billedLabel, current: r?.caHt ?? ar?.caHt ?? 0, target: objectives.revenue_ht_target, format: fmt },
+              objectives.margin_eur_target && { label: 'Bénéfice estimé', current: actualMargin, target: objectives.margin_eur_target, format: fmt },
+              objectives.margin_pct_target && { label: 'Bénéfice estimé %', current: actualMarginPct * 100, target: objectives.margin_pct_target, format: (n: number) => `${n.toFixed(1)} %` },
               objectives.chantiers_count_target && { label: 'Chantiers', current: r?.chantiersTermines ?? ar?.chantiersTermines ?? 0, target: objectives.chantiers_count_target, format: (n: number) => String(Math.round(n)) },
               objectives.hours_target && { label: 'Heures', current: hoursReport?.total ?? 0, target: objectives.hours_target, format: fmtH },
             ].filter(Boolean).map((obj, i) => {
@@ -238,7 +257,7 @@ export default function RapportKpiPDF({
             <Text style={S.sectionTitle}>Top clients</Text>
             <View style={S.tableHeader}>
               <View style={{ width: '45%' }}><Text style={S.thText}>Client</Text></View>
-              <View style={{ width: '25%', alignItems: 'flex-end' }}><Text style={S.thText}>CA HT</Text></View>
+              <View style={{ width: '25%', alignItems: 'flex-end' }}><Text style={S.thText}>{billedLabel}</Text></View>
               <View style={{ width: '30%', alignItems: 'flex-end' }}><Text style={S.thText}>Marge</Text></View>
             </View>
             {topClients.slice(0, 8).map((c, i) => (
@@ -259,8 +278,8 @@ export default function RapportKpiPDF({
             <Text style={S.sectionTitle}>Top chantiers</Text>
             <View style={S.tableHeader}>
               <View style={{ width: '42%' }}><Text style={S.thText}>Chantier</Text></View>
-              <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.thText}>Facturé HT</Text></View>
-              <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.thText}>Encaissé TTC</Text></View>
+              <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.thText}>{billedLabel}</Text></View>
+              <View style={{ width: '20%', alignItems: 'flex-end' }}><Text style={S.thText}>{collectedLabel}</Text></View>
               <View style={{ width: '18%', alignItems: 'flex-end' }}><Text style={S.thText}>Marge</Text></View>
             </View>
             {topChantiers.slice(0, 8).map((c, i) => (

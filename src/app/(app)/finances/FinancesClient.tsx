@@ -884,9 +884,9 @@ export default function FinancesClient({
             ))}
           </select>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
+        <div className="overflow-visible sm:overflow-x-auto">
+          <table className="w-full text-left border-collapse table-fixed sm:table-auto">
+            <thead className="hidden sm:table-header-group">
               <tr className="bg-base/30">
                 <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">N°</th>
                 <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Titre / Client</th>
@@ -908,28 +908,38 @@ export default function FinancesClient({
                       className="hover:bg-accent/5 transition-colors cursor-pointer"
                       onClick={() => router.push(quoteEditorHref(q.id))}
                     >
-                      <td className="px-6 py-4"><p className="text-sm font-mono text-secondary">{q.number ?? '/'}</p></td>
-                      <td className="px-6 py-4">
-                        <p className="font-bold text-primary">{q.title ?? 'Sans titre'}</p>
-                        <p className="text-xs text-secondary">{clientName}</p>
+                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm font-mono text-secondary">{q.number ?? '/'}</p></td>
+                      <td className="px-4 sm:px-6 py-3 sm:py-4 min-w-0">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <p className="font-bold text-primary truncate min-w-0" title={q.title ?? 'Sans titre'}>{q.title ?? 'Sans titre'}</p>
+                            <span className={`sm:hidden px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shrink-0 ${st.cls}`}>
+                              {st.label}
+                            </span>
+                          </div>
+                          <p className="text-xs text-secondary truncate mt-0.5" title={clientName}>{clientName}</p>
+                          <p className="sm:hidden text-[11px] text-secondary/70 truncate mt-0.5">
+                            {q.number ?? 'Sans n°'} · {date}
+                          </p>
+                        </div>
                       </td>
-                      <td className="px-6 py-4"><p className="text-sm text-secondary">{date}</p></td>
-                      <td className="px-6 py-4 text-right">
-                        <p className="text-sm font-medium text-primary tabular-nums">
+                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm text-secondary">{date}</p></td>
+                      <td className="pl-2 pr-3 sm:px-6 py-3 sm:py-4 text-right w-[92px] sm:w-auto">
+                        <p className="text-sm font-semibold sm:font-medium text-primary tabular-nums whitespace-nowrap">
                           {q.total_ht != null ? formatCurrency(q.total_ht) : '/'}
                         </p>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="hidden sm:table-cell px-6 py-4">
                         <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${st.cls}`}>
                           {st.label}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-right" onClick={e => e.stopPropagation()}>
+                      <td className="pl-3 pr-4 sm:px-6 py-3 sm:py-4 text-right w-14 sm:w-auto" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => router.push(`/api/pdf/quote/${q.id}`)}
                             title="Aperçu PDF"
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                            className="hidden sm:flex w-8 h-8 rounded-lg items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
                           >
                             <Eye className="w-4 h-4" />
                           </button>
@@ -937,7 +947,7 @@ export default function FinancesClient({
                             href={`/api/pdf/quote/${q.id}?download=1`}
                             download
                             title="Télécharger PDF"
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                            className="hidden sm:flex w-8 h-8 rounded-lg items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
                           >
                             <FileDown className="w-4 h-4" />
                           </a>
@@ -977,41 +987,47 @@ export default function FinancesClient({
                       className="hover:bg-accent/5 transition-colors cursor-pointer"
                       onClick={() => router.push(invoiceEditorHref(inv.id))}
                     >
-                      <td className="px-6 py-4"><p className="text-sm font-mono text-secondary">{inv.number ?? '/'}</p></td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <p className="font-bold text-primary">{inv.title ?? 'Sans titre'}</p>
+                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm font-mono text-secondary">{inv.number ?? '/'}</p></td>
+                      <td className="px-4 sm:px-6 py-3 sm:py-4 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <p className="font-bold text-primary truncate min-w-0" title={inv.title ?? 'Sans titre'}>{inv.title ?? 'Sans titre'}</p>
                           {inv.invoice_type === 'acompte' && (
                             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400 uppercase tracking-wide flex-shrink-0">Acompte</span>
                           )}
                           {inv.invoice_type === 'solde' && (
                             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-accent/10 text-accent uppercase tracking-wide flex-shrink-0">Solde</span>
                           )}
+                          <span className={`sm:hidden px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shrink-0 ${st.cls}`}>
+                            {st.label}
+                          </span>
                         </div>
-                        <p className="text-xs text-secondary">{clientName}</p>
+                        <p className="text-xs text-secondary truncate mt-0.5" title={clientName}>{clientName}</p>
+                        <p className="sm:hidden text-[11px] text-secondary/70 truncate mt-0.5">
+                          {inv.number ?? 'Sans n°'} · {date}
+                        </p>
                         {isOverdue && inv.due_date && (
                           <p className="text-xs text-red-500 font-semibold mt-0.5">
                             Échue le {new Date(inv.due_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
                           </p>
                         )}
                       </td>
-                      <td className="px-6 py-4"><p className="text-sm text-secondary">{date}</p></td>
-                      <td className="px-6 py-4 text-right">
-                        <p className="text-sm font-medium text-primary tabular-nums">
+                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm text-secondary">{date}</p></td>
+                      <td className="pl-2 pr-3 sm:px-6 py-3 sm:py-4 text-right w-[92px] sm:w-auto">
+                        <p className="text-sm font-semibold sm:font-medium text-primary tabular-nums whitespace-nowrap">
                           {inv.total_ht != null ? formatCurrency(inv.total_ht) : '/'}
                         </p>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="hidden sm:table-cell px-6 py-4">
                         <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${st.cls}`}>
                           {st.label}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-right" onClick={e => e.stopPropagation()}>
+                      <td className="pl-3 pr-4 sm:px-6 py-3 sm:py-4 text-right w-14 sm:w-auto" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => router.push(`/api/pdf/invoice/${inv.id}`)}
                             title="Aperçu PDF"
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                            className="hidden sm:flex w-8 h-8 rounded-lg items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
                           >
                             <Eye className="w-4 h-4" />
                           </button>
@@ -1019,7 +1035,7 @@ export default function FinancesClient({
                             href={`/api/pdf/invoice/${inv.id}?download=1`}
                             download
                             title="Télécharger PDF"
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                            className="hidden sm:flex w-8 h-8 rounded-lg items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
                           >
                             <FileDown className="w-4 h-4" />
                           </a>
@@ -1028,7 +1044,7 @@ export default function FinancesClient({
                               onClick={() => handleMarkPaid(inv.id)}
                               disabled={!!markPaidLoadingId}
                               title="Marquer payée"
-                              className="w-8 h-8 rounded-lg flex items-center justify-center text-accent-green hover:bg-accent-green/10 transition-colors disabled:opacity-50"
+                              className="hidden sm:flex w-8 h-8 rounded-lg items-center justify-center text-accent-green hover:bg-accent-green/10 transition-colors disabled:opacity-50"
                             >
                               {markPaidLoadingId === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                             </button>

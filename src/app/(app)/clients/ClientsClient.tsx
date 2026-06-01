@@ -18,6 +18,7 @@ import {
   FileText, Eye, Edit2, X, Loader2, CheckCircle2, AlertCircle, Building2, Trash2,
   Target, ArrowRight, UserCheck, ChevronLeft, ChevronRight,
 } from 'lucide-react'
+import { ActionButton } from '@/components/ui/ActionButton'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -638,13 +639,14 @@ function ImportCSVModal({ isOpen, onClose, isLeads = false }: { isOpen: boolean;
             )}
             <div className="flex justify-end gap-4 pt-2">
               <button onClick={() => { setStep(1); setResult(null) }} className="px-6 py-3 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Retour</button>
-              <button
+              <ActionButton
                 onClick={handleImport}
-                disabled={isPending || (!mapping['company_name'] && !mapping['last_name'] && !mapping['first_name'])}
+                loading={isPending}
+                disabled={!mapping['company_name'] && !mapping['last_name'] && !mapping['first_name']}
                 className="px-6 py-3 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
               >
-                {isPending ? <><Loader2 className="w-4 h-4 animate-spin" />Import...</> : `Importer ${dataRows.length} contacts`}
-              </button>
+                {`Importer ${dataRows.length} contacts`}
+              </ActionButton>
             </div>
           </div>
         )}
@@ -840,9 +842,9 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
                 )}
               </div>
             )}
-            <button onClick={handleExportCSV} className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
+            <ActionButton onClick={handleExportCSV} className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
               <Download className="w-4 h-4" />Exporter
-            </button>
+            </ActionButton>
             {canCreate && (
               <button onClick={() => setIsNewLeadModalOpen(true)} className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
                 <Target className="w-4 h-4" />Nouveau Lead

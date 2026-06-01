@@ -166,12 +166,13 @@ export default async function DashboardPage({
     const collabData = await getCollaborateurDashboard(profile.id)
     // Cherche les objectifs par fiche intervenant si liée, sinon par membership
     const realGoals = (collabData.memberId || membership?.membershipId)
-      ? await getMemberGoalsWithProgress({
-          memberId: collabData.memberId ?? undefined,
-          membershipId: membership?.membershipId ?? undefined,
-          year: now.getFullYear(),
-          month: now.getMonth() + 1,
-        })
+        ? await getMemberGoalsWithProgress({
+            memberId: collabData.memberId ?? undefined,
+            membershipId: membership?.membershipId ?? undefined,
+            userId: membership?.userId ?? undefined,
+            year: now.getFullYear(),
+            month: now.getMonth() + 1,
+          })
       : []
 
     return (

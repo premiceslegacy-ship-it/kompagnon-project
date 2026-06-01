@@ -27,6 +27,7 @@ const invoiceItemSchema = z.object({
   quantity: z.number().positive(),
   unit: z.string().max(50),
   unit_price: z.number().min(0),
+  unit_cost_ht: z.number().min(0).nullable().optional(),
   vat_rate: z.number().min(0).max(100),
   is_internal: z.boolean().optional(),
   length_m: z.number().nullable().optional(),
