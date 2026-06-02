@@ -358,6 +358,15 @@ Le cockpit Orsayn reste la source de vérité pour modifier tier, modules, quota
 106_chantier_task_assignments.sql         ← Assignations multiples des tâches chantier à des équipes ou membres terrain
 107_org_monthly_objectives.sql            ← Objectifs mensuels organisation : CA, marge, chantiers, heures, objectifs custom
 108_push_subscriptions.sql                ← Abonnements Web Push par user/device (notifications push navigateur)
+110_quote_items_ai_structure.sql          ← Structure IA sur les lignes de devis (champs enrichis analyse IA)
+111_chantier_retention_default.sql        ← Retenue de garantie par défaut sur chantiers
+112_maintenance_contracts.sql             ← Module contrats entretien/maintenance : contracts + interventions + sites
+113_intervention_billable_notes.sql       ← Notes facturables sur les interventions entretien
+114_maintenance_field_production.sql      ← Champs terrain/production sur les interventions
+115_maintenance_contracts_costs_site.sql  ← Coûts et site sur contrats entretien
+116_recurring_invoice_auto_send_delay.sql ← Délai d'envoi automatique sur les factures récurrentes
+117_clean_maintenance_recurring_titles.sql ← Nettoyage des titres de récurrence maintenance
+118_maintenance_auto_send_delay.sql       ← Délai d'envoi auto spécifique aux contrats entretien
 ```
 
 Note historique :
@@ -437,6 +446,15 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `106_chantier_task_assignments.sql`
 - `107_org_monthly_objectives.sql`
 - `108_push_subscriptions.sql`
+- `110_quote_items_ai_structure.sql`
+- `111_chantier_retention_default.sql`
+- `112_maintenance_contracts.sql`
+- `113_intervention_billable_notes.sql`
+- `114_maintenance_field_production.sql`
+- `115_maintenance_contracts_costs_site.sql`
+- `116_recurring_invoice_auto_send_delay.sql`
+- `117_clean_maintenance_recurring_titles.sql`
+- `118_maintenance_auto_send_delay.sql`
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`
@@ -757,21 +775,35 @@ wrangler login   # authentifie vers ton compte Cloudflare
 # @opennextjs/cloudflare est une dépendance locale du projet — npm install suffit
 ```
 
-#### Déployer un client
+#### Déployer via GitHub Actions (recommandé — le build se fait sur GitHub, pas sur ta machine)
+
+Le build OpenNext consomme ~6-8 Go de RAM. Sur un Mac 8 Go, lancer le build en local sature la mémoire et peut crasher la machine. **La procédure normale est via GitHub Actions.**
+
+Secrets à configurer une seule fois sur GitHub (Settings → Secrets → Actions) :
+- `CLOUDFLARE_API_TOKEN` — ton token Cloudflare "Edit Workers"
+- `CLOUDFLARE_ACCOUNT_ID` — ton Account ID Cloudflare
+
+Workflows disponibles (onglet Actions sur GitHub) :
+- **Deploy — Cockpit Orsayn** : déclenché automatiquement à chaque push sur `main`, ou manuellement
+- **Deploy — Client Atelier** : déclenché manuellement, demande le nom du Worker (ex: `atelier-weber`)
+- **Deploy — Tous les clients** : déclenché manuellement, déploie tout `scripts/clients.txt`
+
+Les variables Cloudflare du client (clés Supabase, etc.) sont déjà injectées dans le Worker via `--apply-all` — le workflow ne les touche pas.
+
+#### Déployer en local (backup — déconseillé sur Mac 8 Go)
 
 ```bash
 # Préflight non destructif avant un déploiement client
 npm run preflight:client -- atelier-weber
 
-# Préflight avec build OpenNext Cloudflare
-npm run preflight:client -- atelier-weber --with-open-next-build
-
-# Déployer UN client (premier déploiement ou mise à jour)
+# Déployer UN client — fermer VS Code et autres apps avant de lancer
 ./scripts/deploy-client.sh atelier-weber
 
 # Mettre à jour TOUS les clients en une commande
 ./scripts/deploy-all-clients.sh
 ```
+
+> Si le Mac crashe pendant un déploiement local, le `.env.local` est sauvegardé dans `.env.local.deploybak` — faire `cp .env.local.deploybak .env.local` pour le restaurer.
 
 - `deploy-client.sh` : patche temporairement `wrangler.jsonc` avec le bon `name`, lance `npm run deploy`, puis restaure. Pas besoin de modifier le fichier à la main.
 - `deploy-all-clients.sh` : lit `scripts/clients.txt` (un worker-name par ligne) et déploie chacun séquentiellement. Affiche un résumé succès/échec à la fin.
@@ -1768,4 +1800,4 @@ Créer un cron-job.org gratuit → ping `https://<ref>.supabase.co/rest/v1/` tou
 
 | Client | Project Ref | Domaine | Déployé le | Migrations | WhatsApp | Fact. élec. |
 |--------|-------------|---------|------------|------------|---------|------------|
-| Weber Tôlerie (**démo**) | `pyxnmohknxmbpbcuvudg` | localhost | 2024 | 001→082 | ❌ | ❌ |
+| Weber Tôlerie (**démo**) | `pyxnmohknxmbpbcuvudg` | localhost | 2024 | 001→118 | ❌ | export_only |
