@@ -45,14 +45,17 @@ echo "▶ Déploiement → $WORKER_NAME"
 echo "  (name actuel dans wrangler.jsonc : $ORIGINAL_NAME)"
 echo "  (Supabase sera lu au runtime via les variables du Worker)"
 
+# sed -i portable : macOS exige '' après -i, Linux non
+SED_INPLACE() { sed -i${OSTYPE:+''} "$@" 2>/dev/null || sed -i "$@"; }
+
 restore_wrangler_name() {
-  sed -i '' "s/\"name\":[[:space:]]*\"[^\"]*\"/\"name\": \"$ORIGINAL_NAME\"/" "$WRANGLER"
+  SED_INPLACE "s/\"name\":[[:space:]]*\"[^\"]*\"/\"name\": \"$ORIGINAL_NAME\"/" "$WRANGLER"
 }
 
 trap restore_wrangler_name EXIT
 
 # Patch du name
-sed -i '' "s/\"name\":[[:space:]]*\"[^\"]*\"/\"name\": \"$WORKER_NAME\"/" "$WRANGLER"
+SED_INPLACE "s/\"name\":[[:space:]]*\"[^\"]*\"/\"name\": \"$WORKER_NAME\"/" "$WRANGLER"
 
 # Build + deploy
 npm run deploy
