@@ -18,3 +18,4 @@ tsconfig.tsbuildinfo
 .env*
 .env.example
 .env.local
+!.env.client-template
