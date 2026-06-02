@@ -93,13 +93,16 @@ deploy_cron_worker() {
   local original_name
   original_name=$(grep '^name' "$toml" | head -1 | sed 's/name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/')
 
+  # sed -i portable : macOS exige '' après -i, Linux non
+  SED_INPLACE() { sed -i${OSTYPE:+''} "$@" 2>/dev/null || sed -i "$@"; }
+
   restore_toml_name() {
-    sed -i '' "s/^name[[:space:]]*=.*/name = \"$original_name\"/" "$toml"
+    SED_INPLACE "s/^name[[:space:]]*=.*/name = \"$original_name\"/" "$toml"
   }
   trap restore_toml_name EXIT
 
   # Patcher le name
-  sed -i '' "s/^name[[:space:]]*=.*/name = \"$target_name\"/" "$toml"
+  SED_INPLACE "s/^name[[:space:]]*=.*/name = \"$target_name\"/" "$toml"
 
   # Injecter les secrets
   echo "$APP_URL"    | node "$ROOT_DIR/node_modules/wrangler/bin/wrangler.js" secret put APP_URL    --name "$target_name" --config "$toml"
