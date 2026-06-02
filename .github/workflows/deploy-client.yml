@@ -12,6 +12,7 @@ jobs:
   deploy:
     name: Build & Deploy ${{ inputs.worker_name }}
     runs-on: ubuntu-latest
+    environment: Atelier CDF
     steps:
       - uses: actions/checkout@v4
 

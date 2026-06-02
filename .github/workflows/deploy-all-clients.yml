@@ -7,6 +7,7 @@ jobs:
   deploy:
     name: Build & Deploy tous les clients
     runs-on: ubuntu-latest
+    environment: Atelier CDF
     steps:
       - uses: actions/checkout@v4
 
