@@ -86,6 +86,38 @@ function putSecret(key, value) {
   return result.status === 0
 }
 
+async function deleteTextBindingsViaApi(keys, accountId, apiToken) {
+  // Récupère les bindings existants et supprime ceux qui sont dans la liste
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/settings`,
+    { headers: { Authorization: `Bearer ${apiToken}` } }
+  )
+  const json = await res.json()
+  if (!json.success) return
+
+  const existing = (json.result?.bindings ?? [])
+    .filter((b) => b.type === 'plain_text' && keys.includes(b.name))
+    .map((b) => b.name)
+
+  if (existing.length === 0) return
+
+  // Envoie un PATCH avec ces bindings supprimés (type: "inherit" = suppression)
+  const bindings = existing.map((name) => ({ type: 'plain_text', name, text: '' }))
+  // Cloudflare supprime un plain_text binding en le réécrivant avec text vide puis en l'omettant
+  // La vraie suppression se fait en envoyant le settings sans ce binding — on envoie donc
+  // tous les bindings existants SAUF ceux à supprimer
+  const keep = (json.result?.bindings ?? []).filter(
+    (b) => !(b.type === 'plain_text' && keys.includes(b.name))
+  )
+  const form = new FormData()
+  form.append('settings', JSON.stringify({ bindings: keep }))
+  await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/settings`,
+    { method: 'PATCH', headers: { Authorization: `Bearer ${apiToken}` }, body: form }
+  )
+  for (const name of existing) console.log(`  CLEANUP variable texte conflictuelle : ${name}`)
+}
+
 async function putTextVarsViaApi(vars, accountId, apiToken) {
   // Cloudflare API : PATCH /accounts/{id}/workers/scripts/{name}/settings
   // Attend multipart/form-data avec un champ "settings" JSON
@@ -141,6 +173,15 @@ console.log('')
 
 const missingSecrets = secretKeys.filter((key) => !env[key])
 const missingText = textKeys.filter((key) => !env[key])
+
+// ── Nettoyage des variables texte conflictuelles avec les secrets ──────────────
+if (applySecrets) {
+  const accountId = env['CLOUDFLARE_ACCOUNT_ID']
+  const apiToken = env['CLOUDFLARE_API_TOKEN']
+  if (accountId && apiToken) {
+    await deleteTextBindingsViaApi(secretKeys, accountId, apiToken)
+  }
+}
 
 // ── Secrets ────────────────────────────────────────────────────────────────────
 console.log('Secrets:')
