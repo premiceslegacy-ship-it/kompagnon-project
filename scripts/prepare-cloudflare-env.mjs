@@ -120,9 +120,15 @@ if (!workerName || !/^[a-z0-9][a-z0-9-]{1,62}$/.test(workerName)) {
   process.exit(1)
 }
 
+// Toujours merger .env.local en base (contient CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN
+// et les clés partagées Orsayn), puis écraser avec le fichier client/cockpit spécifique.
+const envLocal = readEnvFile(path.resolve(process.cwd(), '.env.local'))
+const envClient = envFile !== '.env.local' ? readEnvFile(path.resolve(process.cwd(), envFile)) : {}
+
 const env = {
   ...process.env,
-  ...readEnvFile(path.resolve(process.cwd(), envFile)),
+  ...envLocal,
+  ...envClient,
 }
 
 console.log(`Cloudflare env preparation for ${workerName}`)
