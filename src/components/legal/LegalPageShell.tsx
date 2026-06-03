@@ -1,4 +1,8 @@
+'use client'
+
 import type { ReactNode } from 'react'
+import { useRouter } from 'next/navigation'
+import { ArrowLeft } from 'lucide-react'
 import { BrandWordmark } from '@/components/brand/BrandMonogram'
 import { LegalFooter } from './LegalFooter'
 
@@ -11,14 +15,24 @@ type Props = {
 }
 
 export function LegalPageShell({ eyebrow, title, description, updatedAt, children }: Props) {
+  const router = useRouter()
+
   return (
     <main className="min-h-screen bg-slate-50 dark:bg-black text-slate-900 dark:text-white">
       <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-6 py-8 md:px-10 lg:px-12">
-        <div className="mb-10 flex justify-center">
+        <div className="mb-10 flex items-center justify-between">
+          <button
+            onClick={() => router.back()}
+            className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-slate-600 dark:text-zinc-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Retour
+          </button>
           <a href="/login" className="inline-flex">
             <BrandWordmark background="light" className="h-8 w-auto object-contain dark:hidden" />
             <BrandWordmark background="dark" className="hidden h-8 w-auto object-contain dark:block" />
           </a>
+          <div className="w-20" />
         </div>
 
         <div className="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-xl dark:shadow-none">
