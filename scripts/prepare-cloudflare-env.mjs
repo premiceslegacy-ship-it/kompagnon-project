@@ -87,13 +87,16 @@ function putSecret(key, value) {
 }
 
 async function putTextVarsViaApi(vars, accountId, apiToken) {
-  // Cloudflare API : PUT /accounts/{id}/workers/scripts/{name}/settings
-  // body : { bindings: [ { type: "plain_text", name: KEY, text: VALUE }, ... ] }
+  // Cloudflare API : PATCH /accounts/{id}/workers/scripts/{name}/settings
+  // Attend multipart/form-data avec un champ "settings" JSON
   const bindings = Object.entries(vars).map(([name, text]) => ({
     type: 'plain_text',
     name,
     text,
   }))
+
+  const form = new FormData()
+  form.append('settings', JSON.stringify({ bindings }))
 
   const res = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/settings`,
@@ -101,9 +104,8 @@ async function putTextVarsViaApi(vars, accountId, apiToken) {
       method: 'PATCH',
       headers: {
         Authorization: `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ bindings }),
+      body: form,
     }
   )
 
