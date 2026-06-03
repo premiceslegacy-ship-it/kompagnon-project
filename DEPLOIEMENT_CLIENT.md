@@ -775,6 +775,29 @@ wrangler login   # authentifie vers ton compte Cloudflare
 # @opennextjs/cloudflare est une dépendance locale du projet — npm install suffit
 ```
 
+#### Créer le fichier env d'un nouveau client
+
+```bash
+cp .env.client-template .env.client-nomclient
+```
+
+Remplir les `TODO` dans `.env.client-nomclient` :
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` — Supabase → Settings → API
+- `NEXT_PUBLIC_APP_URL` — URL du Worker (connue après T3, étape déploiement)
+- `RESEND_FROM_ADDRESS`, `RESEND_FROM_NAME` — email expéditeur du client
+- `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET` — `openssl rand -hex 32` (même valeur pour les 3 ou valeurs distinctes)
+- Variables partagées (`OPERATOR_INGEST_SECRET`, `VAPID_*`, `OPENROUTER_API_KEY`, etc.) — déjà pré-remplies avec les valeurs Orsayn dans le template
+
+Puis injecter dans le Worker :
+```bash
+npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-all
+```
+
+Ajouter le client dans `scripts/clients.txt` pour les mises à jour futures :
+```
+atelier-nomclient
+```
+
 #### Déployer via GitHub Actions (recommandé — le build se fait sur GitHub, pas sur ta machine)
 
 Le build OpenNext consomme ~6-8 Go de RAM. Sur un Mac 8 Go, lancer le build en local sature la mémoire et peut crasher la machine. **La procédure normale est via GitHub Actions.**
