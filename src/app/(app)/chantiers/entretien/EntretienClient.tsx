@@ -1,10 +1,11 @@
 'use client'
 
 import React, { useState, useTransition, useMemo, useEffect } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   Plus, X, Pencil, Trash2, ChevronRight, Search, Loader2,
-  Wrench, Calendar, CheckCircle2, Clock, AlertCircle, Link as LinkIcon,
+  Wrench, Calendar, Check, CheckCircle2, Clock, AlertCircle, Link as LinkIcon,
   Package, FileText, RotateCcw, Euro, FileDown, Target, Save,
   Truck, HardHat, Send,
 } from 'lucide-react'
@@ -25,9 +26,11 @@ import {
   uploadMaintenanceInterventionPhoto,
 } from '@/lib/data/mutations/maintenance'
 import { sendMaintenanceInterventionReportEmail } from '@/lib/data/mutations/maintenance-report-email'
+import { markInvoicePaid } from '@/lib/data/mutations/invoices'
 import { getClientDisplayName } from '@/lib/client'
 import { LEGAL_VAT_RATES } from '@/lib/utils'
 import MaintenanceDepensesSection from './MaintenanceDepensesSection'
+import ClientEmailRequiredModal from '@/components/ClientEmailRequiredModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -262,6 +265,7 @@ export default function EntretienClient({
   const [selectedContract, setSelectedContract] = useState<MaintenanceContract | null>(null)
   const [interventions, setInterventions] = useState<MaintenanceIntervention[]>([])
   const [expenses, setExpenses] = useState<MaintenanceContractExpense[]>([])
+  const [recurringInstances, setRecurringInstances] = useState<import('@/lib/data/queries/maintenance').RecurringInvoiceInstance[]>([])
   const [loadingDetail, setLoadingDetail] = useState(false)
 
   // Modales
@@ -301,15 +305,29 @@ export default function EntretienClient({
     [quotes, contractForm.client_id],
   )
 
+  // Auto-ouvre le contrat au retour depuis l'éditeur de facture (?contract=<id>)
+  useEffect(() => {
+    const contractId = new URLSearchParams(window.location.search).get('contract')
+    if (!contractId) return
+    const contract = initialContracts.find(c => c.id === contractId)
+    if (!contract) return
+    openDetail(contract)
+    const url = new URL(window.location.href)
+    url.searchParams.delete('contract')
+    window.history.replaceState(null, '', url.toString())
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ─── Load detail ────────────────────────────────────────────────────────────
 
   async function openDetail(contract: MaintenanceContract) {
     setSelectedContract(contract)
     setLoadingDetail(true)
-    const { contract: full, interventions: ivs, expenses: exp } = await fetchMaintenanceContractDetail(contract.id)
+    const { contract: full, interventions: ivs, expenses: exp, recurringInstances: ri } = await fetchMaintenanceContractDetail(contract.id)
     if (full) setSelectedContract(full)
     setInterventions(ivs)
     setExpenses(exp)
+    setRecurringInstances(ri)
     setLoadingDetail(false)
   }
 
@@ -317,6 +335,7 @@ export default function EntretienClient({
     setSelectedContract(null)
     setInterventions([])
     setExpenses([])
+    setRecurringInstances([])
   }
 
   // ─── Contract modal ─────────────────────────────────────────────────────────
@@ -410,7 +429,7 @@ export default function EntretienClient({
     setShowContractModal(false)
     startTransition(() => router.refresh())
     // Optimistic refresh
-    const { contract: full, interventions: ivs, expenses: exp } = await fetchMaintenanceContractDetail(
+    const { contract: full, interventions: ivs, expenses: exp, recurringInstances: ri } = await fetchMaintenanceContractDetail(
       editingContract?.id ?? (res as { id?: string }).id ?? ''
     )
     if (!full) { router.refresh(); return }
@@ -423,6 +442,7 @@ export default function EntretienClient({
       setSelectedContract(full)
       setInterventions(ivs)
       setExpenses(exp)
+      setRecurringInstances(ri)
     }
   }
 
@@ -437,6 +457,7 @@ export default function EntretienClient({
       setSelectedContract(null)
       setInterventions([])
       setExpenses([])
+      setRecurringInstances([])
     }
     setConfirmDelete(null)
   }
@@ -524,13 +545,14 @@ export default function EntretienClient({
 
     setShowInterventionModal(false)
     // Reload detail
-    const { contract: full, interventions: ivs, expenses: exp } = await fetchMaintenanceContractDetail(selectedContract.id)
+    const { contract: full, interventions: ivs, expenses: exp, recurringInstances: ri } = await fetchMaintenanceContractDetail(selectedContract.id)
     if (full) {
       setSelectedContract(full)
       setContracts(prev => prev.map(c => c.id === full.id ? full : c))
     }
     setInterventions(ivs)
     setExpenses(exp)
+    setRecurringInstances(ri)
   }
 
   async function invoiceIntervention(iv: MaintenanceIntervention) {
@@ -540,8 +562,28 @@ export default function EntretienClient({
     setSaving(false)
     if (res.error) { setFormError(res.error); return }
     if (res.invoiceId) {
-      router.push(`/finances/invoice-editor?id=${res.invoiceId}&returnTo=${encodeURIComponent('/chantiers/entretien')}`)
+      const contractParam = selectedContract ? `?contract=${selectedContract.id}` : ''
+      router.push(`/finances/invoice-editor?id=${res.invoiceId}&returnTo=${encodeURIComponent(`/chantiers/entretien${contractParam}`)}`)
     }
+  }
+
+  async function markInterventionDone(iv: MaintenanceIntervention) {
+    setSaving(true)
+    setFormError(null)
+    const res = await updateIntervention(iv.id, { statut: 'réalisée' })
+    setSaving(false)
+    if (res.error) {
+      setFormError(res.error)
+      return
+    }
+    const { contract: full, interventions: ivs, expenses: exp, recurringInstances: ri } = await fetchMaintenanceContractDetail(selectedContract!.id)
+    if (full) {
+      setSelectedContract(full)
+      setContracts(prev => prev.map(c => c.id === full.id ? full : c))
+    }
+    setInterventions(ivs)
+    setExpenses(exp)
+    setRecurringInstances(ri)
   }
 
   async function confirmDeleteIntervention(id: string) {
@@ -650,6 +692,7 @@ export default function EntretienClient({
             contract={selectedContract}
             interventions={interventions}
             expenses={expenses}
+            recurringInstances={recurringInstances}
             loading={loadingDetail}
             intervenants={intervenants}
             materials={materials}
@@ -666,6 +709,7 @@ export default function EntretienClient({
             onNewIntervention={openCreateIntervention}
             onEditIntervention={openEditIntervention}
             onBillIntervention={invoiceIntervention}
+            onMarkInterventionDone={markInterventionDone}
             onDeleteIntervention={id => setConfirmDelete({ type: 'intervention', id })}
           />
         </div>
@@ -1529,7 +1573,7 @@ function ContractCard({
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-xs text-secondary">
-          {c.prochaine_intervention ? (
+          {c.prochaine_intervention && c.prochaine_intervention >= today() ? (
             <>
               <Calendar size={11} />
               <span>Prochaine : {fmtDateShort(c.prochaine_intervention)}</span>
@@ -1643,6 +1687,7 @@ function buildMaintenancePeriodRows(
   c: MaintenanceContract,
   interventions: MaintenanceIntervention[],
   expenses: MaintenanceContractExpense[],
+  recurringInstances: import('@/lib/data/queries/maintenance').RecurringInvoiceInstance[],
 ) {
   const expectedRevenue = c.montant_ht ?? 0
   const expectedCost = (c.period_cost_labor_ht ?? 0) + (c.period_cost_parts_ht ?? 0) + (c.period_cost_travel_ht ?? 0) + (c.period_cost_other_ht ?? 0)
@@ -1652,6 +1697,7 @@ function buildMaintenancePeriodRows(
     interventions: number
     revenueHt: number
     billedRevenueHt: number
+    paidRevenueHt: number
     draftRevenueHt: number
     pendingRevenueHt: number
     actualCostHt: number
@@ -1663,6 +1709,7 @@ function buildMaintenancePeriodRows(
     expectedCostHt: number
     marginEur: number
     marginPct: number
+    invoiceId: string | null
   }> = {}
 
   const ensure = (key: string) => {
@@ -1672,6 +1719,7 @@ function buildMaintenancePeriodRows(
       interventions: 0,
       revenueHt: 0,
       billedRevenueHt: 0,
+      paidRevenueHt: 0,
       draftRevenueHt: 0,
       pendingRevenueHt: 0,
       actualCostHt: 0,
@@ -1683,6 +1731,7 @@ function buildMaintenancePeriodRows(
       expectedCostHt: expectedCost,
       marginEur: expectedRevenue - expectedCost,
       marginPct: expectedRevenue > 0 ? (expectedRevenue - expectedCost) / expectedRevenue : 0,
+      invoiceId: null,
     }
     return rows[key]
   }
@@ -1699,6 +1748,8 @@ function buildMaintenancePeriodRows(
     const revenue = invoiceRevenueForIntervention(iv, expectedRevenue)
     if (isIssuedInvoiceStatus(iv.invoice?.status)) {
       row.billedRevenueHt += revenue
+      if (iv.invoice?.status === 'paid') row.paidRevenueHt += revenue
+      if (iv.invoice_id) row.invoiceId = iv.invoice_id
     } else if (iv.invoice_id) {
       row.draftRevenueHt += revenue
     } else {
@@ -1715,6 +1766,23 @@ function buildMaintenancePeriodRows(
     if (expense.category === 'materiel') row.partsCostHt += amount
     else if (expense.category === 'transport') row.travelCostHt += amount
     else row.otherCostHt += amount
+  }
+
+  // Factures récurrentes : une instance par période de facturation
+  for (const inst of recurringInstances) {
+    if (!inst.scheduled_date) continue
+    const key = inst.scheduled_date.slice(0, 7)
+    const row = ensure(key)
+    const amount = inst.invoice_total_ht ?? inst.amount_ht
+    if (isIssuedInvoiceStatus(inst.invoice_status)) {
+      row.billedRevenueHt += amount
+      if (inst.invoice_status === 'paid') row.paidRevenueHt += amount
+      if (inst.invoice_id) row.invoiceId = inst.invoice_id
+    } else if (inst.invoice_id) {
+      row.draftRevenueHt += amount
+    } else {
+      row.pendingRevenueHt += amount
+    }
   }
 
   return Object.values(rows)
@@ -1736,14 +1804,15 @@ function buildMaintenancePeriodRows(
 }
 
 function ContractDetail({
-  contract: c, interventions, expenses, loading, intervenants,
+  contract: c, interventions, expenses, recurringInstances, loading, intervenants,
   materials, laborRates, prestationTypes, orgSector,
   onClose, onEdit, onDelete, onNewIntervention, onEditIntervention, onDeleteIntervention,
-  onBillIntervention, onContractUpdated,
+  onBillIntervention, onMarkInterventionDone, onContractUpdated,
 }: {
   contract: MaintenanceContract
   interventions: MaintenanceIntervention[]
   expenses: MaintenanceContractExpense[]
+  recurringInstances: import('@/lib/data/queries/maintenance').RecurringInvoiceInstance[]
   loading: boolean
   intervenants: { id: string; label: string; group: string }[]
   materials: CatalogMaterial[]
@@ -1757,11 +1826,14 @@ function ContractDetail({
   onNewIntervention: () => void
   onEditIntervention: (iv: MaintenanceIntervention) => void
   onBillIntervention: (iv: MaintenanceIntervention) => void
+  onMarkInterventionDone: (iv: MaintenanceIntervention) => void
   onDeleteIntervention: (id: string) => void
 }) {
   const [expandedIv, setExpandedIv] = useState<string | null>(null)
   const [budgetOpen, setBudgetOpen] = useState(false)
   const [margeOpen, setMargeOpen] = useState(false)
+  const [markPaidLoadingId, setMarkPaidLoadingId] = useState<string | null>(null)
+  const [localPaidInvoiceIds, setLocalPaidInvoiceIds] = useState<Set<string>>(new Set())
   const [budgetForm, setBudgetForm] = useState<ExpectedBudgetForm>(() => contractExpectedBudget(c))
   const [budgetDraft, setBudgetDraft] = useState<CatalogBudgetDraft>(() => emptyCatalogBudgetDraft())
   const [budgetSaving, setBudgetSaving] = useState(false)
@@ -1772,6 +1844,15 @@ function ContractDetail({
     setBudgetDraft(emptyCatalogBudgetDraft())
     setBudgetError(null)
   }, [c.id, c.period_cost_labor_ht, c.period_cost_parts_ht, c.period_cost_travel_ht, c.period_cost_other_ht])
+
+  async function handleMarkPaid(invoiceId: string) {
+    if (markPaidLoadingId) return
+    setMarkPaidLoadingId(invoiceId)
+    const res = await markInvoicePaid(invoiceId)
+    setMarkPaidLoadingId(null)
+    if (res.error) { alert(res.error); return }
+    setLocalPaidInvoiceIds(prev => new Set([...prev, invoiceId]))
+  }
 
   const montantTTC = c.montant_ht !== null
     ? c.montant_ht * (1 + c.vat_rate / 100)
@@ -1787,7 +1868,7 @@ function ContractDetail({
     (a, b) => new Date(b.date_intervention).getTime() - new Date(a.date_intervention).getTime()
   )
 
-  const periodRows = buildMaintenancePeriodRows(c, interventions, expenses)
+  const periodRows = buildMaintenancePeriodRows(c, interventions, expenses, recurringInstances)
 
   const planifiees = sortedInterventions.filter(iv => iv.statut === 'planifiée')
   const realisees = sortedInterventions.filter(iv => iv.statut !== 'planifiée')
@@ -1935,7 +2016,7 @@ function ContractDetail({
                 <p className="text-sm font-semibold text-primary">{fmtDate(c.date_fin)}</p>
               </div>
             )}
-            {c.prochaine_intervention && (
+            {c.prochaine_intervention && c.prochaine_intervention >= today() && (
               <div className="rounded-xl p-3 bg-accent/10 border border-accent/20">
                 <p className="text-xs text-secondary mb-0.5">Prochaine intervention</p>
                 <p className="text-sm font-semibold text-primary">{fmtDate(c.prochaine_intervention)}</p>
@@ -1984,11 +2065,13 @@ function ContractDetail({
                         <InterventionRow
                           key={iv.id}
                           iv={iv}
+                          contract={c}
                           intervenants={intervenants}
                           expanded={expandedIv === iv.id}
                           onToggle={() => setExpandedIv(prev => prev === iv.id ? null : iv.id)}
                           onEdit={() => onEditIntervention(iv)}
                           onBill={() => onBillIntervention(iv)}
+                          onMarkDone={() => onMarkInterventionDone(iv)}
                           onDelete={() => onDeleteIntervention(iv.id)}
                         />
                       ))}
@@ -2003,11 +2086,13 @@ function ContractDetail({
                         <InterventionRow
                           key={iv.id}
                           iv={iv}
+                          contract={c}
                           intervenants={intervenants}
                           expanded={expandedIv === iv.id}
                           onToggle={() => setExpandedIv(prev => prev === iv.id ? null : iv.id)}
                           onEdit={() => onEditIntervention(iv)}
                           onBill={() => onBillIntervention(iv)}
+                          onMarkDone={() => onMarkInterventionDone(iv)}
                           onDelete={() => onDeleteIntervention(iv.id)}
                         />
                       ))}
@@ -2200,7 +2285,7 @@ function ContractDetail({
             )}
           </div>
 
-          {((c.montant_ht ?? 0) > 0 || expectedCost > 0 || interventions.some(iv => iv.statut === 'réalisée') || expenses.length > 0) && periodRows.length > 0 && (
+          {((c.montant_ht ?? 0) > 0 || expectedCost > 0 || interventions.some(iv => iv.statut === 'réalisée') || expenses.length > 0 || recurringInstances.length > 0) && periodRows.length > 0 && (
             <div className="rounded-xl bg-base border border-[var(--elevation-border)] overflow-hidden">
               <button
                 onClick={() => setMargeOpen(o => !o)}
@@ -2217,48 +2302,124 @@ function ContractDetail({
               </button>
 
               {margeOpen && (
-                <div className="px-3 pb-3 space-y-2 border-t border-[var(--elevation-border)] pt-3">
-                  {periodRows.map(row => (
-                    <div key={row.period} className="rounded-xl bg-[var(--elevation-1)] border border-[var(--elevation-border)] p-3">
-                      <div className="flex items-center justify-between gap-3 mb-2">
-                        <div>
-                          <p className="text-sm font-semibold text-primary capitalize">{row.label}</p>
-                          <p className="text-xs text-secondary">{row.interventions > 0 ? `${row.interventions} intervention${row.interventions > 1 ? 's' : ''} réalisée${row.interventions > 1 ? 's' : ''}` : 'Base prévue'}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className={`text-sm font-bold ${row.revenueHt > 0 ? marginTextTone(row.marginEur) : 'text-secondary'}`}>{row.revenueHt > 0 ? fmt(row.marginEur) : '-'}</p>
-                          <p className="text-xs text-secondary">{row.revenueHt > 0 ? `${(row.marginPct * 100).toFixed(1)} %` : 'marge facturée'}</p>
-                        </div>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-secondary/10 overflow-hidden">
-                        <div className={`h-full rounded-full ${marginTone(row.marginPct)}`} style={{ width: `${Math.max(0, Math.min(100, row.marginPct * 100))}%` }} />
-                      </div>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-xs">
-                        <div className="rounded-lg bg-base p-2">
-                          <p className="text-secondary">Facturé HT</p>
-                          <p className="font-semibold text-primary">{row.revenueHt > 0 ? fmt(row.revenueHt) : '-'}</p>
-                        </div>
-                        <div className="rounded-lg bg-base p-2">
-                          <p className="text-secondary">Brouillon</p>
-                          <p className="font-semibold text-primary">{row.draftRevenueHt > 0 ? fmt(row.draftRevenueHt) : '-'}</p>
-                        </div>
-                        <div className="rounded-lg bg-base p-2">
-                          <p className="text-secondary">À facturer</p>
-                          <p className="font-semibold text-primary">{row.pendingRevenueHt > 0 ? fmt(row.pendingRevenueHt) : '-'}</p>
-                        </div>
-                        <div className="rounded-lg bg-base p-2">
-                          <p className="text-secondary">Coûts</p>
-                          <p className="font-semibold text-primary">{fmt(row.actualCostHt)}</p>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-secondary mt-2">
-                        <span>MO {fmt(row.laborCostHt)}</span>
-                        <span>Pièces {fmt(row.partsCostHt)}</span>
-                        <span>Déplacement {fmt(row.travelCostHt)}</span>
-                        <span>Autres {fmt(row.otherCostHt)}</span>
-                      </div>
-                    </div>
-                  ))}
+                <div className="border-t border-[var(--elevation-border)]">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-[var(--elevation-border)] bg-[var(--elevation-1)]">
+                          <th className="text-left px-3 py-2 font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Période</th>
+                          <th className="text-right px-3 py-2 font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Base prévue</th>
+                          <th className="px-3 py-2 font-semibold text-secondary uppercase tracking-wider min-w-[120px]">Facturé / Encaissé</th>
+                          <th className="text-right px-3 py-2 font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Coûts</th>
+                          <th className="text-right px-3 py-2 font-semibold text-secondary uppercase tracking-wider whitespace-nowrap">Marge</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--elevation-border)]">
+                        {periodRows.map(row => {
+                          const billedPct = row.expectedRevenueHt > 0 ? Math.min(1, row.billedRevenueHt / row.expectedRevenueHt) : 0
+                          const paidPct   = row.expectedRevenueHt > 0 ? Math.min(1, row.paidRevenueHt   / row.expectedRevenueHt) : 0
+                          const hasBilled = row.billedRevenueHt > 0
+                          const hasDraft  = row.draftRevenueHt > 0
+                          const hasPending = row.pendingRevenueHt > 0
+                          return (
+                            <tr key={row.period} className="hover:bg-[var(--elevation-1)] transition-colors">
+                              <td className="px-3 py-3 whitespace-nowrap">
+                                <p className="font-medium text-primary capitalize">{row.label}</p>
+                                {row.invoiceId && (() => {
+                                  const isPaid = localPaidInvoiceIds.has(row.invoiceId!) || row.paidRevenueHt >= row.billedRevenueHt && row.billedRevenueHt > 0
+                                  const isLoading = markPaidLoadingId === row.invoiceId
+                                  if (isPaid) return (
+                                    <span className="text-[10px] text-green-600 dark:text-green-400 flex items-center gap-0.5 mt-0.5">
+                                      <Check className="w-3 h-3" /> Payée
+                                    </span>
+                                  )
+                                  return (
+                                    <button
+                                      onClick={() => handleMarkPaid(row.invoiceId!)}
+                                      disabled={!!markPaidLoadingId}
+                                      className="text-[10px] text-accent hover:text-accent/80 flex items-center gap-0.5 mt-0.5 disabled:opacity-50"
+                                    >
+                                      {isLoading
+                                        ? <><Loader2 className="w-3 h-3 animate-spin" /> En cours…</>
+                                        : <><CheckCircle2 className="w-3 h-3" /> Marquer payée</>
+                                      }
+                                    </button>
+                                  )
+                                })()}
+                              </td>
+                              <td className="px-3 py-3 text-right tabular-nums text-secondary whitespace-nowrap">
+                                {row.expectedRevenueHt > 0 ? fmt(row.expectedRevenueHt) : '-'}
+                              </td>
+                              <td className="px-3 py-3">
+                                <div className="space-y-1.5">
+                                  {/* Jauge segmentée : encaissé | facturé non encaissé | non facturé */}
+                                  <div className="h-2 rounded-full bg-secondary/10 overflow-hidden flex">
+                                    <div className="h-full bg-green-500 transition-all" style={{ width: `${paidPct * 100}%` }} />
+                                    <div className="h-full bg-green-300 dark:bg-green-700 transition-all" style={{ width: `${Math.max(0, billedPct - paidPct) * 100}%` }} />
+                                  </div>
+                                  {/* Légende */}
+                                  <div className="flex items-center gap-3 text-[10px] text-secondary">
+                                    {row.paidRevenueHt > 0 && (
+                                      <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />Encaissé</span>
+                                    )}
+                                    {row.billedRevenueHt > row.paidRevenueHt && (
+                                      <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-green-300 dark:bg-green-700 flex-shrink-0" />Envoyé</span>
+                                    )}
+                                    {row.expectedRevenueHt > 0 && row.billedRevenueHt < row.expectedRevenueHt && (
+                                      <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-secondary/20 flex-shrink-0" />Non facturé</span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    {hasBilled && (() => {
+                                      const diff = row.expectedRevenueHt > 0 ? row.billedRevenueHt - row.expectedRevenueHt : 0
+                                      return (
+                                        <span className="text-green-600 dark:text-green-400 font-semibold tabular-nums">
+                                          {fmt(row.billedRevenueHt)}
+                                          {diff !== 0 && (
+                                            <span className={`ml-1 font-normal text-[10px] ${diff > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                              {diff > 0 ? '+' : ''}{fmt(diff)}
+                                            </span>
+                                          )}
+                                          {row.paidRevenueHt > 0 && row.paidRevenueHt < row.billedRevenueHt && (
+                                            <span className="text-secondary font-normal"> · encaissé {fmt(row.paidRevenueHt)}</span>
+                                          )}
+                                          {row.paidRevenueHt >= row.billedRevenueHt && row.billedRevenueHt > 0 && (
+                                            <span className="text-secondary font-normal"> · encaissé</span>
+                                          )}
+                                        </span>
+                                      )
+                                    })()}
+                                    {hasDraft && (
+                                      <span className="text-amber-500 tabular-nums">brouillon {fmt(row.draftRevenueHt)}</span>
+                                    )}
+                                    {hasPending && !hasBilled && !hasDraft && (
+                                      <span className="text-secondary tabular-nums">à facturer {fmt(row.pendingRevenueHt)}</span>
+                                    )}
+                                    {!hasBilled && !hasDraft && !hasPending && (
+                                      <span className="text-secondary">-</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 text-right tabular-nums text-secondary whitespace-nowrap">
+                                {row.actualCostHt > 0 ? fmt(row.actualCostHt) : '-'}
+                              </td>
+                              <td className="px-3 py-3 text-right tabular-nums whitespace-nowrap">
+                                {hasBilled ? (
+                                  <span className={`font-semibold ${marginTextTone(row.marginEur)}`}>
+                                    {row.marginEur >= 0 ? '+' : ''}{fmt(row.marginEur)}
+                                    <span className="block text-secondary font-normal">{(row.marginPct * 100).toFixed(0)} %</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-secondary">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
@@ -2368,14 +2529,16 @@ function ContractDetail({
 // ─── InterventionRow ──────────────────────────────────────────────────────────
 
 function InterventionRow({
-  iv, intervenants, expanded, onToggle, onEdit, onBill, onDelete,
+  iv, contract, intervenants, expanded, onToggle, onEdit, onBill, onMarkDone, onDelete,
 }: {
   iv: MaintenanceIntervention
+  contract: MaintenanceContract
   intervenants: { id: string; label: string }[]
   expanded: boolean
   onToggle: () => void
   onEdit: () => void
   onBill: () => void
+  onMarkDone: () => void
   onDelete: () => void
 }) {
   const cfg = INTERVENTION_STATUS_CONFIG[iv.statut]
@@ -2392,13 +2555,31 @@ function InterventionRow({
   const [sendingReport, setSendingReport] = useState(false)
   const [sendStatus, setSendStatus] = useState<'idle' | 'done' | 'error'>('idle')
   const [sendError, setSendError] = useState<string | null>(null)
+  const [clientEmail, setClientEmail] = useState(contract.client?.email ?? '')
+  const [emailRequiredOpen, setEmailRequiredOpen] = useState(false)
   const [photos, setPhotos] = useState(iv.photos ?? [])
   const [photoTitle, setPhotoTitle] = useState('')
   const [photoCaption, setPhotoCaption] = useState('')
   const [photoUploading, setPhotoUploading] = useState(false)
   const [photoError, setPhotoError] = useState<string | null>(null)
+  const [doneLoading, setDoneLoading] = useState(false)
 
-  const handleSendReport = async () => {
+  const getEmailTarget = () => contract.client
+    ? { ...contract.client, email: clientEmail }
+    : null
+
+  const handleSendReport = async (skipEmailCheck = false) => {
+    if (!skipEmailCheck && !contract.site_contact_email?.trim() && contract.client && !clientEmail.trim()) {
+      setSendStatus('idle')
+      setSendError(null)
+      setEmailRequiredOpen(true)
+      return
+    }
+    if (!contract.site_contact_email?.trim() && !contract.client) {
+      setSendStatus('error')
+      setSendError('Ajoutez un email de contact site ou liez un client au contrat.')
+      return
+    }
     setSendingReport(true)
     setSendStatus('idle')
     setSendError(null)
@@ -2410,6 +2591,12 @@ function InterventionRow({
       return
     }
     setSendStatus('done')
+  }
+
+  const handleClientEmailSaved = async (email: string) => {
+    setClientEmail(email)
+    setEmailRequiredOpen(false)
+    await handleSendReport(true)
   }
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2469,6 +2656,20 @@ function InterventionRow({
           </div>
         </div>
         <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+          {iv.statut === 'planifiée' && (
+            <button
+              onClick={async () => {
+                setDoneLoading(true)
+                await onMarkDone()
+                setDoneLoading(false)
+              }}
+              disabled={doneLoading}
+              className="p-1.5 rounded-lg hover:bg-green-500/10 text-secondary hover:text-green-600 disabled:opacity-50"
+              title="Marquer terminée"
+            >
+              {doneLoading ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+            </button>
+          )}
           {iv.statut === 'réalisée' && !iv.invoice_id && (
             <button onClick={onBill} className="p-1.5 rounded-lg hover:bg-green-500/10 text-secondary hover:text-green-600" title="Facturer l'intervention">
               <Euro size={12} />
@@ -2484,7 +2685,7 @@ function InterventionRow({
             <FileDown size={12} />
           </a>
           <button
-            onClick={handleSendReport}
+            onClick={() => handleSendReport()}
             disabled={sendingReport}
             className="p-1.5 rounded-lg hover:bg-accent/10 text-secondary hover:text-accent disabled:opacity-50"
             title="Envoyer le rapport au client"
@@ -2616,6 +2817,13 @@ function InterventionRow({
           )}
         </div>
       )}
+      <ClientEmailRequiredModal
+        open={emailRequiredOpen}
+        client={getEmailTarget()}
+        documentLabel="le rapport d’intervention"
+        onCancel={() => setEmailRequiredOpen(false)}
+        onSaved={handleClientEmailSaved}
+      />
     </div>
   )
 }

@@ -5,6 +5,7 @@ import {
   Plus, Trash2, Pencil, Check, X, Loader2, FileText,
   CheckCircle2, Clock, AlertTriangle, Sparkles,
 } from 'lucide-react'
+import AICreditsErrorModal from '@/components/shared/AICreditsErrorModal'
 import type { ChantierJalon } from '@/lib/data/queries/chantier-jalons'
 import type { Tache } from '@/lib/data/queries/chantiers'
 import {
@@ -71,6 +72,7 @@ function JalonCard({
 
   const [loading, setLoading] = useState(false)
   const [invLoading, setInvLoading] = useState(false)
+  const [deleteLoading, setDeleteLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   const amount = budgetHt > 0 ? (budgetHt * jalon.acompte_pct) / 100 : 0
@@ -92,7 +94,10 @@ function JalonCard({
 
   async function handleDelete() {
     if (!confirm(`Supprimer le jalon "${jalon.title}" ?`)) return
-    await deleteJalon(jalon.id)
+    setDeleteLoading(true)
+    const { error } = await deleteJalon(jalon.id)
+    setDeleteLoading(false)
+    if (error) { setErr(error); return }
     onDeleted(jalon.id)
   }
 
@@ -195,8 +200,8 @@ function JalonCard({
               <button onClick={() => setEditing(true)} className="p-1.5 rounded text-secondary hover:text-primary hover:bg-[var(--elevation-1)] transition-colors">
                 <Pencil className="w-3.5 h-3.5" />
               </button>
-              <button onClick={handleDelete} className="p-1.5 rounded text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors">
-                <Trash2 className="w-3.5 h-3.5" />
+              <button onClick={handleDelete} disabled={deleteLoading} className="p-1.5 rounded text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50">
+                {deleteLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
               </button>
             </div>
           )}
@@ -366,6 +371,7 @@ export default function JalonsTab({ initialJalons, chantierId, budgetHt, taches 
   const [addLoading, setAddLoading] = useState(false)
 
   const [aiLoading, setAiLoading] = useState(false)
+  const [aiCreditsError, setAiCreditsError] = useState(false)
   const [aiSuggestions, setAiSuggestions] = useState<null | Array<{
     title: string; acompte_pct: number; description: string; tasks: Array<{ title: string }>
   }>>(null)
@@ -417,7 +423,10 @@ export default function JalonsTab({ initialJalons, chantierId, budgetHt, taches 
         body: JSON.stringify({ chantierId }),
       })
       const data = await res.json()
-      if (!res.ok) { setAiErr(data.error ?? 'Erreur IA'); return }
+      if (!res.ok) {
+        if (res.status === 402) { setAiCreditsError(true); return }
+        setAiErr(data.error ?? 'Erreur IA'); return
+      }
       setAiSuggestions(data)
     } catch {
       setAiErr('Impossible de contacter l\'IA.')
@@ -449,6 +458,7 @@ export default function JalonsTab({ initialJalons, chantierId, budgetHt, taches 
 
   return (
     <div className="space-y-5">
+      {aiCreditsError && <AICreditsErrorModal onClose={() => setAiCreditsError(false)} />}
       {/* En-tête avec résumé % */}
       <div className="flex items-center justify-between">
         <div>

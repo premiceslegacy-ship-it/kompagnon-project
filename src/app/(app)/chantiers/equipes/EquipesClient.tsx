@@ -11,6 +11,7 @@ import { ActionButton } from '@/components/ui/ActionButton'
 import type { Equipe, EquipeMembre } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
 import type { TeamMember } from '@/lib/data/queries/team'
+import type { OrgRole } from '@/lib/data/queries/roles'
 import {
   createEquipe, updateEquipe, deleteEquipe,
   addEquipeMembre, removeEquipeMembre, updateEquipeMembreTaux,
@@ -45,6 +46,7 @@ interface Props {
   equipes: Equipe[]
   soloMembers: IndividualMember[]
   appMembers: TeamMember[]
+  orgRoles: OrgRole[]
   canManageTeam: boolean
   canEditRates: boolean
   canEditGoals: boolean
@@ -114,9 +116,54 @@ function TauxBadge({
   )
 }
 
+function RoleSelect({
+  value,
+  onChange,
+  roles,
+  label = 'Rôle / permissions',
+}: {
+  value: string
+  onChange: (value: string) => void
+  roles: OrgRole[]
+  label?: string
+}) {
+  if (roles.length === 0) {
+    return (
+      <div>
+        <label className="block text-xs font-medium text-secondary mb-1">{label}</label>
+        <input
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder="Chef d'équipe..."
+          className="w-full px-3 py-2 rounded-lg border border-[var(--elevation-border)] bg-interactive text-sm text-primary focus:outline-none focus:border-accent dark:bg-white/[0.04]"
+        />
+      </div>
+    )
+  }
+
+  const hasCustomValue = value && !roles.some(role => role.name === value)
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-secondary mb-1">{label}</label>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="w-full px-3 py-2 rounded-lg border border-[var(--elevation-border)] bg-interactive text-sm text-primary focus:outline-none focus:border-accent dark:bg-white/[0.04]"
+      >
+        <option value="">Sans rôle</option>
+        {hasCustomValue && <option value={value}>{value}</option>}
+        {roles.map(role => (
+          <option key={role.id} value={role.name}>{role.name}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
-export default function EquipesClient({ equipes: initialEquipes, soloMembers: initialSolo, appMembers, canManageTeam, canEditRates, canEditGoals, memberGoals, currentUserId }: Props) {
+export default function EquipesClient({ equipes: initialEquipes, soloMembers: initialSolo, appMembers, orgRoles, canManageTeam, canEditRates, canEditGoals, memberGoals, currentUserId }: Props) {
   const router = useRouter()
   const [, startTransition] = useTransition()
 
@@ -371,8 +418,9 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
   async function handleDeleteEquipe(equipeId: string) {
     if (!canManageTeam) return
     setSaving(true)
-    await deleteEquipe(equipeId)
+    const { error: e } = await deleteEquipe(equipeId)
     setSaving(false)
+    if (e) { setError(e); setConfirmDelete(null); return }
     setConfirmDelete(null)
     refresh()
   }
@@ -422,7 +470,8 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
       {/* Note contextuelle */}
       <div className="rounded-xl border border-[var(--elevation-border)] bg-surface px-4 py-3 text-sm text-secondary dark:bg-white/[0.03]">
         <span className="font-semibold text-primary">Note :</span> un intervenant peut appartenir à une équipe et intervenir en solo sur d&apos;autres chantiers.
-        Les pointages d&apos;heures sont toujours individuels par intervenant, que ce soit en équipe ou non.
+            Les pointages d&apos;heures sont toujours individuels par intervenant, que ce soit en équipe ou non.
+            Les comptes application ont un rôle lié aux permissions ; les intervenants externes gardent seulement un intitulé terrain.
         {canEditRates && <> Le taux horaire sert au calcul de la rentabilité chantier.</>}
       </div>
 
@@ -486,8 +535,11 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
                           {membre.email && <span className="text-xs text-secondary">{membre.email}</span>}
                           {membre.profile_id && (
                             <span className="flex items-center gap-0.5 text-xs text-emerald-600 dark:text-emerald-400">
-                              <Shield className="w-3 h-3" /> Compte app
+                              <Shield className="w-3 h-3" /> Compte application
                             </span>
+                          )}
+                          {!membre.profile_id && (
+                            <span className="text-xs text-amber-600 dark:text-amber-400">Intervenant externe</span>
                           )}
                         </div>
                       </div>
@@ -616,11 +668,14 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
                     {membre.role_label && <span className="text-xs text-secondary">{membre.role_label}</span>}
                     {membre.email && <span className="text-xs text-secondary">{membre.email}</span>}
-                    {membre.profile_id && (
-                      <span className="flex items-center gap-0.5 text-xs text-emerald-600 dark:text-emerald-400">
-                        <Shield className="w-3 h-3" /> Compte app
-                      </span>
-                    )}
+                          {membre.profile_id && (
+                            <span className="flex items-center gap-0.5 text-xs text-emerald-600 dark:text-emerald-400">
+                              <Shield className="w-3 h-3" /> Compte application
+                            </span>
+                          )}
+                          {!membre.profile_id && (
+                            <span className="text-xs text-amber-600 dark:text-amber-400">Intervenant externe</span>
+                          )}
                   </div>
                 </div>
                 {/* Taux horaire */}
@@ -670,7 +725,7 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
       {appMembersState.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-secondary">
-            Membres avec compte application ({appMembersState.length})
+            Comptes application de l&apos;organisation ({appMembersState.length})
           </h2>
           <div className="card divide-y divide-[var(--elevation-border)] overflow-hidden">
             {appMembersState.map(m => {
@@ -785,9 +840,7 @@ export default function EquipesClient({ equipes: initialEquipes, soloMembers: in
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Rôle / Poste</label>
-                  <input value={fRole} onChange={e => setFRole(e.target.value)} placeholder="Chef d'équipe…"
-                    className="w-full px-3 py-2 rounded-lg border border-[var(--elevation-border)] bg-interactive text-sm text-primary focus:outline-none focus:border-accent dark:bg-white/[0.04]" />
+                  <RoleSelect value={fRole} onChange={setFRole} roles={orgRoles} />
                 </div>
                 {canEditRates && (
                   <div>

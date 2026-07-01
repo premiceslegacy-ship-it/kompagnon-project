@@ -20,6 +20,7 @@ import {
   Edit2, Trash2, FileDown, Eye, Repeat, Check, Copy, Landmark, HardHat,
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Upload, Loader2, CalendarClock, X, RefreshCw,
 } from 'lucide-react'
+import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 
 // ─── Helpers mois ─────────────────────────────────────────────────────────────
 
@@ -108,7 +109,7 @@ function EmptyState({ type, canCreate, returnTo }: { type: 'quotes' | 'invoices'
       </div>
       {canCreate && type === 'quotes' && (
         <Link href={buildEditorHref('/finances/quote-editor', { returnTo })} className="mt-2 px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap">
-          <Bot className="w-4 h-4" />Nouveau Devis
+          <AssistantAvatar assistant="chloe" size={16} />Nouveau Devis
         </Link>
       )}
       {canCreate && type === 'invoices' && (
@@ -216,11 +217,14 @@ export default function FinancesClient({
 
   const quotesOfMonth = quotes.filter(q => q.created_at.startsWith(quoteStatsMonth))
   const quotesOfPrevMonth = quotes.filter(q => q.created_at.startsWith(prevQuoteStatsMonth))
+  const emittedQuoteStatuses = ['sent', 'viewed', 'accepted', 'refused', 'expired', 'converted', 'fully_invoiced']
+  const emittedQuotesOfMonth = quotesOfMonth.filter(q => emittedQuoteStatuses.includes(q.status))
+  const emittedQuotesOfPrevMonth = quotesOfPrevMonth.filter(q => emittedQuoteStatuses.includes(q.status))
 
-  const qEmisCount = quotesOfMonth.length
-  const qEmisCountPrev = quotesOfPrevMonth.length
-  const qEmisHt = quotesOfMonth.reduce((s, q) => s + (q.total_ht ?? 0), 0)
-  const qEmisHtPrev = quotesOfPrevMonth.reduce((s, q) => s + (q.total_ht ?? 0), 0)
+  const qEmisCount = emittedQuotesOfMonth.length
+  const qEmisCountPrev = emittedQuotesOfPrevMonth.length
+  const qEmisHt = emittedQuotesOfMonth.reduce((s, q) => s + (q.total_ht ?? 0), 0)
+  const qEmisHtPrev = emittedQuotesOfPrevMonth.reduce((s, q) => s + (q.total_ht ?? 0), 0)
   const qAcceptedCount = quotesOfMonth.filter(q => q.status === 'accepted').length
   const qAcceptedHt = quotesOfMonth.filter(q => q.status === 'accepted').reduce((s, q) => s + (q.total_ht ?? 0), 0)
   const qAcceptedHtPrev = quotesOfPrevMonth.filter(q => q.status === 'accepted').reduce((s, q) => s + (q.total_ht ?? 0), 0)
@@ -728,7 +732,7 @@ export default function FinancesClient({
           )}
           {canCreateQuote && (
             <Link href={quoteEditorHref()} className="px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap">
-              <Bot className="w-4 h-4" />Nouveau Devis
+              <AssistantAvatar assistant="chloe" size={16} />Nouveau Devis
             </Link>
           )}
         </div>

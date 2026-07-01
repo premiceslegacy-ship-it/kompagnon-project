@@ -11,7 +11,14 @@ import {
 import { completeOnboarding, skipInvites, joinViaCode } from './actions'
 import type { OrgRole } from '@/lib/data/queries/roles'
 import { createClient } from '@/lib/supabase/client'
-import { BUSINESS_ACTIVITIES_BY_PROFILE, resolveBusinessSelection, type BusinessActivityId, type BusinessProfile } from '@/lib/catalog-context'
+import {
+  BUSINESS_ACTIVITIES_BY_PROFILE,
+  getSecondaryActivityOptions,
+  normalizeSecondaryActivityIds,
+  resolveBusinessSelection,
+  type BusinessActivityId,
+  type BusinessProfile,
+} from '@/lib/catalog-context'
 import { LegalFooter } from '@/components/legal/LegalFooter'
 import { APP_NAME } from '@/lib/brand'
 import {
@@ -88,7 +95,9 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
   // Owner state
   const [companyName, setCompanyName] = useState('')
   const [selectedActivity, setSelectedActivity] = useState<BusinessActivityId | ''>('')
+  const [selectedSecondaryActivities, setSelectedSecondaryActivities] = useState<BusinessActivityId[]>([])
   const [openActivityProfile, setOpenActivityProfile] = useState<BusinessProfile>('btp')
+  const [showSecondaryActivities, setShowSecondaryActivities] = useState<Partial<Record<BusinessProfile, boolean>>>({})
   const [siret, setSiret] = useState('')
   const [vatNumber, setVatNumber] = useState('')
   const [email, setEmail] = useState(initialEmail ?? '')
@@ -244,6 +253,11 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
           const profile = resolveBusinessSelection({ businessProfile: profileKey }).profileConfig
           const open = openActivityProfile === profileKey
           const selectedInProfile = activities.some((activity) => activity.id === selectedActivity)
+          const tier1 = activities.filter((a) => a.tier === 1)
+          const tier2 = activities.filter((a) => a.tier === 2)
+          const showSecondary = showSecondaryActivities[profileKey] ?? false
+          const selectedIsSecondary = tier2.some((a) => a.id === selectedActivity)
+          const visibleActivities = showSecondary || selectedIsSecondary ? activities : tier1
           return (
             <div key={profileKey} className="rounded-xl border border-white/[0.08] bg-white/[0.035] overflow-hidden">
               <button
@@ -263,12 +277,13 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
               </button>
               {open && (
                 <div className="px-3 pb-3 space-y-2">
-                  {activities.map((activity) => (
+                  {visibleActivities.map((activity) => (
                     <button
                       key={activity.id}
                       type="button"
                       onClick={() => {
                         setSelectedActivity(activity.id)
+                        setSelectedSecondaryActivities((prev) => normalizeSecondaryActivityIds(prev, activity.id))
                         setOpenActivityProfile(profileKey)
                         setFieldError('name')
                       }}
@@ -282,11 +297,58 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                       <span className="mt-1 block text-xs leading-relaxed opacity-80">{activity.description}</span>
                     </button>
                   ))}
+                  {tier2.length > 0 && !showSecondary && !selectedIsSecondary && (
+                    <button
+                      type="button"
+                      onClick={() => setShowSecondaryActivities((prev) => ({ ...prev, [profileKey]: true }))}
+                      className="w-full py-2 text-xs text-white/35 hover:text-white/55 transition-colors text-center"
+                    >
+                      Voir d'autres activités ({tier2.length})
+                    </button>
+                  )}
                 </div>
               )}
             </div>
           )
         })}
+      </div>
+    )
+  }
+
+  function SecondaryActivitiesPicker({
+    currentActivityId,
+    selected,
+    onChange,
+  }: {
+    currentActivityId: BusinessActivityId
+    selected: BusinessActivityId[]
+    onChange: (next: BusinessActivityId[]) => void
+  }) {
+    const others = getSecondaryActivityOptions(currentActivityId)
+    return (
+      <div className="space-y-2">
+        <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
+          Vous faites aussi
+        </label>
+        <div className="flex flex-wrap gap-2">
+          {others.map((a) => {
+            const checked = selected.includes(a.id)
+            const cls = checked
+              ? 'bg-accent/15 border-accent/40 text-accent'
+              : 'bg-white/[0.04] border-white/[0.08] text-white/40 hover:text-white/60 hover:border-white/20'
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => onChange(checked ? selected.filter((id) => id !== a.id) : [...selected, a.id])}
+                className={'px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ' + cls}
+              >
+                {a.label}
+              </button>
+            )
+          })}
+        </div>
+        <p className="text-xs text-white/30">Optionnel — aide Sarah à mieux contextualiser vos devis.</p>
       </div>
     )
   }
@@ -446,6 +508,14 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                     Choisissez l’activité qui correspond le mieux à votre entreprise. Vous pourrez ensuite chiffrer plusieurs types de prestations.
                   </p>
                 </div>
+
+                {selectedActivity && (
+                  <SecondaryActivitiesPicker
+                    currentActivityId={selectedActivity}
+                    selected={selectedSecondaryActivities}
+                    onChange={setSelectedSecondaryActivities}
+                  />
+                )}
 
                 <div className="pt-1">
                   <button
@@ -739,6 +809,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
               <form action={completeOnboarding} className="space-y-5">
                 <input type="hidden" name="company_name" value={companyName} />
                 <input type="hidden" name="business_activity" value={selectedActivity} />
+                <input type="hidden" name="secondary_activity_ids" value={JSON.stringify(selectedSecondaryActivities)} />
                 <input type="hidden" name="business_profile" value={resolvedSelection?.businessProfile ?? ''} />
                 <input
                   type="hidden"

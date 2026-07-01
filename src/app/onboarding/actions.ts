@@ -8,7 +8,12 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { sendEmail } from '@/lib/email'
 import { buildInviteEmail } from '@/lib/email/templates'
-import { resolveBusinessSelection, type BusinessActivityId, type BusinessProfileConfig } from '@/lib/catalog-context'
+import {
+  normalizeSecondaryActivityIds,
+  resolveBusinessSelection,
+  type BusinessActivityId,
+  type BusinessProfileConfig,
+} from '@/lib/catalog-context'
 import {
   normalizeBic,
   normalizeCommercialCourt,
@@ -70,6 +75,12 @@ function buildOrganizationUpdateFromForm(formData: FormData) {
     businessProfile: (formData.get('business_profile') as string | null) ?? null,
     sector: (formData.get('sector') as string | null) ?? null,
   })
+  const secondaryActivityIdsRaw = formString(formData, 'secondary_activity_ids')
+  let secondaryActivityIds: BusinessActivityId[] = []
+  try {
+    const parsed = JSON.parse(secondaryActivityIdsRaw || '[]')
+    secondaryActivityIds = normalizeSecondaryActivityIds(parsed, selection.activity.id)
+  } catch { /* ignore */ }
   const siret = normalizeSiret(formString(formData, 'siret'))
   const vatNumber = normalizeFrenchVatNumber(formString(formData, 'vat_number'))
   const email = normalizeEmail(formString(formData, 'email'))
@@ -106,6 +117,7 @@ function buildOrganizationUpdateFromForm(formData: FormData) {
       name: companyName,
       slug: buildSlug(companyName),
       sector: selection.sectorLabel,
+      secondary_activity_ids: secondaryActivityIds,
       siret: siret.value,
       siren: siret.siren,
       vat_number: vatNumber.value,
@@ -181,13 +193,14 @@ async function seedStarterPresetsIfNeeded(params: {
       prestation_type_id: template.id,
       organization_id: organizationId,
       position: index,
+      section_title: line.section_title ?? '',
       item_type: line.item_type,
       designation: line.designation,
       quantity: line.quantity,
       unit: line.unit,
       unit_price_ht: line.unit_price_ht ?? 0,
       unit_cost_ht: line.unit_cost_ht ?? 0,
-      is_internal: false,
+      is_internal: line.is_internal ?? false,
     }))
   })
 
@@ -200,6 +213,33 @@ async function seedStarterPresetsIfNeeded(params: {
   if (itemError) {
     console.error('[seedStarterPresetsIfNeeded] insert items error:', itemError.message)
   }
+}
+
+async function seedStarterClausesIfNeeded(params: {
+  admin: ReturnType<typeof createAdminClient>
+  organizationId: string
+  config: BusinessProfileConfig
+}) {
+  const { admin, organizationId, config } = params
+  if (!config.starterClauses || config.starterClauses.length === 0) return
+
+  const { count } = await admin
+    .from('quote_clause_templates')
+    .select('id', { count: 'exact', head: true })
+    .eq('organization_id', organizationId)
+
+  if ((count ?? 0) > 0) return
+
+  const payload = config.starterClauses.map((clause) => ({
+    organization_id: organizationId,
+    title: clause.title,
+    body: clause.body,
+    category: clause.category,
+    position: clause.position,
+  }))
+
+  const { error } = await admin.from('quote_clause_templates').insert(payload)
+  if (error) console.error('[seedStarterClausesIfNeeded] error:', error.message)
 }
 
 /**
@@ -242,6 +282,11 @@ export async function completeOnboarding(formData: FormData) {
     admin,
     organizationId,
     createdBy: user.id,
+    config: orgForm.selection.profileConfig,
+  })
+  await seedStarterClausesIfNeeded({
+    admin,
+    organizationId,
     config: orgForm.selection.profileConfig,
   })
   const inviteErrors: string[] = []

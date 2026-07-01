@@ -144,6 +144,7 @@ export async function GET(req: NextRequest) {
           montant_ttc: fmtAmount,
           date_echeance: fmtDate,
           entreprise_nom: org.name,
+          email_org: org.email ?? '',
         }
 
         const tpl = getTemplate(slug)
@@ -227,6 +228,7 @@ export async function GET(req: NextRequest) {
           montant_ttc: fmtAmount,
           entreprise_nom: org.name,
           lien_signature: '',
+          email_org: org.email ?? '',
         }
 
         const tpl = getTemplate('quote_sent')

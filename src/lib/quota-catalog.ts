@@ -15,7 +15,8 @@ export const PRODUCT_MODULE_KEYS = [
   'weekly_summary',
   'quote_ai',
   'planning_ai',
-  'chantier_assistant',
+  'chantier_assistant',  // Assistant IA inline dans la fiche chantier (Starter+)
+  'sarah_assistant',     // Sarah — widget global secrétaire métier (Pro+)
   'suggest_tasks',
   'catalog_ai',
   'document_import_ai',
@@ -23,6 +24,7 @@ export const PRODUCT_MODULE_KEYS = [
   'labor_estimate_ai',
   'receipt_ocr',
   'voice_input',
+  'voice_live',          // Mode vocal streaming live Sarah (Pro+ et Expert)
   'whatsapp_agent',
   'whatsapp_ocr',
   'whatsapp_proactive',
@@ -43,11 +45,14 @@ export type TechnicalQuotaFeature =
   | 'whatsapp_document_ocr'
   | 'reminder_draft'
   | 'auto_reminder_draft'
+  | 'email_draft'         // Rédaction email client via IA (Starter+, quota relances_ai)
   | 'chantier_report_summary'
   | 'chantier_assistant'
+  | 'sarah_assistant'
   | 'catalog_extract'
   | 'receipt_ocr'
   | 'voice_transcription'
+  | 'voice_live'
 
 export type QuotaFeature =
   | 'relances_ai'
@@ -55,6 +60,7 @@ export type QuotaFeature =
   | 'quote_ai'
   | 'planning_ai'
   | 'chantier_assistant'
+  | 'sarah_assistant'
   | 'suggest_tasks'
   | 'catalog_ai'
   | 'document_import_ai'
@@ -62,6 +68,7 @@ export type QuotaFeature =
   | 'labor_estimate_ai'
   | 'receipt_ocr'
   | 'voice_input'
+  | 'voice_live_minutes'
   | 'wa_messages'
   | 'wa_vocal_minutes'
   | 'wa_proactive_messages'
@@ -79,14 +86,16 @@ export const QUOTA_DEFINITIONS: Record<QuotaFeature, QuotaDefinition> = {
   weekly_summary: { label: 'Synthese hebdo', unit: 'call', moduleKey: 'weekly_summary', section: 'ia_base' },
   quote_ai: { label: 'Analyse devis', unit: 'call', moduleKey: 'quote_ai', section: 'ia_base' },
   planning_ai: { label: 'Planning IA', unit: 'call', moduleKey: 'planning_ai', section: 'ia_base' },
-  chantier_assistant: { label: 'Assistant chantier', unit: 'call', moduleKey: 'chantier_assistant', section: 'ia_base' },
+  chantier_assistant: { label: 'Assistant chantier IA', unit: 'call', moduleKey: 'chantier_assistant', section: 'ia_base' },
+  sarah_assistant: { label: 'Sarah — secrétaire métier', unit: 'call', moduleKey: 'sarah_assistant', section: 'ia_base' },
   suggest_tasks: { label: 'Suggestions taches', unit: 'call', moduleKey: 'suggest_tasks', section: 'ia_base' },
   catalog_ai: { label: 'Catalogue IA', unit: 'call', moduleKey: 'catalog_ai', section: 'ia_base' },
   document_import_ai: { label: 'Import documents IA', unit: 'document', moduleKey: 'document_import_ai', section: 'ia_base' },
   chantier_report_ai: { label: 'Rapports chantier IA', unit: 'call', moduleKey: 'chantier_report_ai', section: 'ia_base' },
   labor_estimate_ai: { label: 'Estimation main d oeuvre', unit: 'call', moduleKey: 'labor_estimate_ai', section: 'ia_base' },
   receipt_ocr: { label: 'OCR tickets', unit: 'document', moduleKey: 'receipt_ocr', section: 'ia_base' },
-  voice_input: { label: 'Saisie vocale', unit: 'minute', moduleKey: 'voice_input', section: 'ia_base' },
+  voice_input: { label: 'Saisie vocale (transcription)', unit: 'minute', moduleKey: 'voice_input', section: 'ia_base' },
+  voice_live_minutes: { label: 'Vocal live Sarah', unit: 'minute', moduleKey: 'voice_live', section: 'ia_base' },
   wa_messages: { label: 'Messages WhatsApp', unit: 'message', moduleKey: 'whatsapp_agent', section: 'whatsapp' },
   wa_vocal_minutes: { label: 'Vocal WhatsApp', unit: 'minute', moduleKey: 'whatsapp_agent', section: 'whatsapp' },
   wa_proactive_messages: { label: 'WhatsApp proactif', unit: 'message', moduleKey: 'whatsapp_proactive', section: 'whatsapp' },
@@ -108,11 +117,14 @@ export const TECHNICAL_FEATURE_TO_QUOTA: Record<TechnicalQuotaFeature, QuotaFeat
   whatsapp_document_ocr: 'whatsapp_ocr',
   reminder_draft: 'relances_ai',
   auto_reminder_draft: 'relances_ai',
+  email_draft: 'relances_ai',    // Mails clients IA partagent le quota relances — Starter inclus
   chantier_report_summary: 'chantier_report_ai',
   chantier_assistant: 'chantier_assistant',
+  sarah_assistant: 'sarah_assistant',
   catalog_extract: 'catalog_ai',
   receipt_ocr: 'receipt_ocr',
   voice_transcription: 'voice_input',
+  voice_live: 'voice_live_minutes',
 }
 
 export const MODULES_BY_TIER: Record<SubscriptionTier, Record<ProductModuleKey, boolean>> = {
@@ -122,7 +134,8 @@ export const MODULES_BY_TIER: Record<SubscriptionTier, Record<ProductModuleKey, 
     weekly_summary: true,
     quote_ai: true,
     planning_ai: true,
-    chantier_assistant: true,
+    chantier_assistant: true,   // Assistant inline fiche chantier — Starter+
+    sarah_assistant: false,     // Sarah widget global — Pro+
     suggest_tasks: true,
     catalog_ai: true,
     document_import_ai: true,
@@ -130,6 +143,7 @@ export const MODULES_BY_TIER: Record<SubscriptionTier, Record<ProductModuleKey, 
     labor_estimate_ai: true,
     receipt_ocr: true,
     voice_input: true,
+    voice_live: false,          // Vocal live — Pro+
     whatsapp_agent: false,
     whatsapp_ocr: false,
     whatsapp_proactive: false,
@@ -140,6 +154,7 @@ export const MODULES_BY_TIER: Record<SubscriptionTier, Record<ProductModuleKey, 
     quote_ai: true,
     planning_ai: true,
     chantier_assistant: true,
+    sarah_assistant: true,      // Sarah widget global — Pro+
     suggest_tasks: true,
     catalog_ai: true,
     document_import_ai: true,
@@ -147,7 +162,8 @@ export const MODULES_BY_TIER: Record<SubscriptionTier, Record<ProductModuleKey, 
     labor_estimate_ai: true,
     receipt_ocr: true,
     voice_input: true,
-    whatsapp_agent: true,
+    voice_live: true,           // Vocal live inclus en Pro
+    whatsapp_agent: false,      // WhatsApp suspendu (vérification Meta en attente)
     whatsapp_ocr: false,
     whatsapp_proactive: false,
   },
@@ -164,6 +180,7 @@ export const QUOTAS_BY_TIER: Record<SubscriptionTier, Record<QuotaFeature, numbe
     quote_ai: 15,
     planning_ai: 10,
     chantier_assistant: 25,
+    sarah_assistant: 0,         // Sarah Pro+ uniquement
     suggest_tasks: 15,
     catalog_ai: 10,
     document_import_ai: 15,
@@ -171,26 +188,29 @@ export const QUOTAS_BY_TIER: Record<SubscriptionTier, Record<QuotaFeature, numbe
     labor_estimate_ai: UNLIMITED,
     receipt_ocr: UNLIMITED,
     voice_input: 20,
+    voice_live_minutes: 0,      // Vocal live — Pro+
     wa_messages: 0,
     wa_vocal_minutes: 0,
     wa_proactive_messages: 0,
     whatsapp_ocr: 0,
   },
   pro: {
-    relances_ai: 40,
-    weekly_summary: 8,
-    quote_ai: 40,
+    relances_ai: 60,
+    weekly_summary: 12,
+    quote_ai: 60,
     planning_ai: UNLIMITED,
-    chantier_assistant: 60,
-    suggest_tasks: 40,
-    catalog_ai: 30,
-    document_import_ai: 30,
+    chantier_assistant: 120,    // 2 utilisateurs IA × 60 appels
+    sarah_assistant: 120,       // 2 utilisateurs IA × 60 appels/mois
+    suggest_tasks: 60,
+    catalog_ai: 50,
+    document_import_ai: 50,
     chantier_report_ai: UNLIMITED,
     labor_estimate_ai: UNLIMITED,
     receipt_ocr: UNLIMITED,
-    voice_input: 60,
-    wa_messages: 120,
-    wa_vocal_minutes: 10,
+    voice_input: 120,
+    voice_live_minutes: 60,     // ~2 min/jour ouvré — marge ElevenLabs préservée (~$6-7/mois)
+    wa_messages: 0,
+    wa_vocal_minutes: 0,
     wa_proactive_messages: 0,
     whatsapp_ocr: 0,
   },
@@ -200,6 +220,7 @@ export const QUOTAS_BY_TIER: Record<SubscriptionTier, Record<QuotaFeature, numbe
     quote_ai: UNLIMITED,
     planning_ai: UNLIMITED,
     chantier_assistant: UNLIMITED,
+    sarah_assistant: UNLIMITED,
     suggest_tasks: UNLIMITED,
     catalog_ai: UNLIMITED,
     document_import_ai: UNLIMITED,
@@ -207,10 +228,11 @@ export const QUOTAS_BY_TIER: Record<SubscriptionTier, Record<QuotaFeature, numbe
     labor_estimate_ai: UNLIMITED,
     receipt_ocr: UNLIMITED,
     voice_input: UNLIMITED,
-    wa_messages: 500,
-    wa_vocal_minutes: 40,
-    wa_proactive_messages: 30,
-    whatsapp_ocr: UNLIMITED,
+    voice_live_minutes: 300,    // ~10 min/jour ouvré — ElevenLabs ~$30-36/mois (couvert par hausse Expert 119→139€)
+    wa_messages: 0,
+    wa_vocal_minutes: 0,
+    wa_proactive_messages: 0,
+    whatsapp_ocr: 0,
   },
 }
 

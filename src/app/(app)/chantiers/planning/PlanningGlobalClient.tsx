@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useTransition, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import {
   Calendar,
   ChevronLeft,
@@ -12,20 +13,22 @@ import {
   LayoutList,
   CalendarDays,
   ArrowLeft,
-  Sparkles,
   Loader2,
   Check,
   X,
   Clock,
   Wrench,
+  Copy,
 } from 'lucide-react'
 import type { GlobalPlanning, Chantier, Equipe } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
+import { AI_ASSISTANTS } from '@/lib/brand'
 import TourneeView from './TourneeView'
-import { planWeekWithAI, createPlanningSlots, createAITournee, deletePlanningSlot } from '@/lib/data/mutations/planning'
+import { planWeekWithAI, createPlanningSlots, createMaintenancePlanningSlots, createAITournee, deletePlanningEntry, duplicatePlanningEntry, duplicatePlanningRange } from '@/lib/data/mutations/planning'
 import type { AIPlanningDeletion, AIPlanningSlot, AIUnknownPerson, AITour } from '@/lib/data/mutations/planning'
 import { createIndividualMember } from '@/lib/data/mutations/members'
 import { todayParis } from '@/lib/utils'
+import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 
 // ─── Palette de couleurs (12 couleurs pour les chantiers) ────────────────────
 
@@ -49,6 +52,7 @@ const CHANTIER_COLORS = [
 const CAL_START_H = 5
 const CAL_END_H = 23
 const ROW_H = 56 // px par heure — légèrement plus grand pour la lisibilité desktop
+const PLANNING_ASSISTANT = AI_ASSISTANTS.nora
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -152,6 +156,10 @@ function buildTimedPlanningLayout(plannings: GlobalPlanning[], calStartH = CAL_S
   return positioned
 }
 
+function sIsChantierSlot(slot: AIPlanningSlot): boolean {
+  return slot.source !== 'maintenance' && !slot.maintenanceContractId
+}
+
 // ─── Props ───────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -215,12 +223,18 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   const [aiModalOpen, setAiModalOpen] = useState(false)
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiStatus, setAiStatus] = useState<'idle' | 'loading' | 'new_member' | 'preview' | 'saving' | 'done' | 'error'>('idle')
+  const [noraBriefBanner, setNoraBriefBanner] = useState<string | null>(null)
   const [aiSlots, setAiSlots] = useState<AIPlanningSlot[]>([])
   const [aiDeletions, setAiDeletions] = useState<AIPlanningDeletion[]>([])
   const [aiTours, setAiTours] = useState<AITour[]>([])
   const [aiUnknownPeople, setAiUnknownPeople] = useState<AIUnknownPerson[]>([])
   const [aiSummary, setAiSummary] = useState('')
   const [aiError, setAiError] = useState('')
+  const [duplicateModalOpen, setDuplicateModalOpen] = useState(false)
+  const [duplicateTargetDate, setDuplicateTargetDate] = useState('')
+  const [duplicateSlot, setDuplicateSlot] = useState<GlobalPlanning | null>(null)
+  const [duplicateLoading, setDuplicateLoading] = useState(false)
+  const [duplicateError, setDuplicateError] = useState<string | null>(null)
 
   // Modale nouveau membre
   const [newMemberQueue, setNewMemberQueue] = useState<AIUnknownPerson[]>([])
@@ -237,6 +251,28 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   useEffect(() => {
     setPlannings(initialPlannings)
   }, [initialPlannings])
+
+  // Brief Sarah→Nora : si Sarah a préparé un brief planning, ouvrir le modal pré-rempli
+  useEffect(() => {
+    if (!planningAiEnabled) return
+    fetch('/api/sarah/briefs?target=nora')
+      .then(r => r.json())
+      .then(({ brief }: { brief: { id: string; payload: { description?: string; chantier_title?: string } } | null }) => {
+        if (!brief?.payload?.description?.trim()) return
+        const desc = brief.payload.description.trim()
+        const chantierHint = brief.payload.chantier_title ? ` pour "${brief.payload.chantier_title}"` : ''
+        setAiPrompt(desc)
+        setNoraBriefBanner(`Brief transmis par Sarah${chantierHint}.`)
+        setAiModalOpen(true)
+        fetch('/api/sarah/briefs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ briefId: brief.id }),
+        }).catch(() => {})
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   function openAiModal() {
     if (!planningAiEnabled) return
@@ -323,24 +359,62 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
     }
   }
 
+  function openDuplicateWeek() {
+    const target = new Date(weekStart)
+    target.setDate(target.getDate() + 7)
+    setDuplicateSlot(null)
+    setDuplicateTargetDate(getLocalDateStr(target))
+    setDuplicateError(null)
+    setDuplicateModalOpen(true)
+  }
+
+  function openDuplicateSlot(slot: GlobalPlanning) {
+    const target = dateFromYmd(slot.planned_date)
+    target.setDate(target.getDate() + 7)
+    setDuplicateSlot(slot)
+    setDuplicateTargetDate(getLocalDateStr(target))
+    setDuplicateError(null)
+    setDuplicateModalOpen(true)
+  }
+
+  async function handleDuplicateConfirm() {
+    if (!duplicateTargetDate) return
+    setDuplicateLoading(true)
+    setDuplicateError(null)
+    const result = duplicateSlot
+      ? await duplicatePlanningEntry(duplicateSlot.id, duplicateTargetDate)
+      : await duplicatePlanningRange(getLocalDateStr(weekStart), getLocalDateStr(days[days.length - 1] ?? weekStart), duplicateTargetDate)
+    setDuplicateLoading(false)
+    if (result.error) {
+      setDuplicateError(result.error)
+      return
+    }
+    setDuplicateModalOpen(false)
+    setDuplicateSlot(null)
+    router.refresh()
+  }
+
   async function handleAiConfirm() {
     setAiStatus('saving')
     startTransition(async () => {
       let error: string | null = null
 
       for (const deletion of aiDeletions) {
-        const result = await deletePlanningSlot(deletion.id)
+        const result = await deletePlanningEntry(deletion.id)
         if (result.error) { error = result.error; break }
       }
 
       if (!error) {
         // Indices des slots qui font partie d'une tournée
-        const tourSlotIndices = new Set(aiTours.flatMap(t => t.slotIndices))
+        const tourSlotIndices = new Set(
+          aiTours.flatMap(t => t.slotIndices).filter(i => aiSlots[i]?.source !== 'maintenance' && !aiSlots[i]?.maintenanceContractId)
+        )
 
         // Créer les tournées IA (les slots qu'elles contiennent)
         for (const tour of aiTours) {
           if (error) break
-          const tourSlots = tour.slotIndices.map(i => aiSlots[i]).filter(Boolean)
+          const tourSlots = tour.slotIndices.map(i => aiSlots[i]).filter(s => s && s.source !== 'maintenance' && !s.maintenanceContractId)
+          if (tourSlots.length < 2) continue
           const result = await createAITournee(
             tourSlots.map(s => ({
               chantierId: s.chantierId,
@@ -362,7 +436,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
         }
 
         // Créer les slots hors tournée
-        const standaloneSlots = aiSlots.filter((_, i) => !tourSlotIndices.has(i))
+        const standaloneSlots = aiSlots.filter((_, i) => !tourSlotIndices.has(i) && sIsChantierSlot(aiSlots[i]))
         if (!error && standaloneSlots.length > 0) {
           const result = await createPlanningSlots(standaloneSlots.map(s => ({
             chantierId: s.chantierId,
@@ -375,6 +449,24 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
             equipeId: s.equipeId ?? null,
             memberId: s.memberId ?? null,
           })))
+          if (result.error) error = result.error
+        }
+
+        const maintenanceSlots = aiSlots.filter(s => s.source === 'maintenance' || s.maintenanceContractId)
+        if (!error && maintenanceSlots.length > 0) {
+          const result = await createMaintenancePlanningSlots(maintenanceSlots.flatMap(s => (
+            s.maintenanceContractId
+              ? [{
+                  maintenanceContractId: s.maintenanceContractId,
+                  plannedDate: s.plannedDate,
+                  startTime: s.startTime,
+                  endTime: s.endTime,
+                  label: s.label,
+                  notes: s.notes,
+                  memberId: s.memberId ?? null,
+                }]
+              : []
+          )))
           if (result.error) error = result.error
         }
       }
@@ -391,13 +483,9 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   }
 
   async function handleDeletePlanning(planning: GlobalPlanning) {
-    if (planning.source === 'maintenance') {
-      router.push('/chantiers/entretien')
-      return
-    }
     if (!confirm(`Supprimer le créneau "${planning.label}" du ${planning.planned_date} ?`)) return
     setPlannings(prev => prev.filter(p => p.id !== planning.id))
-    const { error } = await deletePlanningSlot(planning.id)
+    const { error } = await deletePlanningEntry(planning.id)
     if (error) {
       setPlannings(prev => [...prev, planning].sort((a, b) =>
         a.planned_date.localeCompare(b.planned_date) || (a.start_time ?? '').localeCompare(b.start_time ?? '')
@@ -516,13 +604,14 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
           <p className="text-sm text-secondary mt-0.5 hidden sm:block">Vue d&apos;ensemble de tous les chantiers actifs</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <a
+          <Link
             href="/chantiers/heures"
+            prefetch
             className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-all whitespace-nowrap"
           >
             <Clock className="w-4 h-4" />
             <span className="hidden sm:inline">Heures pointées</span>
-          </a>
+          </Link>
           {icalUrl && (
             <button
               onClick={() => setShowIcalModal(true)}
@@ -648,14 +737,24 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
         {/* Spacer */}
         <div className="flex-1" />
 
+        {canManage && (
+          <button
+            onClick={openDuplicateWeek}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-all whitespace-nowrap"
+          >
+            <Copy className="w-4 h-4" />
+            <span className="hidden sm:inline">Dupliquer semaine</span>
+          </button>
+        )}
+
         {/* Bouton IA */}
         {planningAiEnabled && canManage && (
           <button
             onClick={openAiModal}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-accent text-black font-semibold text-sm hover:scale-105 transition-all shadow-lg shadow-accent/20"
           >
-            <Sparkles className="w-4 h-4" />
-            Planifier avec Sarah
+            <AssistantAvatar assistant="nora" size={16} className="border-none bg-transparent shadow-none !rounded-full" />
+            Planifier avec {PLANNING_ASSISTANT.name}
           </button>
         )}
 
@@ -796,6 +895,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
           byDay={byDay}
           nowH={nowH}
           onDeletePlanning={canManage ? handleDeletePlanning : undefined}
+          onDuplicatePlanning={canManage ? openDuplicateSlot : undefined}
         />
       ) : effectiveView === 'jour' || effectiveView === 'semaine' ? (
         // Vue jour (desktop) ou mini-calendrier + jour (mobile, y compris quand on tape "Semaine")
@@ -813,6 +913,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
             byDay={byDay}
             nowH={nowH}
             onDeletePlanning={canManage ? handleDeletePlanning : undefined}
+            onDuplicatePlanning={canManage ? openDuplicateSlot : undefined}
             onSwipeDay={isMobile ? (dir) => {
               const d = new Date(selectedDate)
               d.setDate(d.getDate() + dir)
@@ -834,7 +935,52 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
           todayStr={todayStr}
           byDay={byDay}
           onDeletePlanning={canManage ? handleDeletePlanning : undefined}
+          onDuplicatePlanning={canManage ? openDuplicateSlot : undefined}
         />
+      )}
+
+      {duplicateModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-panel sm:max-w-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-primary flex items-center gap-2">
+                <Copy className="w-4 h-4 text-accent" />
+                {duplicateSlot ? 'Dupliquer le créneau' : 'Dupliquer la semaine'}
+              </h2>
+              <button onClick={() => setDuplicateModalOpen(false)} className="p-1.5 rounded-lg text-secondary hover:text-primary hover:bg-[var(--elevation-1)]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm text-secondary">
+              {duplicateSlot
+                ? `Le créneau "${duplicateSlot.label}" sera copié à la date choisie.`
+                : 'Tous les créneaux chantier et interventions entretien planifiées de la semaine visible seront copiés.'}
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-secondary">
+                {duplicateSlot ? 'Nouvelle date' : 'Début de la semaine cible'}
+              </label>
+              <input
+                type="date"
+                className="input w-full text-sm"
+                value={duplicateTargetDate}
+                onChange={e => setDuplicateTargetDate(e.target.value)}
+              />
+            </div>
+            {duplicateError && <p className="text-sm text-red-500">{duplicateError}</p>}
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setDuplicateModalOpen(false)} className="btn-secondary text-sm px-4 py-2">Annuler</button>
+              <button
+                onClick={handleDuplicateConfirm}
+                disabled={duplicateLoading || !duplicateTargetDate}
+                className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2"
+              >
+                {duplicateLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
+                Dupliquer
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Modal IA planning ── */}
@@ -845,25 +991,30 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
             {/* Header */}
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[var(--elevation-border)]">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold">
-                  S
-                </div>
+                <AssistantAvatar assistant="nora" size={32} />
                 <div>
-                  <h2 className="font-bold text-primary text-base">Sarah <span className="font-normal text-secondary">, planification</span></h2>
+                  <h2 className="font-bold text-primary text-base">{PLANNING_ASSISTANT.name} <span className="font-normal text-secondary">, planification</span></h2>
                   <p className="text-xs text-secondary">Semaine du {fmtWeekLabel(weekStart)}</p>
                 </div>
               </div>
-              <button onClick={() => setAiModalOpen(false)} className="text-secondary hover:text-primary transition-colors">
+              <button onClick={() => { setAiModalOpen(false); setNoraBriefBanner(null) }} className="text-secondary hover:text-primary transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {noraBriefBanner && (
+              <div className="mx-6 mt-3 flex items-center gap-2 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 px-3 py-2 text-xs text-[var(--accent)]">
+                <Check className="w-3.5 h-3.5 shrink-0" />
+                <span>{noraBriefBanner}</span>
+              </div>
+            )}
 
             <div className="px-6 py-5 space-y-4">
               {/* Phase saisie ou erreur */}
               {(aiStatus === 'idle' || aiStatus === 'error') && (
                 <>
                   <p className="text-sm text-secondary">
-                    Décrivez votre semaine en langage naturel. Sarah crée les créneaux automatiquement.
+                    Décrivez votre semaine en langage naturel. {PLANNING_ASSISTANT.name} crée les créneaux automatiquement.
                   </p>
                   <div className="bg-base rounded-xl p-3 border border-[var(--elevation-border)] text-xs text-secondary/70 space-y-1">
                     <p className="font-semibold text-secondary">Exemples :</p>
@@ -900,7 +1051,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
               {aiStatus === 'loading' && (
                 <div className="flex flex-col items-center gap-4 py-8">
                   <Loader2 className="w-8 h-8 text-accent animate-spin" />
-                  <p className="text-sm text-secondary">Sarah organise votre semaine...</p>
+                  <p className="text-sm text-secondary">{PLANNING_ASSISTANT.name} organise votre semaine...</p>
                 </div>
               )}
 
@@ -1247,6 +1398,7 @@ interface SemaineViewProps {
   byDay: Record<string, GlobalPlanning[]>
   nowH: number
   onDeletePlanning?: (planning: GlobalPlanning) => void
+  onDuplicatePlanning?: (planning: GlobalPlanning) => void
   onSwipeDay?: (dir: 1 | -1) => void
 }
 
@@ -1256,6 +1408,7 @@ function SemaineView({
   byDay,
   nowH,
   onDeletePlanning,
+  onDuplicatePlanning,
   onSwipeDay,
 }: SemaineViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -1451,14 +1604,24 @@ function SemaineView({
                         hasOverlap ? 'ring-1 ring-white/70 dark:ring-black/40' : ''
                       }`}
                     >
+                      {onDuplicatePlanning && (
+                        <button
+                          onClick={() => onDuplicatePlanning(p)}
+                          className="absolute top-1 left-1 rounded bg-white/80 p-0.5 text-secondary opacity-0 transition-opacity hover:text-accent group-hover/slot:opacity-100 dark:bg-black/50"
+                          title="Dupliquer ce créneau"
+                        >
+                          <Copy className="w-2.5 h-2.5" />
+                        </button>
+                      )}
                       {p.source === 'maintenance' ? (
-                        <a
+                        <Link
                           href="/chantiers/entretien"
+                          prefetch
                           className="absolute top-1 right-1 rounded bg-white/80 p-0.5 opacity-0 transition-opacity hover:text-accent group-hover/slot:opacity-100 dark:bg-black/50"
                           title="Ouvrir l'entretien"
                         >
                           <Wrench className="w-2.5 h-2.5" />
-                        </a>
+                        </Link>
                       ) : onDeletePlanning && (
                         <button
                           onClick={() => onDeletePlanning(p)}
@@ -1468,7 +1631,7 @@ function SemaineView({
                           <X className="w-2.5 h-2.5" />
                         </button>
                       )}
-                      <p className={`text-[9px] font-semibold leading-tight ${col.text} opacity-90 truncate pr-4`}>
+                      <p className={`text-[9px] font-semibold leading-tight ${col.text} opacity-90 truncate ${onDuplicatePlanning ? 'pl-4' : ''} pr-4`}>
                         {fmtTime(p.start_time!)}{p.end_time ? ` — ${fmtTime(p.end_time)}` : ''}
                       </p>
                       <p className={`text-[10px] font-bold leading-tight truncate mt-0.5 ${col.text}`}>
@@ -1490,7 +1653,7 @@ function SemaineView({
                           )}
                           <p className="opacity-70 flex items-center gap-0.5">
                             <Users className="w-2.5 h-2.5" />
-                            {p.team_size} pers.
+                            {p.member_name ?? p.equipe_name ?? `${p.team_size} pers.`}
                           </p>
                           {p.notes && heightPx > 80 && (
                             <p className="opacity-70 mt-0.5 whitespace-pre-wrap break-words">{p.notes}</p>
@@ -1518,14 +1681,24 @@ function SemaineView({
                           <p className={`text-[9px] font-semibold truncate ${col.text}`}>
                             {p.chantier_title}
                           </p>
+                          {onDuplicatePlanning && (
+                            <button
+                              onClick={() => onDuplicatePlanning(p)}
+                              className="ml-auto text-secondary opacity-0 transition-opacity hover:text-accent group-hover/slot:opacity-100"
+                              title="Dupliquer ce créneau"
+                            >
+                              <Copy className="w-2.5 h-2.5" />
+                            </button>
+                          )}
                           {p.source === 'maintenance' ? (
-                            <a
+                            <Link
                               href="/chantiers/entretien"
-                              className="ml-auto text-secondary transition-colors hover:text-accent"
+                              prefetch
+                              className="text-secondary transition-colors hover:text-accent"
                               title="Ouvrir l'entretien"
                             >
                               <Wrench className="w-2.5 h-2.5" />
-                            </a>
+                            </Link>
                           ) : onDeletePlanning && (
                             <button
                               onClick={() => onDeletePlanning(p)}
@@ -1558,9 +1731,10 @@ interface ListeViewProps {
   todayStr: string
   byDay: Record<string, GlobalPlanning[]>
   onDeletePlanning?: (planning: GlobalPlanning) => void
+  onDuplicatePlanning?: (planning: GlobalPlanning) => void
 }
 
-function ListeView({ days, todayStr, byDay, onDeletePlanning }: ListeViewProps) {
+function ListeView({ days, todayStr, byDay, onDeletePlanning, onDuplicatePlanning }: ListeViewProps) {
   const daysWithPlannings = days.filter(d => {
     const dateStr = getLocalDateStr(d)
     return (byDay[dateStr]?.length ?? 0) > 0
@@ -1654,7 +1828,7 @@ function ListeView({ days, todayStr, byDay, onDeletePlanning }: ListeViewProps) 
                     <div className="flex items-center gap-3 flex-shrink-0 text-xs text-secondary">
                       <span className="flex items-center gap-1">
                         <Users className="w-3 h-3" />
-                        {p.team_size}
+                        {p.member_name ?? p.equipe_name ?? `${p.team_size} pers.`}
                       </span>
                       {p.chantier_city && (
                         <span className="flex items-center gap-1">
@@ -1662,15 +1836,26 @@ function ListeView({ days, todayStr, byDay, onDeletePlanning }: ListeViewProps) 
                           {p.chantier_city}
                         </span>
                       )}
-                      {p.source === 'maintenance' ? (
-                        <a
+                      {onDuplicatePlanning && (
+                        <button
+                          onClick={() => onDuplicatePlanning(p)}
+                          className="rounded-lg p-1 text-secondary transition-colors hover:bg-accent/10 hover:text-accent"
+                          title="Dupliquer ce créneau"
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
+                      )}
+                      {p.source === 'maintenance' && (
+                        <Link
                           href="/chantiers/entretien"
+                          prefetch
                           className="rounded-lg p-1 text-secondary transition-colors hover:bg-accent/10 hover:text-accent"
                           title="Ouvrir l'entretien"
                         >
                           <Wrench className="w-4 h-4" />
-                        </a>
-                      ) : onDeletePlanning && (
+                        </Link>
+                      )}
+                      {onDeletePlanning && (
                         <button
                           onClick={() => onDeletePlanning(p)}
                           className="rounded-lg p-1 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"

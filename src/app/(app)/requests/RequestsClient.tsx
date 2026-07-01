@@ -12,6 +12,7 @@ import {
   ChevronDown, ChevronUp, Zap, Loader2, CheckCircle2,
   Paperclip, Ruler, Tag, FileText, Package, Bot, AlertCircle,
 } from 'lucide-react'
+import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   new:       { label: 'Nouveau',  cls: 'bg-accent/10 text-accent' },
@@ -267,7 +268,7 @@ function RequestCard({ request }: { request: QuoteRequest }) {
                   >
                     {isAnalyzingAI
                       ? <><Loader2 className="w-4 h-4 animate-spin" />Analyse...</>
-                      : <><Bot className="w-4 h-4" />Générer un devis avec l'IA</>
+                      : <><AssistantAvatar assistant="chloe" size={16} />Générer un devis avec l'IA</>
                     }
                   </button>
                 )}

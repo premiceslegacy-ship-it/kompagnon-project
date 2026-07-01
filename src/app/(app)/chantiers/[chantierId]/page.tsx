@@ -9,16 +9,19 @@ import {
   getChantierEquipes,
   getChantierPlannings,
   getOrgTaskTitles,
+  getChantierReserves,
 } from '@/lib/data/queries/chantiers'
 import { getQuotesForLinking } from '@/lib/data/queries/quotes'
 import { getInvoiceStubs, getSituationsSummary } from '@/lib/data/queries/invoices'
 import { getTeamMembers } from '@/lib/data/queries/team'
+import { getOrgRoles } from '@/lib/data/queries/roles'
 import { getChantierProfitability } from '@/lib/data/queries/chantier-profitability'
 import { getJalonsForChantier } from '@/lib/data/queries/chantier-jalons'
 import { getChantierIndividualMembers, getOrgIndividualMembers } from '@/lib/data/queries/members'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { getMaterials } from '@/lib/data/queries/catalog'
 import { canManageLaborRates, hasPermission } from '@/lib/data/queries/membership'
+import { createClient } from '@/lib/supabase/server'
 import ChantierDetailClient from './ChantierDetailClient'
 
 export default async function ChantierDetailPage({
@@ -38,6 +41,7 @@ export default async function ChantierDetailPage({
     linkableQuotes,
     taskLibraryTitles,
     orgMembers,
+    orgRoles,
     profitability,
     jalons,
     individualMembers,
@@ -69,6 +73,7 @@ export default async function ChantierDetailPage({
     getQuotesForLinking(),
     getOrgTaskTitles(params.chantierId),
     getTeamMembers(),
+    getOrgRoles(),
     getChantierProfitability(params.chantierId),
     getJalonsForChantier(params.chantierId),
     getChantierIndividualMembers(params.chantierId),
@@ -94,6 +99,12 @@ export default async function ChantierDetailPage({
   const situationsSummary = chantier?.quote_id
     ? await getSituationsSummary(chantier.quote_id)
     : null
+
+  const reserves = await getChantierReserves(params.chantierId)
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const currentUserId = user?.id ?? null
 
   if (!chantier) notFound()
 
@@ -130,6 +141,7 @@ export default async function ChantierDetailPage({
       linkableQuotes={linkableQuotes}
       taskLibraryTitles={taskLibraryTitles}
       orgMembers={orgMembers}
+      orgRoles={orgRoles}
       initialProfitability={defaultProfitability}
       initialJalons={jalons}
       initialIndividualMembers={individualMembers}
@@ -141,6 +153,8 @@ export default async function ChantierDetailPage({
       canCreateSituation={canCreateSituation}
       canCreateSolde={canCreateSolde}
       canCreateInvoice={canCreateInvoice}
+      currentUserId={currentUserId}
+      initialReserves={reserves}
       permissions={{
         canEditChantier,
         canManageTeam,

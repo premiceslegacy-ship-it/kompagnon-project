@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { computeNextSendDate } from '@/lib/data/recurring-utils'
+import { computeNextSendDate, computeRecurringInvoiceDueDate, normalizePaymentTermsDays } from '@/lib/data/recurring-utils'
 import type { RecurringFrequency } from '@/lib/data/recurring-utils'
 import { dateParis } from '@/lib/utils'
 import { coerceLegalVatRate } from '@/lib/utils'
@@ -214,6 +214,7 @@ export async function prepareNextRecurringDraft(recurringId: string): Promise<Re
       id, organization_id, client_id, title, frequency, send_day,
       custom_interval_days, next_send_date, requires_confirmation,
       confirmation_delay_days, currency,
+      client:clients(payment_terms_days),
       items:recurring_invoice_items(description, quantity, unit, unit_price, vat_rate, position, is_internal)
     `)
     .eq('id', recurringId)
@@ -264,6 +265,17 @@ export async function prepareNextRecurringDraft(recurringId: string): Promise<Re
     (sum, item) => sum + Number(item.quantity) * Number(item.unit_price) * (Number(item.vat_rate) / 100),
     0,
   )
+  const { data: organization } = await supabase
+    .from('organizations')
+    .select('payment_terms_days')
+    .eq('id', orgId)
+    .maybeSingle()
+  const clientRelation = model.client as unknown as { payment_terms_days: number | null } | { payment_terms_days: number | null }[] | null
+  const clientPaymentTermsDays = Array.isArray(clientRelation)
+    ? clientRelation[0]?.payment_terms_days
+    : clientRelation?.payment_terms_days
+  const paymentTermsDays = normalizePaymentTermsDays(clientPaymentTermsDays, organization?.payment_terms_days)
+  const dueDate = computeRecurringInvoiceDueDate(model.next_send_date, paymentTermsDays, null)
 
   const { data: invoiceRow, error: invoiceError } = await supabase
     .from('invoices')
@@ -274,7 +286,8 @@ export async function prepareNextRecurringDraft(recurringId: string): Promise<Re
       currency: model.currency ?? 'EUR',
       status: 'draft',
       issue_date: model.next_send_date,
-      due_date: model.next_send_date,
+      due_date: dueDate,
+      payment_terms_days: paymentTermsDays,
       total_ht: totalHt,
       total_tva: totalTva,
       total_ttc: totalHt + totalTva,

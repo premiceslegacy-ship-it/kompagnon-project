@@ -75,6 +75,7 @@ export async function sendMaintenanceInterventionReportEmail(
     contractTitle: contract?.title ?? 'Intervention entretien',
     date: formatDate(intervention.date_intervention),
     orgName: organization.name,
+    orgEmail: organization.email ?? null,
   })
 
   const { error } = await sendEmail({
@@ -157,7 +158,11 @@ function buildEmailHtml(ctx: {
   contractTitle: string
   date: string
   orgName: string
+  orgEmail: string | null
 }) {
+  const contactLine = ctx.orgEmail
+    ? `<p style="margin:14px 0 0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;">Pour toute question, n'hésitez pas à nous contacter à <a href="mailto:${escHtml(ctx.orgEmail)}" style="color:#FF9F1C;">${escHtml(ctx.orgEmail)}</a>.</p>`
+    : ''
   const body = `
 <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#A1A1AA;text-transform:uppercase;letter-spacing:0.8px;font-family:'Inter',sans-serif;">Rapport d'intervention</p>
 <h1 style="margin:0 0 12px;font-size:22px;font-weight:800;color:#FFFFFF;line-height:1.3;font-family:'Plus Jakarta Sans',sans-serif;">
@@ -167,7 +172,8 @@ function buildEmailHtml(ctx: {
   Vous trouverez en pièce jointe le rapport de l'intervention réalisée le ${escHtml(ctx.date)}. Il reprend les travaux effectués, les observations éventuelles et les photos associées lorsqu'elles sont disponibles.
 </p>
 ${renderInfoBox([{ label: 'Contrat', value: escHtml(ctx.contractTitle), large: true }])}
-<p style="margin:0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;">Le rapport complet est joint en PDF.</p>`
+<p style="margin:0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;">Le rapport complet est joint en PDF.</p>
+${contactLine}`
 
   return renderEmailShell({
     title: `Rapport d'intervention : ${ctx.contractTitle}`,

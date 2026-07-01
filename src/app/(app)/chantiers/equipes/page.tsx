@@ -3,14 +3,16 @@ import { getOrgIndividualMembers } from '@/lib/data/queries/members'
 import { getTeamMembers } from '@/lib/data/queries/team'
 import { canManageLaborRates, hasPermission, getCurrentMembershipContext } from '@/lib/data/queries/membership'
 import { getAllMemberGoals } from '@/lib/data/queries/member-goals'
+import { getOrgRoles } from '@/lib/data/queries/roles'
 import EquipesClient from './EquipesClient'
 
 export default async function EquipesPage() {
   const now = new Date()
-  const [equipes, soloMembers, appMembers, canManageTeam, canEditRates, canEditGoals, memberGoals, membership] = await Promise.all([
+  const [equipes, soloMembers, appMembers, orgRoles, canManageTeam, canEditRates, canEditGoals, memberGoals, membership] = await Promise.all([
     getEquipes(),
     getOrgIndividualMembers(),
     getTeamMembers().catch(() => []),
+    getOrgRoles(),
     hasPermission('chantiers.manage_team'),
     canManageLaborRates(),
     hasPermission('settings.edit_goals'),
@@ -30,6 +32,7 @@ export default async function EquipesPage() {
       equipes={equipes}
       soloMembers={visibleSoloMembers}
       appMembers={visibleAppMembers}
+      orgRoles={orgRoles}
       canManageTeam={canManageTeam}
       canEditRates={canEditRates}
       canEditGoals={canEditGoals}

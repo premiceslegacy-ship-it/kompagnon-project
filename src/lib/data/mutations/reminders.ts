@@ -97,6 +97,7 @@ export async function sendInvoiceReminder(
     montant_ttc: fmtAmount,
     date_echeance: fmtDate,
     entreprise_nom: org.name,
+    email_org: org.email ?? '',
   }
 
   let bodyText: string
@@ -204,6 +205,7 @@ export async function sendQuoteFollowup(
     montant_ttc: fmtAmount,
     entreprise_nom: org.name,
     lien_signature: signUrl,
+    email_org: org.email ?? '',
   }
 
   let subject: string

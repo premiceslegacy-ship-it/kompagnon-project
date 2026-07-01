@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { TrendingUp, Eye, Plus, CheckCircle } from 'lucide-react'
+import { TrendingUp, Eye, Plus, CheckCircle, Loader2 } from 'lucide-react'
 import type { SituationsSummary } from '@/lib/data/queries/invoices'
 import { generateSituationInvoice } from '@/lib/data/mutations/chantiers'
 
@@ -221,8 +221,9 @@ function SituationCreatorModal({
 
         <div className="flex gap-3">
           <button onClick={onClose} className="btn-secondary flex-1">Annuler</button>
-          <button onClick={handleSubmit} disabled={loading} className="btn-primary flex-1">
-            {loading ? 'Génération...' : isSolde ? 'Générer le solde' : 'Créer la situation'}
+          <button onClick={handleSubmit} disabled={loading} className="btn-primary flex-1 inline-flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {isSolde ? 'Générer le solde' : 'Créer la situation'}
           </button>
         </div>
       </div>

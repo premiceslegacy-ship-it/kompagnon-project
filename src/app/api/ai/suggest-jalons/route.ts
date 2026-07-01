@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { APP_NAME } from '@/lib/brand'
-import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { getBusinessContext } from '@/lib/ai/business-context'
 import { hasPermission } from '@/lib/data/queries/membership'
@@ -28,6 +28,10 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
+  if (!await hasPermission('ai.terrain')) {
+    return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
+  }
+
   if (!await hasPermission('chantiers.edit')) {
     return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
   }
@@ -48,6 +52,9 @@ export async function POST(req: NextRequest) {
   }
 
   const businessCtx = await getBusinessContext(orgId)
+  const secondaryActivityContext = businessCtx.secondaryActivityLabels.length > 0
+    ? ` Activités secondaires : ${businessCtx.secondaryActivityLabels.join(', ')}.`
+    : ''
 
   // Charger les infos du chantier + devis si dispo + tâches existantes
   const { data: chantier } = await supabase
@@ -95,7 +102,7 @@ Réponds UNIQUEMENT avec un tableau JSON, rien d'autre.`
   const messages = [
     {
       role: 'system',
-      content: `Tu es un expert en gestion de chantier pour une entreprise du métier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}. Tu aides à structurer la facturation par jalons d'avancement en tenant compte des phases et pratiques propres à ce métier. Réponds toujours en JSON valide avec le format demandé.`,
+      content: `Tu es un expert en gestion de chantier pour une entreprise du métier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}.${secondaryActivityContext} Tu aides à structurer la facturation par jalons d'avancement en tenant compte des phases et pratiques propres à ce métier. Réponds toujours en JSON valide avec le format demandé.`,
     },
     {
       role: 'user',
@@ -158,6 +165,9 @@ Format attendu :
     }
     if (err instanceof AIRateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 })
+    }
+    if (err instanceof AIProviderCreditError && err.aiBillingMode === 'client_owned') {
+      return NextResponse.json({ error: 'Rechargez vos crédits OpenRouter ou vérifiez la clé OpenRouter de votre organisation pour continuer.' }, { status: 402 })
     }
     console.error('[ai/suggest-jalons]', err)
     return NextResponse.json({ error: 'Erreur lors de la génération des jalons' }, { status: 500 })

@@ -25,6 +25,8 @@ export type NotificationsSummary = {
   chantiersAtRisk: number
   maintenanceDue: number
   maintenanceBillingPending: number
+  dailyBriefPending: boolean
+  sarahAlertLines: string[]
 }
 
 export const EMPTY_NOTIFICATIONS: NotificationsSummary = {
@@ -46,6 +48,48 @@ export const EMPTY_NOTIFICATIONS: NotificationsSummary = {
   chantiersAtRisk: 0,
   maintenanceDue: 0,
   maintenanceBillingPending: 0,
+  dailyBriefPending: false,
+  sarahAlertLines: [],
+}
+
+function formatHour(value: string | null | undefined): string | null {
+  return value ? value.slice(0, 5) : null
+}
+
+function minutesFromTime(value: string | null | undefined): number | null {
+  const hour = formatHour(value)
+  if (!hour) return null
+  const [h, m] = hour.split(':').map(Number)
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null
+  return h * 60 + m
+}
+
+function formatDurationMinutes(minutes: number | null | undefined): string | null {
+  if (!minutes || minutes <= 0) return null
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h > 0 && m > 0) return `${h} h ${m.toString().padStart(2, '0')}`
+  if (h > 0) return `${h} h`
+  return `${m} min`
+}
+
+function formatSlotHours(start: string | null | undefined, end: string | null | undefined, durationMin?: number | null): string {
+  const startHour = formatHour(start)
+  const endHour = formatHour(end)
+  const computedDuration = startHour && endHour
+    ? formatDurationMinutes((minutesFromTime(end) ?? 0) - (minutesFromTime(start) ?? 0))
+    : null
+  const duration = computedDuration ?? formatDurationMinutes(durationMin)
+  const suffix = duration ? ` (${duration})` : ''
+  if (startHour && endHour) return `de ${startHour} à ${endHour}${suffix}`
+  if (startHour) return `à ${startHour}${suffix}`
+  if (duration) return `durée prévue ${duration}`
+  return 'horaire non renseigné'
+}
+
+function personName(row: { prenom?: string | null; name?: string | null } | null | undefined): string | null {
+  const full = [row?.prenom, row?.name].filter(Boolean).join(' ').trim()
+  return full || null
 }
 
 export async function getNotificationsSummary(): Promise<NotificationsSummary> {
@@ -59,12 +103,13 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
   const in3days = dateParis(now + 3 * 24 * 60 * 60 * 1000)
   const followUpCutoff = new Date(now - FOLLOW_UP_DELAY_DAYS * 24 * 60 * 60 * 1000).toISOString()
   const recentActivityCutoff = new Date(now - RECENT_ACTIVITY_DAYS * 24 * 60 * 60 * 1000).toISOString()
-  const [canSeeInvoices, canSeeQuotes, canSeeReminders, canSeeChantiers, canSeeLeads] = await Promise.all([
+  const [canSeeInvoices, canSeeQuotes, canSeeReminders, canSeeChantiers, canSeeLeads, canUseAI] = await Promise.all([
     hasPermission('invoices.view'),
     hasPermission('quotes.view'),
     hasPermission('reminders.view'),
     hasPermission('chantiers.view'),
     hasPermission('leads.view'),
+    hasPermission('ai.sarah'),
   ])
 
   const [
@@ -80,9 +125,15 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     { count: completedTasks },
     { count: newRequests },
     { data: orgDecennale },
+    { data: todayPlanningDetails },
+    { data: todayPointages },
+    { data: equipesForPlanning },
+    { data: membersForPlanning },
     { data: plannedSlots },
     { data: pointages },
     { data: activeChantiers },
+    { data: maintenanceDueDetails },
+    { data: dailyBriefRow },
   ] = await Promise.all([
     supabase
       .from('invoices')
@@ -165,6 +216,29 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       .single(),
     supabase
       .from('chantier_plannings')
+      .select('id, planned_date, start_time, end_time, duration_min, label, team_size, member_id, equipe_id, chantier:chantiers!inner(title, client_name, organization_id, is_archived, status)')
+      .eq('chantier.organization_id', orgId)
+      .eq('chantier.is_archived', false)
+      .not('chantier.status', 'in', '("termine","annule")')
+      .eq('planned_date', today)
+      .order('start_time', { ascending: true, nullsFirst: false })
+      .limit(5),
+    supabase
+      .from('chantier_pointages')
+      .select('id, chantier_planning_id, chantier_id, date, member_id, user_id')
+      .eq('date', today),
+    supabase
+      .from('chantier_equipes')
+      .select('id, name, membres:chantier_equipe_membres(prenom, name)')
+      .eq('organization_id', orgId)
+      .limit(50),
+    supabase
+      .from('chantier_equipe_membres')
+      .select('id, prenom, name')
+      .eq('organization_id', orgId)
+      .limit(200),
+    supabase
+      .from('chantier_plannings')
       .select('id, chantier_id, planned_date, member_id, equipe_id, chantier:chantiers!inner(organization_id, is_archived, status)')
       .eq('chantier.organization_id', orgId)
       .eq('chantier.is_archived', false)
@@ -183,6 +257,33 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       .eq('is_archived', false)
       .in('status', ['planifie', 'en_cours'])
       .gt('budget_ht', 0),
+    supabase
+      .from('maintenance_interventions')
+      .select(`
+        id, date_intervention, start_time, end_time, duration_hours,
+        intervenant:chantier_equipe_membres!maintenance_interventions_intervenant_member_id_fkey(prenom, name),
+        intervenant_profile:profiles!maintenance_interventions_intervenant_user_id_fkey(full_name, email),
+        contract:maintenance_contracts!inner(
+          title, organization_id,
+          chantier:chantiers!maintenance_contracts_chantier_id_fkey(title)
+        )
+      `)
+      .eq('organization_id', orgId)
+      .eq('statut', 'planifiée')
+      .lte('date_intervention', today)
+      .order('date_intervention', { ascending: true })
+      .order('start_time', { ascending: true, nullsFirst: false })
+      .limit(5),
+    canUseAI
+      ? supabase
+          .from('company_memory')
+          .select('id, metadata')
+          .eq('organization_id', orgId)
+          .eq('type', 'daily_brief')
+          .eq('metadata->>date', today)
+          .eq('is_active', true)
+          .limit(1)
+      : Promise.resolve({ data: null, error: null }),
   ])
 
   const pointageKeys = new Set((pointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}:${p.member_id ?? '*'}`))
@@ -218,6 +319,10 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     }
     chantiersAtRisk = (activeChantiers ?? []).filter(c => (costs[c.id] ?? 0) >= (c.budget_ht ?? 0) * 0.9).length
   }
+
+  const dailyBriefPending = canUseAI && Array.isArray(dailyBriefRow) && dailyBriefRow.length > 0
+    ? dailyBriefRow[0].metadata?.read !== true
+    : false
 
   let decennaleExpiringDays: number | null = null
   if (orgDecennale?.decennale_enabled && orgDecennale?.decennale_date_fin) {
@@ -277,6 +382,88 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     ).length
   }
 
+  const equipeMembersById = new Map<string, string[]>()
+  const equipeNameById = new Map<string, string>()
+  for (const row of equipesForPlanning ?? []) {
+    const eq = row as any
+    if (eq.id && eq.name) equipeNameById.set(eq.id, eq.name)
+    equipeMembersById.set(
+      eq.id,
+      (eq.membres ?? []).map((m: any) => personName(m)).filter(Boolean),
+    )
+  }
+
+  const memberNameById = new Map<string, string>()
+  for (const row of membersForPlanning ?? []) {
+    const member = row as any
+    const name = personName(member)
+    if (member.id && name) memberNameById.set(member.id, name)
+  }
+
+  const todayPointagePlanningIds = new Set(
+    (todayPointages ?? []).map((p: any) => p.chantier_planning_id).filter(Boolean),
+  )
+  const todayPointageKeys = new Set(
+    (todayPointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}:${p.member_id ?? p.user_id ?? '*'}`),
+  )
+
+  const filteredTodayPlanning = (todayPlanningDetails ?? []).filter((row: any) => {
+    if (todayPointagePlanningIds.has(row.id)) return false
+    const directKey = `${row.chantier_id}:${row.planned_date}:${row.member_id ?? '*'}` // fallback pour les pointages non liés
+    const genericKey = `${row.chantier_id}:${row.planned_date}:*`
+    return !todayPointageKeys.has(directKey) && !todayPointageKeys.has(genericKey)
+  })
+
+  const sarahAlertLines: string[] = []
+
+  if (canSeeChantiers) {
+    for (const slot of filteredTodayPlanning) {
+      const row = slot as any
+      const chantier = row.chantier as any
+      const member = row.member_id ? memberNameById.get(row.member_id) ?? null : null
+      const equipeMembers = row.equipe_id ? equipeMembersById.get(row.equipe_id) ?? [] : []
+      const equipeName = row.equipe_id ? equipeNameById.get(row.equipe_id) ?? null : null
+      const who = member
+        ?? (equipeMembers.length ? equipeMembers.join(', ') : null)
+        ?? (equipeName ? `l'équipe ${equipeName}` : null)
+        ?? (row.team_size ? `${row.team_size} personne${row.team_size > 1 ? 's' : ''}` : null)
+        ?? 'Intervenant non renseigné'
+      const pluralSubject = !member && (equipeMembers.length > 1 || (row.team_size ?? 0) > 1)
+      const verb = pluralSubject ? 'interviennent' : 'intervient'
+      const chantierLabel = chantier?.title ? `sur le chantier "${chantier.title}"` : 'sur un chantier non renseigné'
+      const clientLabel = chantier?.client_name ? ` (${chantier.client_name})` : ''
+      const label = row.label ? `, mission : ${row.label}` : ''
+      sarahAlertLines.push(`${who} ${verb} aujourd'hui ${formatSlotHours(row.start_time, row.end_time, row.duration_min)} ${chantierLabel}${clientLabel}${label}.`)
+    }
+
+    for (const intervention of maintenanceDueDetails ?? []) {
+      const row = intervention as any
+      const contract = row.contract as any
+      const member = personName(row.intervenant)
+      const profileName = row.intervenant_profile?.full_name ?? row.intervenant_profile?.email ?? null
+      const who = member ?? profileName ?? 'Intervenant non renseigné'
+      const dateLabel = row.date_intervention === today ? "aujourd'hui" : `prévue le ${row.date_intervention}`
+      const contractLabel = contract?.title ? `"${contract.title}"` : 'maintenance'
+      const chantierLabel = contract?.chantier?.title ? ` sur le chantier "${contract.chantier.title}"` : ''
+      sarahAlertLines.push(`${who} doit réaliser l'intervention ${contractLabel} ${dateLabel} ${formatSlotHours(row.start_time, row.end_time)}${chantierLabel}.`)
+    }
+  }
+
+  if (canSeeInvoices && (overdueInvoices ?? 0) > 0) sarahAlertLines.push(`${overdueInvoices} facture${(overdueInvoices ?? 0) > 1 ? 's' : ''} en retard de paiement.`)
+  if (canSeeInvoices && canSeeReminders && (invoiceFollowups ?? 0) > 0) sarahAlertLines.push(`${invoiceFollowups} facture${(invoiceFollowups ?? 0) > 1 ? 's' : ''} sans échéance à relancer.`)
+  if (canSeeQuotes && canSeeReminders && (pendingQuotes ?? 0) > 0) sarahAlertLines.push(`${pendingQuotes} devis à relancer.`)
+  if (canSeeInvoices && (pendingRecurring ?? 0) > 0) sarahAlertLines.push(`${pendingRecurring} facture${(pendingRecurring ?? 0) > 1 ? 's récurrentes' : ' récurrente'} à confirmer.`)
+  if (recurringReady > 0) sarahAlertLines.push(`${recurringReady} facture${recurringReady > 1 ? 's récurrentes' : ' récurrente'} prête à préparer.`)
+  if (canSeeInvoices && (chantierPeriodDrafts ?? 0) > 0) sarahAlertLines.push(`${chantierPeriodDrafts} facture${(chantierPeriodDrafts ?? 0) > 1 ? 's' : ''} de chantier à valider.`)
+  if (canSeeReminders && (recentAutoReminders ?? 0) > 0) sarahAlertLines.push(`${recentAutoReminders} relance${(recentAutoReminders ?? 0) > 1 ? 's automatiques envoyées' : ' automatique envoyée'} récemment.`)
+  if (canSeeChantiers && (dueTasks ?? 0) > 0) sarahAlertLines.push(`${dueTasks} tâche${(dueTasks ?? 0) > 1 ? 's chantier' : ' chantier'} à échéance.`)
+  if (canSeeChantiers && missingPointages > 0) sarahAlertLines.push(`${missingPointages} pointage${missingPointages > 1 ? 's' : ''} à vérifier.`)
+  if (canSeeChantiers && (completedTasks ?? 0) > 0) sarahAlertLines.push(`${completedTasks} tâche${(completedTasks ?? 0) > 1 ? 's chantier terminées' : ' chantier terminée'} récemment.`)
+  if (canSeeLeads && (newRequests ?? 0) > 0) sarahAlertLines.push(`${newRequests} nouvelle${(newRequests ?? 0) > 1 ? 's demandes' : ' demande'} de devis à traiter.`)
+  if (canSeeChantiers && chantiersAtRisk > 0) sarahAlertLines.push(`${chantiersAtRisk} chantier${chantiersAtRisk > 1 ? 's' : ''} en alerte budget.`)
+  if (maintenanceBillingPending > 0) sarahAlertLines.push(`${maintenanceBillingPending} intervention${maintenanceBillingPending > 1 ? 's maintenance' : ' maintenance'} à facturer.`)
+  if (dailyBriefPending) sarahAlertLines.push('Le brief du jour est disponible.')
+
   const summary = {
     overdueInvoices: canSeeInvoices ? overdueInvoices ?? 0 : 0,
     invoiceFollowups: canSeeInvoices && canSeeReminders ? invoiceFollowups ?? 0 : 0,
@@ -287,7 +474,7 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     chantierPeriodDrafts: canSeeInvoices ? chantierPeriodDrafts ?? 0 : 0,
     recentAutoReminders: canSeeReminders ? recentAutoReminders ?? 0 : 0,
     dueTasks: canSeeChantiers ? dueTasks ?? 0 : 0,
-    planningToday: canSeeChantiers ? planningToday ?? 0 : 0,
+    planningToday: canSeeChantiers ? filteredTodayPlanning.length : 0,
     missingPointages: canSeeChantiers ? missingPointages : 0,
     completedTasks: canSeeChantiers ? completedTasks ?? 0 : 0,
     newRequests: canSeeLeads ? newRequests ?? 0 : 0,
@@ -295,6 +482,8 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     chantiersAtRisk: canSeeChantiers ? chantiersAtRisk : 0,
     maintenanceDue,
     maintenanceBillingPending,
+    dailyBriefPending,
+    sarahAlertLines,
   }
 
   return {
@@ -306,14 +495,13 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       summary.pendingRecurring +
       summary.recurringReady +
       summary.chantierPeriodDrafts +
-      summary.recentAutoReminders +
       summary.dueTasks +
       summary.planningToday +
       summary.missingPointages +
-      summary.completedTasks +
       summary.newRequests +
       summary.chantiersAtRisk +
       summary.maintenanceDue +
-      summary.maintenanceBillingPending,
+      summary.maintenanceBillingPending +
+      (summary.dailyBriefPending ? 1 : 0),
   }
 }

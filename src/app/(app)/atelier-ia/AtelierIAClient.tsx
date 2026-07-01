@@ -11,6 +11,8 @@ import {
 } from '@/lib/data/mutations/quotes'
 import type { AIQuoteResult } from '@/app/api/ai/analyze-quote/route'
 import { AI_NAME } from '@/lib/brand'
+import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
+import AICreditsErrorModal from '@/components/shared/AICreditsErrorModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -84,10 +86,49 @@ export default function AtelierIAClient() {
   const [results, setResults] = useState<AIQuoteResult[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [creditsError, setCreditsError] = useState(false)
+  const [briefBanner, setBriefBanner] = useState<string | null>(null)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ─── Brief Sarah → Chloé : vérifier en base au montage ──────────────────
+  useEffect(() => {
+    // D'abord le sessionStorage (compat ancienne logique)
+    const stored = sessionStorage.getItem('sarah_brief_chloe')
+    if (stored) {
+      try {
+        const brief = JSON.parse(stored)
+        sessionStorage.removeItem('sarah_brief_chloe')
+        if (brief.description?.trim()) {
+          setText(brief.description.trim())
+          setMode('text')
+          setBriefBanner(`Brief transmis par Sarah${brief.client_name ? ` pour ${brief.client_name}` : ''}.`)
+        }
+      } catch { /* ignore */ }
+      return
+    }
+    // Sinon vérifier la table ai_briefs
+    fetch('/api/sarah/briefs?target=chloe')
+      .then(r => r.json())
+      .then(({ brief }) => {
+        if (!brief) return
+        const payload = brief.payload ?? {}
+        if (payload.description?.trim()) {
+          setText(payload.description.trim())
+          setMode('text')
+          setBriefBanner(`Brief transmis par Sarah${payload.client_name ? ` pour ${payload.client_name}` : ''}.`)
+          // Marquer comme consommé
+          fetch('/api/sarah/briefs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ briefId: brief.id }),
+          }).catch(() => {})
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   // ─── MediaRecorder → Mistral transcription ───────────────────────────────
 
@@ -161,8 +202,10 @@ export default function AtelierIAClient() {
       }
       setAnalyzeStage('Vérification marge')
       const data = await res.json()
-      if (!res.ok) setError(data.error ?? 'Erreur inconnue')
-      else setResults((data as { quotes: AIQuoteResult[] }).quotes ?? [])
+      if (!res.ok) {
+        if (res.status === 402) { setCreditsError(true); return }
+        setError(data.error ?? 'Erreur inconnue')
+      } else setResults((data as { quotes: AIQuoteResult[] }).quotes ?? [])
     } catch {
       setError('Impossible de contacter l\'IA. Vérifiez votre connexion.')
     } finally {
@@ -222,24 +265,27 @@ export default function AtelierIAClient() {
 
   return (
     <main className="flex-1 w-full max-w-[1600px] mx-auto px-4 py-5 sm:px-6 lg:px-8 lg:py-8 space-y-6">
+      {creditsError && <AICreditsErrorModal onClose={() => setCreditsError(false)} />}
 
       {/* Header */}
       <div className="card overflow-hidden">
         <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4 min-w-0">
-            {/* Icone 3D principale */}
-            <Icon3D size={56} accent className="shrink-0">
-              <Bot
-                className="w-7 h-7 text-[var(--accent-primary)]"
-                style={{ strokeWidth: '2.5', filter: 'var(--icon-depth-filter)' }}
-              />
-            </Icon3D>
+            <AssistantAvatar assistant="chloe" size={56} className="shrink-0" />
             <div className="min-w-0">
               <h1 className="text-2xl font-bold text-primary">{AI_NAME}</h1>
               <p className="text-sm text-secondary">Assistante de génération de devis</p>
             </div>
           </div>
         </div>
+        {briefBanner && (
+          <div className="px-5 pb-4">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[rgb(var(--accent-primary)/0.08)] border border-[rgb(var(--accent-primary)/0.2)] text-xs text-[rgb(var(--accent-primary))] font-medium">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              {briefBanner}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[calc(100vh-240px)]">
@@ -284,7 +330,7 @@ export default function AtelierIAClient() {
 
                 {mode === 'voice' && (
                   <div className="flex-1 flex flex-col gap-4">
-                    <p className="text-xs text-secondary">Décrivez les travaux à voix haute. Sarah structure le devis pour vous.</p>
+                    <p className="text-xs text-secondary">Décrivez les travaux à voix haute. {AI_NAME} structure le devis pour vous.</p>
                     <div className="flex-1 min-h-[280px] rounded-2xl border border-[var(--elevation-border)] bg-black/[0.025] dark:bg-white/[0.035] flex flex-col items-center justify-center gap-6 p-6">
                       {/* Bouton micro 3D */}
                       <button
@@ -304,7 +350,7 @@ export default function AtelierIAClient() {
                         {isRecording
                           ? 'Enregistrement... (cliquez pour arrêter)'
                           : isTranscribing
-                            ? 'Transcription Mistral...'
+                            ? 'Transcription en cours...'
                             : 'Cliquez pour parler'
                         }
                       </p>
@@ -338,7 +384,7 @@ export default function AtelierIAClient() {
 
                 {mode === 'pdf' && (
                   <div className="flex-1 flex flex-col gap-2">
-                    <p className="text-xs text-secondary">Importez un cahier des charges PDF ou une photo de plan. Sarah extrait les postes pour vous.</p>
+                    <p className="text-xs text-secondary">Importez un cahier des charges PDF ou une photo de plan. {AI_NAME} extrait les postes pour vous.</p>
                     {!file ? (
                       <div
                         className="flex-1 min-h-[320px] border-2 border-dashed border-[var(--elevation-border)] rounded-2xl flex flex-col items-center justify-center gap-5 text-secondary hover:border-[rgb(var(--accent-primary)/0.6)] hover:bg-[rgb(var(--accent-primary)/0.04)] transition-all cursor-pointer"
@@ -403,7 +449,7 @@ export default function AtelierIAClient() {
 
                         <div>
                           <label className="text-xs text-secondary font-medium mb-1.5 block">
-                            Précisions pour Sarah <span className="opacity-50 font-normal">(optionnel)</span>
+                            Précisions pour {AI_NAME} <span className="opacity-50 font-normal">(optionnel)</span>
                           </label>
                           <textarea
                             value={pdfDescription}
@@ -436,12 +482,12 @@ export default function AtelierIAClient() {
                 {isAnalyzing ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Sarah analyse...
+                    {AI_NAME} analyse...
                   </>
                 ) : (
                   <>
-                    <Bot className="w-5 h-5" style={{ strokeWidth: '2.5' }} />
-                    Confier à Sarah
+                    <AssistantAvatar assistant="chloe" size={20} className="border-none bg-transparent shadow-none !rounded-full" />
+                    Confier à {AI_NAME}
                   </>
                 )}
               </button>
@@ -469,15 +515,10 @@ export default function AtelierIAClient() {
 
               {!currentQuote && !isAnalyzing && (
                 <div className="flex-1 flex flex-col items-center justify-center gap-5 text-secondary">
-                  <Icon3D size={80} accent>
-                    <Bot
-                      className="w-9 h-9 text-[var(--accent-primary)]"
-                      style={{ strokeWidth: '2.5', filter: 'var(--icon-depth-filter)' }}
-                    />
-                  </Icon3D>
+                  <AssistantAvatar assistant="chloe" size={80} />
                   <div className="text-center">
                     <p className="font-semibold text-primary">Prêt à générer</p>
-                    <p className="text-sm text-secondary mt-1.5 max-w-[260px]">Décrivez votre projet à gauche. Sarah structure le devis ici.</p>
+                    <p className="text-sm text-secondary mt-1.5 max-w-[260px]">Décrivez votre projet à gauche. {AI_NAME} structure le devis ici.</p>
                   </div>
                 </div>
               )}
@@ -493,7 +534,7 @@ export default function AtelierIAClient() {
                       filter: 'drop-shadow(0 2px 8px rgb(var(--accent-primary) / 0.35))',
                     }}
                   />
-                  <p className="font-bold text-primary">Sarah analyse...</p>
+                  <p className="font-bold text-primary">{AI_NAME} analyse...</p>
                   <p className="text-xs text-secondary">{analyzeStage}</p>
                 </div>
               )}
@@ -542,6 +583,26 @@ export default function AtelierIAClient() {
 
                   {/* Sections */}
                   <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                    {(currentQuote.clientName || currentQuote.clientDraft) && (
+                      <div className="rounded-2xl border border-[var(--elevation-border)] bg-black/[0.025] dark:bg-white/[0.035] p-4 shadow-[inset_0_1px_0_var(--inner-highlight)]">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-secondary">Client détecté</p>
+                        <p className="text-sm font-bold text-primary mt-1">
+                          {currentQuote.clientDraft?.company_name || currentQuote.clientName || [currentQuote.clientDraft?.first_name, currentQuote.clientDraft?.last_name].filter(Boolean).join(' ')}
+                        </p>
+                        {currentQuote.clientDraft?.contact_name && <p className="text-xs text-secondary mt-0.5">Réf. : {currentQuote.clientDraft.contact_name}</p>}
+                        {currentQuote.clientDraft?.siret && <p className="text-xs text-secondary mt-0.5">SIRET : {currentQuote.clientDraft.siret}</p>}
+                      </div>
+                    )}
+                    {(currentQuote.quoteWarnings?.length ?? 0) > 0 && (
+                      <div className="rounded-2xl border border-amber-500/25 bg-amber-500/10 p-4 space-y-2">
+                        {currentQuote.quoteWarnings!.slice(0, 5).map((warning, wi) => (
+                          <div key={wi} className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{warning}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {currentQuote.sections.map((section, si) => (
                       <div key={si} className="rounded-2xl border border-[var(--elevation-border)] overflow-hidden shadow-[inset_0_1px_0_var(--inner-highlight),0_3px_0_0_var(--hard-edge),0_3px_0_1px_var(--shadow-ring),0_6px_12px_var(--shadow-drop)]">
                         <div className="px-4 py-3 bg-black/[0.04] dark:bg-white/[0.06] border-b border-[var(--elevation-border)]">

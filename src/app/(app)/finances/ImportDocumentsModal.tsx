@@ -3,6 +3,7 @@
 import React, { useState, useRef, useTransition } from 'react'
 import { X, Upload, Download, CheckCircle2, AlertCircle, Loader2, FileText, Sparkles } from 'lucide-react'
 import { importInvoices, importQuotes, type ImportDocumentRow, type ImportDocumentsResult } from '@/lib/data/mutations/import-documents'
+import AICreditsErrorModal from '@/components/shared/AICreditsErrorModal'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -133,6 +134,7 @@ export default function ImportDocumentsModal({ isOpen, onClose, defaultType = 'i
   const [preview, setPreview] = useState<{ headers: string[]; rows: string[][] } | null>(null)
   const [pdfRows, setPdfRows] = useState<ImportDocumentRow[] | null>(null)
   const [parseError, setParseError] = useState<string | null>(null)
+  const [aiCreditsError, setAiCreditsError] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
   const [result, setResult] = useState<ImportDocumentsResult | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -156,7 +158,10 @@ export default function ImportDocumentsModal({ isOpen, onClose, defaultType = 'i
         fd.append('docType', docType)
         const res = await fetch('/api/ai/parse-document-pdf', { method: 'POST', body: fd })
         const data = await res.json()
-        if (!res.ok || data.error) { setParseError(data.error ?? "Impossible d'analyser le PDF."); setAiLoading(false); return }
+        if (!res.ok || data.error) {
+          if (res.status === 402) { setAiCreditsError(true); setAiLoading(false); return }
+          setParseError(data.error ?? "Impossible d'analyser le PDF."); setAiLoading(false); return
+        }
         const rows: ImportDocumentRow[] = data.rows
         if (!rows || rows.length === 0) { setParseError('Aucune ligne extraite du PDF.'); setAiLoading(false); return }
         setPdfRows(rows)
@@ -209,6 +214,7 @@ export default function ImportDocumentsModal({ isOpen, onClose, defaultType = 'i
 
   return (
     <div className="modal-overlay">
+      {aiCreditsError && <AICreditsErrorModal onClose={() => setAiCreditsError(false)} />}
       <div className="modal-panel animate-in fade-in duration-200">
         <button onClick={handleClose} className="absolute top-6 right-6 text-secondary hover:text-primary"><X className="w-6 h-6" /></button>
 

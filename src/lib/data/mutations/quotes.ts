@@ -24,6 +24,21 @@ type Result = { error: string | null }
 type AIQuoteDraftInput = {
   title?: string | null
   clientName?: string | null
+  clientDraft?: {
+    type?: 'company' | 'individual' | null
+    company_name?: string | null
+    contact_name?: string | null
+    first_name?: string | null
+    last_name?: string | null
+    email?: string | null
+    phone?: string | null
+    siret?: string | null
+    vat_number?: string | null
+    address_line1?: string | null
+    postal_code?: string | null
+    city?: string | null
+  } | null
+  quoteWarnings?: string[]
   sections: Array<{
     title?: string | null
     items: Array<{
@@ -86,6 +101,15 @@ function normalizeSearchText(value: string | null | undefined) {
     .replace(/\p{Diacritic}/gu, '')
     .replace(/[^a-z0-9@.]+/g, ' ')
     .trim()
+}
+
+function cleanString(value: string | null | undefined): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function normalizeSiret(value: string | null | undefined): string | null {
+  const siret = cleanString(value)?.replace(/\D/g, '') ?? null
+  return siret && siret.length >= 9 ? siret.slice(0, 14) : null
 }
 
 function looksInternalLine(sectionTitle: string | null | undefined, description: string | null | undefined) {
@@ -152,7 +176,7 @@ async function findClientIdBySearch(searchRaw: string | null | undefined): Promi
 
   const { data: clients } = await supabase
     .from('clients')
-    .select('id, company_name, contact_name, first_name, last_name, email, phone')
+    .select('id, company_name, contact_name, first_name, last_name, email, phone, siret')
     .eq('organization_id', orgId)
     .eq('is_archived', false)
 
@@ -164,6 +188,7 @@ async function findClientIdBySearch(searchRaw: string | null | undefined): Promi
       [client.first_name, client.last_name].filter(Boolean).join(' '),
       client.email,
       client.phone,
+      client.siret,
     ].filter(Boolean) as string[]
 
     let score = 0
@@ -186,17 +211,121 @@ async function findClientIdBySearch(searchRaw: string | null | undefined): Promi
   return best && best.score >= 70 ? best.id : null
 }
 
+async function findClientIdFromAIDraft(aiQuote: AIQuoteDraftInput): Promise<string | null> {
+  const candidates = [
+    aiQuote.clientDraft?.siret,
+    aiQuote.clientDraft?.company_name,
+    aiQuote.clientDraft?.contact_name,
+    [aiQuote.clientDraft?.first_name, aiQuote.clientDraft?.last_name].filter(Boolean).join(' '),
+    aiQuote.clientDraft?.email,
+    aiQuote.clientDraft?.phone,
+    aiQuote.clientName,
+  ]
+
+  for (const candidate of candidates) {
+    const clientId = await findClientIdBySearch(candidate)
+    if (clientId) return clientId
+  }
+
+  return null
+}
+
+function buildClientDraftFromAI(aiQuote: AIQuoteDraftInput) {
+  const draft = aiQuote.clientDraft
+  const clientName = cleanString(aiQuote.clientName)
+  const type = draft?.type === 'individual' ? 'individual' : 'company'
+  const fullName = clientName && type === 'individual' ? clientName.split(/\s+/).filter(Boolean) : []
+
+  return {
+    type,
+    company_name: type === 'company' ? cleanString(draft?.company_name) || clientName : null,
+    contact_name: cleanString(draft?.contact_name),
+    first_name: cleanString(draft?.first_name) || (type === 'individual' && fullName.length > 1 ? fullName.slice(0, -1).join(' ') : null),
+    last_name: cleanString(draft?.last_name) || (type === 'individual' ? fullName.at(-1) ?? clientName : null),
+    email: cleanString(draft?.email),
+    phone: cleanString(draft?.phone),
+    siret: normalizeSiret(draft?.siret),
+    vat_number: cleanString(draft?.vat_number),
+    address_line1: cleanString(draft?.address_line1),
+    postal_code: cleanString(draft?.postal_code),
+    city: cleanString(draft?.city),
+  }
+}
+
+async function createProspectFromAIDraft(aiQuote: AIQuoteDraftInput): Promise<string | null> {
+  if (!(await hasPermission('clients.create'))) return null
+
+  const draft = buildClientDraftFromAI(aiQuote)
+  if (!draft.company_name && !draft.first_name && !draft.last_name && !draft.email && !draft.phone && !draft.siret) {
+    return null
+  }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return null
+
+  const notes = [
+    'Prospect créé automatiquement par Sarah depuis une demande de devis. Informations à vérifier avant envoi.',
+    draft.vat_number ? `TVA intracommunautaire détectée : ${draft.vat_number}` : null,
+  ].filter(Boolean).join('\n')
+
+  const { data, error } = await supabase
+    .from('clients')
+    .insert({
+      organization_id: orgId,
+      type: draft.type,
+      company_name: draft.type === 'company' ? draft.company_name : null,
+      contact_name: draft.type === 'company' ? draft.contact_name : null,
+      first_name: draft.first_name,
+      last_name: draft.last_name,
+      email: draft.email,
+      phone: draft.phone,
+      siret: draft.type === 'company' ? draft.siret : null,
+      address_line1: draft.address_line1,
+      postal_code: draft.postal_code,
+      city: draft.city,
+      status: 'prospect',
+      source: 'ai_quote',
+      notes,
+      created_by: user.id,
+    })
+    .select('id')
+    .single()
+
+  if (error) {
+    console.error('[createProspectFromAIDraft]', error)
+    return null
+  }
+
+  revalidatePath('/clients')
+  return data.id
+}
+
+function buildAIBriefNotes(aiQuote: AIQuoteDraftInput, clientWasCreated: boolean): string | null {
+  const lines = [
+    clientWasCreated ? 'Nouveau prospect créé par Sarah : identité client à vérifier avant envoi.' : null,
+    ...(aiQuote.quoteWarnings ?? []).map(warning => `- ${warning}`),
+  ].filter(Boolean)
+
+  return lines.length > 0 ? lines.join('\n') : null
+}
+
 // ─── Create ───────────────────────────────────────────────────────────────────
 
 export async function createQuote(data: {
   clientId?: string | null
   title?: string
   currency?: string
+  briefNotes?: string | null
 }): Promise<{ quoteId: string | null; error: string | null }> {
   if (!(await hasPermission('quotes.create'))) return { quoteId: null, error: 'Permission refusée.' }
 
   const parsed = CreateQuoteSchema.safeParse(data)
   if (!parsed.success) return { quoteId: null, error: parsed.error.issues[0]?.message ?? 'Données invalides.' }
+  const input = parsed.data
 
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -209,9 +338,10 @@ export async function createQuote(data: {
     .from('quotes')
     .insert({
       organization_id: orgId,
-      client_id: data.clientId || null,
-      title: data.title ?? 'Nouveau devis',
-      currency: data.currency ?? 'EUR',
+      client_id: input.clientId ?? null,
+      title: input.title ?? 'Nouveau devis',
+      currency: input.currency ?? 'EUR',
+      brief_notes: input.briefNotes ?? null,
       status: 'draft',
       created_by: user.id,
     })
@@ -229,10 +359,16 @@ export async function createQuote(data: {
 }
 
 export async function createQuoteFromAIResult(aiQuote: AIQuoteDraftInput): Promise<{ quoteId: string | null; clientId: string | null; error: string | null }> {
-  const clientId = await findClientIdBySearch(aiQuote.clientName)
+  let clientId = await findClientIdFromAIDraft(aiQuote)
+  let clientWasCreated = false
+  if (!clientId) {
+    clientId = await createProspectFromAIDraft(aiQuote)
+    clientWasCreated = Boolean(clientId)
+  }
   const quoteRes = await createQuote({
     clientId,
     title: aiQuote.title?.trim() || 'Nouveau devis',
+    briefNotes: buildAIBriefNotes(aiQuote, clientWasCreated),
   })
   if (quoteRes.error || !quoteRes.quoteId) {
     return { quoteId: null, clientId, error: quoteRes.error ?? 'Impossible de créer le devis.' }
@@ -296,12 +432,16 @@ export async function updateQuote(
     aid_label?: string | null
     aid_amount?: number | null
     parent_quote_id?: string | null
+    show_section_subtotals?: boolean
+    variant_label?: string | null
+    technical_checklist?: Array<{ id: string; label: string; category: string; checked: boolean }> | null
   },
 ): Promise<Result> {
   if (!(await hasPermission('quotes.edit'))) return { error: 'Permission refusée.' }
 
   const parsed = UpdateQuoteSchema.safeParse(updates)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Données invalides.' }
+  const input = parsed.data
 
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
@@ -309,7 +449,7 @@ export async function updateQuote(
 
   const { error } = await supabase
     .from('quotes')
-    .update(updates)
+    .update(input)
     .eq('id', quoteId)
     .eq('organization_id', orgId)
 
@@ -403,6 +543,9 @@ export async function upsertQuoteItem(item: {
   height_m?: number | null
   dim_quantity?: number
   is_internal?: boolean
+  metal_grid_id?: string | null
+  price_pending?: boolean
+  labor_category?: 'atelier' | 'pose' | 'finition' | 'autre' | null
 }): Promise<{ itemId: string | null; error: string | null }> {
   if (!(await hasPermission('quotes.edit'))) return { itemId: null, error: 'Permission refusée.' }
 
@@ -428,11 +571,12 @@ export async function upsertQuoteItem(item: {
     .single()
   const vatRate = orgVat?.is_vat_subject === false ? 0 : coerceLegalVatRate(item.vat_rate, 20)
 
-  const total_ht = item.quantity * item.unit_price
+  const normalizedItem = parsed.data
+  const total_ht = normalizedItem.quantity * normalizedItem.unit_price
 
-  const description = item.description ?? buildStructuredDescription(item.designation, item.details, null)
+  const description = normalizedItem.description ?? buildStructuredDescription(normalizedItem.designation, normalizedItem.details, null)
   const payload = {
-    ...item,
+    ...normalizedItem,
     description,
     total_ht,
     vat_rate: vatRate,
@@ -802,6 +946,95 @@ export async function duplicateQuote(quoteId: string): Promise<{ quoteId: string
   }
 
   // Dupliquer les items
+  if (items && items.length > 0) {
+    const newItems = items.map(({ id: _id, quote_id: _qid, created_at: _ca, updated_at: _ua, ...rest }) => ({
+      ...rest,
+      quote_id: newId,
+      section_id: rest.section_id ? (sectionMap.get(rest.section_id) ?? null) : null,
+    }))
+    await supabase.from('quote_items').insert(newItems)
+    await recalcQuoteTotals(newId, orgId)
+  }
+
+  await syncQuoteMemoryEntry(supabase, orgId, newId)
+  revalidatePath('/finances')
+  return { quoteId: newId, error: null }
+}
+
+export async function createQuoteVariant(
+  sourceQuoteId: string,
+  variantLabel: string,
+): Promise<{ quoteId: string | null; error: string | null }> {
+  if (!(await hasPermission('quotes.create'))) return { quoteId: null, error: 'Permission refusée.' }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!orgId || !user) return { quoteId: null, error: 'Non authentifié.' }
+
+  const { data: original, error: fetchError } = await supabase
+    .from('quotes')
+    .select('title, client_id, currency, validity_days, notes_client, payment_conditions, discount_rate, deposit_rate, variant_group_id, variant_label')
+    .eq('id', sourceQuoteId)
+    .eq('organization_id', orgId)
+    .single()
+
+  if (fetchError || !original) return { quoteId: null, error: 'Devis introuvable.' }
+
+  // Déterminer ou créer le variant_group_id
+  const groupId: string = (original as any).variant_group_id ?? crypto.randomUUID()
+
+  // Si le devis source n'a pas encore de group_id, lui en assigner un
+  if (!(original as any).variant_group_id) {
+    const sourceLabel = (original as any).variant_label ?? 'Version A'
+    await supabase
+      .from('quotes')
+      .update({ variant_group_id: groupId, variant_label: sourceLabel })
+      .eq('id', sourceQuoteId)
+      .eq('organization_id', orgId)
+  }
+
+  const { data: newQuote, error: createError } = await supabase
+    .from('quotes')
+    .insert({
+      organization_id: orgId,
+      created_by: user.id,
+      client_id: original.client_id,
+      title: original.title,
+      currency: original.currency ?? 'EUR',
+      validity_days: original.validity_days,
+      notes_client: original.notes_client,
+      payment_conditions: original.payment_conditions,
+      discount_rate: original.discount_rate,
+      deposit_rate: original.deposit_rate,
+      status: 'draft',
+      variant_group_id: groupId,
+      variant_label: variantLabel,
+    })
+    .select('id')
+    .single()
+
+  if (createError || !newQuote) return { quoteId: null, error: 'Erreur lors de la création de la variante.' }
+
+  const newId = newQuote.id
+
+  const [{ data: sections }, { data: items }] = await Promise.all([
+    supabase.from('quote_sections').select('*').eq('quote_id', sourceQuoteId).order('position'),
+    supabase.from('quote_items').select('*').eq('quote_id', sourceQuoteId).order('position'),
+  ])
+
+  const sectionMap = new Map<string, string>()
+  if (sections && sections.length > 0) {
+    for (const sec of sections) {
+      const { data: newSec } = await supabase
+        .from('quote_sections')
+        .insert({ quote_id: newId, title: sec.title, position: sec.position })
+        .select('id')
+        .single()
+      if (newSec) sectionMap.set(sec.id, newSec.id)
+    }
+  }
+
   if (items && items.length > 0) {
     const newItems = items.map(({ id: _id, quote_id: _qid, created_at: _ca, updated_at: _ua, ...rest }) => ({
       ...rest,

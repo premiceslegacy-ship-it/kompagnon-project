@@ -10,6 +10,7 @@ import {
 
 export type QuotaCheckResult = {
   allowed: boolean
+  aiBillingMode: AIBillingMode
   quotaFeature: QuotaFeature | null
   quotaUnit: QuotaUnit | null
   quotaMonthly: number | null
@@ -19,6 +20,8 @@ export type QuotaCheckResult = {
   overflowMode: OverflowMode
   overQuota: boolean
 }
+
+export type AIBillingMode = 'orsayn_shared' | 'client_owned'
 
 export class AIQuotaExceededError extends Error {
   readonly quotaFeature: QuotaFeature
@@ -48,15 +51,18 @@ export function evaluateQuotaAllowance(params: {
   usedQuantity: number
   requestedQuantity?: number
   overflowMode?: string | null
+  aiBillingMode?: AIBillingMode
 }): QuotaCheckResult {
   const requestedQuantity = Math.max(0, params.requestedQuantity ?? 1)
   const overflowMode = params.overflowMode && isOverflowMode(params.overflowMode)
     ? params.overflowMode
     : 'block'
+  const aiBillingMode = params.aiBillingMode ?? 'orsayn_shared'
 
   if (params.quotaMonthly < 0) {
     return {
       allowed: true,
+      aiBillingMode,
       quotaFeature: params.quotaFeature,
       quotaUnit: params.quotaUnit,
       quotaMonthly: params.quotaMonthly,
@@ -74,6 +80,7 @@ export function evaluateQuotaAllowance(params: {
 
   return {
     allowed: !overQuota || overflowMode !== 'block',
+    aiBillingMode,
     quotaFeature: params.quotaFeature,
     quotaUnit: params.quotaUnit,
     quotaMonthly: params.quotaMonthly,
@@ -104,6 +111,10 @@ function parseQuotaConfig(value: unknown): Record<string, number> {
   )
 }
 
+function normalizeAIBillingMode(value: unknown): AIBillingMode {
+  return value === 'client_owned' ? 'client_owned' : 'orsayn_shared'
+}
+
 export async function checkQuota(params: {
   supabase: SupabaseClient
   organizationId: string
@@ -115,6 +126,7 @@ export async function checkQuota(params: {
   if (!quotaFeature) {
     return {
       allowed: true,
+      aiBillingMode: 'orsayn_shared',
       quotaFeature: null,
       quotaUnit: null,
       quotaMonthly: null,
@@ -129,14 +141,17 @@ export async function checkQuota(params: {
   const quotaUnit = getQuotaUnit(quotaFeature)
   const { data: modules, error: modulesError } = await params.supabase
     .from('organization_modules')
-    .select('quota_config, overflow_mode')
+    .select('quota_config, overflow_mode, ai_billing_mode')
     .eq('organization_id', params.organizationId)
     .maybeSingle()
+
+  const aiBillingMode = normalizeAIBillingMode((modules as { ai_billing_mode?: unknown } | null)?.ai_billing_mode)
 
   if (modulesError) {
     console.error('[checkQuota.organization_modules]', modulesError)
     return {
       allowed: true,
+      aiBillingMode,
       quotaFeature,
       quotaUnit,
       quotaMonthly: null,
@@ -149,20 +164,38 @@ export async function checkQuota(params: {
   }
 
   const quotaConfig = parseQuotaConfig(modules?.quota_config)
+  if (aiBillingMode === 'client_owned') {
+    return {
+      allowed: true,
+      aiBillingMode,
+      quotaFeature,
+      quotaUnit,
+      quotaMonthly: -1,
+      usedQuantity: 0,
+      requestedQuantity: params.quantity ?? 1,
+      remaining: null,
+      overflowMode: 'charge',
+      overQuota: false,
+    }
+  }
+
   const quotaMonthly = quotaConfig[quotaFeature] ?? -1
   const overflowMode = isOverflowMode(String(modules?.overflow_mode ?? 'block'))
     ? String(modules?.overflow_mode ?? 'block') as OverflowMode
     : 'block'
 
   if (quotaMonthly < 0) {
-    return evaluateQuotaAllowance({
-      quotaFeature,
-      quotaUnit,
-      quotaMonthly,
-      usedQuantity: 0,
-      requestedQuantity: params.quantity ?? 1,
-      overflowMode,
-    })
+    return {
+      ...evaluateQuotaAllowance({
+        quotaFeature,
+        quotaUnit,
+        quotaMonthly,
+        usedQuantity: 0,
+        requestedQuantity: params.quantity ?? 1,
+        overflowMode,
+        aiBillingMode,
+      }),
+    }
   }
 
   const { data: usageRows, error: usageError } = await params.supabase
@@ -178,6 +211,7 @@ export async function checkQuota(params: {
     console.error('[checkQuota.usage_logs]', usageError)
     return {
       allowed: true,
+      aiBillingMode,
       quotaFeature,
       quotaUnit,
       quotaMonthly,
@@ -194,12 +228,15 @@ export async function checkQuota(params: {
     return sum + (Number.isFinite(quantity) ? quantity : 1)
   }, 0)
 
-  return evaluateQuotaAllowance({
-    quotaFeature,
-    quotaUnit,
-    quotaMonthly,
-    usedQuantity,
-    requestedQuantity: params.quantity ?? 1,
-    overflowMode,
-  })
+  return {
+    ...evaluateQuotaAllowance({
+      quotaFeature,
+      quotaUnit,
+      quotaMonthly,
+      usedQuantity,
+      requestedQuantity: params.quantity ?? 1,
+      overflowMode,
+      aiBillingMode,
+    }),
+  }
 }

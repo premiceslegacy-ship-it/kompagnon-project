@@ -21,6 +21,7 @@ export type Client = {
   source: string | null
   total_revenue: number
   payment_terms_days: number
+  internal_notes: string | null
   created_at: string
 }
 
@@ -40,7 +41,7 @@ export async function getClients(): Promise<Client[]> {
       .select(`
         id, organization_id, type, company_name, contact_name, first_name, last_name,
         email, phone, siret, address_line1, city, postal_code, status, source,
-        payment_terms_days, created_at
+        payment_terms_days, internal_notes, created_at
       `)
       .eq('organization_id', orgId)
       .eq('is_archived', false)

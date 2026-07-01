@@ -23,6 +23,8 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'invoices.delete':         'Supprimer des factures',
   'invoices.record_payment': 'Enregistrer un paiement',
   'invoices.create_credit':  'Créer un avoir',
+  'invoices.create_situation':'Créer une situation de travaux',
+  'invoices.create_solde':   'Créer une facture de solde',
   'received_invoices.view':  'Voir les factures reçues',
   'received_invoices.process':'Traiter les factures reçues',
   'received_invoices.reject':'Rejeter une facture reçue',
@@ -73,6 +75,12 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'settings.edit_roles':    'Configurer les rôles',
   'einvoicing.configure':   'Configurer la facturation électronique (B2Brouter)',
 
+  // ─── Contrats ──────────────────────────────────────────────────────────────
+  'contracts.view':   'Voir les contrats',
+  'contracts.create': 'Créer des contrats',
+  'contracts.edit':   'Modifier les contrats',
+  'contracts.delete': 'Supprimer les contrats',
+
   // ─── Chantiers ────────────────────────────────────────────────────────────
   'chantiers.view':         'Voir les chantiers',
   'chantiers.create':       'Créer des chantiers',
@@ -82,6 +90,8 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'chantiers.manage_team':  'Gérer l’équipe d’un chantier',
   'chantiers.view_tasks':   'Voir les tâches',
   'chantiers.manage_tasks': 'Gérer les tâches',
+  'chantiers.planning':     'Gérer le planning et les tournées',
+  'chantiers.profitability.view':'Voir la rentabilité des chantiers',
   'chantiers.expenses.view':      'Voir les dépenses chantier',
   'chantiers.expenses.create':    'Ajouter des dépenses chantier',
   'chantiers.expenses.edit':      'Modifier des dépenses chantier',
@@ -94,6 +104,11 @@ export const PERMISSION_LABELS: Record<string, string> = {
 
   // ─── Rapports ─────────────────────────────────────────────────────────────
   'reports.view': 'Voir les rapports',
+
+  // ─── IA ───────────────────────────────────────────────────────────────────
+  'ai.sarah':   'Sarah — widget secrétaire IA (chatbot texte + vocal ElevenLabs)',
+  'ai.manage':  'IA de pilotage (analyse devis, planning IA, imports documents, rapports, estimation MO)',
+  'ai.terrain': 'IA terrain (assistant chantier, suggestions tâches, OCR tickets, saisie vocale, catalogue Léa)',
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {
@@ -106,9 +121,11 @@ export const CATEGORY_LABELS: Record<string, string> = {
   import:     'Imports',
   team:       'Équipe',
   settings:   'Paramètres',
+  contracts:  'Contrats',
   chantiers:  'Chantiers',
   leads:      'Demandes',
   reports:    'Rapports',
+  ai:         'Intelligence artificielle',
 }
 
 /** Helper : retourne le label FR final avec fallbacks. */

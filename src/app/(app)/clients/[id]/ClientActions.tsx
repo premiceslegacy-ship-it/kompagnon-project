@@ -153,6 +153,18 @@ function EditModal({ client, onClose }: { client: Client; onClose: () => void })
             </div>
           </div>
 
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-secondary">Notes internes</label>
+            <p className="text-xs text-secondary">Contexte commercial, habitudes, interlocuteurs clés. Non transmis au client.</p>
+            <textarea
+              name="internal_notes"
+              rows={4}
+              defaultValue={client.internal_notes ?? ''}
+              placeholder="Ex : Préfère les devis détaillés, décision prise par la responsable achats..."
+              className={`${inputCls} resize-y`}
+            />
+          </div>
+
           <div className="flex justify-end gap-4 pt-4">
             <button type="button" onClick={onClose} className="px-6 py-3 rounded-full text-secondary hover:text-primary font-semibold transition-colors">
               Annuler

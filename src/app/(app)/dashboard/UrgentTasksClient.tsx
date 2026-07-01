@@ -14,8 +14,41 @@ const fmt = (n: number) =>
 const cardCls = "rounded-3xl p-6 card transition-all duration-300 ease-out"
 type StateTone = 'danger' | 'warning' | 'amber' | 'info' | 'violet' | 'success'
 
+function PendingActionLink({
+  href,
+  title,
+  className,
+  actionKey,
+  pendingKey,
+  onNavigate,
+  children,
+}: {
+  href: string
+  title: string
+  className: string
+  actionKey: string
+  pendingKey: string | null
+  onNavigate: (key: string) => void
+  children: React.ReactNode
+}) {
+  const pending = pendingKey === actionKey
+  return (
+    <Link
+      href={href}
+      prefetch
+      title={title}
+      onClick={() => onNavigate(actionKey)}
+      className={`${className} inline-flex min-w-[4.75rem] items-center justify-center gap-1.5`}
+      aria-busy={pending}
+    >
+      {pending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+      {children}
+    </Link>
+  )
+}
+
 function getContextLine(item: UrgentItem) {
-  return [item.clientName, item.title].filter(Boolean).join(' · ')
+  return [...new Set([item.clientName, item.title].filter(Boolean))].join(' · ')
 }
 
 function getItemTone(item: UrgentItem): StateTone {
@@ -36,6 +69,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
 }) {
   const [items, setItems] = useState<UrgentItem[]>(initialItems)
   const [loadingId, setLoadingId] = useState<string | null>(null)
+  const [navigatingAction, setNavigatingAction] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [, startTransition] = useTransition()
   const [reminderTarget, setReminderTarget] = useState<{ type: 'invoice' | 'quote'; id: string } | null>(null)
@@ -145,6 +179,10 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
           {actionItems.map(item => {
             const contextLine = getContextLine(item)
             const tone = getItemTone(item)
+            const invoiceHref = item.invoiceId
+              ? `/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`
+              : ''
+            const chantierHref = item.chantierId ? `/chantiers/${item.chantierId}` : ''
             return (
             <div key={item.id} className="flex flex-col gap-1">
               <div
@@ -204,49 +242,64 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                     <span className="text-sm font-bold text-primary tabular-nums mr-2">{fmt(item.amount)}</span>
                   )}
                   {item.type === 'pending_recurring' && item.invoiceId && (
-                    <Link
-                      href={`/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`}
+                    <PendingActionLink
+                      href={invoiceHref}
                       title="Vérifier et modifier le brouillon"
                       className="state-action px-3 py-1.5 text-xs font-bold text-violet-700 dark:text-violet-300"
+                      actionKey={`${item.id}:edit-recurring`}
+                      pendingKey={navigatingAction}
+                      onNavigate={setNavigatingAction}
                     >
                       Modifier
-                    </Link>
+                    </PendingActionLink>
                   )}
                   {item.type === 'pending_recurring' && item.invoiceId && (
-                    <Link
-                      href={`/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`}
+                    <PendingActionLink
+                      href={invoiceHref}
                       title="Vérifier puis envoyer le brouillon"
                       className="state-action px-3 py-1.5 text-xs font-bold text-violet-700 dark:text-violet-300"
+                      actionKey={`${item.id}:send-recurring`}
+                      pendingKey={navigatingAction}
+                      onNavigate={setNavigatingAction}
                     >
                       Envoyer
-                    </Link>
+                    </PendingActionLink>
                   )}
                   {(item.type === 'task_due' || item.type === 'planning_slot' || item.type === 'missing_pointage' || item.type === 'chantier_profitability') && item.chantierId && (
-                    <Link
-                      href={`/chantiers/${item.chantierId}`}
+                    <PendingActionLink
+                      href={chantierHref}
                       title="Ouvrir le chantier"
                       className="state-action px-3 py-1.5 text-xs font-bold text-blue-700 dark:text-blue-300"
+                      actionKey={`${item.id}:open-chantier`}
+                      pendingKey={navigatingAction}
+                      onNavigate={setNavigatingAction}
                     >
                       Ouvrir
-                    </Link>
+                    </PendingActionLink>
                   )}
                   {item.type === 'balance_due' && item.invoiceId && (
-                    <Link
-                      href={`/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`}
+                    <PendingActionLink
+                      href={invoiceHref}
                       title="Voir la facture d'acompte"
                       className="state-action px-3 py-1.5 text-xs font-bold text-amber-700 dark:text-amber-300"
+                      actionKey={`${item.id}:open-balance`}
+                      pendingKey={navigatingAction}
+                      onNavigate={setNavigatingAction}
                     >
                       Voir
-                    </Link>
+                    </PendingActionLink>
                   )}
                   {item.type === 'installment_due' && item.invoiceId && (
-                    <Link
-                      href={`/finances/invoice-editor?id=${item.invoiceId}&returnTo=${encodeURIComponent('/dashboard')}`}
+                    <PendingActionLink
+                      href={invoiceHref}
                       title="Voir la facture"
                       className="state-action px-3 py-1.5 text-xs font-bold text-blue-700 dark:text-blue-300"
+                      actionKey={`${item.id}:open-installment`}
+                      pendingKey={navigatingAction}
+                      onNavigate={setNavigatingAction}
                     >
                       Voir
-                    </Link>
+                    </PendingActionLink>
                   )}
                   {(item.type === 'overdue_invoice' || item.type === 'invoice_to_follow_up') && (
                     <button

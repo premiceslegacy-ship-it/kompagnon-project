@@ -758,9 +758,15 @@ export default function RapportsClient({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <KpiCard label="Interventions" value={mr.interventionsDone > 0 ? String(mr.interventionsDone) : '-'} icon={<Wrench className="w-4 h-4" />} />
             <KpiCard label="Heures entretien" value={mr.hoursTotal > 0 ? fmtH(mr.hoursTotal) : '-'} sub={mr.laborCost > 0 ? `${fmt(mr.laborCost)} coût MO` : undefined} icon={<Clock className="w-4 h-4" />} />
-            <KpiCard label="Coûts terrain" value={fmt(mr.partsCost + mr.travelCost + mr.otherCost)} sub={`Pièces ${fmt(mr.partsCost)} · déplacement ${fmt(mr.travelCost)}`} icon={<HardHat className="w-4 h-4" />} />
-            <KpiCard label="CA entretien" value={mr.revenueHt > 0 ? fmt(mr.revenueHt) : '-'} sub={`Marge estimée ${fmt(mr.marginEur)}`} icon={<Euro className="w-4 h-4" />} />
+            <KpiCard label="Facturé HT" value={mr.revenueHt > 0 ? fmt(mr.revenueHt) : '-'} sub="Factures émises sur la période" icon={<Euro className="w-4 h-4" />} />
+            <KpiCard label="Encaissé HT" value={mr.encaisseHt > 0 ? fmt(mr.encaisseHt) : '-'} sub={mr.revenueHt > 0 && mr.encaisseHt < mr.revenueHt ? `${fmt(mr.revenueHt - mr.encaisseHt)} en attente` : 'Factures marquées payées'} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
           </div>
+          {maintenanceActualCost > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-2 gap-4">
+              <KpiCard label="Coûts terrain" value={fmt(mr.partsCost + mr.travelCost + mr.otherCost)} sub={`Pièces ${fmt(mr.partsCost)} · déplacement ${fmt(mr.travelCost)}`} icon={<HardHat className="w-4 h-4" />} />
+              <KpiCard label="Marge estimée" value={mr.marginEur > 0 ? fmt(mr.marginEur) : '-'} sub={mr.revenueHt > 0 ? `${fmtPct(maintenanceActualMarginPct)} · après coûts terrain et MO` : undefined} icon={<Target className="w-4 h-4" />} />
+            </div>
+          )}
           {(mr.expectedRevenueHt > 0 || mr.expectedCostHt > 0) && (
             <>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -768,24 +774,28 @@ export default function RapportsClient({
                 <KpiCard label="Coût prévu / période" value={mr.expectedCostHt > 0 ? fmt(mr.expectedCostHt) : '-'} sub="Référence catalogue entretien" icon={<HardHat className="w-4 h-4" />} />
                 <KpiCard label="Marge prévue / période" value={fmt(mr.expectedMarginHt)} sub={`${fmtPct(maintenanceExpectedMarginPct)} prévu`} icon={<Target className="w-4 h-4" />} />
               </div>
-              <div className="rounded-2xl bg-secondary/5 border border-secondary/10 p-4 space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-semibold text-primary">Jauge marge entretien</span>
-                  <span className="text-secondary">
-                    Réel {fmt(mr.marginEur)} · Prévu {fmt(mr.expectedMarginHt)}
-                  </span>
+              {maintenanceActualCost > 0 ? (
+                <div className="rounded-2xl bg-secondary/5 border border-secondary/10 p-4 space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-semibold text-primary">Jauge marge entretien</span>
+                    <span className="text-secondary">
+                      Réel {fmt(mr.marginEur)} · Prévu {fmt(mr.expectedMarginHt)}
+                    </span>
+                  </div>
+                  <div className="h-2 rounded-full bg-secondary/15 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${maintenanceActualMarginPct >= 0.2 ? 'bg-accent-green' : maintenanceActualMarginPct >= 0.05 ? 'bg-accent' : 'bg-red-500'}`}
+                      style={{ width: `${Math.max(0, Math.min(100, maintenanceActualMarginPct * 100))}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-secondary">
+                    <span>CA réel {fmt(mr.revenueHt)}</span>
+                    <span>Coûts réels {fmt(maintenanceActualCost)}</span>
+                  </div>
                 </div>
-                <div className="h-2 rounded-full bg-secondary/15 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${maintenanceActualMarginPct >= 0.2 ? 'bg-accent-green' : maintenanceActualMarginPct >= 0.05 ? 'bg-accent' : 'bg-red-500'}`}
-                    style={{ width: `${Math.max(0, Math.min(100, maintenanceActualMarginPct * 100))}%` }}
-                  />
-                </div>
-                <div className="flex justify-between text-xs text-secondary">
-                  <span>CA réel {fmt(mr.revenueHt || mr.expectedRevenueHt)}</span>
-                  <span>Coûts réels {fmt(maintenanceActualCost)}</span>
-                </div>
-              </div>
+              ) : (
+                <p className="text-xs text-secondary">Aucun coût réel saisi sur la période. La jauge sera disponible dès qu&apos;une heure ou dépense est enregistrée.</p>
+              )}
             </>
           )}
         </section>

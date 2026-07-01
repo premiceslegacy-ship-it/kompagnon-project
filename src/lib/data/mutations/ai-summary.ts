@@ -241,6 +241,7 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
     { data: facturesImpayees },
     { data: newRequests },
     { data: acomptesEnAttente },
+    { data: maintenanceActifs },
   ] = await Promise.all([
     supabase
       .from('chantiers')
@@ -276,15 +277,34 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
       .eq('invoice_type', 'acompte')
       .in('status', ['sent', 'partial'])
       .lt('due_date', todayStr),
+
+    supabase
+      .from('maintenance_contracts')
+      .select('title, chantier_id, montant_ht, frequence, period_cost_labor_ht, period_cost_parts_ht, period_cost_travel_ht, period_cost_other_ht, client:clients(company_name)')
+      .eq('organization_id', orgId)
+      .eq('status', 'actif'),
   ])
 
   if (!process.env.OPENROUTER_API_KEY) return { summary: null, error: 'Clé API IA manquante.' }
 
-  // Calcul rentabilité pour les chantiers actifs (max 5 pour limiter les appels)
-  const activeChantiers = (chantiers ?? []).slice(0, 5)
+  // Calcul rentabilité pour les chantiers actifs (max 10 pour limiter les appels)
+  const activeChantiers = (chantiers ?? []).slice(0, 10)
   const profitabilityResults = await Promise.allSettled(
     activeChantiers.map(c => getChantierProfitability((c as any).id))
   )
+
+  // Indexer les contrats de maintenance actifs par chantier_id
+  const maintenanceByChantier: Record<string, Array<{ titre: string; montant_ht: number | null; frequence: string }>> = {}
+  for (const m of maintenanceActifs ?? []) {
+    const cid = (m as any).chantier_id
+    if (!cid) continue
+    maintenanceByChantier[cid] ??= []
+    maintenanceByChantier[cid].push({
+      titre: (m as any).title,
+      montant_ht: (m as any).montant_ht ?? null,
+      frequence: (m as any).frequence,
+    })
+  }
 
   const context = {
     chantiers_actifs: activeChantiers.map((c, i) => {
@@ -297,11 +317,16 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
         budget_ht: (c as any).budget_ht ?? null,
         marge_pct: prof ? Math.round(prof.marginPct * 100) : null,
         marge_eur: prof ? Math.round(prof.marginEur) : null,
-        cout_total: prof ? Math.round(prof.costTotal) : null,
+        ca_facture_ht: prof ? Math.round(prof.revenueHt) : null,
+        cout_main_oeuvre: prof ? Math.round(prof.costLabor) : null,
+        cout_materiaux: prof ? Math.round(prof.costMaterial) : null,
+        cout_sous_traitance: prof ? Math.round(prof.costSubcontract) : null,
+        cout_autre: prof ? Math.round(prof.costOther) : null,
         heures_pointees: prof?.hoursLogged ?? null,
         alerte_budget: prof && (c as any).budget_ht > 0
           ? prof.costTotal / (c as any).budget_ht > 0.9 ? 'depassement_imminent' : null
           : null,
+        contrats_maintenance_actifs: maintenanceByChantier[(c as any).id] ?? [],
       }
     }),
     devis_sans_reponse_7j: (devisEnAttente ?? []).map(d => ({
@@ -329,16 +354,20 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
   }
 
   const prompt = `Tu es l'assistant de ${APP_NAME}, un ERP pour artisans du BTP.
-Génère un résumé hebdomadaire concis et actionnable en français. Maximum 5 lignes.
-Format : commence par les alertes critiques (factures impayées, chantiers en dépassement budget, marge faible < 10%), puis l'état général.
-Termine toujours par UNE priorité claire : "Priorité : [action concrète]".
-Sois direct, pas de formules creuses. Chiffre tout ce qui peut l'être (€, %, heures).
-Si un chantier a alerte_budget="depassement_imminent" ou marge_pct < 10, mentionne-le explicitement.
+Rédige un point de situation en français naturel, comme si tu parlais directement à l'artisan. Pas de liste à puces, pas de labels formatés, pas de format robot. Des phrases simples et directes, 3 à 5 phrases maximum.
 
-Règles de style obligatoires :
+Commence par ce qui est urgent ou problématique : marge négative, factures impayées, dépassement budget. Si un chantier a marge_pct < 10 ou marge_eur négatif, dis-le clairement avec les chiffres. Pour les chantiers en perte, oriente sur la cause probable en regardant cout_main_oeuvre, cout_materiaux, cout_sous_traitance. Si ce chantier a des contrats_maintenance_actifs, mentionne que les coûts d'entretien peuvent expliquer une partie des dépenses et qu'il faut vérifier la page Entretien.
+
+Si devis_sans_reponse_7j est vide, dis-le ("aucun devis en attente"). Si factures_impayees est vide, dis-le ("aucune facture impayée"). Ne mentionne pas les sections vides si tout le reste est problématique, mais si tout va bien mentionne explicitement que la trésorerie est saine.
+
+Termine par une recommandation concrète formulée naturellement, sans le mot "Priorité :".
+
+Règles de style :
 - Aucun emoji, aucun symbole décoratif
 - Aucun tiret cadratin (—). Utilise des virgules ou des points.
-- Français irréprochable, ton professionnel et direct
+- Aucun label formaté ("ALERTES :", "PRIORITÉ :", "État général :"), aucune liste à puces
+- Français courant et professionnel, ton direct sans être froid
+- Tu tutoies l'artisan
 
 Données actuelles :
 ${JSON.stringify(context, null, 2)}`

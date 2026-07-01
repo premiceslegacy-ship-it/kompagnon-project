@@ -22,6 +22,7 @@ import { createInvoice, saveInvoiceItems, sendInvoice, savePaymentSchedule } fro
 import SaveToCatalogModal, { type SaveToCatalogSource, type SaveToCatalogResult } from '@/components/catalog/SaveToCatalogModal'
 import { fetchClientContractsForAttachment } from '@/lib/data/mutations/contracts'
 import AttachmentPickerModal, { type AttachmentGroup } from '@/components/AttachmentPickerModal'
+import ClientEmailRequiredModal from '@/components/ClientEmailRequiredModal'
 import { createClientInline } from '@/lib/data/mutations/clients'
 import { getClientDisplayName } from '@/lib/client'
 import { UnitSelect } from '@/components/ui/UnitSelect'
@@ -114,6 +115,15 @@ function getTransportMeta(item: {
 
 function isEquipmentLine(item: Pick<LocalItem, 'is_internal' | 'unit' | 'transport_prix_l'>) {
   return item.is_internal && item.unit === 'usage' && item.transport_prix_l == null
+}
+
+function getInternalUnitCost(item: Pick<LocalItem, 'unit_cost_ht' | 'is_internal' | 'pu'>) {
+  if (item.unit_cost_ht != null) return Number(item.unit_cost_ht) || 0
+  return item.is_internal ? (Number(item.pu) || 0) : 0
+}
+
+function getInternalCostTotal(item: Pick<LocalItem, 'unit_cost_ht' | 'is_internal' | 'pu' | 'qty'>) {
+  return (Number(item.qty) || 0) * getInternalUnitCost(item)
 }
 
 function parseEquipmentAmortization(description: string, unitPrice: number) {
@@ -246,7 +256,7 @@ export default function InvoiceEditorClient({
         address_line1: newClientForm.address_line1 || null,
         postal_code: newClientForm.postal_code || null,
         city: newClientForm.city || null,
-        status: 'active', source: null, total_revenue: 0, payment_terms_days: 30,
+        status: 'active', source: null, total_revenue: 0, payment_terms_days: 30, internal_notes: null,
         created_at: new Date().toISOString(),
       }])
       setClientId(res.id!)
@@ -266,6 +276,7 @@ export default function InvoiceEditorClient({
   const [aidLabel, setAidLabel] = useState<string>(existingInvoice?.aid_label ?? '')
   const [aidAmount, setAidAmount] = useState<number | null>(existingInvoice?.aid_amount ?? null)
   const [showAid, setShowAid] = useState<boolean>(!!(existingInvoice?.aid_label || existingInvoice?.aid_amount))
+  const [isReverseCharge, setIsReverseCharge] = useState<boolean>(existingInvoice?.is_reverse_charge ?? false)
   const [aidMode, setAidMode] = useState<'€' | '%'>('€')
 
   // ── Échéancier ────────────────────────────────────────────────────────────────
@@ -562,6 +573,7 @@ export default function InvoiceEditorClient({
   const [sendModalGroups, setSendModalGroups] = useState<AttachmentGroup[]>([])
   const [sendModalLoading, setSendModalLoading] = useState(false)
   const [sendModalError, setSendModalError] = useState<string | null>(null)
+  const [emailRequiredOpen, setEmailRequiredOpen] = useState(false)
   const [pendingInvoiceId, setPendingInvoiceId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -768,7 +780,7 @@ export default function InvoiceEditorClient({
   }
 
   function getMeta() {
-    return { clientId: clientId || null, issueDate, dueDate, title: title || 'Facture', quoteId: importedQuoteId, chantierId: chantierId || null, aidLabel: aidLabel || null, aidAmount }
+    return { clientId: clientId || null, issueDate, dueDate, title: title || 'Facture', quoteId: importedQuoteId, chantierId: chantierId || null, aidLabel: aidLabel || null, aidAmount, isReverseCharge }
   }
 
   // Préremplissage du client depuis le chantier (création uniquement)
@@ -833,8 +845,22 @@ export default function InvoiceEditorClient({
     })
   }
 
-  function handleSend() {
+  function getSelectedClientForSend() {
+    return clients.find(c => c.id === clientId) ?? (existingInvoice?.client?.id === clientId ? existingInvoice.client : null)
+  }
+
+  function prepareInvoiceSend(skipEmailCheck = false) {
     if (!clientId) { setError('Sélectionnez un client avant d\'envoyer.'); return }
+    const selectedClient = getSelectedClientForSend()
+    if (!selectedClient) {
+      setError('Client introuvable. Sélectionnez à nouveau le client.')
+      return
+    }
+    if (!skipEmailCheck && !selectedClient.email?.trim()) {
+      setError(null)
+      setEmailRequiredOpen(true)
+      return
+    }
     setIsSending(true)
     setError(null)
     startTransition(async () => {
@@ -859,6 +885,16 @@ export default function InvoiceEditorClient({
     })
   }
 
+  function handleSend() {
+    prepareInvoiceSend(false)
+  }
+
+  async function handleClientEmailSaved(email: string) {
+    setClients(prev => prev.map(client => client.id === clientId ? { ...client, email } : client))
+    setEmailRequiredOpen(false)
+    prepareInvoiceSend(true)
+  }
+
   function confirmInvoiceSend(selected: Record<string, string[]>) {
     if (!pendingInvoiceId) return
     setIsSending(true)
@@ -875,16 +911,15 @@ export default function InvoiceEditorClient({
 
   // ── Totaux ───────────────────────────────────────────────────────────────────
   const clientItems = items.filter(i => !i.is_internal)
-  const internalItems = items.filter(i => i.is_internal)
   const totalHt = clientItems.reduce((acc, i) => acc + Number(i.qty) * Number(i.pu), 0)
   const totalTva = clientItems.reduce((acc, i) => acc + Number(i.qty) * Number(i.pu) * (Number(i.vat) / 100), 0)
   const totalTtc = totalHt + totalTva
   const scheduleTotalAmount = schedule.reduce((sum, s) => sum + scheduleLineAmount(s), 0)
   const scheduleRemaining = totalTtc - scheduleTotalAmount
-  const totalInternalHt = internalItems.reduce((acc, i) => acc + Number(i.qty) * Number(i.pu), 0)
+  const totalInternalHt = items.reduce((acc, i) => acc + getInternalCostTotal(i), 0)
   const margeHt = totalHt - totalInternalHt
   const margePct = totalHt > 0 ? (margeHt / totalHt) * 100 : 0
-  const hasInternal = internalItems.length > 0
+  const hasInternal = items.some(i => i.unit_cost_ht != null || i.is_internal)
 
   const isEditing = !!existingInvoice
 
@@ -1028,10 +1063,10 @@ export default function InvoiceEditorClient({
             <div className="flex justify-end gap-3">
               <button type="button" onClick={() => setShowTransport(false)}
                 className="px-5 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold">Annuler</button>
-              <button type="button" onClick={handleAddTransport}
+              <ActionButton type="button" onClick={handleAddTransport}
                 className="px-5 py-2.5 rounded-full bg-amber-500 text-white font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-amber-500/20">
                 <Plus className="w-4 h-4" />Ajouter la ligne
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -1084,10 +1119,10 @@ export default function InvoiceEditorClient({
             <div className="flex justify-end gap-3">
               <button type="button" onClick={() => setShowEquipment(false)}
                 className="px-5 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold">Annuler</button>
-              <button type="button" onClick={handleAddEquipment} disabled={equipmentPurchase <= 0 || equipmentUses <= 0}
+              <ActionButton type="button" onClick={handleAddEquipment} disabled={equipmentPurchase <= 0 || equipmentUses <= 0}
                 className="px-5 py-2.5 rounded-full bg-purple-500 text-white font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-purple-500/20 disabled:opacity-40 disabled:hover:scale-100">
                 <Plus className="w-4 h-4" />Ajouter la ligne
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -1285,9 +1320,10 @@ export default function InvoiceEditorClient({
 	              const heightMeta = getDimensionFieldDefinition(sourceMaterial?.dimension_schema, 'height', dimensionMode)
 	              const isEquipment = isEquipmentLine(item)
               const equipmentMeta = isEquipment ? parseEquipmentAmortization(item.desc, item.pu) : null
+              const internalUnitCost = getInternalUnitCost(item)
               return (
                 <React.Fragment key={item.id}>
-	                  <div className={`rounded-xl border transition-all ${isEquipment ? 'border-l-2 border-purple-400/60 bg-purple-500/5' : item.is_internal ? 'border-l-2 border-amber-400/50 bg-amber-500/5' : 'border-transparent hover:border-[var(--elevation-border)] hover:bg-base/30'}`}>
+	                  <div className={`rounded-xl border transition-all ${isEquipment ? 'border-l-2 border-purple-400/60 bg-purple-500/5' : item.is_internal ? 'border-l-2 border-amber-400/50 bg-amber-500/5' : 'border-[var(--elevation-border)] bg-base/20 hover:bg-base/40'}`}>
 
                     {/* ── Badge + désignation ── */}
                     <div className="flex items-start gap-2 px-3 pt-3 pb-1">
@@ -1302,7 +1338,7 @@ export default function InvoiceEditorClient({
                         onChange={e => equipmentMeta ? handleEquipmentAmortizationChange(item.id, 'name', e.target.value) : updateItem(item.id, 'desc', e.target.value)}
                         placeholder={item.is_internal ? "Coût interne (non visible client)..." : 'Description...'}
                         rows={equipmentMeta ? Math.min(3, Math.max(1, equipmentMeta.name.split('\n').length)) : Math.min(6, Math.max(2, item.desc.split('\n').length))}
-                        className={`flex-1 min-h-16 p-2 border rounded-lg outline-none text-primary text-sm leading-6 transition-colors resize-none ${equipmentMeta ? 'bg-base/40 border-purple-300/50 dark:border-purple-500/30 focus:border-purple-400 focus:bg-base/60 font-semibold' : 'bg-transparent border-transparent focus:border-accent focus:bg-base/50'}`}
+                        className={`flex-1 min-h-16 p-2 border rounded-lg outline-none text-primary text-sm leading-6 transition-colors resize-none ${equipmentMeta ? 'bg-base/40 border-purple-300/50 dark:border-purple-500/30 focus:border-purple-400 focus:bg-base/60 font-semibold' : 'bg-base/40 border-[var(--elevation-border)] focus:border-accent focus:bg-base/60'}`}
                       />
                       {/* Actions mobile */}
                       <div className="flex flex-col gap-1 sm:hidden pt-0.5">
@@ -1342,7 +1378,7 @@ export default function InvoiceEditorClient({
                           <p className="p-2 text-right text-sm font-bold tabular-nums text-accent">{item.qty}</p>
                         ) : (
                           <NumericInput value={item.qty} min={0} onChange={v => updateItem(item.id, 'qty', v ?? 0)}
-                            className="w-full p-2 bg-transparent border border-transparent rounded-lg focus:border-accent focus:bg-base/50 outline-none text-primary tabular-nums text-right text-sm transition-colors" />
+                            className="w-full p-2 bg-base/40 border border-[var(--elevation-border)] rounded-lg focus:border-accent focus:bg-base/60 outline-none text-primary tabular-nums text-right text-sm transition-colors" />
                         )}
                         {isEquipment ? (
                           <div className="h-9 flex items-center px-2 bg-purple-500/8 border border-purple-400/30 rounded-lg">
@@ -1360,7 +1396,7 @@ export default function InvoiceEditorClient({
                           ) : (
                             <>
                               <NumericInput value={item.pu} min={0} decimals={2} onChange={v => updateItem(item.id, 'pu', v ?? 0)}
-                                className="w-full p-2 pr-5 bg-transparent border border-transparent rounded-lg outline-none text-sm tabular-nums text-right transition-colors text-primary focus:border-accent focus:bg-base/50" />
+                                className="w-full p-2 pr-5 bg-base/40 border border-[var(--elevation-border)] rounded-lg outline-none text-sm tabular-nums text-right transition-colors text-primary focus:border-accent focus:bg-base/60" />
                               <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-secondary pointer-events-none text-xs">€</span>
                             </>
                           )}
@@ -1375,9 +1411,21 @@ export default function InvoiceEditorClient({
                             {LEGAL_VAT_RATES.map(r => <option key={r} value={r}>{r}%</option>)}
                           </select>
                         )}
-                        <span className={`font-semibold tabular-nums text-sm text-right pr-1 ${isEquipment ? 'text-purple-700 dark:text-purple-300' : item.is_internal ? 'text-amber-500' : 'text-primary'}`}>
-                          {fmt(Number(item.qty) * Number(item.pu))}
-                        </span>
+                        <div className="flex flex-col items-end gap-0.5 pr-1">
+                          <span className={`font-semibold tabular-nums text-sm text-right ${isEquipment ? 'text-purple-700 dark:text-purple-300' : item.is_internal ? 'text-amber-500' : 'text-primary'}`}>
+                            {fmt(Number(item.qty) * Number(item.pu))}
+                          </span>
+                          {internalUnitCost > 0 && !isEquipment && (
+                            <span className="text-[10px] tabular-nums text-secondary/70">
+                              coût {fmt(internalUnitCost)}
+                            </span>
+                          )}
+                          {item.is_internal && !isEquipment && (
+                            <span className="text-[10px] font-semibold text-amber-600">
+                              Interne
+                            </span>
+                          )}
+                        </div>
 	                        <div className="flex items-center gap-1 justify-end shrink-0 relative z-10">
 	                          <button type="button" onClick={() => { if (!isEquipment) updateItem(item.id, 'is_internal', !item.is_internal) }}
                             disabled={isEquipment}
@@ -1431,11 +1479,11 @@ export default function InvoiceEditorClient({
                             <p className="text-[10px] font-semibold text-secondary uppercase tracking-wider">PU HT</p>
                             <div className="relative">
                               {isEquipment ? (
-                                <p className="p-2 text-sm font-bold tabular-nums text-purple-700 dark:text-purple-300 text-right bg-purple-500/8 border border-purple-400/30 rounded-lg">{fmt(Number(item.pu))}</p>
+                              <p className="p-2 text-sm font-bold tabular-nums text-purple-700 dark:text-purple-300 text-right bg-purple-500/8 border border-purple-400/30 rounded-lg">{fmt(Number(item.pu))}</p>
                               ) : (
                                 <>
                                   <NumericInput value={item.pu} min={0} decimals={2} onChange={v => updateItem(item.id, 'pu', v ?? 0)}
-                                    className="w-full p-2 pr-6 border rounded-lg outline-none tabular-nums text-sm bg-base/50 border-[var(--elevation-border)] text-primary focus:border-accent" />
+                                    className="w-full p-2 pr-6 border rounded-lg outline-none tabular-nums text-sm bg-base/40 border-[var(--elevation-border)] text-primary focus:border-accent focus:bg-base/60" />
                                   <span className="absolute right-2 top-1/2 -translate-y-1/2 text-secondary pointer-events-none text-xs">€</span>
                                 </>
                               )}
@@ -1454,9 +1502,21 @@ export default function InvoiceEditorClient({
                           </div>
                         </div>
                         <div className="flex items-center justify-between pt-1 border-t border-[var(--elevation-border)]/50">
+                        <div className="flex flex-col items-end gap-0.5">
                           <span className={`font-bold tabular-nums text-sm ${isEquipment ? 'text-purple-700 dark:text-purple-300' : item.is_internal ? 'text-amber-500' : 'text-primary'}`}>
                             {fmt(Number(item.qty) * Number(item.pu))}
                           </span>
+                          {internalUnitCost > 0 && !isEquipment && (
+                            <span className="text-[10px] tabular-nums text-secondary/70">
+                              coût {fmt(internalUnitCost)}
+                            </span>
+                          )}
+                          {item.is_internal && !isEquipment && (
+                            <span className="text-[10px] font-semibold text-amber-600">
+                              Interne
+                            </span>
+                          )}
+                        </div>
                         </div>
                       </div>
                     </div>
@@ -1694,6 +1754,26 @@ export default function InvoiceEditorClient({
             <span className="text-secondary font-semibold text-sm">TOTAL TTC</span>
             <span className="text-3xl font-bold text-primary tabular-nums tracking-tight">{fmt(totalTtc)}</span>
           </div>
+
+          {/* Autoliquidation TVA sous-traitant BTP */}
+          <div className="flex items-center justify-between pt-1">
+            <div>
+              <p className="text-xs font-medium text-primary">Autoliquidation TVA</p>
+              <p className="text-xs text-secondary">Sous-traitance BTP — art. 283-2 nonies CGI</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsReverseCharge(v => !v)}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${isReverseCharge ? 'bg-accent' : 'bg-[var(--elevation-border)]'}`}
+            >
+              <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${isReverseCharge ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+          {isReverseCharge && (
+            <p className="text-xs text-amber-500 bg-amber-500/10 rounded px-2 py-1.5">
+              La mention "Autoliquidation TVA — art. 283-2 nonies CGI" sera imprimee sur la facture. TVA portee par le donneur d'ordre.
+            </p>
+          )}
 
           {/* Aide déductible (MaPrimeRénov, CEE…) */}
           {!showAid ? (
@@ -2026,6 +2106,13 @@ export default function InvoiceEditorClient({
           onConfirm={confirmInvoiceSend}
         />
       )}
+      <ClientEmailRequiredModal
+        open={emailRequiredOpen}
+        client={getSelectedClientForSend()}
+        documentLabel="la facture"
+        onCancel={() => setEmailRequiredOpen(false)}
+        onSaved={handleClientEmailSaved}
+      />
     </main>
   )
 }

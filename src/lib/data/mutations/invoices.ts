@@ -62,6 +62,7 @@ type ProratedInvoiceRow = {
   quantity: number
   unit: string | null
   unit_price: number
+  unit_cost_ht?: number | null
   vat_rate: number
   is_internal: boolean
   position: number
@@ -110,6 +111,7 @@ export async function saveInvoiceItems(
     chantierId?: string | null
     aidLabel?: string | null
     aidAmount?: number | null
+    isReverseCharge?: boolean
   },
 ): Promise<Result> {
   if (!(await hasPermission('invoices.edit'))) return { error: 'Permission refusée.' }
@@ -182,6 +184,7 @@ export async function saveInvoiceItems(
       chantier_id: meta.chantierId ?? null,
       aid_label: meta.aidLabel ?? null,
       aid_amount: meta.aidAmount ?? null,
+      is_reverse_charge: meta.isReverseCharge ?? false,
       total_ht: totalHt,
       total_tva: totalTva,
       total_ttc: totalTtc,
@@ -296,6 +299,7 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
           client_nom: clientName,
           montant_ttc: new Intl.NumberFormat('fr-FR', { style: 'currency', currency: invoice.currency ?? 'EUR' }).format(invoice.total_ttc ?? 0),
           entreprise_nom: org.name,
+          email_org: org.email ?? '',
         }
         const interpolate = (t: string) => Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), t)
         subject = interpolate(customTpl.subject ?? '')
@@ -489,7 +493,7 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
         id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
         issue_date, due_date, sent_at, paid_at, created_at,
         notes_client, payment_conditions, aid_label, aid_amount, quote_id, chantier_id, client_id,
-        situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference,
+        situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference, is_reverse_charge,
         client:clients(id, company_name, contact_name, first_name, last_name, email, phone,
           address_line1, postal_code, city, siret, siren, vat_number, type),
         items:invoice_items(id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, position, length_m, width_m, height_m, dim_quantity, is_internal, material_id),
@@ -589,6 +593,7 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
       client_nom: clientName,
       montant_ttc: fmtAmount,
       entreprise_nom: organization.name,
+      email_org: organization.email ?? '',
     }
 
     subject = interpolate(tpl.subject, vars)

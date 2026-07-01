@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { resolveCatalogContext, getBusinessActivityById } from '@/lib/catalog-context'
+import { resolveCatalogContext, getBusinessActivityById, normalizeSecondaryActivityIds } from '@/lib/catalog-context'
 import { getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { APP_NAME } from '@/lib/brand'
-import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { fetchRAGContext } from '@/lib/ai/rag'
+import { buildIndustryQualityPrompt } from '@/lib/ai/industry-context'
 import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/membership'
+import { METAL_LABELS, type MetalCode } from '@/lib/metal-prices'
 
 export type AIQuoteItem = {
   designation: string
@@ -35,9 +37,26 @@ export type AIQuoteSection = {
   items: AIQuoteItem[]
 }
 
+export type AIQuoteClientDraft = {
+  type?: 'company' | 'individual' | null
+  company_name?: string | null
+  contact_name?: string | null
+  first_name?: string | null
+  last_name?: string | null
+  email?: string | null
+  phone?: string | null
+  siret?: string | null
+  vat_number?: string | null
+  address_line1?: string | null
+  postal_code?: string | null
+  city?: string | null
+}
+
 export type AIQuoteResult = {
   title: string
   clientName?: string | null
+  clientDraft?: AIQuoteClientDraft | null
+  quoteWarnings?: string[]
   sections: AIQuoteSection[]
 }
 
@@ -45,8 +64,8 @@ export type AIQuoteMultiResult = {
   quotes: AIQuoteResult[]
 }
 
-const TEXT_MODEL = 'google/gemini-2.5-flash-lite'
-const VISION_MODEL = 'google/gemini-2.5-flash-lite'
+const TEXT_MODEL = 'google/gemini-2.5-flash'
+const VISION_MODEL = 'google/gemini-2.5-flash'
 const FALLBACK_MODEL = 'anthropic/claude-sonnet-4-6'
 const FAST_MODEL_TIMEOUT_MS = 35_000
 const FALLBACK_MODEL_TIMEOUT_MS = 45_000
@@ -57,6 +76,8 @@ type QuoteAIContext = {
   sector: string
   activityId: string | null
   activityDescription: string | null
+  secondaryActivityLabels: string[]
+  metalPricingPrompt: string
   clientsContext: string
 }
 
@@ -101,9 +122,22 @@ function quoteTotals(quote: AIQuoteResult): { visibleHt: number; internalHt: num
   return quote.sections.reduce(
     (totals, section) => {
       for (const item of section.items) {
-        const amount = Math.max(0, Number(item.quantity) || 0) * Math.max(0, Number(item.unit_price) || 0)
-        if (item.is_internal) totals.internalHt += amount
-        else totals.visibleHt += amount
+        const qty = Math.max(0, Number(item.quantity) || 0)
+        const price = Math.max(0, Number(item.unit_price) || 0)
+        if (item.is_internal) {
+          // Ligne interne (main d'oeuvre, déplacement...) : son coût réel est unit_cost_ht si renseigné,
+          // sinon unit_price (le taux horaire ou forfait interne).
+          const costPerUnit = item.unit_cost_ht != null
+            ? Math.max(0, Number(item.unit_cost_ht))
+            : price
+          totals.internalHt += qty * costPerUnit
+        } else {
+          totals.visibleHt += qty * price
+          // Coût matière/achat répercuté sur ligne visible
+          if (item.unit_cost_ht != null) {
+            totals.internalHt += qty * Math.max(0, Number(item.unit_cost_ht))
+          }
+        }
       }
       return totals
     },
@@ -149,6 +183,114 @@ function clampConfidence(value: unknown): number | null {
   const n = Number(value)
   if (!Number.isFinite(n)) return null
   return Math.max(0, Math.min(1, Math.round(n * 100) / 100))
+}
+
+function normalizeAIText(value: string | null | undefined): string {
+  return (value ?? '')
+    .replace(/[—–]/g, '-')
+    .replace(/\s+-\s+/g, ' - ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function normalizeAITextOrNull(value: string | null | undefined): string | null {
+  const normalized = normalizeAIText(value)
+  return normalized || null
+}
+
+function removeLongDashes(value: string | null | undefined): string {
+  return (value ?? '').replace(/[—–]/g, '-').trim()
+}
+
+function normalizeUnit(value: string | null | undefined): string {
+  return (value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace('m2', 'm²')
+    .replace('m3', 'm³')
+}
+
+function parseFrenchNumber(value: string): number | null {
+  const n = Number(value.replace(/\s/g, '').replace(',', '.'))
+  return Number.isFinite(n) ? n : null
+}
+
+function collectQuantityCandidates(text: string, unit: string): number[] {
+  const normalizedUnit = normalizeUnit(unit)
+  const candidates: number[] = []
+  const patterns: RegExp[] = []
+
+  if (normalizedUnit === 'ml') {
+    patterns.push(/(\d+(?:[\s.,]\d+)?)\s*(?:ml|m(?:etre|ètre)?s?\s*lineaires?|m(?![m²2³3m]))/giu)
+  } else if (normalizedUnit === 'm²') {
+    patterns.push(/(\d+(?:[\s.,]\d+)?)\s*(?:m²|m2|m\s*(?:carres?|carrés?))/giu)
+  } else if (normalizedUnit === 'm³') {
+    patterns.push(/(\d+(?:[\s.,]\d+)?)\s*(?:m³|m3|m\s*(?:cubes?))/giu)
+  }
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const parsed = parseFrenchNumber(match[1] ?? '')
+      if (parsed != null && parsed > 0) candidates.push(parsed)
+    }
+  }
+
+  return candidates
+}
+
+function inferExplicitQuantity(item: AIQuoteItem): number {
+  const quantity = Number(item.quantity)
+  const safeQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 1
+  const unit = normalizeUnit(item.unit)
+  if (!['ml', 'm²', 'm³'].includes(unit)) return safeQuantity
+
+  const text = [item.designation, item.details, item.description].filter(Boolean).join(' ')
+  if (!text) return safeQuantity
+
+  const parentheticalCandidates = [...text.matchAll(/\(([^)]{1,120})\)/g)]
+    .flatMap(match => collectQuantityCandidates(match[1] ?? '', unit))
+  const candidates = parentheticalCandidates.length > 0 ? parentheticalCandidates : collectQuantityCandidates(text, unit)
+  if (candidates.length === 0) return safeQuantity
+
+  const best = Math.max(...candidates)
+  if (safeQuantity <= 1 || Math.abs(best - safeQuantity) / safeQuantity > 0.25) {
+    return Math.round(best * 1000) / 1000
+  }
+  return safeQuantity
+}
+
+function normalizeClientDraft(value: unknown, clientName: string | null): AIQuoteClientDraft | null {
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as AIQuoteClientDraft
+    : {}
+
+  const clean = (v: string | null | undefined) => normalizeAITextOrNull(v)
+  const siret = clean(raw.siret)?.replace(/\D/g, '').slice(0, 14) ?? null
+  const type = raw.type === 'individual' ? 'individual' : 'company'
+  const draft: AIQuoteClientDraft = {
+    type,
+    company_name: type === 'company' ? clean(raw.company_name) || clientName : null,
+    contact_name: clean(raw.contact_name),
+    first_name: clean(raw.first_name),
+    last_name: clean(raw.last_name),
+    email: clean(raw.email),
+    phone: clean(raw.phone),
+    siret,
+    vat_number: clean(raw.vat_number),
+    address_line1: clean(raw.address_line1),
+    postal_code: clean(raw.postal_code),
+    city: clean(raw.city),
+  }
+
+  if (type === 'individual' && !draft.first_name && !draft.last_name && clientName) {
+    const parts = clientName.split(/\s+/).filter(Boolean)
+    draft.first_name = parts.length > 1 ? parts.slice(0, -1).join(' ') : null
+    draft.last_name = parts.at(-1) ?? clientName
+  }
+
+  return draft.company_name || draft.first_name || draft.last_name || draft.email || draft.phone || draft.siret
+    ? draft
+    : null
 }
 
 function compactIncludedZeroPriceItems(quote: AIQuoteResult): AIQuoteResult {
@@ -205,18 +347,33 @@ function compactIncludedZeroPriceItems(quote: AIQuoteResult): AIQuoteResult {
   }
 }
 
+// Uplift max : évite de multiplier les prix visibles par plus de 2x.
+// Au-delà, le devis est probablement mal construit (coûts internes surestimés) ;
+// on plafonne et on génère un warning plutôt que de livrer des prix aberrants.
+const MAX_UPLIFT_FACTOR = 2.0
+
 function enforceNonDeficitMargin(quote: AIQuoteResult): AIQuoteResult {
   const { visibleHt, internalHt } = quoteTotals(quote)
   if (internalHt <= 0 || visibleHt <= 0) return quote
 
-  // Minimum 20% de marge brute sur les coûts internes estimés.
+  // Minimum 20% de marge brute sur le coût total de revient.
   const minimumVisibleHt = Math.ceil(internalHt * 1.2 * 100) / 100
   if (visibleHt >= minimumVisibleHt) return quote
 
-  const upliftFactor = minimumVisibleHt / visibleHt
+  const rawUplift = minimumVisibleHt / visibleHt
+  const upliftFactor = Math.min(rawUplift, MAX_UPLIFT_FACTOR)
+  const upliftCapped = rawUplift > MAX_UPLIFT_FACTOR
+
+  const warnings = [...(quote.quoteWarnings ?? [])]
+  if (upliftCapped) {
+    warnings.push(
+      `Les coûts internes estimés (${Math.round(internalHt)} € HT) dépassent le seuil raisonnable par rapport au total visible (${Math.round(visibleHt)} € HT). Vérifier les quantités de main-d'oeuvre et les coûts matière avant envoi.`
+    )
+  }
 
   return {
     ...quote,
+    quoteWarnings: warnings,
     sections: quote.sections.map(section => ({
       ...section,
       items: section.items.map(item => {
@@ -242,7 +399,7 @@ function shouldKeepUppercaseWord(word: string): boolean {
 }
 
 function normalizeFrenchSentenceCase(value: string | null | undefined): string {
-  const compact = value?.replace(/\s+/g, ' ').trim()
+  const compact = normalizeAIText(value)
   if (!compact) return ''
 
   const words = compact.match(/[\p{L}\p{N}'’.-]+/gu) ?? []
@@ -266,25 +423,31 @@ function normalizeFrenchSentenceCase(value: string | null | undefined): string {
 }
 
 function normalizeAIQuote(quote: AIQuoteResult): AIQuoteResult {
+  const clientName = normalizeAITextOrNull(quote.clientName)
   const normalized = {
     ...quote,
-    title: normalizeFrenchSentenceCase(quote.title) || quote.title,
-    clientName: typeof quote.clientName === 'string' && quote.clientName.trim() ? quote.clientName.trim() : null,
+    title: normalizeFrenchSentenceCase(quote.title) || normalizeAIText(quote.title),
+    clientName,
+    clientDraft: normalizeClientDraft(quote.clientDraft, clientName),
+    quoteWarnings: Array.isArray(quote.quoteWarnings) ? quote.quoteWarnings.map(warning => normalizeAIText(warning)).filter(Boolean).slice(0, 8) : [],
     sections: quote.sections.map(section => ({
       ...section,
-      title: normalizeFrenchSentenceCase(section.title) || section.title,
+      title: normalizeFrenchSentenceCase(section.title) || normalizeAIText(section.title),
       items: section.items.map(item => {
-        const designation = normalizeFrenchSentenceCase(item.designation) || normalizeFrenchSentenceCase(splitStructuredDescription(item.description).designation) || item.designation || item.description
-        const details = item.details?.trim() || splitStructuredDescription(item.description).details
-        const description = composeStructuredDescription(designation, details, item.description)
+        const designation = normalizeFrenchSentenceCase(item.designation) || normalizeFrenchSentenceCase(splitStructuredDescription(item.description).designation) || normalizeAIText(item.designation) || normalizeAIText(item.description)
+        const details = normalizeAITextOrNull(item.details) || normalizeAITextOrNull(splitStructuredDescription(item.description).details)
+        const description = removeLongDashes(composeStructuredDescription(designation, details, item.description))
+        const rawQuantity = inferExplicitQuantity({ ...item, designation, details, description })
+        const quantity = rawQuantity > 0 ? rawQuantity : 1
         return {
           ...item,
           designation,
           details,
           description,
+          quantity,
           ai_confidence: clampConfidence(item.ai_confidence),
           ai_source: item.ai_source ?? (item.is_estimated ? 'ai_estimate' : 'client_input'),
-          ai_warnings: Array.isArray(item.ai_warnings) ? item.ai_warnings.filter(Boolean).slice(0, 5) : [],
+          ai_warnings: Array.isArray(item.ai_warnings) ? item.ai_warnings.map(warning => normalizeAIText(warning)).filter(Boolean).slice(0, 5) : [],
           is_internal: item.is_internal === true || looksInternalLine(section.title, description),
         }
       }),
@@ -295,7 +458,7 @@ function normalizeAIQuote(quote: AIQuoteResult): AIQuoteResult {
 }
 
 // Charge le catalogue, les postes récents et les infos de l'org pour enrichir le contexte IA
-async function loadCatalogContext(orgId: string): Promise<{ context: string; sector: string; activityId: string | null; activityDescription: string | null }> {
+async function loadCatalogContext(orgId: string): Promise<{ context: string; sector: string; activityId: string | null; activityDescription: string | null; secondaryActivityLabels: string[]; metalPricingPrompt: string }> {
   const supabase = await createClient()
 
   const [
@@ -303,10 +466,11 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
     { data: materials },
     { data: laborRates },
     { data: recentItems },
+    { data: metalGrids },
   ] = await Promise.all([
     supabase
       .from('organizations')
-      .select('sector, name, business_profile, business_activity_id')
+      .select('sector, name, business_profile, business_activity_id, secondary_activity_ids, has_metal_pricing')
       .eq('id', orgId)
       .single(),
     supabase
@@ -330,6 +494,12 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
       .not('unit_price', 'eq', 0)
       .order('created_at', { ascending: false })
       .limit(80),
+    supabase
+      .from('metal_price_grids')
+      .select('label, metal_code, coefficient, unit')
+      .eq('organization_id', orgId)
+      .eq('is_active', true)
+      .order('position', { ascending: true }),
   ])
 
   // Variantes tarifaires pour les articles/services qui en ont
@@ -376,9 +546,11 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
   }
 
   if (laborRates && laborRates.length > 0) {
-    lines.push('\n## Ressources internes (utilise ces couts en priorité pour estimer la main-d\'oeuvre interne) :')
+    lines.push('\n## Ressources internes (prix vendu et cout interne pour la main-d\'oeuvre masquee) :')
     for (const l of laborRates) {
-      lines.push(`- ${l.designation} | ${l.unit ?? 'h'} | ${getInternalResourceUnitCost(l as { cost_rate: number | null; rate: number | null })} € HT`)
+      const costRate = getInternalResourceUnitCost(l as { cost_rate: number | null; rate: number | null })
+      const saleRate = l.rate ?? costRate
+      lines.push(`- ${l.designation} | ${l.unit ?? 'h'} | prix vendu ${saleRate} € HT | cout interne ${costRate} € HT`)
     }
   }
 
@@ -401,8 +573,40 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
 
   const activity = getBusinessActivityById(org?.business_activity_id ?? null)
   const activityDescription = activity?.description ?? null
+  const secondaryActivityLabels = normalizeSecondaryActivityIds(org?.secondary_activity_ids, org?.business_activity_id)
+    .map((activityId) => getBusinessActivityById(activityId)?.label)
+    .filter((label): label is string => Boolean(label))
+  const metalPricingPrompt = org?.has_metal_pricing
+    ? buildMetalPricingPrompt(metalGrids ?? [])
+    : ''
 
-  return { context: lines.join('\n'), sector, activityId: org?.business_activity_id ?? null, activityDescription }
+  return { context: lines.join('\n'), sector, activityId: org?.business_activity_id ?? null, activityDescription, secondaryActivityLabels, metalPricingPrompt }
+}
+
+function buildMetalPricingPrompt(grids: Array<{ label: string; metal_code: string; coefficient: number; unit: string }>): string {
+  const lines = [
+    '## Module prix matières métaux',
+    'Le module prix matières métaux est activé pour cette entreprise.',
+    'Règles obligatoires :',
+    '- Utilise les prix catalogue client en priorité quand une correspondance existe.',
+    '- Si une grille matière correspond à la demande, tu peux proposer un prix indicatif basé sur la grille, mais tu dois ajouter un warning.',
+    '- Ne présente jamais le cours LME comme un prix d’achat réel.',
+    '- Le prix final doit rester validé par l’artisan selon fournisseur, format, épaisseur, coupe et livraison.',
+    '- Ne mets jamais de cours brut LME dans le devis client.',
+  ]
+
+  if (grids.length > 0) {
+    lines.push('Grilles configurées :')
+    for (const grid of grids) {
+      const metalLabel = METAL_LABELS[grid.metal_code as MetalCode] ?? grid.metal_code
+      lines.push(`- ${grid.label} : ${metalLabel} x ${Number(grid.coefficient).toFixed(2)} en ${grid.unit}`)
+    }
+    lines.push('Warning à ajouter si tu utilises une grille : "Prix matière proposé depuis une grille de référence client. À valider selon fournisseur, format, épaisseur, coupe et livraison."')
+  } else {
+    lines.push('Aucune grille n’est configurée : n’utilise pas de prix métal indicatif et demande à l’artisan de configurer ses grilles.')
+  }
+
+  return lines.join('\n')
 }
 
 async function loadClientsContext(orgId: string): Promise<string> {
@@ -442,17 +646,23 @@ async function loadQuoteAIContext(orgId: string): Promise<QuoteAIContext> {
   return value
 }
 
-function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string, activityDescription: string | null, clientsContext: string): string {
+function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string, activityDescription: string | null, secondaryActivityLabels: string[], metalPricingPrompt: string, clientsContext: string): string {
   const hasCatalog = catalogContext.trim().length > 0
   const activityContext = activityDescription ? `\nSpécificité métier : ${activityDescription}` : ''
-  const clientContextBlock = clientsContext.trim()
-    ? `\n## Clients, prospects et leads connus\nUtilise cette liste uniquement pour associer \`clientName\` quand la correspondance est forte (nom, société, email ou téléphone très proche). En cas d'ambiguïté, garde le nom détecté mais ajoute un warning sur les lignes concernées ou au devis.\n${clientsContext}\n`
+  const secondaryActivityContext = secondaryActivityLabels.length > 0
+    ? `\nActivités secondaires : ${secondaryActivityLabels.join(', ')}`
     : ''
+  const clientContextBlock = clientsContext.trim()
+    ? `\n## Clients, prospects et leads connus\nUtilise cette liste uniquement pour associer \`clientName\` quand la correspondance est forte (nom, société, email ou téléphone très proche). Si le client mentionné n'existe pas clairement dans cette liste, garde le nom détecté et renseigne \`clientDraft\` comme nouveau prospect à vérifier. En cas d'ambiguïté, ajoute un warning au devis.\n${clientsContext}\n`
+    : ''
+  const industryQualityPrompt = buildIndustryQualityPrompt({ sector, activityDescription, secondaryActivityLabels, usage: 'quote' })
 
-  return `Tu t'appelles Sarah. Tu es chiffreuse et experte devis chez ATELIER by Orsayn. Tu travailles pour une entreprise française du métier : **${sector}**.${activityContext} À partir d'une description de travaux, tu extrais et structures les postes en sections et lignes de devis, et tu estimes la main-d'oeuvre nécessaire.
+  return `Tu t'appelles Chloé. Tu es chiffreuse et experte devis chez ATELIER by Orsayn. Tu travailles pour une entreprise française du métier : **${sector}**.${activityContext}${secondaryActivityContext} À partir d'une description de travaux, tu extrais et structures les postes en sections et lignes de devis, et tu estimes la main-d'oeuvre nécessaire.
 
 Tu parles comme un pro du terrain : direct, précis, sans jargon inutile. Tu connais ton métier sur le bout des doigts.
 ${clientContextBlock}
+${metalPricingPrompt ? `\n${metalPricingPrompt}\n` : ''}
+${industryQualityPrompt ? `\n${industryQualityPrompt}\n` : ''}
 ${hasCatalog ? `
 ${catalogContext}
 
@@ -460,16 +670,20 @@ ${catalogContext}
 1. **Correspondance catalogue** : si la désignation correspond EXACTEMENT ou TRÈS ÉTROITEMENT à un élément du catalogue ci-dessus → utilise son prix et son unité. Si l'article a des variantes (ex: couleur, dimensions, matière), choisis la variante la plus pertinente et note-la dans la description. Mets \`is_estimated: false\`. Pour les articles (pas les services), renseigne aussi \`unit_cost_ht\` avec le coût d'achat catalogue si connu, sinon estime-le.
 2. **Correspondance devis récents** : si le poste correspond à un poste déjà facturé → utilise ce prix. Mets \`is_estimated: false\`.
 3. **Estimation IA** : si aucune correspondance → estime un prix réaliste pour le secteur **${sector}** et le corps de métier concerné. Mets \`is_estimated: true\`. Arrondis toujours à la dizaine supérieure (ex: 47 → 50, 123 → 130).
-4. **Coût interne \`unit_cost_ht\`** : pour toute ligne visible (is_internal: false), estime le coût interne unitaire (coût d'achat matière, coût de sous-traitance, coût de revient). Ce champ n'est jamais affiché au client, il sert uniquement au calcul de marge en interne. Arrondis à la dizaine inférieure pour être conservateur. Si tu ne peux pas estimer, laisse null.
+4. **Coût interne \`unit_cost_ht\`** : pour toute ligne visible (is_internal: false), estime le coût interne unitaire (coût d'achat matière, coût de sous-traitance, coût de revient). Ce champ n'est jamais affiché au client, il sert uniquement au calcul de marge en interne. Arrondis à la dizaine inférieure pour être conservateur. Le \`unit_cost_ht\` doit toujours être inférieur au \`unit_price\` de la même ligne (sinon la ligne est déficitaire à elle seule). Si tu ne peux pas estimer, laisse null.
 - Les articles marqués **[prix dimensionnel]** ont un prix calculé selon les dimensions (m², ml, m³) : utilise la surface ou longueur mentionnée dans la description comme quantité.
-- Les éléments marqués **[service]** sont des prestations de main-d'œuvre ou services : inclus-les dans la section "Main-d'œuvre" ou dans la section concernée selon le contexte.
+- Les éléments marqués **[service]** sont des prestations de main d'oeuvre ou services : inclus-les dans la section "Main d'oeuvre" ou dans la section concernée selon le contexte.
 - Ne jamais laisser unit_price à 0.
-- Ne crée jamais un devis déficitaire : les coûts internes doivent être répercutés dans les lignes visibles par le client, par exemple en ajustant les quantités, forfaits ou prix visibles.
-- Si tu utilises des prix catalogue visibles mais que les coûts internes rendent le devis déficitaire, ajoute une marge de sécurité dans les lignes visibles tout en gardant les coûts internes masqués.
+- Le client achète des ouvrages/prestations visibles, pas le détail de la cuisine interne. Les lignes visibles doivent donc porter le prix vendu final de l'ouvrage, matière + main d'oeuvre + équipement + marge.
+- Les lignes internes (is_internal: true) servent à modéliser les ressources masquées : main d'oeuvre, préparation, atelier, pose, équipement. Pour ces lignes internes, \`unit_price\` = montant vendu interne à dispatcher dans les lignes visibles ; \`unit_cost_ht\` = coût réel de revient. Exemple : 100 h vendues 20 €/h et coûtant 10 €/h → ligne interne quantity 100, unit_price 20, unit_cost_ht 10, is_internal true.
+- Ne crée jamais un devis déficitaire : le montant vendu des lignes internes doit être répercuté dans les lignes visibles par le client, par exemple en ajustant les quantités, forfaits ou prix visibles.
+- Si tu utilises des prix catalogue visibles mais que les ressources internes ne sont pas couvertes, ajoute leur montant vendu dans les lignes visibles tout en gardant les ressources internes masquées pour la marge.
 ` : `
 - Si le prix n'est pas mentionné dans la description, estime un prix réaliste pour le secteur **${sector}** et mets \`is_estimated: true\`. Arrondis toujours à la dizaine supérieure.
 - Pour toute ligne visible (is_internal: false), renseigne \`unit_cost_ht\` avec le coût interne unitaire estimé quand c'est possible (achat, sous-traitance, coût de revient). Laisse null uniquement si tu ne peux vraiment pas l'estimer.
-- Ne crée jamais un devis déficitaire : répercute les coûts internes dans les lignes visibles par le client.
+- Le client achète des ouvrages/prestations visibles, pas le détail interne. Les lignes visibles doivent porter le prix vendu final.
+- Pour les lignes internes (is_internal: true), \`unit_price\` = montant vendu interne à dispatcher dans les lignes visibles ; \`unit_cost_ht\` = coût réel de revient. Exemple : 100 h vendues 20 €/h et coûtant 10 €/h → quantity 100, unit_price 20, unit_cost_ht 10.
+- Ne crée jamais un devis déficitaire : répercute le montant vendu des lignes internes dans les lignes visibles par le client.
 `}
 ## Détection de plusieurs devis
 Si la description contient plusieurs projets ou chantiers **clairement distincts et séparés** (ex: "chantier A : ... / chantier B : ...", ou plusieurs adresses, ou plusieurs clients), génère un devis séparé pour chacun.
@@ -487,6 +701,23 @@ Retourne UNIQUEMENT un objet JSON valide avec cette structure exacte :
   "quotes": [
     {
       "clientName": "Nom du client mentionné, ou null si aucun client clair",
+      "clientDraft": {
+        "type": "company",
+        "company_name": "Raison sociale si client professionnel nouveau ou détecté",
+        "contact_name": "Interlocuteur ou null",
+        "first_name": null,
+        "last_name": null,
+        "email": null,
+        "phone": null,
+        "siret": null,
+        "vat_number": null,
+        "address_line1": null,
+        "postal_code": null,
+        "city": null
+      },
+      "quoteWarnings": [
+        "Points de contrôle métier, conformité, prix ou planning à vérifier avant envoi"
+      ],
       "title": "Titre court du projet (5-8 mots, professionnel, ex: Réfection toiture bâtiment nord)",
       "sections": [
         {
@@ -519,21 +750,50 @@ Retourne UNIQUEMENT un objet JSON valide avec cette structure exacte :
 }
 Le tableau "quotes" contient toujours au moins 1 élément.
 
-## Main-d'œuvre - règle importante :
-Dans un cahier des charges, le client décrit rarement la main-d'œuvre à déployer, c'est l'entreprise qui en décide. Si la MO n'est PAS mentionnée dans le document, tu dois estimer et inclure les postes de main-d'œuvre nécessaires pour réaliser les travaux :
-- Cherche d'abord dans les "Ressources internes" ci-dessus. Si tu trouves une désignation correspondante → utilise ce cout de reference, mets \`is_estimated: false\`.
-- Si aucune correspondance dans le catalogue MO → estime un taux horaire ou forfaitaire réaliste pour le secteur **${sector}** et le type de poste. Mets \`is_estimated: true\`. Arrondis à la dizaine supérieure.
-- Si la MO est déjà explicitement mentionnée dans le document (nombre de personnes, heures, équipes…) → extrais-la telle quelle et n'en rajoute pas d'autre.
-- Regroupe les postes MO dans une section dédiée "Main-d'œuvre" ou intègre-les dans les sections pertinentes selon le contexte.
+## Client et identité commerciale
+- Si la demande mentionne une entreprise cliente (ex: "Client : Laboratoires X SAS"), \`clientName\` doit être cette entreprise, pas le nom de l'utilisateur ni un client par défaut.
+- Renseigne \`clientDraft\` avec toutes les informations trouvées : raison sociale, interlocuteur, email, téléphone, SIRET, TVA, adresse, code postal, ville.
+- Si seul un particulier est mentionné, mets \`type: "individual"\` et renseigne prénom/nom quand c'est possible.
+- Si aucun client clair n'est mentionné, mets \`clientName: null\` et \`clientDraft: null\`.
+- Ne choisis jamais un client connu de la base si la correspondance n'est pas forte.
+
+## Contrôle devis professionnel
+- Quand le cahier des charges demande des livrables, contraintes HSE, certifications, notes de calcul, planning, matériaux ou procédés spécifiques, ajoute-les soit dans les détails des lignes concernées, soit dans \`quoteWarnings\` si ce sont des points à vérifier ou pièces à fournir avant envoi.
+- Pour les environnements réglementés (pharma, agroalimentaire, médical, industriel), baisse la confiance si certifications, traçabilité matière, habilitations, note de calcul, planning d'intervention ou méthodes de pose ne sont pas chiffrés explicitement.
+- Si un budget indicatif est donné : cible un total HT visible proche de ce budget (±15%). Si tes estimations dépassent ce budget, réduis les prix unitaires ou les quantités de main d'oeuvre en conséquence, et ajoute un warning expliquant les postes qui ont été ajustés. Ne dépasse jamais le budget de plus de 15% sans warning explicite.
+- Si un délai ou planning attendu est donné, ajoute un warning ou une ligne forfaitaire de préparation/coordination si nécessaire.
+
+## Main d'oeuvre - règle importante :
+Dans un cahier des charges, le client décrit rarement la main d'oeuvre à déployer, c'est l'entreprise qui en décide. Si la main d'oeuvre n'est PAS mentionnée dans le document, tu dois estimer et inclure les postes de main d'oeuvre nécessaires pour réaliser les travaux :
+- Cherche d'abord dans les "Ressources internes" ci-dessus. Si tu trouves une désignation correspondante -> utilise son prix vendu dans \`unit_price\`, son coût interne dans \`unit_cost_ht\`, et mets \`is_estimated: false\`.
+- Si aucune correspondance dans le catalogue de main d'oeuvre -> estime un taux vendu réaliste pour le secteur **${sector}** et le type de poste, puis estime un coût de revient inférieur dans \`unit_cost_ht\`. Mets \`is_estimated: true\`. Arrondis le taux vendu à la dizaine supérieure.
+- Si la main d'oeuvre est déjà explicitement mentionnée dans le document (nombre de personnes, heures, équipes...) -> extrais-la telle quelle et n'en rajoute pas d'autre.
+- Regroupe les postes de main d'oeuvre dans une section dédiée "Main d'oeuvre" ou intègre-les dans les sections pertinentes selon le contexte.
 - Estime des quantités d'heures réalistes en fonction de l'ampleur des travaux décrits.
-- Toutes les lignes de main-d'œuvre, déplacement, transport, carburant, frais de route, marge interne, préparation interne, coordination interne ou coût de revient doivent avoir \`is_internal: true\`.
-- Ces lignes internes servent au calcul de marge de l'entreprise et ne doivent pas être visibles sur le devis client.
-- Après avoir ajouté ces coûts internes, vérifie la marge : le total HT visible client doit toujours couvrir les coûts internes avec une marge positive. Si ce n'est pas le cas, augmente les quantités, forfaits ou prix des lignes visibles, jamais les lignes internes.
+- Toutes les lignes de main d'oeuvre, marge interne, préparation interne et coordination interne doivent avoir \`is_internal: true\`.
+- Ces lignes internes ne sont pas visibles sur le devis client. Leur \`unit_price\` représente le montant vendu à dispatcher dans les lignes visibles ; leur \`unit_cost_ht\` représente le coût réel utilisé pour la marge.
+- Les lignes visibles doivent rester des prestations/ouvrages achetés par le client et intégrer commercialement le montant vendu de la main d'oeuvre interne.
+- Ne génère JAMAIS de ligne transport, déplacement, carburant ou frais de route : l'utilisateur les ajoute lui-même via un outil dédié dans l'éditeur.
+
+## Finitions et codes couleur RAL
+Si une couleur ou finition est mentionnée dans la demande, utilise directement le code RAL standard correspondant dans la description - ne mets pas "(RAL à définir)". Correspondances courantes : gris anthracite = RAL 7016, gris clair = RAL 7035, blanc = RAL 9016, blanc pur = RAL 9010, noir = RAL 9005, beige = RAL 1013, rouge = RAL 3000, vert = RAL 6005, bleu = RAL 5010, aluminium = RAL 9006. Si la couleur mentionnée n'a pas de RAL standard évident, alors seulement tu peux écrire "(RAL à confirmer avec le client)".
+
+## Règle fondamentale de marge - NE JAMAIS créer un devis déficitaire :
+Le coût total de revient = coûts réels des lignes internes (unit_cost_ht si renseigné, sinon unit_price) + coûts matière/prestation (unit_cost_ht des lignes visibles).
+Le total HT visible client doit TOUJOURS couvrir ce coût total avec une marge positive (minimum 20%) ET inclure commercialement le montant vendu des lignes internes.
+Méthode de vérification obligatoire avant de retourner le JSON :
+1. Calcule : coût_total = somme(qty × (unit_cost_ht si renseigné sinon unit_price) pour lignes internes) + somme(qty × unit_cost_ht pour lignes visibles où unit_cost_ht est renseigné)
+2. Calcule : montant_interne_a_vendre = somme(qty × unit_price pour lignes internes)
+3. Calcule : total_visible = somme(qty × unit_price pour lignes visibles)
+4. Si total_visible ne couvre pas le montant_interne_a_vendre et les autres postes visibles, augmente les unit_price des lignes visibles proportionnellement : le client doit voir le prix final de l'ouvrage, pas les ressources internes.
+5. Si total_visible < coût_total × 1.2 → augmente encore les unit_price des lignes visibles proportionnellement jusqu'à atteindre coût_total × 1.2. Ne touche jamais aux unit_cost_ht.
+6. Ne double pas les coûts : si une main d'oeuvre est déjà entièrement intégrée dans le unit_price d'une ligne visible ET que tu n'as pas besoin de la suivre en marge interne, ne crée pas aussi une ligne interne pour ce même coût.
 
 ${ragContext ? `\n## Mémoire de l'entreprise (devis et tarifs de référence issus de projets passés) :\n${ragContext}\n\n` : ''}Règles générales :
 - Si un nom de client, entreprise, particulier, adresse email ou contact est mentionné, renseigne \`clientName\` avec la chaîne la plus précise. Pour plusieurs devis avec plusieurs clients, renseigne le bon \`clientName\` sur chaque devis.
 - Le champ \`title\` doit synthétiser le projet en un titre court et professionnel. Si un titre ou nom de chantier est explicitement mentionné dans le document, utilise-le. Sinon, forge un titre clair (ex: "Bardage acier façade entrepôt B", "Rénovation cuisine appartement 3e étage").
 - Typographie française obligatoire : pas de Title Case / majuscule à chaque mot dans les titres, sections et descriptions. Utilise la casse phrase ("Pose de tableau électrique", pas "Pose De Tableau Électrique"). Garde les majuscules uniquement pour les noms propres, marques, acronymes et références techniques (PVC, TIG, S235).
+- N'utilise jamais de tiret cadratin ni de demi-cadratin dans les titres, sections, désignations, détails ou warnings. Si un séparateur est nécessaire, utilise un tiret simple entouré d'espaces.
 - Chaque ligne doit distinguer \`designation\` et \`details\` : la designation est courte et commerciale ("Pose de carrelage mural"), details contient les précisions ("Comprend préparation support, colle, joints, nettoyage"). Ne mets pas toute la ligne dans \`details\`.
 - \`description\` doit rester un fallback compatible : reprends la designation, puis si details existe ajoute "Comprend :" et les détails.
 - \`ai_confidence\` vaut 0 à 1. Baisse la confiance si quantité absente, plan peu lisible, prix estimé, client ambigu ou document incomplet.
@@ -543,6 +803,8 @@ ${ragContext ? `\n## Mémoire de l'entreprise (devis et tarifs de référence is
 - TVA : 10% pour rénovation logement existant, 20% par défaut (neuf, travaux neufs)
 - Unités courantes : u (unité), m² (mètre carré), ml (mètre linéaire), m³ (mètre cube), h (heure), forfait
 - Si des quantités sont mentionnées dans la description, extrais-les ; sinon mets 1
+- Si une quantité est donnée entre parenthèses ou dans le détail d'une ligne, elle doit devenir la \`quantity\` de la ligne. Exemple : garde-corps indiqué "(48 m)" → quantity 48, unit "ml", pas quantity 1.
+- Pour un périmètre, une surface ou un linéaire déduit de dimensions, calcule la quantité quand c'est fiable et ajoute l'hypothèse dans \`details\` ou \`ai_warnings\`.
 - **Tarification dimensionnelle** : si un poste a des dimensions explicites (ex: "3 pièces de 4×5m", "cloison de 2,5m × 12m", "2 longueurs de 8ml"), utilise les champs \`dimension_pricing_mode\`, \`length_m\`, \`width_m\`, \`height_m\` et \`dim_quantity\` (multiplicateur d'unités). La \`quantity\` finale = dim_quantity × (L × l ou L ou L × l × H). Si le poste n'a pas de dimensions explicites, laisse \`dimension_pricing_mode\` à null ou "none".
   - mode "linear" : longueur seule en mètres → unité = ml
   - mode "area" : longueur × largeur en mètres → unité = m²
@@ -589,6 +851,10 @@ export async function POST(req: NextRequest) {
   }
   const userId = user.id
 
+  if (!await hasPermission('ai.manage')) {
+    return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
+  }
+
   if (!await hasPermission('quotes.create')) {
     return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
   }
@@ -623,11 +889,11 @@ export async function POST(req: NextRequest) {
 
   const context = orgId
     ? await loadQuoteAIContext(orgId)
-    : { context: '', sector: 'BTP', activityId: null, activityDescription: null, clientsContext: '' }
+    : { context: '', sector: 'BTP', activityId: null, activityDescription: null, secondaryActivityLabels: [], metalPricingPrompt: '', clientsContext: '' }
   const ragContext = orgId
     ? await fetchRAGContext(orgId, queryText, { activityId: context.activityId })
     : ''
-  const systemPrompt = buildSystemPrompt(context.context, context.sector, ragContext, context.activityDescription, context.clientsContext)
+  const systemPrompt = buildSystemPrompt(context.context, context.sector, ragContext, context.activityDescription, context.secondaryActivityLabels, context.metalPricingPrompt, context.clientsContext)
 
   if (contentType.includes('multipart/form-data')) {
     const formData = formDataCache!
@@ -698,7 +964,7 @@ export async function POST(req: NextRequest) {
     try {
       quotes = await callQuoteModel(model, FAST_MODEL_TIMEOUT_MS)
     } catch (fastErr) {
-      if (fastErr instanceof AIQuotaExceededError || fastErr instanceof AIModuleDisabledError || fastErr instanceof AIRateLimitError) {
+      if (fastErr instanceof AIQuotaExceededError || fastErr instanceof AIModuleDisabledError || fastErr instanceof AIRateLimitError || fastErr instanceof AIProviderCreditError) {
         throw fastErr
       }
       console.warn('[ai/analyze-quote] fast model error, trying fallback', fastErr instanceof Error ? fastErr.message : fastErr)
@@ -731,6 +997,9 @@ export async function POST(req: NextRequest) {
     }
     if (err instanceof AIRateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 })
+    }
+    if (err instanceof AIProviderCreditError && err.aiBillingMode === 'client_owned') {
+      return NextResponse.json({ error: 'Rechargez vos crédits OpenRouter ou vérifiez la clé OpenRouter de votre organisation pour continuer.' }, { status: 402 })
     }
     console.error('[ai/analyze-quote]', err)
     return NextResponse.json({ error: 'Erreur lors de l\'analyse IA' }, { status: 500 })

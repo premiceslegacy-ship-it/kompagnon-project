@@ -46,7 +46,7 @@ export type ChantierProfitability = {
   budgetHt: number
   budgetCostMaterial: number  // coût d'achat budgété (unit_cost_ht × qty) lignes material du devis
   budgetCostLabor: number     // coût interne budgété (unit_cost_ht × qty) lignes labor du devis
-  budgetCostTotal: number     // budgetCostMaterial + budgetCostLabor
+  budgetCostTotal: number     // tous les coûts budgétés du devis avec unit_cost_ht
   revenueHt: number           // factures émises liées au devis
   collectedRevenueHt: number  // part HT encaissée des factures liées
   costMaterial: number        // dépenses catégorie materiel
@@ -108,6 +108,7 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
   // 2. Budgets de coûts réels depuis les lignes du devis (unit_cost_ht × quantity)
   let budgetCostMaterial = 0
   let budgetCostLabor = 0
+  let budgetCostOther = 0
   if (chantier.quote_id) {
     const { data: quoteItems } = await supabase
       .from('quote_items')
@@ -118,9 +119,10 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
       const cost = (item.unit_cost_ht as number) * (item.quantity as number)
       if (item.type === 'material') budgetCostMaterial += cost
       else if (item.type === 'labor') budgetCostLabor += cost
+      else budgetCostOther += cost
     }
   }
-  const budgetCostTotal = budgetCostMaterial + budgetCostLabor
+  const budgetCostTotal = budgetCostMaterial + budgetCostLabor + budgetCostOther
 
   // 3. Taux horaire org (fallback si membre sans taux défini)
   const { data: org } = await supabase

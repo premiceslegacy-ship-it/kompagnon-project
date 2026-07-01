@@ -6,7 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { canManageLaborRates, hasPermission, requirePermission } from '@/lib/data/queries/membership'
 import { coerceLegalVatRate, todayParis } from '@/lib/utils'
-import { sendPushToOrg } from '@/lib/push'
+import { getPlanningRecipientUserIds, sendPushToOrgPermission, sendPushToUsers } from '@/lib/push'
 
 type Result = { error: string | null }
 
@@ -18,6 +18,7 @@ type ProratedInvoiceRow = {
   quantity: number
   unit: string | null
   unit_price: number
+  unit_cost_ht?: number | null
   vat_rate: number
   is_internal: boolean
   position: number
@@ -163,6 +164,85 @@ async function memberBelongsToOrg(
     .eq('organization_id', orgId)
     .maybeSingle()
   return !!data
+}
+
+async function userCanPointOnChantier(userId: string, orgId: string, chantierId: string): Promise<boolean> {
+  if (await hasPermission('chantiers.manage_pointages') || await hasPermission('chantiers.edit')) return true
+
+  const admin = createAdminClient()
+  const { data: memberRows } = await admin
+    .from('chantier_equipe_membres')
+    .select('id, equipe_id')
+    .eq('organization_id', orgId)
+    .eq('profile_id', userId)
+
+  const memberIds = (memberRows ?? []).map((m: any) => m.id).filter(Boolean)
+  const equipeIds = (memberRows ?? []).map((m: any) => m.equipe_id).filter(Boolean)
+
+  const checks: any[] = [
+    admin
+      .from('chantier_taches')
+      .select('id')
+      .eq('chantier_id', chantierId)
+      .eq('assigned_to', userId)
+      .limit(1)
+      .maybeSingle(),
+  ]
+
+  if (memberIds.length > 0) {
+    checks.push(
+      admin
+        .from('chantier_individual_members')
+        .select('id')
+        .eq('chantier_id', chantierId)
+        .in('member_id', memberIds)
+        .limit(1)
+        .maybeSingle(),
+      admin
+        .from('chantier_plannings')
+        .select('id')
+        .eq('chantier_id', chantierId)
+        .in('member_id', memberIds)
+        .limit(1)
+        .maybeSingle(),
+      admin
+        .from('chantier_task_assignments')
+        .select('id, tache:chantier_taches!inner(chantier_id)')
+        .eq('tache.chantier_id', chantierId)
+        .in('member_id', memberIds)
+        .limit(1)
+        .maybeSingle(),
+    )
+  }
+
+  if (equipeIds.length > 0) {
+    checks.push(
+      admin
+        .from('chantier_equipe_chantiers')
+        .select('id')
+        .eq('chantier_id', chantierId)
+        .in('equipe_id', equipeIds)
+        .limit(1)
+        .maybeSingle(),
+      admin
+        .from('chantier_plannings')
+        .select('id')
+        .eq('chantier_id', chantierId)
+        .in('equipe_id', equipeIds)
+        .limit(1)
+        .maybeSingle(),
+      admin
+        .from('chantier_task_assignments')
+        .select('id, tache:chantier_taches!inner(chantier_id)')
+        .eq('tache.chantier_id', chantierId)
+        .in('equipe_id', equipeIds)
+        .limit(1)
+        .maybeSingle(),
+    )
+  }
+
+  const results = await Promise.all(checks)
+  return results.some(result => Boolean((result as any).data))
 }
 
 // ─── Chantier ─────────────────────────────────────────────────────────────────
@@ -590,11 +670,11 @@ export async function updateMyAssignedTaskStatus(
         actor_name: actorName,
       },
     })
-    sendPushToOrg(orgId, {
+    sendPushToOrgPermission(orgId, 'chantiers.edit', {
       title: 'Tâche terminée',
       body: `${actorName} a terminé "${task.title}"${chantierTitle ? ` — ${chantierTitle}` : ''}`,
       url: `/chantiers/${task.chantier_id}`,
-    }).catch(() => {})
+    }, user.id).catch(() => {})
   }
 
   revalidatePath('/dashboard')
@@ -787,6 +867,9 @@ export async function createPointage(
   if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) {
     return { error: 'Chantier introuvable ou non autorisé.' }
   }
+  if (!await userCanPointOnChantier(user.id, orgId, chantierId)) {
+    return { error: "Ce chantier ne vous est pas affecté." }
+  }
 
   if (data.hours <= 0 || data.hours > 24) {
     return { error: 'Le nombre d\'heures doit être compris entre 0.5 et 24.' }
@@ -809,6 +892,16 @@ export async function createPointage(
     console.error('[createPointage]', error)
     return { error: 'Erreur lors de l\'enregistrement du pointage.' }
   }
+
+  const [{ data: profile }, { data: chantier }] = await Promise.all([
+    supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle(),
+    supabase.from('chantiers').select('title').eq('id', chantierId).eq('organization_id', orgId).maybeSingle(),
+  ])
+  sendPushToOrgPermission(orgId, 'chantiers.manage_pointages', {
+    title: 'Pointage enregistré',
+    body: `${profile?.full_name ?? user.email ?? 'Un membre'} a pointé ${data.hours}h — ${chantier?.title ?? 'Chantier'}`,
+    url: `/chantiers/${chantierId}`,
+  }, user.id).catch(() => {})
 
   revalidatePath(`/chantiers/${chantierId}`)
   return { error: null }
@@ -1607,6 +1700,17 @@ export async function deleteEquipe(equipeId: string): Promise<Result> {
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
 
+  const { error: detachMembersError } = await supabase
+    .from('chantier_equipe_membres')
+    .update({ equipe_id: null })
+    .eq('equipe_id', equipeId)
+    .eq('organization_id', orgId)
+
+  if (detachMembersError) {
+    console.error('[deleteEquipe:detachMembers]', detachMembersError)
+    return { error: 'Erreur lors du détachement des membres de l’équipe.' }
+  }
+
   const { error } = await supabase
     .from('chantier_equipes')
     .delete()
@@ -1619,6 +1723,7 @@ export async function deleteEquipe(equipeId: string): Promise<Result> {
   }
 
   revalidatePath('/chantiers')
+  revalidatePath('/chantiers/equipes')
   return { error: null }
 }
 
@@ -1986,6 +2091,13 @@ export async function createChantierPlanning(
     return { planningId: null, error: 'Erreur lors de la création du planning.' }
   }
 
+  const recipients = await getPlanningRecipientUserIds(orgId, { memberId: data.memberId, equipeId: data.equipeId })
+  sendPushToUsers(recipients, {
+    title: 'Nouveau créneau planifié',
+    body: `${data.label.trim()} — ${data.plannedDate}${data.startTime ? ` à ${data.startTime}` : ''}`,
+    url: `/mon-espace/dashboard`,
+  }, user.id).catch(() => {})
+
   revalidatePath(`/chantiers/${chantierId}`)
   revalidatePath('/chantiers/planning')
   return { planningId: row.id, error: null }
@@ -2016,5 +2128,140 @@ export async function deleteChantierPlanning(planningId: string, chantierId: str
 
   revalidatePath(`/chantiers/${chantierId}`)
   revalidatePath('/chantiers/planning')
+  return { error: null }
+}
+
+// ─── Réception chantier ───────────────────────────────────────────────────────
+
+export async function pronounceReception(
+  chantierId: string,
+  data: {
+    status: 'sans_reserve' | 'avec_reserve'
+    reception_at: string
+    notes?: string | null
+  }
+): Promise<Result> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Permission refusée.' }
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Non authentifié.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) return { error: 'Chantier introuvable.' }
+
+  const { error } = await supabase
+    .from('chantiers')
+    .update({
+      reception_status: data.status,
+      reception_at: data.reception_at,
+      reception_notes: data.notes ?? null,
+    })
+    .eq('id', chantierId)
+    .eq('organization_id', orgId)
+
+  if (error) return { error: error.message }
+  revalidatePath(`/chantiers/${chantierId}`)
+  return { error: null }
+}
+
+// ─── Réserves ─────────────────────────────────────────────────────────────────
+
+export async function upsertReserve(
+  chantierId: string,
+  reserve: {
+    id?: string
+    description: string
+    lot?: string | null
+    position?: number
+  }
+): Promise<Result & { reserveId?: string }> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Permission refusée.' }
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Non authentifié.' }
+  if (!await chantierBelongsToOrg(supabase, chantierId, orgId)) return { error: 'Chantier introuvable.' }
+
+  const row = {
+    chantier_id: chantierId,
+    organization_id: orgId,
+    description: reserve.description,
+    lot: reserve.lot ?? null,
+    position: reserve.position ?? 0,
+    updated_at: new Date().toISOString(),
+  }
+
+  let reserveId: string | undefined
+  if (reserve.id) {
+    const { error } = await supabase
+      .from('chantier_reserves')
+      .update(row)
+      .eq('id', reserve.id)
+      .eq('organization_id', orgId)
+    if (error) return { error: error.message }
+    reserveId = reserve.id
+  } else {
+    const { data, error } = await supabase
+      .from('chantier_reserves')
+      .insert({ ...row, status: 'ouverte' })
+      .select('id')
+      .single()
+    if (error) return { error: error.message }
+    reserveId = data?.id
+  }
+
+  revalidatePath(`/chantiers/${chantierId}`)
+  return { error: null, reserveId }
+}
+
+export async function resolveReserve(
+  reserveId: string,
+  chantierId: string,
+  notes?: string | null
+): Promise<Result> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Permission refusée.' }
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Non authentifié.' }
+
+  const { error } = await supabase
+    .from('chantier_reserves')
+    .update({ status: 'levee', resolved_at: new Date().toISOString(), resolved_notes: notes ?? null, updated_at: new Date().toISOString() })
+    .eq('id', reserveId)
+    .eq('organization_id', orgId)
+
+  if (error) return { error: error.message }
+
+  // Si toutes les réserves du chantier sont levées → mettre à jour le statut réception
+  const { data: open } = await supabase
+    .from('chantier_reserves')
+    .select('id')
+    .eq('chantier_id', chantierId)
+    .eq('organization_id', orgId)
+    .eq('status', 'ouverte')
+
+  if (open && open.length === 0) {
+    await supabase
+      .from('chantiers')
+      .update({ reception_status: 'reserve_levee', updated_at: new Date().toISOString() })
+      .eq('id', chantierId)
+      .eq('organization_id', orgId)
+  }
+
+  revalidatePath(`/chantiers/${chantierId}`)
+  return { error: null }
+}
+
+export async function deleteReserve(reserveId: string, chantierId: string): Promise<Result> {
+  if (!(await hasPermission('chantiers.edit'))) return { error: 'Permission refusée.' }
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Non authentifié.' }
+
+  const { error } = await supabase
+    .from('chantier_reserves')
+    .delete()
+    .eq('id', reserveId)
+    .eq('organization_id', orgId)
+
+  if (error) return { error: error.message }
+  revalidatePath(`/chantiers/${chantierId}`)
   return { error: null }
 }

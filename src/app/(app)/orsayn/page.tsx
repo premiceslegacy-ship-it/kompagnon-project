@@ -9,6 +9,7 @@ import {
   upsertOperatorClientModules,
   upsertOperatorSubscription,
 } from './actions'
+import EmailsTab from './EmailsTab'
 import { getOperatorUsdToEurRate } from '@/lib/operator'
 import { getOperatorUser } from '@/lib/operator-auth'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
@@ -116,6 +117,10 @@ type OperatorCommercialEvent = {
   actor_email: string | null
   email_template: string | null
   subject_preview: string | null
+  body_text: string | null
+  recipient_email: string | null
+  delivery_status: string
+  auto_send_after: string | null
   notes: string | null
   metadata: Record<string, unknown> | null
 }
@@ -181,7 +186,7 @@ type CommercialRecommendation = {
   title: string
   reason: string
   severity: 'high' | 'medium' | 'low'
-  eventType: 'upgrade_prompt_quota' | 'upgrade_prompt_wa'
+  eventType: 'upgrade_prompt_quota' | 'usage_signal_client_owned'
   currentTier: SubscriptionTier
   suggestedTier: SubscriptionTier
   usageCostLabel: string
@@ -253,7 +258,6 @@ function getEventLabel(eventType: string): string {
 function getCommercialEventLabel(eventType: string): string {
   const labels: Record<string, string> = {
     upgrade_prompt_quota: 'Upgrade quota',
-    upgrade_prompt_wa: 'Upgrade WhatsApp',
     manual_email: 'Email manuel',
     trial_expiry_7d: 'Relance essai J-7',
     trial_expiry_2d: 'Relance essai J-2',
@@ -294,7 +298,12 @@ function normalizeAIBillingMode(value: unknown): AIBillingMode {
 }
 
 function formatAIBillingMode(value: AIBillingMode): string {
-  return value === 'client_owned' ? 'Cle client' : 'Cle Orsayn'
+  return value === 'client_owned' ? 'Clé client' : 'Clé Orsayn'
+}
+
+function formatCommercialStatus(row: Pick<ClientRow, 'tier' | 'aiBillingMode'>): string {
+  if (row.aiBillingMode === 'client_owned') return 'BYOK - clé client'
+  return `Stripe ${row.tier}`
 }
 
 function formatQuotaValue(value: number): string {
@@ -455,7 +464,7 @@ export default async function OrsaynPage() {
       .limit(300),
     operator
       .from('operator_commercial_events')
-      .select('id, source_instance, event_type, tier_context, sent_at, sent_by, actor_email, email_template, subject_preview, notes, metadata')
+      .select('id, source_instance, event_type, tier_context, sent_at, sent_by, actor_email, email_template, subject_preview, body_text, recipient_email, delivery_status, auto_send_after, notes, metadata')
       .order('sent_at', { ascending: false })
       .limit(300),
   ])
@@ -707,28 +716,7 @@ export default async function OrsaynPage() {
       return current
     }, null)
 
-    const waQuota = row.quotas.find((quota) => quota.quota_feature === 'wa_messages')
-    const waMonthly = normalizeNumber(waQuota?.quota_monthly)
-    const waConsumed = normalizeNumber(waQuota?.current_quantity)
-    const waPct = waMonthly > 0 ? (waConsumed / waMonthly) * 100 : 0
-
-    if (row.tier === 'pro' && waPct >= 80) {
-      items.push({
-        id: `${row.sourceInstance}-wa`,
-        sourceInstance: row.sourceInstance,
-        clientLabel: row.label,
-        title: 'WhatsApp proche limite Pro',
-        reason: `${Math.round(waPct)}% du quota WhatsApp consomme ce mois-ci.`,
-        severity: waPct >= 95 ? 'high' : 'medium',
-        eventType: 'upgrade_prompt_wa',
-        currentTier: row.tier,
-        suggestedTier: 'expert',
-        usageCostLabel,
-        notePlaceholder: 'Proposer Expert pour sécuriser WhatsApp',
-      })
-    }
-
-    if (maxQuota && maxQuota.pct >= 90 && row.tier !== 'expert') {
+    if (row.aiBillingMode === 'orsayn_shared' && maxQuota && maxQuota.pct >= 90 && row.tier !== 'expert') {
       items.push({
         id: `${row.sourceInstance}-quota-${maxQuota.feature}`,
         sourceInstance: row.sourceInstance,
@@ -765,18 +753,18 @@ export default async function OrsaynPage() {
         id: `${row.sourceInstance}-client-owned-usage`,
         sourceInstance: row.sourceInstance,
         clientLabel: row.label,
-        title: 'Usage client-owned élevé',
+        title: 'Usage BYOK élevé',
         reason: `${usageCostLabel} d'usage indicatif avec clé client.`,
         severity: 'low',
-        eventType: 'upgrade_prompt_quota',
+        eventType: 'usage_signal_client_owned',
         currentTier: row.tier,
         suggestedTier,
         usageCostLabel,
-        notePlaceholder: 'Signal pricing sans impact marge Orsayn',
+        notePlaceholder: 'Signal usage uniquement, sans upgrade Stripe',
       })
     }
 
-    if (items.length === 0 && row.monthUsageCostEur >= 0.5 && row.tier !== 'expert') {
+    if (items.length === 0 && row.aiBillingMode === 'orsayn_shared' && row.monthUsageCostEur >= 0.5 && row.tier !== 'expert') {
       items.push({
         id: `${row.sourceInstance}-usage`,
         sourceInstance: row.sourceInstance,
@@ -901,7 +889,7 @@ export default async function OrsaynPage() {
                   <span className="text-secondary tabular-nums">{formatMoney(row.monthUsageCostEur)}</span>
                 </div>
                 <div className="mt-1 flex items-center justify-between gap-3 text-xs text-secondary">
-                  <span>{row.tier} · {formatAIBillingMode(row.aiBillingMode)}</span>
+                  <span>{formatCommercialStatus(row)} · {formatAIBillingMode(row.aiBillingMode)}</span>
                   <span>{row.monthEventCount} event(s)</span>
                 </div>
                 {row.aiBillingMode === 'client_owned' && (
@@ -1147,7 +1135,14 @@ export default async function OrsaynPage() {
                         Configuration : {row.configSyncStatus ?? 'n/a'}
                       </p>
                     </td>
-                    <td className="py-4 pr-4 text-secondary tabular-nums">{row.tier}</td>
+                    <td className="py-4 pr-4 text-secondary tabular-nums">
+                      {formatCommercialStatus(row)}
+                      {row.aiBillingMode === 'client_owned' && (
+                        <p className="mt-1 text-[11px] text-secondary">
+                          Sans abonnement Stripe
+                        </p>
+                      )}
+                    </td>
                     <td className="py-4 pr-4 text-secondary tabular-nums">
                       {row.monthlyFee === null ? 'À compléter' : formatMoney(row.monthlyFee, row.billingCurrency)}
                     </td>
@@ -1481,6 +1476,27 @@ export default async function OrsaynPage() {
           </table>
         </div>
       </section>
+
+      {/* ── Module emails cockpit ────────────────────────────────────────── */}
+      {(() => {
+        const pendingAlerts = commercialEvents.filter((e) => e.delivery_status === 'pending_review')
+        const sentEmails = commercialEvents.filter((e) => e.delivery_status !== 'pending_review')
+        const emailClients = clientRows
+          .filter((row) => row.isActive)
+          .map((row) => ({
+            sourceInstance: row.sourceInstance,
+            label: row.label,
+            tier: row.tier,
+            recipientEmail: (row.commercialEvents.find((e) => e.recipient_email)?.recipient_email) ?? null,
+          }))
+        return (
+          <EmailsTab
+            pendingAlerts={pendingAlerts}
+            sentEmails={sentEmails}
+            clients={emailClients}
+          />
+        )
+      })()}
 
       <section className="card px-8 py-6 space-y-5">
         <div>

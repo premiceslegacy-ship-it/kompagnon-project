@@ -136,6 +136,17 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
                 </div>
             </div>
 
+            {/* Notes internes */}
+            {client.internal_notes && (
+                <div className={`${cardClasses} p-6 space-y-2`}>
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 px-2 py-0.5 rounded-full">Notes internes</span>
+                        <span className="text-xs text-secondary">Non transmises au client</span>
+                    </div>
+                    <p className="text-sm text-primary whitespace-pre-wrap">{client.internal_notes}</p>
+                </div>
+            )}
+
             {/* Historique Financier */}
             <div className={`${cardClasses} overflow-hidden`}>
                 <div className="flex items-center justify-between px-8 pt-6 pb-4 border-b border-[var(--elevation-border)]">

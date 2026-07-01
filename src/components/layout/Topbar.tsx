@@ -32,6 +32,7 @@ import {
     CalendarCheck,
     AlertCircle,
     Wrench,
+    Loader2,
 } from 'lucide-react';
 import type { UserProfile } from '@/lib/data/queries/user';
 import type { OrganizationModules } from '@/lib/organization-modules';
@@ -107,11 +108,21 @@ const ThemeToggle = () => {
 const UserMenu = ({ profile }: { profile: UserProfile | null }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [mounted, setMounted] = useState(false);
+    const [pendingRoute, setPendingRoute] = useState<string | null>(null);
     const buttonRef = useRef<HTMLButtonElement>(null);
     const [coords, setCoords] = useState({ top: 0, left: 0 });
     const router = useRouter();
+    const pathname = usePathname();
 
     useEffect(() => { setMounted(true); }, []);
+    useEffect(() => { setPendingRoute(null); }, [pathname]);
+
+    const goToUserRoute = (href: string) => {
+        setPendingRoute(routeKey(href));
+        setIsOpen(false);
+        router.prefetch(href);
+        router.push(href);
+    };
 
     const toggleMenu = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -152,7 +163,11 @@ const UserMenu = ({ profile }: { profile: UserProfile | null }) => {
                 onClick={toggleMenu}
                 className="btn-avatar w-10 h-10 p-0.5"
             >
-                {profile?.avatar_url ? (
+                {pendingRoute ? (
+                    <div className="w-full h-full rounded-full bg-accent/10 flex items-center justify-center">
+                        <Loader2 className="w-4 h-4 text-accent animate-spin" />
+                    </div>
+                ) : profile?.avatar_url ? (
                     <img className="w-full h-full object-cover rounded-full" alt={displayName} src={profile.avatar_url} />
                 ) : (
                     <div className="w-full h-full rounded-full bg-accent/20 flex items-center justify-center">
@@ -174,18 +189,18 @@ const UserMenu = ({ profile }: { profile: UserProfile | null }) => {
                     </div>
                     <div className="pt-1">
                         <button
-                            onClick={() => { setIsOpen(false); router.push('/settings'); }}
+                            onClick={() => goToUserRoute('/settings')}
                             className="w-full text-left px-4 py-2 text-sm font-semibold text-primary hover:bg-base transition-colors flex items-center gap-2"
                         >
-                            <User className="w-4 h-4" />
+                            {pendingRoute === '/settings' ? <Loader2 className="w-4 h-4 animate-spin" /> : <User className="w-4 h-4" />}
                             Mon profil
                         </button>
                         <div className="h-px w-full bg-[var(--elevation-border)] my-1"></div>
                         <button
-                            onClick={() => { setIsOpen(false); router.push('/login'); }}
+                            onClick={() => goToUserRoute('/login')}
                             className="w-full text-left px-4 py-2 text-sm font-semibold text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2"
                         >
-                            <LogOut className="w-4 h-4" />
+                            {pendingRoute === '/login' ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
                             Se déconnecter
                         </button>
                     </div>
@@ -199,20 +214,36 @@ const UserMenu = ({ profile }: { profile: UserProfile | null }) => {
 type NotificationsData = Partial<NotificationsSummary> & { overdueInvoices: number; expiringQuotes: number }
 
 type PushPermission = 'default' | 'granted' | 'denied'
+const NOTIFICATIONS_SEEN_SIGNATURE_KEY = 'notifications_seen_signature'
 
-const NotificationBell = ({ notifications }: { notifications: NotificationsData }) => {
+const NotificationBell = ({ notifications, onNavigate }: { notifications: NotificationsData; onNavigate?: (href: string) => void }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [seenSignature, setSeenSignature] = useState<string | null>(null);
     const [mounted, setMounted] = useState(false);
     const [pushPermission, setPushPermission] = useState<PushPermission>('granted');
+    const [pendingRoute, setPendingRoute] = useState<string | null>(null);
     const buttonRef = useRef<HTMLButtonElement>(null);
     const [coords, setCoords] = useState({ top: 0, left: 0 });
     const router = useRouter();
+    const pathname = usePathname();
 
     useEffect(() => {
         setMounted(true);
+        setSeenSignature(localStorage.getItem(NOTIFICATIONS_SEEN_SIGNATURE_KEY));
         if ('Notification' in window) setPushPermission(Notification.permission as PushPermission);
     }, []);
+
+    useEffect(() => {
+        setPendingRoute(null);
+    }, [pathname]);
+
+    const goToNotification = (href: string) => {
+        setPendingRoute(routeKey(href));
+        setIsOpen(false);
+        onNavigate?.(href);
+        router.prefetch(href);
+        router.push(href);
+    };
 
     async function handleEnablePush() {
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
@@ -244,11 +275,9 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
         (notifications.pendingRecurring ?? 0) +
         (notifications.recurringReady ?? 0) +
         (notifications.chantierPeriodDrafts ?? 0) +
-        (notifications.recentAutoReminders ?? 0) +
         (notifications.dueTasks ?? 0) +
         (notifications.planningToday ?? 0) +
         (notifications.missingPointages ?? 0) +
-        (notifications.completedTasks ?? 0) +
         (notifications.newRequests ?? 0) +
         (notifications.chantiersAtRisk ?? 0) +
         (notifications.maintenanceDue ?? 0) +
@@ -273,6 +302,48 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
         notifications.maintenanceBillingPending ?? 0,
     ].join(':');
     const badgeTotal = seenSignature === notificationSignature ? 0 : total;
+    const notificationRoutes = React.useMemo(() => {
+        const routes = new Set<string>();
+        if (notifications.overdueInvoices > 0) routes.add('/finances');
+        if ((notifications.invoiceFollowups ?? 0) > 0) routes.add('/reminders');
+        if ((notifications.pendingRecurring ?? 0) > 0) routes.add('/finances/recurring');
+        if ((notifications.recurringReady ?? 0) > 0) routes.add('/finances/recurring');
+        if ((notifications.chantierPeriodDrafts ?? 0) > 0) routes.add('/finances');
+        if (notifications.expiringQuotes > 0) routes.add('/finances');
+        if ((notifications.pendingQuotes ?? 0) > 0) routes.add('/reminders');
+        if ((notifications.recentAutoReminders ?? 0) > 0) routes.add('/dashboard');
+        if ((notifications.dueTasks ?? 0) > 0) routes.add('/dashboard');
+        if ((notifications.planningToday ?? 0) > 0) routes.add('/chantiers/planning');
+        if ((notifications.missingPointages ?? 0) > 0) routes.add('/chantiers/heures');
+        if ((notifications.maintenanceDue ?? 0) > 0) routes.add('/chantiers/entretien');
+        if ((notifications.maintenanceBillingPending ?? 0) > 0) routes.add('/chantiers/entretien');
+        if ((notifications.completedTasks ?? 0) > 0) routes.add('/dashboard');
+        if ((notifications.chantiersAtRisk ?? 0) > 0) routes.add('/chantiers');
+        if ((notifications.newRequests ?? 0) > 0) routes.add('/requests');
+        return Array.from(routes);
+    }, [
+        notifications.overdueInvoices,
+        notifications.invoiceFollowups,
+        notifications.pendingRecurring,
+        notifications.recurringReady,
+        notifications.chantierPeriodDrafts,
+        notifications.expiringQuotes,
+        notifications.pendingQuotes,
+        notifications.recentAutoReminders,
+        notifications.dueTasks,
+        notifications.planningToday,
+        notifications.missingPointages,
+        notifications.maintenanceDue,
+        notifications.maintenanceBillingPending,
+        notifications.completedTasks,
+        notifications.chantiersAtRisk,
+        notifications.newRequests,
+    ]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        notificationRoutes.forEach(href => router.prefetch(href));
+    }, [isOpen, notificationRoutes, router]);
 
     const toggleMenu = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -280,6 +351,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
             const rect = buttonRef.current.getBoundingClientRect();
             setCoords({ top: rect.bottom + window.scrollY, left: rect.right + window.scrollX - 320 });
             setSeenSignature(notificationSignature);
+            localStorage.setItem(NOTIFICATIONS_SEEN_SIGNATURE_KEY, notificationSignature);
         }
         setIsOpen(!isOpen);
     };
@@ -301,10 +373,10 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
             <button
                 ref={buttonRef}
                 onClick={toggleMenu}
-                className="btn-icon relative"
+                className={`btn-icon relative ${pendingRoute ? 'translate-y-[2px]' : ''}`}
                 title="Notifications"
             >
-                <Bell className="w-5 h-5 text-primary" />
+                {pendingRoute ? <Loader2 className="w-5 h-5 text-primary animate-spin" /> : <Bell className="w-5 h-5 text-primary" />}
                 {badgeTotal > 0 && (
                     <span className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-accent text-black text-[9px] font-extrabold flex items-center justify-center leading-none">
                         {badgeTotal > 9 ? '9+' : badgeTotal}
@@ -339,7 +411,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                         <div className="py-1">
                             {notifications.overdueInvoices > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/finances'); }}
+                                    onClick={() => goToNotification('/finances')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <span className="w-2 h-2 rounded-full bg-red-500 mt-1.5 flex-shrink-0" />
@@ -351,7 +423,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.invoiceFollowups ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/reminders'); }}
+                                    onClick={() => goToNotification('/reminders')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <span className="w-2 h-2 rounded-full bg-orange-500 mt-1.5 flex-shrink-0" />
@@ -363,7 +435,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.pendingRecurring ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/finances/recurring'); }}
+                                    onClick={() => goToNotification('/finances/recurring')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <Repeat className="w-4 h-4 text-violet-500 mt-0.5 flex-shrink-0" />
@@ -375,7 +447,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.recurringReady ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/finances/recurring'); }}
+                                    onClick={() => goToNotification('/finances/recurring')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <Repeat className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
@@ -387,7 +459,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.chantierPeriodDrafts ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/finances'); }}
+                                    onClick={() => goToNotification('/finances')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <FileText className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
@@ -399,7 +471,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {notifications.expiringQuotes > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/finances'); }}
+                                    onClick={() => goToNotification('/finances')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <span className="w-2 h-2 rounded-full bg-amber-400 mt-1.5 flex-shrink-0" />
@@ -411,7 +483,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.pendingQuotes ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/reminders'); }}
+                                    onClick={() => goToNotification('/reminders')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <MailWarning className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
@@ -423,7 +495,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.recentAutoReminders ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/dashboard'); }}
+                                    onClick={() => goToNotification('/dashboard')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <CheckSquare className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
@@ -435,7 +507,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.dueTasks ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/dashboard'); }}
+                                    onClick={() => goToNotification('/dashboard')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <CheckSquare className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
@@ -447,7 +519,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.planningToday ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/chantiers/planning'); }}
+                                    onClick={() => goToNotification('/chantiers/planning')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <CalendarCheck className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
@@ -459,7 +531,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.missingPointages ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/chantiers/heures'); }}
+                                    onClick={() => goToNotification('/chantiers/heures')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
@@ -471,7 +543,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.maintenanceDue ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/chantiers/entretien'); }}
+                                    onClick={() => goToNotification('/chantiers/entretien')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <Wrench className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
@@ -483,7 +555,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.maintenanceBillingPending ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/chantiers/entretien'); }}
+                                    onClick={() => goToNotification('/chantiers/entretien')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <FileText className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
@@ -495,7 +567,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.completedTasks ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/dashboard'); }}
+                                    onClick={() => goToNotification('/dashboard')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <CheckSquare className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
@@ -507,7 +579,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.chantiersAtRisk ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/chantiers'); }}
+                                    onClick={() => goToNotification('/chantiers')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <span className="w-2 h-2 rounded-full bg-orange-500 mt-1.5 flex-shrink-0" />
@@ -519,7 +591,7 @@ const NotificationBell = ({ notifications }: { notifications: NotificationsData 
                             )}
                             {(notifications.newRequests ?? 0) > 0 && (
                                 <button
-                                    onClick={() => { setIsOpen(false); router.push('/requests'); }}
+                                    onClick={() => goToNotification('/requests')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <Inbox className="w-4 h-4 text-accent mt-0.5 flex-shrink-0" />
@@ -655,9 +727,20 @@ const MobileDrawer = ({
     notifications: NotificationsData;
 }) => {
     const router = useRouter();
+    const pathname = usePathname();
     const [mounted, setMounted] = useState(false);
+    const [pendingRoute, setPendingRoute] = useState<string | null>(null);
 
     useEffect(() => { setMounted(true); }, []);
+    useEffect(() => { setPendingRoute(null); }, [pathname]);
+
+    const goToDrawerRoute = (href: string) => {
+        setPendingRoute(routeKey(href));
+        onNavigate(href);
+        onClose();
+        router.prefetch(href);
+        router.push(href);
+    };
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -685,11 +768,9 @@ const MobileDrawer = ({
         (notifications.pendingRecurring ?? 0) +
         (notifications.recurringReady ?? 0) +
         (notifications.chantierPeriodDrafts ?? 0) +
-        (notifications.recentAutoReminders ?? 0) +
         (notifications.dueTasks ?? 0) +
         (notifications.planningToday ?? 0) +
         (notifications.missingPointages ?? 0) +
-        (notifications.completedTasks ?? 0) +
         (notifications.newRequests ?? 0) +
         (notifications.chantiersAtRisk ?? 0) +
         (notifications.maintenanceDue ?? 0) +
@@ -775,17 +856,17 @@ const MobileDrawer = ({
                         </div>
                     )}
                     <button
-                        onClick={() => { onClose(); router.push('/settings'); }}
+                        onClick={() => goToDrawerRoute('/settings')}
                         className="flex items-center gap-3 py-3 px-3 rounded-xl text-sm font-semibold text-secondary hover:text-primary hover:bg-base transition-colors"
                     >
-                        <Settings className="w-4 h-4" />
+                        {pendingRoute === '/settings' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
                         Paramètres
                     </button>
                     <button
-                        onClick={() => { onClose(); router.push('/login'); }}
+                        onClick={() => goToDrawerRoute('/login')}
                         className="flex items-center gap-3 py-3 px-3 rounded-xl text-sm font-semibold text-red-500 hover:bg-red-500/10 transition-colors"
                     >
-                        <LogOut className="w-4 h-4" />
+                        {pendingRoute === '/login' ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
                         Se déconnecter
                     </button>
                 </div>
@@ -887,7 +968,7 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
         }] : []),
         ...(showAtelierAi ? [{
             href: '/atelier-ia',
-            label: 'ATELIER IA',
+            label: 'DEVIS IA',
             icon: <Bot className="w-4 h-4" />,
             active: pathname.startsWith('/atelier-ia'),
         }] : []),
@@ -1020,7 +1101,7 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                         <NavChipLink
                             href="/atelier-ia"
                             icon={<Bot className="w-4 h-4" />}
-                            label="ATELIER IA"
+                            label="DEVIS IA"
                             active={pathname.startsWith('/atelier-ia')}
                             pending={pendingHref === '/atelier-ia'}
                             onNavigate={handleNavigate}
@@ -1060,7 +1141,7 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                     >
                         <Settings className="w-5 h-5 text-primary" />
                     </Link>}
-                    <NotificationBell notifications={notifications} />
+                    <NotificationBell notifications={notifications} onNavigate={handleNavigate} />
                     <UserMenu profile={profile} />
                 </div>
                 {pendingHref && <div className="nav-pending-bar" aria-hidden="true" />}

@@ -8,6 +8,7 @@ import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
 import { getSupabaseRuntimeConfig } from '@/lib/supabase/config'
 import { verifyCronSecret } from '@/lib/cron-auth'
+import { renderInvoicePdfBufferById, renderQuotePdfBufferById } from '@/lib/pdf/server'
 
 // ─── Sécurité ─────────────────────────────────────────────────────────────────
 // Appelé par Cloudflare Worker (ou cron-job.org) avec le header X-Cron-Secret
@@ -20,6 +21,7 @@ const MAX_RANK = 3 // Au-delà : plus de relance automatique, passage manuel
 type Org = {
   id: string
   name: string
+  email: string | null
   email_from_name: string | null
   email_from_address: string | null
   auto_reminder_enabled: boolean
@@ -42,6 +44,7 @@ type ReminderItem = {
   dueOrSentDate: string
   daysLate: number
   rank: number
+  signatureToken?: string | null
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -68,7 +71,7 @@ export async function POST(req: NextRequest) {
   // 1. Toutes les orgs avec relances auto activées
   const { data: orgs } = await supabase
     .from('organizations')
-    .select('id, name, email_from_name, email_from_address, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_first_delay_days')
+    .select('id, name, email, email_from_name, email_from_address, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_first_delay_days')
     .eq('auto_reminder_enabled', true)
 
   if (!orgs?.length) {
@@ -95,16 +98,43 @@ export async function POST(req: NextRequest) {
 
         try {
           const { subject, body } = await generateEmail(
-            org.name, item, appUrl, org.id,
+            org.name, item, appUrl, org.id, org.email ?? null,
           )
 
+          let attachments: Array<{ filename: string; content: Buffer }> | undefined
+          let signUrl: string | null = null
+          if (item.type === 'quote') {
+            if (item.signatureToken && !appUrl) {
+              throw new Error('NEXT_PUBLIC_APP_URL non configurée pour le lien de signature')
+            }
+            signUrl = item.signatureToken
+              ? `${appUrl.replace(/\/+$/, '')}/sign/${item.signatureToken}`
+              : null
+
+            try {
+              const pdf = await renderQuotePdfBufferById(item.id, org.id)
+              if (pdf) attachments = [{ filename: pdf.fileName, content: pdf.buffer }]
+            } catch (pdfError) {
+              console.error(`[auto-reminders] PDF devis ${item.id}:`, pdfError)
+            }
+          } else {
+            try {
+              const pdf = await renderInvoicePdfBufferById(item.id, org.id)
+              if (pdf) attachments = [{ filename: pdf.fileName, content: pdf.buffer }]
+            } catch (pdfError) {
+              console.error(`[auto-reminders] PDF facture ${item.id}:`, pdfError)
+            }
+          }
+
           const fromName = org.email_from_name || org.name
-          await resend.emails.send({
+          const { error: emailError } = await resend.emails.send({
             from: `${fromName} <${org.email_from_address}>`,
             to: item.clientEmail,
             subject,
-            html: wrapHtml(org.name, body.replace(/\n/g, '<br>')),
+            html: wrapHtml(org.name, body.replace(/\n/g, '<br>'), signUrl),
+            ...(attachments?.length ? { attachments } : {}),
           })
+          if (emailError) throw new Error(`Resend: ${emailError.message}`)
 
           // Log relance
           await supabase.from('reminders').insert({
@@ -173,7 +203,7 @@ async function collectItems(
 
     supabase
       .from('quotes')
-    .select('id, number, title, total_ttc, currency, sent_at, client_id, client:clients(company_name, contact_name, first_name, last_name, email)')
+      .select('id, number, title, total_ttc, currency, sent_at, client_id, signature_token, client:clients(company_name, contact_name, first_name, last_name, email)')
       .eq('organization_id', orgId)
       .in('status', ['sent', 'viewed'])
       .lt('sent_at', maxQuoteSentBefore),
@@ -251,6 +281,7 @@ async function collectItems(
       dueOrSentDate: q.sent_at!.split('T')[0],
       daysLate,
       rank,
+      signatureToken: q.signature_token ?? null,
     })
   }
 
@@ -264,6 +295,7 @@ async function generateEmail(
   item: ReminderItem,
   appUrl: string,
   orgId: string,
+  orgEmail: string | null,
 ): Promise<{ subject: string; body: string }> {
   const fmtAmount = item.amount != null
     ? new Intl.NumberFormat('fr-FR', { style: 'currency', currency: item.currency }).format(item.amount)
@@ -286,12 +318,14 @@ async function generateEmail(
       : `${invoiceTypeLabel} ${item.number ?? ''}${fmtAmount ? `, ${fmtAmount} TTC` : ''}, envoyée le ${fmtDate} (${item.daysLate}j sans règlement enregistré)`
     : `Devis ${item.number ?? ''}${item.amount ? `, ${fmtAmount} TTC` : ''}, envoyé le ${fmtDate} (${item.daysLate}j sans réponse)`
 
+  const contactLine = orgEmail ? `Pour toute question, le client peut nous joindre à ${orgEmail}.` : ''
   const prompt = `Tu rédiges une relance automatique pour ${orgName} (artisan BTP).
 Contexte : ${contextStr}
 Client : ${item.clientName}
 Relance n°${item.rank}, ${toneGuide}
+${contactLine}
 
-Règles obligatoires : aucun emoji, aucun tiret cadratin (—), français soigné, ton professionnel. Pour une facture envoyée mais pas encore échue, faire un rappel préventif de règlement sans parler de retard.
+Règles obligatoires : aucun emoji, aucun tiret cadratin (—), français soigné, ton professionnel. Pour une facture envoyée mais pas encore échue, faire un rappel préventif de règlement sans parler de retard. Si un email de contact est fourni, l'inclure dans le corps du message avec la formule "Pour toute question, n'hésitez pas à nous contacter à [email]."
 
 Format STRICT :
 Objet: [sujet]
@@ -339,6 +373,10 @@ Objet: [sujet]
 
 // ─── HTML wrapper ─────────────────────────────────────────────────────────────
 
-function wrapHtml(orgName: string, bodyHtml: string): string {
-  return `<div style="max-width:560px;margin:0 auto;font-family:sans-serif"><div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0"><p style="color:white;font-weight:bold;margin:0;font-size:16px">${orgName}</p></div><div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">${bodyHtml}</div></div>`
+function wrapHtml(orgName: string, bodyHtml: string, signUrl: string | null = null): string {
+  const signatureCallToAction = signUrl
+    ? `<div style="margin-top:24px"><a href="${signUrl}" style="display:inline-block;background:#0a0a0a;color:white;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:600">Consulter et signer le devis</a><p style="margin:12px 0 0;color:#777;font-size:12px;word-break:break-all">Si le bouton ne fonctionne pas : <a href="${signUrl}" style="color:#555">${signUrl}</a></p></div>`
+    : ''
+
+  return `<div style="max-width:560px;margin:0 auto;font-family:sans-serif"><div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0"><p style="color:white;font-weight:bold;margin:0;font-size:16px">${orgName}</p></div><div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">${bodyHtml}${signatureCallToAction}</div></div>`
 }

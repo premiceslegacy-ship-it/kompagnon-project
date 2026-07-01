@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from './clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -101,6 +102,16 @@ export type MaintenanceContractExpense = {
   maintenance_intervention_id: string | null
 }
 
+export type RecurringInvoiceInstance = {
+  id: string
+  invoice_id: string | null
+  scheduled_date: string
+  status: string
+  amount_ht: number
+  invoice_status: string | null
+  invoice_total_ht: number | null
+}
+
 export type MaintenanceInterventionPhoto = {
   id: string
   storage_path: string
@@ -112,6 +123,8 @@ export type MaintenanceInterventionPhoto = {
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 export async function fetchMaintenanceContracts(): Promise<MaintenanceContract[]> {
+  if (!await hasPermission('chantiers.view')) return []
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return []
 
@@ -144,9 +157,12 @@ export async function fetchMaintenanceContractDetail(contractId: string): Promis
   contract: MaintenanceContract | null
   interventions: MaintenanceIntervention[]
   expenses: MaintenanceContractExpense[]
+  recurringInstances: RecurringInvoiceInstance[]
 }> {
+  if (!await hasPermission('chantiers.view')) return { contract: null, interventions: [], expenses: [], recurringInstances: [] }
+
   const orgId = await getCurrentOrganizationId()
-  if (!orgId) return { contract: null, interventions: [], expenses: [] }
+  if (!orgId) return { contract: null, interventions: [], expenses: [], recurringInstances: [] }
 
   const supabase = await createClient()
 
@@ -177,7 +193,7 @@ export async function fetchMaintenanceContractDetail(contractId: string): Promis
 
   if (contractRes.error) {
     console.error('fetchMaintenanceContractDetail error:', contractRes.error)
-    return { contract: null, interventions: [], expenses: [] }
+    return { contract: null, interventions: [], expenses: [], recurringInstances: [] }
   }
 
   const contract = {
@@ -247,6 +263,29 @@ export async function fetchMaintenanceContractDetail(contractId: string): Promis
     expenses = (expenseRows ?? []) as MaintenanceContractExpense[]
   }
 
+  // Instances de facturation récurrente (une par période)
+  let recurringInstances: RecurringInvoiceInstance[] = []
+  if (contract.recurring_invoice_id) {
+    const { data: schedules } = await supabase
+      .from('invoice_schedules')
+      .select('id, invoice_id, scheduled_date, status, amount_ht, invoice:invoices(status, total_ht)')
+      .eq('recurring_invoice_id', contract.recurring_invoice_id)
+      .order('scheduled_date', { ascending: false })
+
+    recurringInstances = (schedules ?? []).map((s: any) => {
+      const inv = Array.isArray(s.invoice) ? s.invoice[0] : s.invoice
+      return {
+        id: s.id,
+        invoice_id: s.invoice_id,
+        scheduled_date: s.scheduled_date,
+        status: s.status,
+        amount_ht: s.amount_ht ?? 0,
+        invoice_status: inv?.status ?? null,
+        invoice_total_ht: inv?.total_ht ?? null,
+      }
+    })
+  }
+
   return {
     contract,
     interventions: rawInterventions.map(iv => ({
@@ -256,5 +295,6 @@ export async function fetchMaintenanceContractDetail(contractId: string): Promis
       photos: photosByIntervention[iv.id] ?? [],
     })),
     expenses,
+    recurringInstances,
   }
 }

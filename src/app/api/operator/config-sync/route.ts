@@ -11,6 +11,7 @@ type ConfigSyncPayload = {
   modules: Record<string, unknown>
   quota_config: Record<string, unknown>
   overflow_mode: string
+  ai_billing_mode?: string
   einvoicing_config?: Record<string, unknown>
 }
 
@@ -27,6 +28,7 @@ function isValidPayload(value: unknown): value is ConfigSyncPayload {
     && isRecord(value.modules)
     && isRecord(value.quota_config)
     && typeof value.overflow_mode === 'string'
+    && (value.ai_billing_mode === undefined || typeof value.ai_billing_mode === 'string')
     && (value.einvoicing_config === undefined || isRecord(value.einvoicing_config))
   )
 }
@@ -66,6 +68,7 @@ export async function POST(req: NextRequest) {
   }
 
   const overflowMode = isOverflowMode(payload.overflow_mode) ? payload.overflow_mode : 'block'
+  const aiBillingMode = payload.ai_billing_mode === 'client_owned' ? 'client_owned' : 'orsayn_shared'
   const einvoicingConfig = normalizeEinvoicingConfig(payload.einvoicing_config)
   const admin = createAdminClient()
   const { error: modulesError } = await admin
@@ -75,6 +78,7 @@ export async function POST(req: NextRequest) {
       modules: normalizeOrganizationModules(payload.modules),
       quota_config: normalizeQuotaConfig(payload.quota_config),
       overflow_mode: overflowMode,
+      ai_billing_mode: aiBillingMode,
       quota_synced_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }, { onConflict: 'organization_id' })

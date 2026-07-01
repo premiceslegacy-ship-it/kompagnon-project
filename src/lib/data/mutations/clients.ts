@@ -87,9 +87,12 @@ export type CreateClientInlineInput = {
   last_name?: string
   email?: string
   phone?: string
+  siret?: string
   address_line1?: string
   postal_code?: string
   city?: string
+  status?: 'active' | 'prospect' | 'lead_hot' | 'lead_cold' | 'subcontractor' | 'inactive'
+  source?: string
 }
 
 export async function createClientInline(
@@ -122,10 +125,12 @@ export async function createClientInline(
       last_name: lastName,
       email: data.email?.trim() || null,
       phone: data.phone?.trim() || null,
+      siret: data.type === 'company' ? data.siret?.replace(/\D/g, '').trim() || null : null,
       address_line1: data.address_line1?.trim() || null,
       postal_code: data.postal_code?.trim() || null,
       city: data.city?.trim() || null,
-      status: 'active',
+      status: data.status ?? 'active',
+      source: data.source?.trim() || null,
       created_by: user.id,
     })
     .select('id')
@@ -138,6 +143,39 @@ export async function createClientInline(
 
   revalidatePath('/clients')
   return { error: null, id: row.id }
+}
+
+export async function updateClientEmailInline(
+  clientId: string,
+  email: string,
+): Promise<{ error: string | null; email: string | null }> {
+  if (!(await hasPermission('clients.edit'))) return { error: 'Permission refusée.', email: null }
+
+  const cleanedEmail = email.trim()
+  if (!clientId) return { error: 'Client introuvable.', email: null }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanedEmail)) {
+    return { error: 'Adresse email invalide.', email: null }
+  }
+
+  const supabase = await createSupabaseClient()
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) return { error: 'Organisation introuvable.', email: null }
+
+  const { error } = await supabase
+    .from('clients')
+    .update({ email: cleanedEmail })
+    .eq('id', clientId)
+    .eq('organization_id', organizationId)
+
+  if (error) {
+    console.error('[updateClientEmailInline]', error)
+    return { error: 'Erreur lors de la mise à jour de l’email.', email: null }
+  }
+
+  revalidatePath('/clients')
+  revalidatePath(`/clients/${clientId}`)
+  revalidatePath('/finances')
+  return { error: null, email: cleanedEmail }
 }
 
 // ─── Update ───────────────────────────────────────────────────────────────────
@@ -185,6 +223,7 @@ export async function updateClient(
   const source             = (formData.get('source') as string)?.trim() || null
   const currency           = (formData.get('currency') as string)?.trim() || 'EUR'
   const locale             = (formData.get('locale') as string)?.trim() || 'fr'
+  const internalNotes      = (formData.get('internal_notes') as string)?.trim() || null
 
   const { error } = await supabase
     .from('clients')
@@ -198,6 +237,7 @@ export async function updateClient(
       address_line1:   addressLine1,
       payment_terms_days: paymentTermsDays,
       status, source, currency, locale,
+      internal_notes: internalNotes,
     })
     .eq('id', clientId)
     .eq('organization_id', organizationId)

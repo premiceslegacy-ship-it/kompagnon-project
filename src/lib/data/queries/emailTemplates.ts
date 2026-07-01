@@ -23,32 +23,32 @@ export const DEFAULT_EMAIL_TEMPLATES: Omit<EmailTemplate, 'id' | 'is_custom'>[] 
     name: 'Envoi de Devis',
     subject: 'Votre devis {{numero_devis}}',
     body_text:
-      'Bonjour {{client_nom}},\n\nVeuillez trouver ci-joint notre devis {{numero_devis}} d\'un montant de {{montant_ttc}}.\n\nPour l\'accepter en ligne : {{lien_signature}}\n\nAu plaisir de continuer avec vous sur ce projet,\nL\'équipe {{entreprise_nom}}',
-    variables: ['{{numero_devis}}', '{{client_nom}}', '{{montant_ttc}}', '{{entreprise_nom}}', '{{lien_signature}}'],
+      'Bonjour {{client_nom}},\n\nVeuillez trouver ci-joint notre devis {{numero_devis}} d\'un montant de {{montant_ttc}}.\n\nPour l\'accepter en ligne : {{lien_signature}}\n\nPour toute question, n\'hésitez pas à nous contacter à {{email_org}}.\n\nAu plaisir de continuer avec vous sur ce projet,\nL\'équipe {{entreprise_nom}}',
+    variables: ['{{numero_devis}}', '{{client_nom}}', '{{montant_ttc}}', '{{entreprise_nom}}', '{{lien_signature}}', '{{email_org}}'],
   },
   {
     slug: 'invoice_sent',
     name: 'Envoi de Facture',
     subject: 'Votre facture {{numero_facture}}',
     body_text:
-      'Bonjour {{client_nom}},\n\nVeuillez trouver ci-joint notre facture {{numero_facture}} d\'un montant de {{montant_ttc}}.\n\nMerci encore pour votre confiance,\nL\'équipe {{entreprise_nom}}',
-    variables: ['{{numero_facture}}', '{{client_nom}}', '{{montant_ttc}}', '{{entreprise_nom}}'],
+      'Bonjour {{client_nom}},\n\nVeuillez trouver ci-joint notre facture {{numero_facture}} d\'un montant de {{montant_ttc}}.\n\nPour toute question, n\'hésitez pas à nous contacter à {{email_org}}.\n\nMerci encore pour votre confiance,\nL\'équipe {{entreprise_nom}}',
+    variables: ['{{numero_facture}}', '{{client_nom}}', '{{montant_ttc}}', '{{entreprise_nom}}', '{{email_org}}'],
   },
   {
     slug: 'payment_reminder_1',
     name: 'Relance facture (niveau 1, douce)',
     subject: 'Relance : Facture {{numero_facture}}',
     body_text:
-      'Bonjour {{client_nom}},\n\nSauf erreur de notre part, la facture {{numero_facture}} de {{montant_ttc}} arrivée à échéance le {{date_echeance}} reste impayée.\n\nMerci par avance pour votre retour,\nL\'équipe {{entreprise_nom}}',
-    variables: ['{{numero_facture}}', '{{client_nom}}', '{{montant_ttc}}', '{{date_echeance}}', '{{entreprise_nom}}'],
+      'Bonjour {{client_nom}},\n\nSauf erreur de notre part, la facture {{numero_facture}} de {{montant_ttc}} arrivée à échéance le {{date_echeance}} reste impayée.\n\nPour toute question ou si vous avez déjà effectué ce règlement, contactez-nous à {{email_org}}.\n\nMerci par avance pour votre retour,\nL\'équipe {{entreprise_nom}}',
+    variables: ['{{numero_facture}}', '{{client_nom}}', '{{montant_ttc}}', '{{date_echeance}}', '{{entreprise_nom}}', '{{email_org}}'],
   },
   {
     slug: 'payment_reminder_2',
     name: 'Relance facture (niveau 2, ferme)',
     subject: 'Dernière relance : Facture {{numero_facture}}',
     body_text:
-      'Bonjour {{client_nom}},\n\nMalgré notre précédente relance, la facture {{numero_facture}} d\'un montant de {{montant_ttc}} est toujours en attente de paiement.\n\nNous vous invitons à procéder au règlement dès que possible afin que nous puissions clôturer ce dossier dans les meilleures conditions.\n\nL\'équipe {{entreprise_nom}}',
-    variables: ['{{numero_facture}}', '{{client_nom}}', '{{montant_ttc}}', '{{date_echeance}}', '{{entreprise_nom}}'],
+      'Bonjour {{client_nom}},\n\nMalgré notre précédente relance, la facture {{numero_facture}} d\'un montant de {{montant_ttc}} est toujours en attente de paiement.\n\nNous vous invitons à procéder au règlement dès que possible afin que nous puissions clôturer ce dossier dans les meilleures conditions.\n\nPour tout renseignement, vous pouvez nous joindre à {{email_org}}.\n\nL\'équipe {{entreprise_nom}}',
+    variables: ['{{numero_facture}}', '{{client_nom}}', '{{montant_ttc}}', '{{date_echeance}}', '{{entreprise_nom}}', '{{email_org}}'],
   },
 ]
 

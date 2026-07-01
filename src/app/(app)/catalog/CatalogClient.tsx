@@ -23,6 +23,7 @@ import { displayUnitToMeters, formatDimensionLabel, getDimensionFieldDefinition,
 import { getBusinessActivityById, type ResolvedCatalogContext } from '@/lib/catalog-context'
 import { getCatalogLabelsForProfile, getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import CatalogAIPanel from '@/components/catalog/CatalogAIPanel'
+import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1971,10 +1972,13 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
           {!isAIPanelOpen && (
             <button
               onClick={() => setIsAIPanelOpen(true)}
-              title="Assistant IA catalogue"
-              className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center transition-colors hover:from-violet-600 hover:to-indigo-700"
+              aria-label="Ouvrir Léa, assistante catalogue"
+              className="fixed bottom-[84px] left-4 sm:hidden z-[9997] w-[52px] h-[52px] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
+              style={{
+                boxShadow: 'inset 0 1.5px 0 rgba(255,255,255,0.25), 0 4px 0 0 rgba(0,0,0,0.3), 0 4px 0 1px rgba(0,0,0,0.1), 0 8px 20px rgba(0,0,0,0.25), 0 0 0 2px rgb(var(--accent-primary) / 0.45)',
+              }}
             >
-              <Bot className="w-5 h-5 text-white" />
+              <AssistantAvatar assistant="lea" size={52} className="border-none bg-transparent shadow-none !rounded-full" />
             </button>
           )}
         </>
@@ -2022,6 +2026,22 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            {catalogAIEnabled && (
+              <button
+                onClick={() => setIsAIPanelOpen(true)}
+                title="Léa — assistante catalogue IA"
+                className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-full font-semibold text-sm whitespace-nowrap hover:scale-105 transition-all"
+                style={{
+                  background: 'var(--sarah-panel-bg)',
+                  border: '1px solid var(--sarah-panel-border)',
+                  boxShadow: 'inset 0 1.5px 0 rgba(255,255,255,0.18), 0 2px 0 0 rgba(0,0,0,0.18), 0 3px 8px rgba(0,0,0,0.1)',
+                  color: 'rgb(var(--text-primary))',
+                }}
+              >
+                <AssistantAvatar assistant="lea" size={20} className="border-none bg-transparent shadow-none !rounded-full" />
+                Léa
+              </button>
+            )}
             <div className="relative flex-1 sm:flex-none">
               <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-secondary" />
               <input

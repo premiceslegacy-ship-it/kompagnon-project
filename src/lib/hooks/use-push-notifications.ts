@@ -68,6 +68,11 @@ export function usePushNotifications(onPoll?: () => void) {
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
+    const handleSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'refresh-notifications') {
+        onPollRef.current?.()
+      }
+    }
 
     function schedule() {
       timer = setTimeout(() => {
@@ -86,9 +91,11 @@ export function usePushNotifications(onPoll?: () => void) {
 
     schedule()
     document.addEventListener('visibilitychange', onVisibilityChange)
+    navigator.serviceWorker?.addEventListener('message', handleSwMessage)
     return () => {
       clearTimeout(timer)
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      navigator.serviceWorker?.removeEventListener('message', handleSwMessage)
     }
   }, [])
 }

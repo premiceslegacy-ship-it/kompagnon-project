@@ -74,6 +74,26 @@ export function fmtCurrency(amount: number, currency = 'EUR'): string {
     .format(amount))
 }
 
+export function fmtCapitalSocial(value: string | number | null | undefined): string | null {
+  if (value == null) return null
+  let amount: number
+
+  if (typeof value === 'string') {
+    const numeric = value.replace(/[^\d,.-]/g, '')
+    const decimalAware = numeric.includes(',') && !numeric.includes('.')
+      ? numeric.replace(',', '.')
+      : numeric
+    amount = Number(decimalAware)
+  } else {
+    amount = value
+  }
+
+  if (!Number.isFinite(amount)) return null
+
+  const rounded = Math.round(amount)
+  return `${rounded.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} €`
+}
+
 
 // Polices chargées via chemin absolu fs (server-side uniquement, compatible Cloudflare Workers)
 

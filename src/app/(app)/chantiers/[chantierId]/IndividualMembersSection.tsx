@@ -13,6 +13,7 @@ import {
   sendMemberSpaceInvite,
 } from '@/lib/data/mutations/members'
 import { updateMemberLaborRate } from '@/lib/data/mutations/team'
+import type { OrgRole } from '@/lib/data/queries/roles'
 
 type Mode = 'existing' | 'phantom' | 'new'
 
@@ -21,19 +22,23 @@ export default function IndividualMembersSection({
   initialMembers,
   orgMembers,
   orgPhantomMembers = [],
+  orgRoles = [],
   canEditRates,
+  currentUserId,
 }: {
   chantierId: string
   initialMembers: IndividualMember[]
   orgMembers: TeamMember[]
   orgPhantomMembers?: IndividualMember[]
+  orgRoles?: OrgRole[]
   canEditRates: boolean
+  currentUserId?: string | null
 }) {
   const [members, setMembers] = useState<IndividualMember[]>(initialMembers)
   const [showCreate, setShowCreate] = useState(false)
   const [mode, setMode] = useState<Mode>('new')
-  const [linkedMembershipId, setLinkedMembershipId] = useState<string>('')
-  const [selectedPhantomId, setSelectedPhantomId] = useState<string>('')
+  const [linkedMembershipIds, setLinkedMembershipIds] = useState<Set<string>>(new Set())
+  const [selectedPhantomIds, setSelectedPhantomIds] = useState<Set<string>>(new Set())
   const [prenom, setPrenom] = useState('')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -43,6 +48,8 @@ export default function IndividualMembersSection({
   const [error, setError] = useState<string | null>(null)
   const [, startTransition] = useTransition()
   const [saving, setSaving] = useState(false)
+  const [detachingIds, setDetachingIds] = useState<Set<string>>(new Set())
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
 
   // État d'édition inline
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -55,9 +62,25 @@ export default function IndividualMembersSection({
   const [editError, setEditError] = useState<string | null>(null)
 
   const reset = () => {
-    setMode('new'); setLinkedMembershipId(''); setSelectedPhantomId(''); setPrenom(''); setName('')
+    setMode('new'); setLinkedMembershipIds(new Set()); setSelectedPhantomIds(new Set()); setPrenom(''); setName('')
     setEmail(''); setRoleLabel(''); setTauxHoraire(''); setSendInvite(true)
     setError(null)
+  }
+
+  const toggleLinkedMembership = (membershipId: string) => {
+    setLinkedMembershipIds(prev => {
+      const next = new Set(prev)
+      next.has(membershipId) ? next.delete(membershipId) : next.add(membershipId)
+      return next
+    })
+  }
+
+  const togglePhantomMember = (memberId: string) => {
+    setSelectedPhantomIds(prev => {
+      const next = new Set(prev)
+      next.has(memberId) ? next.delete(memberId) : next.add(memberId)
+      return next
+    })
   }
 
   const startEdit = (m: IndividualMember) => {
@@ -116,43 +139,60 @@ export default function IndividualMembersSection({
   const handleCreate = async () => {
     setError(null)
     if (mode === 'phantom') {
-      if (!selectedPhantomId) { setError('Sélectionnez un membre.'); return }
-      if (members.some(m => m.id === selectedPhantomId)) { setError('Ce membre est déjà sur ce chantier.'); return }
+      const ids = [...selectedPhantomIds]
+      if (ids.length === 0) { setError('Sélectionnez au moins un membre.'); return }
+      if (ids.some(id => members.some(m => m.id === id))) { setError('Un membre sélectionné est déjà sur ce chantier.'); return }
       setSaving(true)
-      const { error: err } = await attachMemberToChantier(selectedPhantomId, chantierId)
+      const results = await Promise.all(ids.map(id => attachMemberToChantier(id, chantierId)))
       setSaving(false)
+      const err = results.find(result => result.error)?.error
       if (err) { setError(err); return }
-      const phantom = orgPhantomMembers.find(p => p.id === selectedPhantomId)
-      if (phantom) setMembers(prev => [phantom, ...prev])
+      const selected = ids
+        .map(id => orgPhantomMembers.find(p => p.id === id))
+        .filter(Boolean) as IndividualMember[]
+      if (selected.length > 0) setMembers(prev => [...selected, ...prev])
       setShowCreate(false)
       reset()
       return
     }
     if (mode === 'existing') {
-      const m = orgMembers.find(o => o.membership_id === linkedMembershipId)
-      if (!m) { setError('Sélectionnez un membre.'); return }
+      const selectedOrgMembers = [...linkedMembershipIds]
+        .map(id => orgMembers.find(o => o.membership_id === id))
+        .filter(Boolean) as TeamMember[]
+      if (selectedOrgMembers.length === 0) { setError('Sélectionnez au moins un membre.'); return }
       setSaving(true)
-      const fullName = (m.full_name ?? '').trim() || m.email
-      const parts = fullName.split(' ')
-      const firstName = parts.length > 1 ? parts[0] : null
-      const lastName = parts.length > 1 ? parts.slice(1).join(' ') : fullName
-      const { error: err, id } = await createIndividualMember({
+      const created = await Promise.all(selectedOrgMembers.map(async m => {
+        const fullName = (m.full_name ?? '').trim() || m.email
+        const parts = fullName.split(' ')
+        const firstName = parts.length > 1 ? parts[0] : null
+        const lastName = parts.length > 1 ? parts.slice(1).join(' ') : fullName
+        const result = await createIndividualMember({
+          prenom: firstName,
+          name: lastName,
+          email: m.email,
+          roleLabel: m.role_name ?? null,
+          linkToProfileId: m.user_id,
+          attachToChantierId: chantierId,
+          sendInvite: false,
+        })
+        return { result, m, firstName, lastName }
+      }))
+      setSaving(false)
+      const failed = created.find(item => item.result.error || !item.result.id)
+      if (failed) { setError(failed.result.error ?? 'Erreur inconnue.'); return }
+      const optimistic: IndividualMember[] = created.map(({ result, m, firstName, lastName }) => ({
+        id: result.id!,
+        organization_id: '',
+        equipe_id: null,
         prenom: firstName,
         name: lastName,
         email: m.email,
-        roleLabel: m.role_name ?? null,
-        linkToProfileId: m.user_id,
-        attachToChantierId: chantierId,
-        sendInvite: false,
-      })
-      setSaving(false)
-      if (err || !id) { setError(err ?? 'Erreur inconnue.'); return }
-      const optimistic: IndividualMember = {
-        id, organization_id: '', equipe_id: null, prenom: firstName, name: lastName,
-        email: m.email, role_label: m.role_name ?? null, taux_horaire: canEditRates ? m.labor_cost_per_hour ?? null : null,
-        profile_id: m.user_id, created_at: new Date().toISOString(),
-      }
-      setMembers(prev => [optimistic, ...prev])
+        role_label: m.role_name ?? null,
+        taux_horaire: canEditRates ? m.labor_cost_per_hour ?? null : null,
+        profile_id: m.user_id,
+        created_at: new Date().toISOString(),
+      }))
+      setMembers(prev => [...optimistic, ...prev])
     } else {
       if (!name.trim()) { setError('Le nom est requis.'); return }
       const taux = canEditRates && tauxHoraire ? parseFloat(tauxHoraire.replace(',', '.')) : null
@@ -195,20 +235,24 @@ export default function IndividualMembersSection({
 
   const handleDetach = async (memberId: string) => {
     if (!confirm("Retirer ce membre du chantier ? (Il restera dans l'organisation)")) return
+    setDetachingIds(prev => new Set(prev).add(memberId))
     startTransition(async () => {
       const prev = members
       setMembers(p => p.filter(m => m.id !== memberId))
       const { error: err } = await detachMemberFromChantier(memberId, chantierId)
+      setDetachingIds(current => { const next = new Set(current); next.delete(memberId); return next })
       if (err) { alert(err); setMembers(prev) }
     })
   }
 
   const handleDelete = async (memberId: string) => {
     if (!confirm("Supprimer définitivement ce membre de l'organisation ?")) return
+    setDeletingIds(prev => new Set(prev).add(memberId))
     startTransition(async () => {
       const prev = members
       setMembers(p => p.filter(m => m.id !== memberId))
       const { error: err } = await deleteIndividualMember(memberId)
+      setDeletingIds(current => { const next = new Set(current); next.delete(memberId); return next })
       if (err) { alert(err); setMembers(prev) }
     })
   }
@@ -216,6 +260,37 @@ export default function IndividualMembersSection({
   const orgMembersAvailable = orgMembers.filter(om =>
     !members.some(m => m.profile_id === om.user_id)
   )
+
+  const RoleSelect = ({
+    value,
+    onChange,
+    className = 'input w-full text-sm',
+  }: {
+    value: string
+    onChange: (value: string) => void
+    className?: string
+  }) => {
+    if (orgRoles.length === 0) {
+      return (
+        <input
+          className={className}
+          placeholder="Rôle"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+        />
+      )
+    }
+    const hasCustomValue = value && !orgRoles.some(role => role.name === value)
+    return (
+      <select className={className} value={value} onChange={e => onChange(e.target.value)}>
+        <option value="">Sans rôle</option>
+        {hasCustomValue && <option value={value}>{value}</option>}
+        {orgRoles.map(role => (
+          <option key={role.id} value={role.name}>{role.name}</option>
+        ))}
+      </select>
+    )
+  }
 
   const phantomMembersAvailable = orgPhantomMembers.filter(pm =>
     !members.some(m => m.id === pm.id)
@@ -247,7 +322,7 @@ export default function IndividualMembersSection({
                 mode === 'new' ? 'bg-accent text-white' : 'text-secondary hover:text-primary'
               }`}
             >
-              Nouveau (terrain)
+              Nouvel externe
             </button>
             <button
               onClick={() => setMode('phantom')}
@@ -257,7 +332,7 @@ export default function IndividualMembersSection({
               disabled={phantomMembersAvailable.length === 0}
               title={phantomMembersAvailable.length === 0 ? 'Aucun membre fantôme disponible' : ''}
             >
-              Membres de l&apos;org {phantomMembersAvailable.length > 0 && `(${phantomMembersAvailable.length})`}
+              Intervenants externes {phantomMembersAvailable.length > 0 && `(${phantomMembersAvailable.length})`}
             </button>
             <button
               onClick={() => setMode('existing')}
@@ -267,51 +342,62 @@ export default function IndividualMembersSection({
               disabled={orgMembersAvailable.length === 0}
               title={orgMembersAvailable.length === 0 ? "Aucun compte org disponible" : ''}
             >
-              Compte org
+              Comptes app
             </button>
           </div>
 
           {mode === 'phantom' ? (
             <div>
               <label className="text-xs font-semibold text-secondary block mb-1.5">
-                Sélectionner un membre existant de l&apos;organisation
+                Intervenants externes déjà créés dans l&apos;organisation
               </label>
-              <select
-                className="input w-full text-sm"
-                value={selectedPhantomId}
-                onChange={e => setSelectedPhantomId(e.target.value)}
-              >
-                <option value="">— Choisir —</option>
+              <div className="flex flex-wrap gap-1.5">
                 {phantomMembersAvailable.map(pm => {
                   const fullName = [pm.prenom, pm.name].filter(Boolean).join(' ')
+                  const selected = selectedPhantomIds.has(pm.id)
                   return (
-                    <option key={pm.id} value={pm.id}>
+                    <button
+                      key={pm.id}
+                      type="button"
+                      onClick={() => togglePhantomMember(pm.id)}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                        selected ? 'border-accent bg-accent text-white' : 'border-[var(--elevation-border)] text-secondary hover:border-accent/40 hover:text-primary'
+                      }`}
+                    >
+                      {selected && <Check className="h-3 w-3" />}
                       {fullName}{pm.role_label ? ` · ${pm.role_label}` : ''}{canEditRates && pm.taux_horaire != null ? ` · ${pm.taux_horaire}€/h` : ''}
-                    </option>
+                    </button>
                   )
                 })}
-              </select>
+              </div>
               <p className="text-xs text-secondary mt-1.5">
-                Ce membre sera rattaché à ce chantier sans être recréé.
+                Ces membres seront rattachés à ce chantier sans être recréés.
               </p>
             </div>
           ) : mode === 'existing' ? (
             <div>
               <label className="text-xs font-semibold text-secondary block mb-1.5">
-                Sélectionner un membre de l&apos;organisation
+                Comptes application de l&apos;organisation
               </label>
-              <select
-                className="input w-full text-sm"
-                value={linkedMembershipId}
-                onChange={e => setLinkedMembershipId(e.target.value)}
-              >
-                <option value="">— Choisir —</option>
-                {orgMembersAvailable.map(om => (
-                  <option key={om.membership_id} value={om.membership_id}>
-                    {om.full_name ?? om.email}{om.role_name ? ` · ${om.role_name}` : ''}
-                  </option>
-                ))}
-              </select>
+              <div className="flex flex-wrap gap-1.5">
+                {orgMembersAvailable.map(om => {
+                  const selected = linkedMembershipIds.has(om.membership_id)
+                  const isMe = currentUserId === om.user_id
+                  return (
+                    <button
+                      key={om.membership_id}
+                      type="button"
+                      onClick={() => toggleLinkedMembership(om.membership_id)}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                        selected ? 'border-accent bg-accent text-white' : 'border-[var(--elevation-border)] text-secondary hover:border-accent/40 hover:text-primary'
+                      }`}
+                    >
+                      {selected && <Check className="h-3 w-3" />}
+                      {isMe ? 'Moi' : (om.full_name ?? om.email)}{om.role_name ? ` · ${om.role_name}` : ''}
+                    </button>
+                  )
+                })}
+              </div>
               <p className="text-xs text-secondary mt-1.5">
                 Le taux horaire défini sur le compte sera utilisé. Pas besoin d&apos;envoi de lien (compte existant).
               </p>
@@ -341,12 +427,7 @@ export default function IndividualMembersSection({
                 onChange={e => setEmail(e.target.value)}
               />
               <div className="grid grid-cols-2 gap-2">
-                <input
-                  className="input w-full text-sm"
-                  placeholder="Rôle (ex : Sous-traitant, Apprenti)"
-                  value={roleLabel}
-                  onChange={e => setRoleLabel(e.target.value)}
-                />
+                <RoleSelect value={roleLabel} onChange={setRoleLabel} />
                 {canEditRates && (
                   <input
                     className="input w-full text-sm"
@@ -392,6 +473,9 @@ export default function IndividualMembersSection({
           {members.map(m => {
             const fullName = [m.prenom, m.name].filter(Boolean).join(' ') || m.name
             const isEditing = editingId === m.id
+            const isMe = Boolean(currentUserId && m.profile_id === currentUserId)
+            const detaching = detachingIds.has(m.id)
+            const deleting = deletingIds.has(m.id)
 
             if (isEditing) {
               return (
@@ -420,12 +504,7 @@ export default function IndividualMembersSection({
                     onChange={e => setEditEmail(e.target.value)}
                   />
                   <div className="grid grid-cols-2 gap-2">
-                    <input
-                      className="input w-full text-sm"
-                      placeholder="Rôle"
-                      value={editRole}
-                      onChange={e => setEditRole(e.target.value)}
-                    />
+                    <RoleSelect value={editRole} onChange={setEditRole} />
                     {canEditRates && (
                       <div>
                         <input
@@ -463,8 +542,11 @@ export default function IndividualMembersSection({
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-primary truncate flex items-center gap-2">
                     {fullName}
+                    {isMe && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent/15 text-accent">Moi</span>
+                    )}
                     {m.profile_id ? (
-                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500">Compte org</span>
+                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500">Compte application</span>
                     ) : (
                       <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500">Externe</span>
                     )}
@@ -493,17 +575,19 @@ export default function IndividualMembersSection({
                 </button>
                 <button
                   onClick={() => handleDetach(m.id)}
-                  className="p-1.5 rounded text-secondary hover:text-amber-500 hover:bg-amber-500/10 transition-colors flex-shrink-0"
+                  disabled={detaching || deleting}
+                  className="p-1.5 rounded text-secondary hover:text-amber-500 hover:bg-amber-500/10 transition-colors flex-shrink-0 disabled:opacity-50"
                   title="Retirer du chantier"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  {detaching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
                 </button>
                 <button
                   onClick={() => handleDelete(m.id)}
-                  className="p-1.5 rounded text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors flex-shrink-0"
+                  disabled={detaching || deleting}
+                  className="p-1.5 rounded text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors flex-shrink-0 disabled:opacity-50"
                   title="Supprimer définitivement"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                 </button>
               </div>
             )

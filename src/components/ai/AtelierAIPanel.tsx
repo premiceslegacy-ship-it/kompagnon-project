@@ -7,8 +7,9 @@ import {
 } from 'lucide-react'
 import type { AIQuoteResult, AIQuoteSection, AIQuoteItem } from '@/app/api/ai/analyze-quote/route'
 import { AI_ASSISTANTS } from '@/lib/brand'
+import { AssistantAvatar } from './AssistantAvatar'
 
-const SARAH = AI_ASSISTANTS.sarah
+const CHLOE = AI_ASSISTANTS.chloe
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -18,6 +19,10 @@ type Props = {
   onImport: (result: AIQuoteResult) => void
   onClose: () => void
   voiceInputEnabled?: boolean
+  briefBanner?: string | null
+  // Description transmise par Sarah : Chloé lance l'analyse automatiquement
+  // au chargement pour proposer les lignes directement, sans saisie manuelle.
+  autoAnalyzeText?: string | null
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -44,7 +49,7 @@ const fmtPrice = (n: number) =>
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = true }: Props) {
+export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = true, briefBanner = null, autoAnalyzeText = null }: Props) {
   const [mode, setMode] = useState<Mode>(voiceInputEnabled ? 'voice' : 'text')
   const [text, setText] = useState('')
   const [file, setFile] = useState<File | null>(null)
@@ -107,7 +112,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
 
   // ─── AI Analysis ──────────────────────────────────────────────────────────
 
-  async function handleAnalyze() {
+  const handleAnalyze = useCallback(async (overrideText?: string) => {
     if (isRecording) stopRecording()
     setIsAnalyzing(true)
     setError(null)
@@ -117,7 +122,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
 
     try {
       let res: Response
-      if (mode === 'pdf' && file) {
+      if (mode === 'pdf' && file && overrideText === undefined) {
         const formData = new FormData()
         formData.append('file', file)
         if (pdfDescription.trim()) formData.append('description', pdfDescription.trim())
@@ -126,7 +131,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
         res = await fetch('/api/ai/analyze-quote', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text: overrideText ?? text }),
         })
       }
       const data = await res.json()
@@ -137,7 +142,20 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
     } finally {
       setIsAnalyzing(false)
     }
-  }
+  }, [isRecording, stopRecording, mode, file, pdfDescription, text])
+
+  // Auto-analyse à partir du brief Sarah : on bascule en mode texte, on
+  // pré-remplit la description et on lance Chloé une seule fois.
+  const autoAnalyzeDoneRef = useRef(false)
+  useEffect(() => {
+    if (autoAnalyzeDoneRef.current) return
+    const brief = autoAnalyzeText?.trim()
+    if (!brief) return
+    autoAnalyzeDoneRef.current = true
+    setMode('text')
+    setText(brief)
+    handleAnalyze(brief)
+  }, [autoAnalyzeText, handleAnalyze])
 
   function handleImport(index: number) {
     const q = results[index]
@@ -186,12 +204,10 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--elevation-border)]">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm text-white text-xs font-bold">
-              S
-            </div>
+            <AssistantAvatar assistant="chloe" size={32} />
             <div>
-              <h2 className="text-base font-bold text-primary leading-none">{SARAH.name} <span className="font-normal text-secondary text-sm">, {SARAH.role}</span></h2>
-              <p className="text-xs text-secondary mt-0.5">Devis assiste par IA</p>
+              <h2 className="text-base font-bold text-primary leading-none">{CHLOE.name} <span className="font-normal text-secondary text-sm">, {CHLOE.role}</span></h2>
+              <p className="text-xs text-secondary mt-0.5">Devis assisté par IA</p>
             </div>
           </div>
           <button
@@ -201,6 +217,14 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Brief banner */}
+        {briefBanner && (
+          <div className="mx-6 mt-3 flex items-center gap-2 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 px-3 py-2 text-xs text-[var(--accent)]">
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+            <span>{briefBanner}</span>
+          </div>
+        )}
 
         {/* Mode switcher */}
         <div className="px-6 pt-4">
@@ -232,7 +256,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
               {/* Voice mode */}
               {mode === 'voice' && (
                 <>
-                  <p className="text-xs text-secondary">Décrivez les travaux à voix haute. Sarah structure votre devis automatiquement.</p>
+                  <p className="text-xs text-secondary">Décrivez les travaux à voix haute. {CHLOE.name} structure votre devis automatiquement.</p>
                   <div className="flex flex-col items-center gap-4 py-6">
                     <button
                       onClick={isRecording ? stopRecording : startRecording}
@@ -245,13 +269,13 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                       {isRecording ? <MicOff className="w-8 h-8 text-white" /> : <Mic className="w-8 h-8 text-white" />}
                     </button>
                     <p className="text-sm text-secondary">
-                      {isRecording ? 'Enregistrement en cours... (cliquez pour arrêter)' : isTranscribing ? 'Sarah écoute...' : 'Cliquez pour parler'}
+                      {isRecording ? 'Enregistrement en cours... (cliquez pour arrêter)' : isTranscribing ? `${CHLOE.name} écoute...` : 'Cliquez pour parler'}
                     </p>
                   </div>
                   {isTranscribing && (
                     <div className="flex items-center gap-2 text-sm text-secondary">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      Transcription Mistral en cours...
+                      Transcription en cours...
                     </div>
                   )}
                   {text && (
@@ -266,7 +290,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
               {/* Text mode */}
               {mode === 'text' && (
                 <>
-                  <p className="text-xs text-secondary">Décrivez librement les travaux. Sarah s'occupe de la structure.</p>
+                  <p className="text-xs text-secondary">Décrivez librement les travaux. {CHLOE.name} s'occupe de la structure.</p>
                   <textarea
                     value={text}
                     onChange={e => setText(e.target.value)}
@@ -280,7 +304,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
               {/* PDF / Image mode */}
               {mode === 'pdf' && (
                 <>
-                  <p className="text-xs text-secondary">Importez un PDF ou une image (photo, plan scanné). Sarah extrait les postes directement.</p>
+                  <p className="text-xs text-secondary">Importez un PDF ou une image (photo, plan scanné). {CHLOE.name} extrait les postes directement.</p>
                   {!file ? (
                     <div
                       className="border-2 border-dashed border-[var(--elevation-border)] rounded-xl py-10 flex flex-col items-center gap-3 text-secondary hover:border-violet-400/50 hover:bg-violet-500/5 transition-all cursor-pointer"
@@ -332,7 +356,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                         </button>
                       </div>
                       <div>
-                        <label className="text-xs text-secondary font-medium mb-1.5 block">Précisions pour Sarah <span className="text-secondary/50 font-normal">(optionnel)</span></label>
+                        <label className="text-xs text-secondary font-medium mb-1.5 block">Précisions pour {CHLOE.name} <span className="text-secondary/50 font-normal">(optionnel)</span></label>
                         <textarea
                           value={pdfDescription}
                           onChange={e => setPdfDescription(e.target.value)}
@@ -401,6 +425,25 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
                   <p className="text-sm font-bold text-primary">{currentQuote.title}</p>
                 </div>
               )}
+              {(currentQuote.clientName || currentQuote.clientDraft) && (
+                <div className="px-3 py-2 rounded-xl bg-black/5 dark:bg-white/5 border border-[var(--elevation-border)]">
+                  <p className="text-xs text-secondary uppercase tracking-wide font-semibold mb-0.5">Client détecté</p>
+                  <p className="text-sm font-semibold text-primary">
+                    {currentQuote.clientDraft?.company_name || currentQuote.clientName || [currentQuote.clientDraft?.first_name, currentQuote.clientDraft?.last_name].filter(Boolean).join(' ')}
+                  </p>
+                  {currentQuote.clientDraft?.siret && <p className="text-xs text-secondary mt-0.5">SIRET : {currentQuote.clientDraft.siret}</p>}
+                </div>
+              )}
+              {(currentQuote.quoteWarnings?.length ?? 0) > 0 && (
+                <div className="space-y-1.5 p-3 rounded-xl bg-amber-500/10 border border-amber-500/25">
+                  {currentQuote.quoteWarnings!.slice(0, 4).map((warning, wi) => (
+                    <div key={wi} className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>{warning}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {currentQuote.sections.map((section: AIQuoteSection, si: number) => (
                 <div key={si} className="rounded-xl border border-[var(--elevation-border)] overflow-hidden">
                   <div className="px-3 py-2 bg-black/5 dark:bg-white/5 border-b border-[var(--elevation-border)]">
@@ -436,17 +479,17 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
         <div className="px-6 py-4 border-t border-[var(--elevation-border)] space-y-2">
           {!currentQuote ? (
             <button
-              onClick={handleAnalyze}
+              onClick={() => handleAnalyze()}
               disabled={!canAnalyze || isAnalyzing}
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-sm font-semibold hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               {isAnalyzing ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Sarah analyse...</span>
+                  <span>{CHLOE.name} analyse...</span>
                 </>
               ) : (
-                <span>Confier à Sarah</span>
+                <span>Confier à {CHLOE.name}</span>
               )}
             </button>
           ) : (

@@ -544,8 +544,9 @@ function ExpenseForm({
         <button type="button" onClick={onCancel} className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5">
           <X className="w-3.5 h-3.5" /> Annuler
         </button>
-        <button type="submit" disabled={saving} className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5 disabled:opacity-50">
-          <Check className="w-3.5 h-3.5" /> {saving ? 'Enregistrement…' : editingId ? 'Mettre à jour' : 'Ajouter'}
+        <button type="submit" disabled={saving} className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5 min-w-[7.5rem] justify-center disabled:opacity-50">
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+          {saving ? 'Enregistrement…' : editingId ? 'Mettre à jour' : 'Ajouter'}
         </button>
       </div>
     </form>

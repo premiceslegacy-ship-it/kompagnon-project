@@ -80,6 +80,7 @@ export type MaintenanceReport = {
   travelCost: number
   otherCost: number
   revenueHt: number
+  encaisseHt: number
   marginEur: number
   expectedRevenueHt: number
   expectedCostHt: number
@@ -650,18 +651,21 @@ export async function getHoursReport(year: number, month?: number): Promise<Hour
       : Promise.resolve({ data: [] as Array<{ id: string; prenom: string | null; name: string }> }),
   ])
 
-  const byPerson: HoursReportEntry[] = [
-    ...Object.entries(byUser).map(([uid, hours]) => {
-      const p = (profilesRes.data ?? []).find(p => p.id === uid)
-      return { personName: p?.full_name ?? 'Inconnu', hours, userId: uid, memberId: null }
-    }),
-    ...Object.entries(byMember).map(([mid, hours]) => {
-      const m = (membresRes.data ?? []).find(m => m.id === mid)
-      const name = m ? `${m.prenom ?? ''} ${m.name}`.trim() : 'Inconnu'
-      return { personName: name, hours, userId: null, memberId: mid }
-    }),
-  ].sort((a, b) => b.hours - a.hours)
+  const merged: Record<string, HoursReportEntry> = {}
+  for (const [uid, hours] of Object.entries(byUser)) {
+    const p = (profilesRes.data ?? []).find(p => p.id === uid)
+    const name = p?.full_name ?? 'Inconnu'
+    if (merged[name]) merged[name].hours += hours
+    else merged[name] = { personName: name, hours, userId: uid, memberId: null }
+  }
+  for (const [mid, hours] of Object.entries(byMember)) {
+    const m = (membresRes.data ?? []).find(m => m.id === mid)
+    const name = m ? `${m.prenom ?? ''} ${m.name}`.trim() : 'Inconnu'
+    if (merged[name]) merged[name].hours += hours
+    else merged[name] = { personName: name, hours, userId: null, memberId: mid }
+  }
 
+  const byPerson = Object.values(merged).sort((a, b) => b.hours - a.hours)
   const total = byPerson.reduce((s, e) => s + e.hours, 0)
   return { total, byPerson }
 }
@@ -690,7 +694,7 @@ export async function getMaintenanceReport(year: number, month?: number): Promis
 
   if (!activeContractIds.length) {
     const expected = await getMaintenanceExpectedPeriod(supabase, orgId)
-    return { interventionsDone: 0, hoursTotal: 0, laborCost: 0, partsCost: 0, travelCost: 0, otherCost: 0, revenueHt: 0, marginEur: 0, ...expected }
+    return { interventionsDone: 0, hoursTotal: 0, laborCost: 0, partsCost: 0, travelCost: 0, otherCost: 0, revenueHt: 0, encaisseHt: 0, marginEur: 0, ...expected }
   }
 
   const [{ data: interventions }, { data: schedules }, expected] = await Promise.all([
@@ -731,7 +735,7 @@ export async function getMaintenanceReport(year: number, month?: number): Promis
 
     invoiceIds.length ? supabase
       .from('invoices')
-      .select('total_ht, invoice_type')
+      .select('total_ht, total_ttc, total_paid, invoice_type, status')
       .eq('organization_id', orgId)
       .in('id', invoiceIds)
       .in('status', ['sent', 'partial', 'paid'])
@@ -744,9 +748,10 @@ export async function getMaintenanceReport(year: number, month?: number): Promis
   const partsCost = (expenses ?? []).filter(e => e.category === 'materiel').reduce((s, e) => s + (e.amount_ht ?? 0), 0)
   const travelCost = (expenses ?? []).filter(e => e.category === 'transport').reduce((s, e) => s + (e.amount_ht ?? 0), 0)
   const otherCost = (expenses ?? []).filter(e => e.category !== 'materiel' && e.category !== 'transport').reduce((s, e) => s + (e.amount_ht ?? 0), 0)
-  const revenueHt = (invoices ?? [])
-    .filter(i => i.invoice_type !== 'avoir')
-    .reduce((s, i) => s + (i.total_ht ?? 0), 0)
+  const billedInvoices = (invoices ?? []).filter(i => i.invoice_type !== 'avoir')
+  const revenueHt = billedInvoices.reduce((s, i) => s + (i.total_ht ?? 0), 0)
+  const encaisseHt = billedInvoices.reduce((s, i) => s + paidHt(i), 0)
+  const hasCosts = laborCost > 0 || partsCost > 0 || travelCost > 0 || otherCost > 0
 
   return {
     interventionsDone: (interventions ?? []).filter(iv => (
@@ -760,7 +765,8 @@ export async function getMaintenanceReport(year: number, month?: number): Promis
     travelCost,
     otherCost,
     revenueHt,
-    marginEur: revenueHt - laborCost - partsCost - travelCost - otherCost,
+    encaisseHt,
+    marginEur: hasCosts ? revenueHt - laborCost - partsCost - travelCost - otherCost : 0,
     ...expected,
   }
 }

@@ -41,6 +41,9 @@ export type MaintenanceContractInput = {
 }
 
 export async function createMaintenanceContract(input: MaintenanceContractInput): Promise<Result & { id?: string }> {
+  const denied = await requirePermission('chantiers.create')
+  if (denied) return { error: denied }
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable' }
 
@@ -104,6 +107,9 @@ export async function createMaintenanceContract(input: MaintenanceContractInput)
 }
 
 export async function updateMaintenanceContract(contractId: string, input: Partial<MaintenanceContractInput>): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable' }
 
@@ -185,6 +191,9 @@ export async function updateMaintenanceContract(contractId: string, input: Parti
 }
 
 export async function deleteMaintenanceContract(contractId: string): Promise<Result> {
+  const denied = await requirePermission('chantiers.delete')
+  if (denied) return { error: denied }
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable' }
 
@@ -243,6 +252,9 @@ export type InterventionInput = {
 }
 
 export async function createIntervention(contractId: string, input: InterventionInput): Promise<Result & { id?: string }> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable' }
 
@@ -291,6 +303,9 @@ export async function createIntervention(contractId: string, input: Intervention
 }
 
 export async function updateIntervention(interventionId: string, input: Partial<InterventionInput>): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable' }
 
@@ -318,6 +333,13 @@ export async function updateIntervention(interventionId: string, input: Partial<
   if (input.cost_other_ht !== undefined) update.cost_other_ht = normalizeMoney(input.cost_other_ht)
   if (input.invoice_id !== undefined) update.invoice_id = input.invoice_id
 
+  const { data: existing } = await supabase
+    .from('maintenance_interventions')
+    .select('contract_id, date_intervention, contract:maintenance_contracts(prochaine_intervention)')
+    .eq('id', interventionId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+
   const { error } = await supabase
     .from('maintenance_interventions')
     .update(update)
@@ -325,6 +347,25 @@ export async function updateIntervention(interventionId: string, input: Partial<
     .eq('organization_id', orgId)
 
   if (error) return { error: error.message }
+
+  // Quand une intervention planifiée est réalisée ou annulée, effacer prochaine_intervention
+  // sur le contrat si elle correspond à la date de cette intervention.
+  if (
+    (input.statut === 'réalisée' || input.statut === 'annulée') &&
+    existing?.contract_id
+  ) {
+    const contractProchaine = Array.isArray((existing as any).contract)
+      ? (existing as any).contract[0]?.prochaine_intervention
+      : (existing as any).contract?.prochaine_intervention
+    const interventionDate = input.date_intervention ?? existing.date_intervention
+    if (contractProchaine && contractProchaine === interventionDate) {
+      await supabase
+        .from('maintenance_contracts')
+        .update({ prochaine_intervention: null })
+        .eq('id', existing.contract_id)
+        .eq('organization_id', orgId)
+    }
+  }
 
   const productionError = await syncInterventionProduction(interventionId, orgId)
   if (productionError) return { error: productionError }
@@ -334,6 +375,9 @@ export async function updateIntervention(interventionId: string, input: Partial<
 }
 
 export async function deleteIntervention(interventionId: string): Promise<Result> {
+  const denied = await requirePermission('chantiers.edit')
+  if (denied) return { error: denied }
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable' }
 
@@ -452,6 +496,9 @@ export async function billMaintenanceIntervention(
   interventionId: string,
   invoiceId?: string | null,
 ): Promise<{ invoiceId: string | null; error: string | null }> {
+  const denied = await requirePermission(invoiceId ? 'invoices.edit' : 'invoices.create')
+  if (denied) return { invoiceId: null, error: denied }
+
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { invoiceId: null, error: 'Organisation introuvable' }
 

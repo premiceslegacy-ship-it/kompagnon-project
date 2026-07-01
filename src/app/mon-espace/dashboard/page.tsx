@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { getMemberSession } from '@/lib/auth/member-session'
 import {
   getMemberByIdAdmin,
+  getMemberAccessibleChantiers,
   getMemberPointages,
   getMemberPlannings,
   getMemberTasks,
@@ -17,6 +18,7 @@ export default async function MonEspaceDashboardPage() {
 
   const member = await getMemberByIdAdmin(session.memberId)
   if (!member) redirect('/mon-espace/request-access?error=invalid_token')
+  if (member.organization_id !== session.organizationId) redirect('/mon-espace/request-access?error=invalid_token')
 
   // Mois en cours par défaut
   const now = new Date()
@@ -27,7 +29,7 @@ export default async function MonEspaceDashboardPage() {
   const today = now.toISOString().slice(0, 10)
   const in3Weeks = new Date(now.getTime() + 21 * 86_400_000).toISOString().slice(0, 10)
 
-  const [pointages, plannings, tasks, orgRow, icalToken, memberGoals, interventionsRows] = await Promise.all([
+  const [pointages, plannings, tasks, orgRow, icalToken, memberGoals, interventionsRows, chantiers] = await Promise.all([
     getMemberPointages(session.memberId, { dateFrom: monthStart, dateTo: monthEnd, useAdmin: true }),
     getMemberPlannings(session.memberId, { dateFrom: today, dateTo: in3Weeks, useAdmin: true }),
     getMemberTasks(session.memberId, { useAdmin: true }),
@@ -47,17 +49,9 @@ export default async function MonEspaceDashboardPage() {
       .gte('date_intervention', today)
       .lte('date_intervention', in3Weeks)
       .order('date_intervention', { ascending: true }),
+    getMemberAccessibleChantiers(session.memberId, member.organization_id),
   ])
 
-  // Liste des chantiers ouverts pour le formulaire de pointage
-  const { data: chantiersRows } = await createAdminClient()
-    .from('chantiers')
-    .select('id, title, status')
-    .eq('organization_id', member.organization_id)
-    .in('status', ['en_cours', 'planifie', 'suspendu'])
-    .order('title', { ascending: true })
-
-  const chantiers = (chantiersRows ?? []).map(c => ({ id: c.id, title: c.title }))
   const icalUrl = `/api/planning/ical-member?memberId=${session.memberId}&token=${icalToken}`
 
   const upcomingInterventions = (interventionsRows.data ?? []).map((iv: any) => ({

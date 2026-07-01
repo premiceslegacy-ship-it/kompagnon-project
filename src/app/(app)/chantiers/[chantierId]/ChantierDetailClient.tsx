@@ -23,6 +23,7 @@ import {
 import type { ChantierDetail, Tache, TacheStatus, Pointage, ChantierPhoto, ChantierNote, Equipe, ChantierPlanning } from '@/lib/data/queries/chantiers'
 import type { QuoteStub } from '@/lib/data/queries/quotes'
 import type { TeamMember } from '@/lib/data/queries/team'
+import type { OrgRole } from '@/lib/data/queries/roles'
 import { getQuoteItemsForSuggestions } from '@/lib/data/mutations/quotes'
 import {
   createTache, updateTache, deleteTache, reorderTaches,
@@ -42,12 +43,17 @@ import { todayParis } from '@/lib/utils'
 import RentabiliteTab, { type DeletedPointageInfo } from './RentabiliteTab'
 import IndividualMembersSection from './IndividualMembersSection'
 import JalonsTab from './JalonsTab'
+import ReceptionTab from './ReceptionTab'
+import type { ChantierReserve } from '@/lib/data/queries/chantiers'
 import type { ChantierProfitability } from '@/lib/data/queries/chantier-profitability'
 import type { ChantierJalon } from '@/lib/data/queries/chantier-jalons'
 import type { IndividualMember } from '@/lib/data/queries/members'
 import ChantierAIAssistant from '@/components/ai/ChantierAIAssistant'
 import SituationsSection from '@/components/situations/SituationsSection'
+import ClientEmailRequiredModal from '@/components/ClientEmailRequiredModal'
+import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 import type { SituationsSummary } from '@/lib/data/queries/invoices'
+import AICreditsErrorModal from '@/components/shared/AICreditsErrorModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -59,9 +65,48 @@ function fmtHours(hours: number): string {
   return `${h}h${String(min).padStart(2, '0')}`
 }
 
+function RoleLabelSelect({
+  value,
+  onChange,
+  roles,
+  className = 'input w-full text-sm',
+}: {
+  value: string
+  onChange: (value: string) => void
+  roles: OrgRole[]
+  className?: string
+}) {
+  if (roles.length === 0) {
+    return (
+      <input
+        className={className}
+        placeholder="Rôle"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      />
+    )
+  }
+
+  const hasCustomValue = value && !roles.some(role => role.name === value)
+
+  return (
+    <select
+      className={className}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+    >
+      <option value="">Sans rôle</option>
+      {hasCustomValue && <option value={value}>{value}</option>}
+      {roles.map(role => (
+        <option key={role.id} value={role.name}>{role.name}</option>
+      ))}
+    </select>
+  )
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'taches' | 'jalons' | 'planning' | 'pointages' | 'photos' | 'notes' | 'equipes' | 'rentabilite'
+type Tab = 'taches' | 'jalons' | 'planning' | 'pointages' | 'photos' | 'notes' | 'equipes' | 'rentabilite' | 'reception'
 type BillingPeriod = 'none' | 'mensuelle' | 'bimestrielle' | 'trimestrielle' | 'annuelle'
 
 type ChantierPermissions = {
@@ -1002,8 +1047,9 @@ function WeeklyPlanningView({
                     setAddForm(f => ({...f, date: todayParis(), label: '', equipeId: '', memberId: '', notes: ''}))
                   }
                 }}
-                className="btn-primary text-xs py-1.5 px-4"
+                className="btn-primary text-xs py-1.5 px-4 inline-flex items-center gap-1.5 min-w-[6.5rem] justify-center"
               >
+                {addLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                 {addLoading ? 'Enregistrement...' : 'Planifier'}
               </button>
             </div>
@@ -1073,14 +1119,18 @@ function EquipesTab({
   chantierEquipes: initialChantierEquipes,
   linkedQuoteId,
   orgMembers,
+  orgRoles,
   canEditRates,
+  currentUserId,
 }: {
   chantierId: string
   allEquipes: Equipe[]
   chantierEquipes: Equipe[]
   linkedQuoteId?: string | null
   orgMembers: TeamMember[]
+  orgRoles: OrgRole[]
   canEditRates: boolean
+  currentUserId?: string | null
 }) {
   const [allEquipes, setAllEquipes] = useState(initialAllEquipes)
   const [assignedIds, setAssignedIds] = useState<Set<string>>(
@@ -1093,6 +1143,10 @@ function EquipesTab({
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [memberForms, setMemberForms] = useState<Record<string, { name: string; role: string; taux: string; profileId: string | null }>>({})
   const [editingMembreTaux, setEditingMembreTaux] = useState<Record<string, string>>({})
+  const [addingMembres, setAddingMembres] = useState<Set<string>>(new Set())
+  const [removingMembres, setRemovingMembres] = useState<Set<string>>(new Set())
+  const [deletingEquipes, setDeletingEquipes] = useState<Set<string>>(new Set())
+  const [pendingMembreIds, setPendingMembreIds] = useState<Record<string, Set<string>>>({})
 
   // Team suggestions from quote MO lines
   const [teamSuggestions, setTeamSuggestions] = useState<TeamSuggestion[]>([])
@@ -1161,8 +1215,11 @@ function EquipesTab({
   }
 
   const handleDeleteEquipe = async (equipeId: string) => {
-    if (!confirm('Supprimer cette équipe et tous ses membres ?')) return
-    await deleteEquipe(equipeId)
+    if (!confirm("Supprimer cette équipe ? Les membres seront conservés comme intervenants solo.")) return
+    setDeletingEquipes(prev => new Set([...prev, equipeId]))
+    const { error } = await deleteEquipe(equipeId)
+    setDeletingEquipes(prev => { const s = new Set(prev); s.delete(equipeId); return s })
+    if (error) { alert(error); return }
     setAllEquipes(prev => prev.filter(e => e.id !== equipeId))
     setAssignedIds(prev => { const s = new Set(prev); s.delete(equipeId); return s })
   }
@@ -1180,9 +1237,11 @@ function EquipesTab({
   const handleAddMembre = async (equipeId: string) => {
     const form = memberForms[equipeId]
     if (!form?.name.trim()) return
+    setAddingMembres(prev => new Set([...prev, equipeId]))
     const taux = canEditRates && form.taux ? parseFloat(form.taux) : null
     const profileId = form.profileId ?? null
     const { membreId, error } = await addEquipeMembre(equipeId, { name: form.name.trim(), roleLabel: form.role.trim() || null, tauxHoraire: taux, profileId })
+    setAddingMembres(prev => { const s = new Set(prev); s.delete(equipeId); return s })
     if (!error && membreId) {
       setAllEquipes(prev => prev.map(e => e.id !== equipeId ? e : {
         ...e,
@@ -1190,6 +1249,31 @@ function EquipesTab({
       }))
       setMemberForms(prev => ({ ...prev, [equipeId]: { name: '', role: '', taux: '', profileId: null } }))
     }
+  }
+
+  const handleAddMultipleMembres = async (equipeId: string) => {
+    const ids = [...(pendingMembreIds[equipeId] ?? new Set())]
+    if (!ids.length) return
+    setAddingMembres(prev => new Set([...prev, equipeId]))
+    for (const uid of ids) {
+      const member = orgMembers.find(m => m.user_id === uid)
+      if (!member) continue
+      const taux = canEditRates && member.labor_cost_per_hour != null ? member.labor_cost_per_hour : null
+      const { membreId, error } = await addEquipeMembre(equipeId, {
+        name: member.full_name ?? member.email,
+        roleLabel: member.job_title ?? null,
+        tauxHoraire: taux,
+        profileId: uid,
+      })
+      if (!error && membreId) {
+        setAllEquipes(prev => prev.map(e => e.id !== equipeId ? e : {
+          ...e,
+          membres: [...e.membres, { id: membreId, equipe_id: equipeId, prenom: null, name: member.full_name ?? member.email, email: null, role_label: member.job_title ?? null, profile_id: uid, taux_horaire: taux }],
+        }))
+      }
+    }
+    setAddingMembres(prev => { const s = new Set(prev); s.delete(equipeId); return s })
+    setPendingMembreIds(prev => { const s = { ...prev }; delete s[equipeId]; return s })
   }
 
   const handleSaveMembreTaux = async (equipeId: string, membreId: string) => {
@@ -1205,7 +1289,10 @@ function EquipesTab({
   }
 
   const handleRemoveMembre = async (equipeId: string, membreId: string) => {
-    await removeEquipeMembre(membreId)
+    setRemovingMembres(prev => new Set([...prev, membreId]))
+    const { error } = await removeEquipeMembre(membreId)
+    setRemovingMembres(prev => { const s = new Set(prev); s.delete(membreId); return s })
+    if (error) return
     setAllEquipes(prev => prev.map(e => e.id !== equipeId ? e : {
       ...e, membres: e.membres.filter(m => m.id !== membreId),
     }))
@@ -1215,25 +1302,25 @@ function EquipesTab({
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="text-sm font-bold text-primary flex items-center gap-2">
             <Users className="w-4 h-4 text-accent" /> Équipes terrain
           </h3>
           <p className="text-xs text-secondary mt-0.5">Créez des équipes libres et assignez-les à ce chantier.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           {linkedQuoteId && !showTeamSuggestions && (
             <button
               onClick={handleSuggestTeams}
               disabled={suggestTeamsLoading}
-              className="flex items-center gap-2 text-sm font-semibold text-violet-600 dark:text-violet-400 px-3 py-2 rounded-xl border border-violet-400/30 bg-violet-500/5 hover:bg-violet-500/10 transition-all disabled:opacity-60"
+              className="flex items-center justify-center gap-2 text-sm font-semibold text-violet-600 dark:text-violet-400 px-3 py-2 rounded-xl border border-violet-400/30 bg-violet-500/5 hover:bg-violet-500/10 transition-all disabled:opacity-60"
             >
               {suggestTeamsLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
               Suggérer depuis devis
             </button>
           )}
-          <button onClick={() => setShowCreate(v => !v)} className="btn-primary flex items-center gap-2 text-sm">
+          <button onClick={() => setShowCreate(v => !v)} className="btn-primary flex items-center justify-center gap-2 text-sm">
             <Plus className="w-4 h-4" /> Créer une équipe
           </button>
         </div>
@@ -1330,27 +1417,27 @@ function EquipesTab({
         const mForm = memberForms[equipe.id] ?? { name: '', role: '', taux: '', profileId: null }
         return (
           <div key={equipe.id} className={`card overflow-hidden border-2 transition-colors ${isAssigned ? 'border-accent/40' : 'border-[var(--elevation-border)]'}`}>
-            <div className="flex items-center gap-3 p-4">
+            <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
               <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: equipe.color }} />
-              <div className="flex-1 min-w-0">
+              <div className="w-full min-w-0 flex-1">
                 <p className="font-semibold text-primary">{equipe.name}</p>
                 <p className="text-xs text-secondary mt-0.5">
                   {equipe.membres.length} membre{equipe.membres.length !== 1 ? 's' : ''}
                   {isAssigned && <span className="ml-2 text-accent font-semibold">· Assignée à ce chantier</span>}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex w-full items-center gap-2 sm:w-auto">
                 <button
                   onClick={() => handleToggleAssign(equipe.id)}
-                  className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${isAssigned ? 'border-red-400/40 text-red-500 hover:bg-red-500/10' : 'border-accent/40 text-accent hover:bg-accent/10'}`}
+                  className={`flex-1 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors sm:flex-none ${isAssigned ? 'border-red-400/40 text-red-500 hover:bg-red-500/10' : 'border-accent/40 text-accent hover:bg-accent/10'}`}
                 >
                   {isAssigned ? 'Retirer' : 'Assigner'}
                 </button>
                 <button onClick={() => toggleExpand(equipe.id)} className="p-1.5 rounded-lg text-secondary hover:text-primary hover:bg-[var(--elevation-1)] transition-colors">
                   {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </button>
-                <button onClick={() => handleDeleteEquipe(equipe.id)} className="p-1.5 rounded-lg text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors">
-                  <Trash2 className="w-4 h-4" />
+                <button onClick={() => handleDeleteEquipe(equipe.id)} disabled={deletingEquipes.has(equipe.id)} className="p-1.5 rounded-lg text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-40">
+                  {deletingEquipes.has(equipe.id) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                 </button>
               </div>
             </div>
@@ -1360,158 +1447,178 @@ function EquipesTab({
                 {equipe.membres.length === 0 && (
                   <p className="text-xs text-secondary italic">Aucun membre. Ajoutez-en ci-dessous.</p>
                 )}
-                {equipe.membres.map(m => (
-                  <div key={m.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--elevation-0)] border border-[var(--elevation-border)]">
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" style={{ backgroundColor: equipe.color }}>
-                      {m.name[0]?.toUpperCase() ?? '?'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-primary truncate flex items-center gap-1.5">
-                        {m.name}
-                        {m.profile_id ? (
-                          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500" title="Lié à un compte - taux appliqué aux pointages">Lié</span>
-                        ) : (
-                          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500" title="Externe - pas de pointage relié">Externe</span>
-                        )}
-                      </p>
-                      {m.role_label && <p className="text-xs text-secondary">{m.role_label}</p>}
-                      {!m.profile_id && orgMembers.length > 0 && (
-                        <select
-                          className="mt-1 input text-xs py-0.5 px-1 max-w-[180px]"
-                          defaultValue=""
-                          onChange={async e => {
-                            const uid = e.target.value
-                            if (!uid) return
-                            await updateEquipeMembreProfile(m.id, uid)
-                            setAllEquipes(prev => prev.map(eq => eq.id !== equipe.id ? eq : {
-                              ...eq,
-                              membres: eq.membres.map(mm => mm.id !== m.id ? mm : { ...mm, profile_id: uid }),
-                            }))
-                          }}
-                        >
-                          <option value="" disabled>Lier à un compte…</option>
-                          {orgMembers.map(om => (
-                            <option key={om.user_id} value={om.user_id}>
-                              {om.full_name ?? om.email}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                    {/* Taux horaire inline */}
-                    {canEditRates && editingMembreTaux[m.id] !== undefined ? (
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.5"
-                          className="input w-20 text-sm py-1 px-2"
-                          placeholder="€/h"
-                          value={editingMembreTaux[m.id]}
-                          onChange={e => setEditingMembreTaux(prev => ({ ...prev, [m.id]: e.target.value }))}
-                          onKeyDown={e => { if (e.key === 'Enter') handleSaveMembreTaux(equipe.id, m.id) }}
-                          autoFocus
-                        />
-                        <button onClick={() => handleSaveMembreTaux(equipe.id, m.id)} className="p-1 text-accent hover:text-accent/80 transition-colors">
-                          <Check className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => setEditingMembreTaux(prev => { const s = { ...prev }; delete s[m.id]; return s })} className="p-1 text-secondary hover:text-primary transition-colors">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                {equipe.membres.map(m => {
+                  const isMe = currentUserId && m.profile_id === currentUserId
+                  return (
+                    <div key={m.id} className="flex flex-col gap-2 rounded-lg border border-[var(--elevation-border)] bg-[var(--elevation-0)] px-3 py-2.5 sm:flex-row sm:items-center sm:gap-3">
+                      <div className="flex min-w-0 items-start gap-2 sm:flex-1">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" style={{ backgroundColor: equipe.color }}>
+                          {m.name[0]?.toUpperCase() ?? '?'}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-primary flex flex-wrap items-center gap-1">
+                            <span className="min-w-0 truncate">{m.name}</span>
+                            {isMe && (
+                              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent/15 text-accent">Moi</span>
+                            )}
+                            {m.profile_id ? (
+                              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500">Lié</span>
+                            ) : (
+                              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500">Externe</span>
+                            )}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
+                          {m.role_label && <p className="text-xs text-secondary">{m.role_label}</p>}
+                          {canEditRates && editingMembreTaux[m.id] !== undefined ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                className="input w-16 text-xs py-0.5 px-1.5"
+                                placeholder="€/h"
+                                value={editingMembreTaux[m.id]}
+                                onChange={e => setEditingMembreTaux(prev => ({ ...prev, [m.id]: e.target.value }))}
+                                onKeyDown={e => { if (e.key === 'Enter') handleSaveMembreTaux(equipe.id, m.id) }}
+                                autoFocus
+                              />
+                              <button onClick={() => handleSaveMembreTaux(equipe.id, m.id)} className="p-0.5 text-accent hover:text-accent/80 transition-colors">
+                                <Check className="w-3 h-3" />
+                              </button>
+                              <button onClick={() => setEditingMembreTaux(prev => { const s = { ...prev }; delete s[m.id]; return s })} className="p-0.5 text-secondary hover:text-primary transition-colors">
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : canEditRates ? (
+                            <button
+                              onClick={() => setEditingMembreTaux(prev => ({ ...prev, [m.id]: m.taux_horaire != null ? String(m.taux_horaire) : '' }))}
+                              className="flex items-center gap-0.5 text-xs text-secondary hover:text-primary transition-colors"
+                            >
+                              <Euro className="w-2.5 h-2.5" />
+                              {m.taux_horaire != null ? <span>{m.taux_horaire}€/h</span> : <span className="opacity-40">€/h</span>}
+                              <Pencil className="w-2.5 h-2.5 opacity-40" />
+                            </button>
+                          ) : null}
+                          {!m.profile_id && orgMembers.length > 0 && (
+                            <select
+                              className="mt-0.5 input text-xs py-0.5 px-1 max-w-[160px]"
+                              defaultValue=""
+                              onChange={async e => {
+                                const uid = e.target.value
+                                if (!uid) return
+                                await updateEquipeMembreProfile(m.id, uid)
+                                setAllEquipes(prev => prev.map(eq => eq.id !== equipe.id ? eq : {
+                                  ...eq,
+                                  membres: eq.membres.map(mm => mm.id !== m.id ? mm : { ...mm, profile_id: uid }),
+                                }))
+                              }}
+                            >
+                              <option value="" disabled>Lier à un compte application...</option>
+                              {orgMembers.map(om => (
+                                <option key={om.user_id} value={om.user_id}>
+                                  {om.full_name ?? om.email}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          </div>
+                        </div>
                       </div>
-                    ) : canEditRates ? (
                       <button
-                        onClick={() => setEditingMembreTaux(prev => ({ ...prev, [m.id]: m.taux_horaire != null ? String(m.taux_horaire) : '' }))}
-                        className="flex items-center gap-1 text-xs text-secondary hover:text-primary transition-colors flex-shrink-0 px-2 py-1 rounded-lg hover:bg-[var(--elevation-1)]"
-                        title="Définir le taux horaire"
+                        onClick={() => handleRemoveMembre(equipe.id, m.id)}
+                        disabled={removingMembres.has(m.id)}
+                        className="self-end p-1.5 rounded-lg text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors flex-shrink-0 disabled:opacity-40 sm:self-auto"
                       >
-                        {m.taux_horaire != null ? (
-                          <><Euro className="w-3 h-3" />{m.taux_horaire}€/h<Pencil className="w-3 h-3 ml-0.5 opacity-50" /></>
-                        ) : (
-                          <><Euro className="w-3 h-3 opacity-40" /><span className="opacity-40">€/h</span></>
-                        )}
+                        {removingMembres.has(m.id) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
                       </button>
-                    ) : null}
-                    <button onClick={() => handleRemoveMembre(equipe.id, m.id)} className="text-secondary hover:text-red-500 transition-colors flex-shrink-0">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-                <div className="space-y-2 pt-1">
-                  {/* Sélectionner un membre de l'orga (lie au compte → taux suit les pointages) */}
-                  {orgMembers.length > 0 && (
-                    <div className="flex gap-2">
-                      <select
-                        className="input flex-1 text-sm"
-                        onChange={e => {
-                          const member = orgMembers.find(m => m.user_id === e.target.value)
-                          if (member) {
-                            setMemberForms(prev => ({ ...prev, [equipe.id]: {
-                              name: member.full_name ?? member.email,
-                              role: member.job_title ?? '',
-                              taux: canEditRates && member.labor_cost_per_hour != null ? String(member.labor_cost_per_hour) : '',
-                              profileId: member.user_id,
-                            } }))
-                            e.target.value = ''
-                          }
-                        }}
-                        defaultValue=""
-                      >
-                        <option value="" disabled>Lier à un compte (recommandé)…</option>
-                        {orgMembers
-                          .filter(m => !equipe.membres.some(em => em.profile_id === m.user_id))
-                          .map(m => (
-                            <option key={m.user_id} value={m.user_id}>
-                              {m.full_name ?? m.email}{m.job_title ? ` - ${m.job_title}` : ''}
-                            </option>
-                          ))}
-                      </select>
                     </div>
-                  )}
-                  {/* Ou saisie libre (intervenant externe sans compte) */}
-                  <div className="flex gap-2">
-                    <input
-                      className="input flex-1 text-sm"
-                      placeholder={mForm.profileId ? "Nom (lié au compte)" : "Ou saisir un nom manuellement"}
-                      value={mForm.name}
-                      onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, name: e.target.value } }))}
-                      onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
-                    />
-                    <input
-                      className="input w-28 text-sm"
-                      placeholder="Rôle (opt.)"
-                      value={mForm.role}
-                      onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, role: e.target.value } }))}
-                      onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
-                    />
-                    {canEditRates && (
+                  )
+                })}
+                <div className="space-y-2 pt-1">
+                  {/* Multi-sélection comptes application */}
+                  {orgMembers.length > 0 && (() => {
+                    const pending = pendingMembreIds[equipe.id] ?? new Set<string>()
+                    const available = orgMembers.filter(m => !equipe.membres.some(em => em.profile_id === m.user_id))
+                    if (!available.length) return null
+                    return (
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-semibold text-secondary">Comptes application de l&apos;organisation</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {available.map(m => {
+                            const selected = pending.has(m.user_id)
+                            const isMe = currentUserId === m.user_id
+                            return (
+                              <button
+                                key={m.user_id}
+                                type="button"
+                                onClick={() => setPendingMembreIds(prev => {
+                                  const cur = new Set(prev[equipe.id] ?? [])
+                                  selected ? cur.delete(m.user_id) : cur.add(m.user_id)
+                                  return { ...prev, [equipe.id]: cur }
+                                })}
+                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${selected ? 'bg-accent text-white border-accent' : 'border-[var(--elevation-border)] text-secondary hover:border-accent/40 hover:text-primary'}`}
+                              >
+                                {selected && <Check className="w-3 h-3" />}
+                                {isMe ? 'Moi' : (m.full_name ?? m.email)}
+                                {m.job_title && <span className="opacity-70">· {m.job_title}</span>}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        {pending.size > 0 && (
+                          <button
+                            onClick={() => handleAddMultipleMembres(equipe.id)}
+                            disabled={addingMembres.has(equipe.id)}
+                            className="inline-flex w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-accent/90 disabled:opacity-50 sm:w-auto"
+                          >
+                            {addingMembres.has(equipe.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserPlus className="w-3 h-3" />}
+                            <span>Ajouter</span>
+                            <span className="rounded-full bg-white/20 px-1.5 py-0.5 leading-none">{pending.size}</span>
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })()}
+                  {/* Saisie libre (intervenant externe) */}
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-secondary">Intervenant externe sans compte application</p>
+                    <div className="flex flex-col sm:flex-row gap-2">
                       <input
-                        type="number"
-                        min="0"
-                        step="0.5"
-                        className="input w-20 text-sm"
-                        placeholder="€/h"
-                        value={mForm.taux ?? ''}
-                        onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, taux: e.target.value } }))}
+                        className="input flex-1 text-sm min-w-0"
+                        placeholder="Nom"
+                        value={mForm.name}
+                        onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, name: e.target.value } }))}
                         onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
                       />
-                    )}
-                    <button onClick={() => handleAddMembre(equipe.id)} disabled={!mForm.name.trim()} className="btn-primary px-3 flex items-center gap-1">
-                      <UserPlus className="w-3.5 h-3.5" />
-                    </button>
+                      <div className="flex gap-2">
+                        <RoleLabelSelect
+                          className="input flex-1 sm:w-32 text-sm"
+                          value={mForm.role}
+                          onChange={value => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, role: value } }))}
+                          roles={orgRoles}
+                        />
+                        {canEditRates && (
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            className="input w-20 text-sm"
+                            placeholder="€/h"
+                            value={mForm.taux ?? ''}
+                            onChange={e => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, taux: e.target.value } }))}
+                            onKeyDown={e => e.key === 'Enter' && handleAddMembre(equipe.id)}
+                          />
+                        )}
+                        <button
+                          onClick={() => handleAddMembre(equipe.id)}
+                          disabled={!mForm.name.trim() || addingMembres.has(equipe.id)}
+                          className="btn-primary px-3 flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {addingMembres.has(equipe.id) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  {mForm.profileId && (
-                    <p className="text-xs text-emerald-500 flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" /> Lié au compte - son taux sera utilisé pour ses pointages
-                      <button
-                        type="button"
-                        onClick={() => setMemberForms(prev => ({ ...prev, [equipe.id]: { ...mForm, profileId: null } }))}
-                        className="ml-1 text-secondary hover:text-primary underline"
-                      >
-                        annuler le lien
-                      </button>
-                    </p>
-                  )}
                 </div>
               </div>
             )}
@@ -1757,6 +1864,7 @@ export default function ChantierDetailClient({
   linkableQuotes,
   taskLibraryTitles,
   orgMembers,
+  orgRoles = [],
   initialProfitability,
   initialJalons,
   initialIndividualMembers = [],
@@ -1768,7 +1876,9 @@ export default function ChantierDetailClient({
   canCreateSituation = false,
   canCreateSolde = false,
   canCreateInvoice = false,
+  currentUserId = null,
   permissions,
+  initialReserves = [],
 }: {
   chantier: ChantierDetail
   initialTaches: Tache[]
@@ -1781,6 +1891,7 @@ export default function ChantierDetailClient({
   linkableQuotes: QuoteStub[]
   taskLibraryTitles: string[]
   orgMembers: TeamMember[]
+  orgRoles?: OrgRole[]
   initialProfitability: ChantierProfitability
   initialJalons: ChantierJalon[]
   initialIndividualMembers?: import('@/lib/data/queries/members').IndividualMember[]
@@ -1792,7 +1903,9 @@ export default function ChantierDetailClient({
   canCreateSituation?: boolean
   canCreateSolde?: boolean
   canCreateInvoice?: boolean
+  currentUserId?: string | null
   permissions: ChantierPermissions
+  initialReserves?: ChantierReserve[]
 }) {
   const router = useRouter()
 
@@ -1877,6 +1990,7 @@ export default function ChantierDetailClient({
   const [contactName, setContactName] = useState(chantier.contact_name ?? '')
   const [contactEmail, setContactEmail] = useState(chantier.contact_email ?? '')
   const [contactPhone, setContactPhone] = useState(chantier.contact_phone ?? '')
+  const [chantierClientEmail, setChantierClientEmail] = useState(chantier.client?.email ?? '')
   const [contactSaving, setContactSaving] = useState(false)
   const [contactError, setContactError] = useState<string | null>(null)
 
@@ -2016,9 +2130,32 @@ export default function ChantierDetailClient({
   const [emailStatus, setEmailStatus] = useState<EmailStatus>('idle')
   const [emailError, setEmailError] = useState<string | null>(null)
   const [emailRecipient, setEmailRecipient] = useState<string | null>(null)
+  const [reportEmailRequiredOpen, setReportEmailRequiredOpen] = useState(false)
+  const [photosEmailRequiredOpen, setPhotosEmailRequiredOpen] = useState(false)
 
-  const handleSendReportEmail = async () => {
+  const getReportClientEmailTarget = () => {
+    if (!chantier.client) return null
+    return {
+      id: chantier.client.id,
+      company_name: chantier.client.company_name,
+      email: chantierClientEmail,
+    }
+  }
+
+  const handleSendReportEmail = async (skipEmailCheck = false) => {
     if (!canEditChantier) return
+    if (!skipEmailCheck && !contactEmail.trim() && chantier.client && !chantierClientEmail.trim()) {
+      setEmailError(null)
+      setEmailStatus('idle')
+      setReportEmailRequiredOpen(true)
+      return
+    }
+    if (!contactEmail.trim() && !chantier.client) {
+      setEmailStatus('error')
+      setEmailError('Ajoutez un email de contact référent ou liez ce chantier à un client.')
+      setEditContact(true)
+      return
+    }
     setEmailStatus('sending')
     setEmailError(null)
     const { error, recipient } = await sendChantierReportEmail(chantier.id, {
@@ -2035,6 +2172,48 @@ export default function ChantierDetailClient({
     }
   }
 
+  const handleReportClientEmailSaved = async (email: string) => {
+    setChantierClientEmail(email)
+    setReportEmailRequiredOpen(false)
+    await handleSendReportEmail(true)
+  }
+
+  const handleSendPhotosEmail = async (skipEmailCheck = false) => {
+    if (!skipEmailCheck && !contactEmail.trim() && chantier.client && !chantierClientEmail.trim()) {
+      setPhotosEmailError(null)
+      setPhotosEmailStatus('idle')
+      setPhotosEmailRequiredOpen(true)
+      return
+    }
+    if (!contactEmail.trim() && !chantier.client) {
+      setPhotosEmailStatus('error')
+      setPhotosEmailError('Ajoutez un email de contact référent ou liez ce chantier à un client.')
+      setEditContact(true)
+      return
+    }
+    setPhotosEmailStatus('sending')
+    setPhotosEmailError(null)
+    const { error, recipient } = await sendChantierPhotosEmail({
+      chantierId: chantier.id,
+      photoIds: Array.from(selectedPhotoIds),
+      message: photosEmailMsg || `Veuillez trouver ci-joint des photos du chantier "${chantier.title}".`,
+    })
+    if (error) {
+      setPhotosEmailStatus('error')
+      setPhotosEmailError(error)
+      return
+    }
+    setPhotosEmailStatus('done')
+    setPhotosEmailRecipient(recipient ?? '')
+    setPhotos(prev => prev.map(p => selectedPhotoIds.has(p.id) ? { ...p, shared_with_client_at: new Date().toISOString() } : p))
+  }
+
+  const handlePhotosClientEmailSaved = async (email: string) => {
+    setChantierClientEmail(email)
+    setPhotosEmailRequiredOpen(false)
+    await handleSendPhotosEmail(true)
+  }
+
   // Situation — géré par SituationsSection
 
   // Task suggestions
@@ -2042,6 +2221,7 @@ export default function ChantierDetailClient({
   const [taskSuggestions, setTaskSuggestions] = useState<TaskSuggestion[]>([])
   const [suggestTasksLoading, setSuggestTasksLoading] = useState(false)
   const [suggestTasksError, setSuggestTasksError] = useState<string | null>(null)
+  const [suggestTasksCreditsError, setSuggestTasksCreditsError] = useState(false)
   const [showTaskSuggestions, setShowTaskSuggestions] = useState(false)
   const [validateAllLoading, setValidateAllLoading] = useState(false)
   const [validatingSuggId, setValidatingSuggId] = useState<string | null>(null)
@@ -2252,6 +2432,7 @@ export default function ChantierDetailClient({
       })
       const data = await res.json()
       if (!res.ok || data.error) {
+        if (res.status === 402) { setSuggestTasksCreditsError(true); setSuggestTasksLoading(false); return }
         setSuggestTasksError(data.error ?? 'Erreur lors de la génération')
         setSuggestTasksLoading(false)
         return
@@ -2547,6 +2728,7 @@ export default function ChantierDetailClient({
     ...(canEditChantier ? [{ id: 'notes' as const, label: 'Journal', count: notes.length }] : []),
     ...(canManageTeam ? [{ id: 'equipes' as const, label: 'Équipes' }] : []),
     ...((canViewExpenses || canCreateExpenses) ? [{ id: 'rentabilite' as const, label: canViewExpenses ? 'Rentabilité' : 'Mes dépenses' }] : []),
+    ...(canEditChantier ? [{ id: 'reception' as const, label: 'Réception' }] : []),
   ]
 
   return (
@@ -2979,7 +3161,7 @@ export default function ChantierDetailClient({
                   onClick={() => setShowAIAssistant(true)}
                   className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
                 >
-                  <Sparkles className="w-3.5 h-3.5" /> Assistant IA
+                  <AssistantAvatar assistant="marco" size={16} className="border-none bg-transparent shadow-none !rounded-full" /> Assistant IA
                 </button>
               )}
             </div>
@@ -3033,7 +3215,7 @@ export default function ChantierDetailClient({
                       <p className="text-xs text-red-500">{emailError}</p>
                     ) : null}
                     <button
-                      onClick={handleSendReportEmail}
+                      onClick={() => handleSendReportEmail()}
                       disabled={emailStatus === 'sending'}
                       className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5 w-full justify-center mt-1 disabled:opacity-50"
                     >
@@ -3225,6 +3407,7 @@ export default function ChantierDetailClient({
                   Bibliothèque ({taskLibraryTitles.length})
                 </button>
               )}
+              {suggestTasksCreditsError && <AICreditsErrorModal onClose={() => setSuggestTasksCreditsError(false)} />}
               {suggestTasksError && <p className="text-sm text-red-500">{suggestTasksError}</p>}
             </div>
           ))}
@@ -3520,8 +3703,9 @@ export default function ChantierDetailClient({
                 <input className="input w-full" placeholder="Optionnel..." value={ptDesc} onChange={e => setPtDesc(e.target.value)} />
               </div>
             </div>
-            <button type="submit" disabled={ptLoading || (ptMode === 'team' && ptPresentMemberIds.size === 0)} className="btn-primary flex items-center gap-2">
-              <Plus className="w-4 h-4" /> {ptLoading ? 'Enregistrement...' : 'Enregistrer'}
+            <button type="submit" disabled={ptLoading || (ptMode === 'team' && ptPresentMemberIds.size === 0)} className="btn-primary flex items-center gap-2 min-w-[8.5rem] justify-center">
+              {ptLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              {ptLoading ? 'Enregistrement...' : 'Enregistrer'}
             </button>
           </form>
           )}
@@ -3623,19 +3807,7 @@ export default function ChantierDetailClient({
                 </button>
                 <button
                   disabled={photosEmailStatus === 'sending'}
-                  onClick={async () => {
-                    setPhotosEmailStatus('sending')
-                    setPhotosEmailError(null)
-                    const { error, recipient } = await sendChantierPhotosEmail({
-                      chantierId: chantier.id,
-                      photoIds: Array.from(selectedPhotoIds),
-                      message: photosEmailMsg || `Veuillez trouver ci-joint des photos du chantier "${chantier.title}".`,
-                    })
-                    if (error) { setPhotosEmailStatus('error'); setPhotosEmailError(error); return }
-                    setPhotosEmailStatus('done')
-                    setPhotosEmailRecipient(recipient ?? '')
-                    setPhotos(prev => prev.map(p => selectedPhotoIds.has(p.id) ? { ...p, shared_with_client_at: new Date().toISOString() } : p))
-                  }}
+                  onClick={() => handleSendPhotosEmail()}
                   className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {photosEmailStatus === 'sending'
@@ -3898,16 +4070,29 @@ export default function ChantierDetailClient({
             chantierEquipes={initialChantierEquipes}
             linkedQuoteId={linkedQuoteId}
             orgMembers={orgMembers}
+            orgRoles={orgRoles}
             canEditRates={canEditRates}
+            currentUserId={currentUserId}
           />
           <IndividualMembersSection
             chantierId={chantier.id}
             initialMembers={initialIndividualMembers}
             orgMembers={orgMembers}
             orgPhantomMembers={orgPhantomMembers}
+            orgRoles={orgRoles}
             canEditRates={canEditRates}
+            currentUserId={currentUserId}
           />
         </div>
+      )}
+
+      {/* ── Tab: Réception ── */}
+      {tab === 'reception' && (
+        <ReceptionTab
+          chantier={chantier}
+          reserves={initialReserves}
+          canEdit={canEditChantier}
+        />
       )}
 
       {/* ── Assistant IA chantier ── */}
@@ -3919,6 +4104,20 @@ export default function ChantierDetailClient({
           onPlanningCreated={() => { setTab('planning'); router.refresh() }}
         />
       )}
+      <ClientEmailRequiredModal
+        open={reportEmailRequiredOpen}
+        client={getReportClientEmailTarget()}
+        documentLabel="le rapport de chantier"
+        onCancel={() => setReportEmailRequiredOpen(false)}
+        onSaved={handleReportClientEmailSaved}
+      />
+      <ClientEmailRequiredModal
+        open={photosEmailRequiredOpen}
+        client={getReportClientEmailTarget()}
+        documentLabel="les photos du chantier"
+        onCancel={() => setPhotosEmailRequiredOpen(false)}
+        onSaved={handlePhotosClientEmailSaved}
+      />
     </div>
   )
 }

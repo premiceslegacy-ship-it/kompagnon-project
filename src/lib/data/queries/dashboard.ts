@@ -110,6 +110,7 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
     { data: recentRemindersSent },
     { data: dueTasks },
     { data: todayPlanningSlots },
+    { data: todayPointages },
     { data: yesterdayPlanningSlots },
     { data: yesterdayPointages },
     { data: orgLabor },
@@ -245,7 +246,7 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
     supabase
       .from('chantier_plannings')
       .select(`
-        id, chantier_id, planned_date, start_time, end_time, label,
+        id, chantier_id, planned_date, start_time, end_time, label, member_id, equipe_id, team_size,
         chantier:chantiers!inner(id, title, organization_id, is_archived, status)
       `)
       .eq('chantier.organization_id', orgId)
@@ -254,6 +255,12 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       .eq('planned_date', today)
       .order('start_time', { ascending: true, nullsFirst: false })
       .limit(5),
+
+    // Pointages du jour — pour retirer les créneaux déjà pointés du suivi prioritaire
+    supabase
+      .from('chantier_pointages')
+      .select('id, chantier_planning_id, chantier_id, date, member_id, user_id')
+      .eq('date', today),
 
     // Créneaux d'hier sans pointage associé
     supabase
@@ -343,6 +350,23 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
     }, 0) ?? 0
 
   const devisEnAttente = pendingQuotes?.length ?? 0
+
+  const todayPointagePlanningIds = new Set(
+    (todayPointages ?? [])
+      .map((p: any) => p.chantier_planning_id)
+      .filter(Boolean),
+  )
+  const todayPointageKeys = new Set(
+    (todayPointages ?? [])
+      .map((p: any) => `${p.chantier_id}:${p.date}:${p.member_id ?? p.user_id ?? '*'}`),
+  )
+  const filteredTodayPlanningSlots = (todayPlanningSlots ?? []).filter((slot: any) => {
+    if (todayPointagePlanningIds.has(slot.id)) return false
+    const directKey = `${slot.chantier_id}:${slot.planned_date}:${slot.member_id ?? '*'}`
+    const genericKey = `${slot.chantier_id}:${slot.planned_date}:*`
+    if (todayPointageKeys.has(directKey) || todayPointageKeys.has(genericKey)) return false
+    return true
+  })
 
   const staleQuotes = (pendingQuotes ?? [])
     .filter(q => q.sent_at && q.sent_at < followUpCutoff)
@@ -513,7 +537,7 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       clientName: t.chantier?.title ?? null,
       chantierId: t.chantier?.id ?? null,
     })),
-    ...(todayPlanningSlots ?? []).map((slot: any) => ({
+    ...filteredTodayPlanningSlots.map((slot: any) => ({
       id: `planning-${slot.id}`,
       type: 'planning_slot' as const,
       label: slot.start_time ? `${slot.label} · ${slot.start_time.slice(0, 5)}` : slot.label,
