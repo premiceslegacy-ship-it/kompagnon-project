@@ -3,7 +3,14 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { hasPermission } from '@/lib/data/queries/membership'
-import type { BusinessActivityId, BusinessProfile, CatalogLabelSet, DefaultCategories, StarterPreset } from '@/lib/catalog-context'
+import {
+  normalizeSecondaryActivityIds,
+  type BusinessActivityId,
+  type BusinessProfile,
+  type CatalogLabelSet,
+  type DefaultCategories,
+  type StarterPreset,
+} from '@/lib/catalog-context'
 import { LEGAL_VAT_RATES } from '@/lib/utils'
 import {
   normalizeBic,
@@ -59,6 +66,7 @@ export type UpdateOrganizationInput = {
   sector?: string
   business_profile?: BusinessProfile
   business_activity_id?: BusinessActivityId
+  secondary_activity_ids?: BusinessActivityId[]
   label_set?: CatalogLabelSet
   unit_set?: string[]
   default_categories?: DefaultCategories
@@ -84,6 +92,8 @@ export type UpdateOrganizationInput = {
   departure_address?: string | null
   departure_postal_code?: string | null
   departure_city?: string | null
+  // Sous-totaux par lot (migration 126)
+  default_show_section_subtotals?: boolean
 }
 
 /**
@@ -170,6 +180,10 @@ function normalizeOrganizationInput(input: UpdateOrganizationInput): {
     if (rate != null && !LEGAL_VAT_RATES.includes(rate as typeof LEGAL_VAT_RATES[number])) {
       fieldErrors.default_vat_rate = 'Choisissez un taux de TVA légal : 0, 5,5, 10 ou 20 %.'
     }
+  }
+
+  if (hasInputKey(input, 'secondary_activity_ids')) {
+    payload.secondary_activity_ids = normalizeSecondaryActivityIds(input.secondary_activity_ids, input.business_activity_id)
   }
 
   return { payload, fieldErrors }

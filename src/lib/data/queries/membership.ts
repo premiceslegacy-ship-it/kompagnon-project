@@ -97,3 +97,12 @@ export async function canManageLaborRates(): Promise<boolean> {
   const membership = await getCurrentMembershipContext()
   return membership?.roleSlug === 'owner' || membership?.roleSlug === 'admin'
 }
+
+/**
+ * Vérifie si l'utilisateur peut utiliser les assistants IA (Sarah, Chloé, Marco, Nora, Léa).
+ * Par défaut : owner uniquement. L'owner peut accorder ai.sarah à un second membre (admin/secrétaire).
+ * Maximum 2 personnes par organisation — contrôle géré par la permission ai.sarah.
+ */
+export async function canUseAI(): Promise<boolean> {
+  return hasPermission('ai.sarah')
+}

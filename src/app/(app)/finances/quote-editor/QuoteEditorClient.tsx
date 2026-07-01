@@ -28,12 +28,13 @@ import SaveToCatalogModal, { type SaveToCatalogSource, type SaveToCatalogResult 
 import { createClientInline } from '@/lib/data/mutations/clients'
 import { fetchClientContractsForAttachment } from '@/lib/data/mutations/contracts'
 import AttachmentPickerModal, { type AttachmentGroup } from '@/components/AttachmentPickerModal'
+import ClientEmailRequiredModal from '@/components/ClientEmailRequiredModal'
 import { UnitSelect } from '@/components/ui/UnitSelect'
 import { NumericInput } from '@/components/ui/NumericInput'
 import { ActionButton } from '@/components/ui/ActionButton'
 import {
   ArrowLeft, Send, Plus, Trash2, Search, X,
-  Loader2, CheckCircle2, Package, Wrench, FileDown, Bot, Ruler, ChevronDown, ChevronUp, Sparkles, Eye, EyeOff, Layers, Truck, MessageSquare, BookmarkPlus, LayoutGrid,
+  Loader2, CheckCircle2, Package, Wrench, FileDown, Bot, Ruler, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Sparkles, Eye, EyeOff, Layers, Truck, MessageSquare, BookmarkPlus, LayoutGrid, Clock, FileText, Copy,
 } from 'lucide-react'
 import AtelierAIPanel from '@/components/ai/AtelierAIPanel'
 import LaborEstimatePanel, { type MOInsertItem } from '@/components/ai/LaborEstimatePanel'
@@ -44,6 +45,16 @@ import { computeFuel, DEFAULT_CONSUMPTION_L_PER_100KM, DEFAULT_FUEL_PRICE_EUR_PE
 import { getCatalogDocumentVatRate, getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { AI_NAME } from '@/lib/brand'
 import type { OrganizationModules } from '@/lib/organization-modules'
+import MetalPriceBanner from '@/components/quotes/MetalPriceBanner'
+import MetalPriceSnapshotPanel from '@/components/quotes/MetalPriceSnapshotPanel'
+import SupplierPriceRequestsPanel from '@/components/quotes/SupplierPriceRequestsPanel'
+import type { SupplierPriceRequest } from '@/lib/data/mutations/supplier-price-requests'
+import TechnicalChecklistPanel from '@/components/quotes/TechnicalChecklistPanel'
+import BtpMentionsPanel from '@/components/quotes/BtpMentionsPanel'
+import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids'
+import { saveMetalPriceSnapshots } from '@/lib/data/mutations/metal-price-snapshots'
+import type { MetalPriceSnapshotRow } from '@/lib/data/queries/metal-price-snapshots'
+import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n)
@@ -101,6 +112,45 @@ function findBestClientMatch(clients: Client[], rawSearch: string | null | undef
   return best && best.score >= 45 ? best.client : null
 }
 
+function getAIClientSearch(aiResult: AIQuoteResult): string | null {
+  return aiResult.clientDraft?.siret
+    || aiResult.clientDraft?.company_name
+    || aiResult.clientDraft?.contact_name
+    || [aiResult.clientDraft?.first_name, aiResult.clientDraft?.last_name].filter(Boolean).join(' ')
+    || aiResult.clientDraft?.email
+    || aiResult.clientDraft?.phone
+    || aiResult.clientName
+    || null
+}
+
+function getAIClientDraftInput(aiResult: AIQuoteResult) {
+  const draft = aiResult.clientDraft
+  const clientName = aiResult.clientName?.trim() || null
+  const type: 'company' | 'individual' = draft?.type === 'individual' ? 'individual' : 'company'
+  const fullName = type === 'individual' && clientName ? clientName.split(/\s+/).filter(Boolean) : []
+  const companyName = type === 'company' ? draft?.company_name?.trim() || clientName || '' : ''
+  const firstName = draft?.first_name?.trim() || (type === 'individual' && fullName.length > 1 ? fullName.slice(0, -1).join(' ') : '')
+  const lastName = draft?.last_name?.trim() || (type === 'individual' ? fullName.at(-1) ?? clientName ?? '' : '')
+
+  if (!companyName && !firstName && !lastName && !draft?.email && !draft?.phone && !draft?.siret) return null
+
+  return {
+    type,
+    company_name: companyName,
+    contact_name: draft?.contact_name?.trim() || '',
+    first_name: firstName,
+    last_name: lastName,
+    email: draft?.email?.trim() || '',
+    phone: draft?.phone?.trim() || '',
+    siret: draft?.siret?.replace(/\D/g, '').trim() || '',
+    address_line1: draft?.address_line1?.trim() || '',
+    postal_code: draft?.postal_code?.trim() || '',
+    city: draft?.city?.trim() || '',
+    status: 'prospect' as const,
+    source: 'ai_quote',
+  }
+}
+
 function isLikelyInternalAIItem(sectionTitle: string, item: AIQuoteResult['sections'][number]['items'][number]) {
   if (item.is_internal === true) return true
   const haystack = normalizeSearchText(`${sectionTitle} ${item.description}`)
@@ -118,6 +168,27 @@ function isLikelyInternalAIItem(sectionTitle: string, item: AIQuoteResult['secti
     'coordination interne',
     'preparation interne',
   ].some(token => haystack.includes(token))
+}
+
+function inferLaborCategory(sectionTitle: string | null | undefined, description: string | null | undefined): LocalItem['labor_category'] {
+  const haystack = normalizeSearchText(`${sectionTitle ?? ''} ${description ?? ''}`)
+  if (!haystack) return null
+  if (['thermolaquage', 'galvanisation', 'galva', 'traitement surface', 'finition st', 'sous traitance finition'].some(token => haystack.includes(token))) return 'finition'
+  if (['pose', 'scellement', 'fixation', 'installation', 'chantier', 'livraison'].some(token => haystack.includes(token))) return 'pose'
+  if (['atelier', 'fabrication', 'debit', 'faconnage', 'soudure', 'assemblage', 'meulage', 'decoupe', 'pliage'].some(token => haystack.includes(token))) return 'atelier'
+  return null
+}
+
+function ControlTooltip({ children, mobileAlign = 'right' }: { children: string; mobileAlign?: 'left' | 'right' }) {
+  const mobilePosition = mobileAlign === 'left'
+    ? 'left-0 top-full mt-2'
+    : 'right-0 top-full mt-2'
+
+  return (
+    <span className={`pointer-events-none absolute ${mobilePosition} z-50 hidden w-60 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-[11px] font-semibold leading-snug text-slate-950 shadow-2xl ring-1 ring-black/10 group-hover:block group-focus-visible:block group-focus-within:block dark:border-white/20 dark:bg-zinc-950 dark:text-white dark:ring-white/15 sm:right-full sm:left-auto sm:top-1/2 sm:mr-2 sm:mt-0 sm:w-56 sm:-translate-y-1/2`}>
+      {children}
+    </span>
+  )
 }
 
 // ─── Local state types ──────────────────────────────────────────────────────
@@ -146,6 +217,40 @@ type LocalItem = {
   transport_km: number | null
   transport_conso: number | null
   transport_prix_l: number | null
+  // Module prix matières
+  metal_grid_id: string | null
+  price_pending: boolean
+  labor_category: 'atelier' | 'pose' | 'finition' | 'autre' | null
+}
+
+type LaborCategoryValue = NonNullable<LocalItem['labor_category']>
+
+const LABOR_CATEGORY_OPTIONS: Record<ResolvedCatalogContext['businessProfile'], Array<{ value: LaborCategoryValue | ''; label: string }>> = {
+  cleaning: [
+    { value: '', label: 'Main d\'oeuvre' },
+    { value: 'atelier', label: 'Préparation' },
+    { value: 'pose', label: 'Intervention' },
+    { value: 'finition', label: 'Remise en état' },
+    { value: 'autre', label: 'Autre' },
+  ],
+  btp: [
+    { value: '', label: 'Main d\'oeuvre' },
+    { value: 'atelier', label: 'Préparation' },
+    { value: 'pose', label: 'Réalisation' },
+    { value: 'finition', label: 'Finition' },
+    { value: 'autre', label: 'Autre' },
+  ],
+  industry: [
+    { value: '', label: 'Main d\'oeuvre' },
+    { value: 'atelier', label: 'Atelier' },
+    { value: 'pose', label: 'Pose' },
+    { value: 'finition', label: 'Finition' },
+    { value: 'autre', label: 'Autre' },
+  ],
+}
+
+function getLaborCategoryOptions(profile: ResolvedCatalogContext['businessProfile']) {
+  return LABOR_CATEGORY_OPTIONS[profile] ?? LABOR_CATEGORY_OPTIONS.btp
 }
 
 type LocalSection = {
@@ -154,6 +259,19 @@ type LocalSection = {
   title: string
   position: number
   items: LocalItem[]
+}
+
+function roundCurrency(n: number) {
+  return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+function getInternalCostTotal(item: LocalItem) {
+  const unitCost = item.unit_cost_ht != null ? item.unit_cost_ht : (item.is_internal ? item.unit_price : 0)
+  return item.quantity * unitCost
+}
+
+function getInternalSaleTotal(item: LocalItem) {
+  return item.is_internal ? item.quantity * item.unit_price : 0
 }
 
 function resolvePersistedSectionId(section: LocalSection | undefined): string | null | undefined {
@@ -241,6 +359,9 @@ function itemToLocal(i: QuoteItem): LocalItem {
     transport_km: isTransportLine ? Math.round(i.quantity / DEFAULT_CONSUMPTION_L_PER_100KM * 100) : null,
     transport_conso: isTransportLine ? DEFAULT_CONSUMPTION_L_PER_100KM : null,
     transport_prix_l: isTransportLine ? i.unit_price : null,
+    metal_grid_id: i.metal_grid_id ?? null,
+    price_pending: (i as { price_pending?: boolean }).price_pending ?? false,
+    labor_category: (i as { labor_category?: 'atelier' | 'pose' | 'finition' | 'autre' | null }).labor_category ?? null,
   }
 }
 
@@ -258,26 +379,116 @@ type Props = {
   vatConfig: VatConfig
   returnTo?: string | null
   allQuotes?: import('@/lib/data/queries/quotes').QuoteStub[]
+  hasMetalPricing?: boolean
+  metalPriceGrids?: MetalPriceGrid[]
+  initialMetalSnapshots?: MetalPriceSnapshotRow[]
+  clauseTemplates?: import('@/lib/data/queries/clause-templates').QuoteClauseTemplate[]
+  initialVariants?: import('@/lib/data/queries/quotes').QuoteVariantStub[]
+  initialPriceRequests?: SupplierPriceRequest[]
+  allSuppliers?: import('@/lib/data/queries/suppliers').Supplier[]
+  orgForMentions?: import('@/lib/btp-legal-mentions').OrgForCheck | null
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export default function QuoteEditorClient({ clients: initialClients, initialQuote, materials, laborRates, prestationTypes, initialClientId, catalogContext, modules, vatConfig, returnTo: rawReturnTo = null, allQuotes = [] }: Props) {
+export default function QuoteEditorClient({ clients: initialClients, initialQuote, materials, laborRates, prestationTypes, initialClientId, catalogContext, modules, vatConfig, returnTo: rawReturnTo = null, allQuotes = [], hasMetalPricing = false, metalPriceGrids = [], initialMetalSnapshots = [], clauseTemplates = [], initialVariants = [], initialPriceRequests = [], allSuppliers = [], orgForMentions = null }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [isSending, setIsSending] = useState(false)
+  const [isAddingSection, setIsAddingSection] = useState(false)
   const [sendModalOpen, setSendModalOpen] = useState(false)
   const [sendModalGroups, setSendModalGroups] = useState<AttachmentGroup[]>([])
   const [sendModalLoading, setSendModalLoading] = useState(false)
   const [sendModalError, setSendModalError] = useState<string | null>(null)
+  const [emailRequiredOpen, setEmailRequiredOpen] = useState(false)
   const [pendingQuoteId, setPendingQuoteId] = useState<string | null>(null)
+  const [checkModalOpen, setCheckModalOpen] = useState(false)
+  const [checkWarnings, setCheckWarnings] = useState<string[]>([])
+  const [clauseModalOpen, setClauseModalOpen] = useState(false)
+  const [clauseTarget, setClauseTarget] = useState<'notes' | 'conditions'>('notes')
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const defaultVatRate = getCatalogDocumentVatRate(vatConfig)
   const returnTo = getSafeReturnTo(rawReturnTo, '/finances?tab=quotes')
+  const laborCategoryOptions = getLaborCategoryOptions(catalogContext.businessProfile)
 
   // Client list (mutable - peut être étendue par création inline)
   const [clients, setClients] = useState<Client[]>(initialClients)
+
+  // Brief Sarah -> Chloé : pré-remplissage au chargement (sessionStorage d'abord, puis ai_briefs en DB)
+  useEffect(() => {
+    if (initialQuote) return // ne pas écraser un devis existant
+
+    type ChloeBrief = {
+      client_name?: string
+      client_id?: string
+      description?: string
+      items?: unknown
+      conditions?: unknown
+    }
+
+    // Compose le texte envoyé à Chloé pour l'analyse : description + détail
+    // des postes et conditions transmis par Sarah, pour des lignes plus riches.
+    function buildAnalyzeText(brief: ChloeBrief): string {
+      const parts = [brief.description?.trim()].filter(Boolean) as string[]
+      if (Array.isArray(brief.items) && brief.items.length > 0) {
+        const lines = brief.items
+          .map(it => {
+            if (typeof it === 'string') return `- ${it}`
+            if (it && typeof it === 'object') {
+              const o = it as Record<string, unknown>
+              const label = [o.name, o.description].find(v => typeof v === 'string' && v.trim()) as string | undefined
+              const qty = typeof o.quantity === 'number' || typeof o.quantity === 'string' ? ` (${o.quantity}${o.unit ? ` ${o.unit}` : ''})` : ''
+              return label ? `- ${label}${qty}` : null
+            }
+            return null
+          })
+          .filter(Boolean)
+        if (lines.length > 0) parts.push(`Postes à prévoir :\n${lines.join('\n')}`)
+      }
+      if (typeof brief.conditions === 'string' && brief.conditions.trim()) {
+        parts.push(`Conditions : ${brief.conditions.trim()}`)
+      }
+      return parts.join('\n\n')
+    }
+
+    function applyBrief(brief: ChloeBrief, bannerText: string) {
+      if (brief.client_id) {
+        setClientId(brief.client_id)
+      } else if (brief.client_name) {
+        const match = findBestClientMatch(clients, brief.client_name)
+        if (match) setClientId(match.id)
+      }
+      if (brief.description?.trim()) {
+        setTitle(brief.description.trim().slice(0, 120))
+        setChloeBriefBanner(bannerText)
+        setChloeAutoAnalyze(buildAnalyzeText(brief))
+        setAIPanelOpen(true)
+      }
+    }
+
+    // 1. SessionStorage (compat)
+    try {
+      const raw = sessionStorage.getItem('sarah_brief_chloe')
+      if (raw) {
+        sessionStorage.removeItem('sarah_brief_chloe')
+        const brief = JSON.parse(raw) as ChloeBrief
+        applyBrief(brief, `Brief transmis par Sarah${brief.client_name ? ` pour ${brief.client_name}` : ''}.`)
+        return
+      }
+    } catch { /* sessionStorage inaccessible */ }
+
+    // 2. ai_briefs en base (cross-device / cross-session)
+    fetch('/api/sarah/briefs?target=chloe')
+      .then(r => r.json())
+      .then(({ brief }: { brief: { id: string; payload: ChloeBrief } | null }) => {
+        if (!brief?.payload?.description?.trim()) return
+        applyBrief(brief.payload, `Brief transmis par Sarah${brief.payload.client_name ? ` pour ${brief.payload.client_name}` : ''}.`)
+        fetch('/api/sarah/briefs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ briefId: brief.id }) }).catch(() => {})
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Modal création client inline
   const [newClientOpen, setNewClientOpen] = useState(false)
@@ -300,7 +511,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         email: newClientForm.email || null,
         phone: newClientForm.phone || null,
         siret: null, address_line1: newClientForm.address_line1 || null, postal_code: newClientForm.postal_code || null, city: newClientForm.city || null,
-        status: 'active', source: null, total_revenue: 0, payment_terms_days: 30,
+        status: 'active', source: null, total_revenue: 0, payment_terms_days: 30, internal_notes: null,
         created_at: new Date().toISOString(),
       }])
       setClientId(res.id!)
@@ -312,10 +523,11 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
   // Header state
   const [quoteId, setQuoteId] = useState<string | null>(initialQuote?.id ?? null)
-  const [clientId, setClientId] = useState<string>(initialQuote?.client?.id ?? initialClientId ?? initialClients[0]?.id ?? '')
+  const initialSelectedClientId = initialQuote?.client?.id ?? initialClientId ?? ''
+  const [clientId, setClientId] = useState<string>(initialSelectedClientId)
   const [title, setTitle] = useState(initialQuote?.title ?? '')
   const [validityDays, setValidityDays] = useState(initialQuote?.validity_days ?? vatConfig.defaultQuoteValidityDays ?? 30)
-  const initialClientForIntro = initialClients.find(c => c.id === (initialQuote?.client?.id ?? initialClientId ?? initialClients[0]?.id ?? '')) ?? initialQuote?.client ?? null
+  const initialClientForIntro = initialClients.find(c => c.id === initialSelectedClientId) ?? initialQuote?.client ?? null
   const getIntroForClient = (client: Client | null | undefined) =>
     client
       ? buildPersonalizedQuoteIntro(client)
@@ -328,6 +540,15 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const [aidAmount, setAidAmount] = useState<number | null>(initialQuote?.aid_amount ?? null)
   const [showAid, setShowAid] = useState<boolean>(!!(initialQuote?.aid_label || initialQuote?.aid_amount))
   const [parentQuoteId, setParentQuoteId] = useState<string | null>((initialQuote as any)?.parent_quote_id ?? null)
+  const [showSectionSubtotals, setShowSectionSubtotals] = useState<boolean>(
+    (initialQuote as any)?.show_section_subtotals ?? vatConfig.defaultShowSectionSubtotals ?? false,
+  )
+  const [variantGroupId] = useState<string | null>((initialQuote as any)?.variant_group_id ?? null)
+  const [variantLabel, setVariantLabel] = useState<string>((initialQuote as any)?.variant_label ?? '')
+  const [variants, setVariants] = useState<import('@/lib/data/queries/quotes').QuoteVariantStub[]>(initialVariants)
+  const [variantCreating, setVariantCreating] = useState(false)
+  const [variantNewLabel, setVariantNewLabel] = useState('')
+  const [variantModalOpen, setVariantModalOpen] = useState(false)
   const [aidMode, setAidMode] = useState<'€' | '%'>('€')
   const [notesClient, setNotesClient] = useState(
     (initialQuote as any)?.notes_client ?? getIntroForClient(initialClientForIntro as Client | null),
@@ -395,6 +616,8 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
   // ATELIER IA panel
   const [aiPanelOpen, setAIPanelOpen] = useState(false)
+  const [chloeBriefBanner, setChloeBriefBanner] = useState<string | null>(null)
+  const [chloeAutoAnalyze, setChloeAutoAnalyze] = useState<string | null>(null)
 
   // Labour estimate panel
   const [moaPanelOpen, setMoaPanelOpen] = useState(false)
@@ -406,6 +629,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   useEffect(() => { sectionsRef.current = sections }, [sections])
 
   const headerDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const addingSectionRef = useRef(false)
   const itemDebounces = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const pendingItemKeys = useRef<Set<string>>(new Set())
   const deletedSectionTempIds = useRef<Set<string>>(new Set())
@@ -423,6 +647,20 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       sectionsRef.current = next
       return next
     })
+  }
+
+  async function handleCreateVariant() {
+    if (!quoteId || !variantNewLabel.trim()) return
+    setVariantCreating(true)
+    const { createQuoteVariant } = await import('@/lib/data/mutations/quotes')
+    const res = await createQuoteVariant(quoteId, variantNewLabel.trim())
+    setVariantCreating(false)
+    if (res.error) { setErrorMsg(res.error); return }
+    setVariantModalOpen(false)
+    setVariantNewLabel('')
+    if (res.quoteId) {
+      router.push(`/finances/quote-editor?id=${res.quoteId}`)
+    }
   }
 
   async function deleteQuoteItemOrReport(itemId: string, qId: string) {
@@ -486,13 +724,130 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const totalTtc = totalHt + totalTva
   // Coût interne réel = unit_cost_ht sur toutes les lignes (achat matière + coût horaire MO)
   // Les lignes sans unit_cost_ht (saisie libre) contribuent leur unit_price comme coût proxy
-  const totalInternalHt = allItems.reduce((sum, i) => {
-    const cost = i.unit_cost_ht != null ? i.unit_cost_ht : (i.is_internal ? i.unit_price : 0)
-    return sum + i.quantity * cost
-  }, 0)
+  const totalInternalHt = allItems.reduce((sum, i) => sum + getInternalCostTotal(i), 0)
+  const internalOnlyHt = internalItems.reduce((sum, i) => sum + getInternalCostTotal(i), 0)
+  const internalSaleToDistributeHt = internalItems.reduce((sum, i) => sum + getInternalSaleTotal(i), 0)
   const margeHt = totalHt - totalInternalHt
   const margePct = totalHt > 0 ? (margeHt / totalHt) * 100 : 0
   const hasInternalItems = allItems.some(i => i.unit_cost_ht != null || i.is_internal)
+  const pendingSupplierPrices = visibleItems.filter(i => i.price_pending).length
+  const canDistributeInternalCosts = internalSaleToDistributeHt > 0 && visibleItems.some(i => !i.price_pending && i.quantity > 0)
+
+  function scrollToQuoteArea(id: string) {
+    const el = document.getElementById(id)
+    if (!el) return
+    const top = el.getBoundingClientRect().top + window.scrollY - 96
+    window.scrollTo({ top, behavior: 'smooth' })
+  }
+
+  function handleDistributeInternalCostsIntoVisiblePrices() {
+    const currentSections = sectionsRef.current
+    const internalTotal = roundCurrency(
+      currentSections.flatMap(section => section.items).filter(item => item.is_internal).reduce((sum, item) => sum + getInternalSaleTotal(item), 0),
+    )
+    if (internalTotal <= 0) {
+      setErrorMsg('Aucun montant interne à vendre à répartir.')
+      return
+    }
+
+    const visibleEntries = currentSections.flatMap(section =>
+      section.items
+        .filter(item => !item.is_internal && !item.price_pending && item.quantity > 0)
+        .map(item => ({ sectionTempId: section._tempId, itemTempId: item._tempId, item })),
+    )
+    const internalEntries = currentSections.flatMap(section =>
+      section.items
+        .filter(item => item.is_internal)
+        .map(item => ({ sectionTempId: section._tempId, itemTempId: item._tempId, item })),
+    )
+    if (visibleEntries.length === 0) {
+      setErrorMsg('Ajoutez au moins une ligne visible avec quantité pour répartir les coûts internes.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Répartir ${fmt(internalTotal)} HT de montant interne vendu dans les prix des lignes visibles ? Les lignes internes resteront masquées et leur coût de revient restera utilisé pour la marge.`,
+    )
+    if (!confirmed) return
+
+    const visibleTotal = visibleEntries.reduce((sum, entry) => sum + entry.item.quantity * entry.item.unit_price, 0)
+    let remaining = internalTotal
+    const updates = new Map<string, Partial<LocalItem>>()
+
+    visibleEntries.forEach((entry, index) => {
+      const isLast = index === visibleEntries.length - 1
+      const currentLineTotal = entry.item.quantity * entry.item.unit_price
+      const weight = visibleTotal > 0 ? currentLineTotal / visibleTotal : 1 / visibleEntries.length
+      const allocated = isLast ? remaining : roundCurrency(internalTotal * weight)
+      remaining = roundCurrency(remaining - allocated)
+      updates.set(`${entry.sectionTempId}_${entry.itemTempId}`, {
+        unit_price: roundCurrency(entry.item.unit_price + allocated / entry.item.quantity),
+        is_estimated: false,
+      })
+    })
+
+    internalEntries.forEach(entry => {
+      updates.set(`${entry.sectionTempId}_${entry.itemTempId}`, {
+        unit_price: 0,
+        unit_cost_ht: entry.item.unit_cost_ht ?? entry.item.unit_price,
+      })
+    })
+
+    setErrorMsg(null)
+    setSaveStatus('saving')
+    setSectionsSynced(prev => prev.map(section => ({
+      ...section,
+      items: section.items.map(item => {
+        const patch = updates.get(`${section._tempId}_${item._tempId}`)
+        return patch == null ? item : { ...item, ...patch }
+      }),
+    })))
+
+    for (const entry of [...visibleEntries, ...internalEntries]) {
+      scheduleItemSave(entry.sectionTempId, entry.itemTempId)
+    }
+  }
+
+  function handleMarkInternalSalesAlreadyDistributed() {
+    const currentSections = sectionsRef.current
+    const internalEntries = currentSections.flatMap(section =>
+      section.items
+        .filter(item => item.is_internal && getInternalSaleTotal(item) > 0)
+        .map(item => ({ sectionTempId: section._tempId, itemTempId: item._tempId, item })),
+    )
+    const internalTotal = roundCurrency(internalEntries.reduce((sum, entry) => sum + getInternalSaleTotal(entry.item), 0))
+    if (internalEntries.length === 0 || internalTotal <= 0) {
+      setErrorMsg('Aucun montant interne à marquer comme déjà réparti.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Marquer ${fmt(internalTotal)} HT comme déjà répartis ? Les prix visibles ne seront pas modifiés. Les lignes internes garderont leur coût de revient pour la marge.`,
+    )
+    if (!confirmed) return
+
+    const updates = new Map<string, Partial<LocalItem>>()
+    internalEntries.forEach(entry => {
+      updates.set(`${entry.sectionTempId}_${entry.itemTempId}`, {
+        unit_price: 0,
+        unit_cost_ht: entry.item.unit_cost_ht ?? entry.item.unit_price,
+      })
+    })
+
+    setErrorMsg(null)
+    setSaveStatus('saving')
+    setSectionsSynced(prev => prev.map(section => ({
+      ...section,
+      items: section.items.map(item => {
+        const patch = updates.get(`${section._tempId}_${item._tempId}`)
+        return patch == null ? item : { ...item, ...patch }
+      }),
+    })))
+
+    for (const entry of internalEntries) {
+      scheduleItemSave(entry.sectionTempId, entry.itemTempId)
+    }
+  }
 
   // ─── Équipement amorti ────────────────────────────────────────────────────
   const [showEquipment, setShowEquipment] = useState(false)
@@ -542,7 +897,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     }
   }
 
-  function buildEquipmentDescription(name: string, purchasePrice: number | null, lifetimeUses: number | null) {
+function buildEquipmentDescription(name: string, purchasePrice: number | null, lifetimeUses: number | null) {
     const label = name.trim() || 'Équipement amorti'
     if (purchasePrice != null || lifetimeUses != null) {
       return `${label}\n\nAmortissement : ${purchasePrice ?? ''} € / ${lifetimeUses ?? ''} usages`
@@ -603,7 +958,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const desc = `${equipmentLabel}\n\nAmortissement : ${equipmentPurchase} € / ${equipmentUses} usages`
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === equipmentTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, price_pending: false, labor_category: null }] }
         : s
     ))
     setShowEquipment(false)
@@ -632,7 +987,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const desc = `Carburant - trajet ${transportKm} km`
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === transportTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL, metal_grid_id: null, price_pending: false, labor_category: null }] }
         : s
     ))
     setShowTransport(false)
@@ -670,7 +1025,8 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
   async function ensureQuote(clientIdOverride?: string | null): Promise<string | null> {
     if (quoteIdRef.current) return quoteIdRef.current
-    const res = await createQuote({ clientId: clientIdOverride !== undefined ? clientIdOverride : clientId, title: title || 'Nouveau devis' })
+    const resolvedClientId = clientIdOverride !== undefined ? clientIdOverride : clientId
+    const res = await createQuote({ clientId: resolvedClientId || null, title: title || 'Nouveau devis' })
     if (res.error || !res.quoteId) { setErrorMsg(res.error); return null }
     setQuoteId(res.quoteId)
     quoteIdRef.current = res.quoteId
@@ -707,6 +1063,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       client_id: clientId || null,
       validity_days: validityDays,
       notes_client: notesClient,
+      show_section_subtotals: showSectionSubtotals,
     })
     setSaveStatus(res.error ? 'error' : 'saved')
     if (res.error) {
@@ -720,22 +1077,30 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   // ─── Section mutations ────────────────────────────────────────────────────
 
   async function handleAddSection() {
-    const qId = await ensureQuote()
-    if (!qId) return
-    const pos = sections.length + 1
-    const tempId = `sec_${Date.now()}`
-    deletedSectionTempIds.current.delete(tempId)
-    setSectionsSynced(prev => [...prev, { _tempId: tempId, id: null, title: `Section ${pos}`, position: pos, items: [] }])
-    startTransition(async () => {
-      const res = await upsertQuoteSection({ quote_id: qId, title: `Section ${pos}`, position: pos })
-      if (res.sectionId) {
-        if (deletedSectionTempIds.current.has(tempId)) {
-          await deleteQuoteSectionOrReport(res.sectionId)
-          return
+    if (addingSectionRef.current) return
+    addingSectionRef.current = true
+    setIsAddingSection(true)
+    try {
+      const qId = await ensureQuote()
+      if (!qId) return
+      const pos = sectionsRef.current.length + 1
+      const tempId = `sec_${Date.now()}`
+      deletedSectionTempIds.current.delete(tempId)
+      setSectionsSynced(prev => [...prev, { _tempId: tempId, id: null, title: `Section ${pos}`, position: pos, items: [] }])
+      startTransition(async () => {
+        const res = await upsertQuoteSection({ quote_id: qId, title: `Section ${pos}`, position: pos })
+        if (res.sectionId) {
+          if (deletedSectionTempIds.current.has(tempId)) {
+            await deleteQuoteSectionOrReport(res.sectionId)
+            return
+          }
+          setSectionsSynced(prev => prev.map(s => s._tempId === tempId ? { ...s, id: res.sectionId } : s))
         }
-        setSectionsSynced(prev => prev.map(s => s._tempId === tempId ? { ...s, id: res.sectionId } : s))
-      }
-    })
+      })
+    } finally {
+      addingSectionRef.current = false
+      setIsAddingSection(false)
+    }
   }
 
   function handleSectionTitleChange(tempId: string, newTitle: string) {
@@ -830,12 +1195,17 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       quantity: currentItem.quantity,
       unit: currentItem.unit,
       unit_price: currentItem.unit_price,
+      unit_cost_ht: currentItem.unit_cost_ht,
       vat_rate: currentItem.vat_rate,
       position: currentItem.position,
       length_m: currentItem.length_m,
       width_m: currentItem.width_m,
       height_m: currentItem.height_m,
+      dim_quantity: currentItem.dim_quantity,
       is_internal: currentItem.is_internal,
+      metal_grid_id: currentItem.metal_grid_id,
+      price_pending: currentItem.price_pending,
+      labor_category: currentItem.labor_category,
     })
   }
 
@@ -881,12 +1251,80 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     deletedItemKeys.current.delete(key)
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: false, transport_km: null, transport_conso: null, transport_prix_l: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: false, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, price_pending: false, labor_category: null }] }
         : s
     ))
     const sectionId = await ensureSectionSaved(sectionTempId, qId)
     if (!sectionId) return
     await createQuoteItemAndFinalize(sectionTempId, tempId, qId, sectionId, { quote_id: qId, section_id: sectionId, type: 'custom', description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, position: pos })
+  }
+
+  function buildMetalGridLineLabel(grid: MetalPriceGrid) {
+    const details = [
+      grid.grade,
+      grid.thickness_mm ? `${grid.thickness_mm} mm` : null,
+      grid.format_label,
+    ].filter((detail): detail is string => Boolean(detail))
+    return formatGridLabel(grid.label, details)
+  }
+
+  // F3 — Pré-remplissage depuis une grille matière (MetalPriceBanner)
+  async function handleMetalGridSelect(grid: MetalPriceGrid, lmePriceEurKg: number) {
+    const qId = await ensureQuote()
+    if (!qId) return
+    // Cible : première section disponible, ou on en crée une
+    let targetTempId = sectionsRef.current[0]?._tempId
+    if (!targetTempId) {
+      await handleAddSection()
+      targetTempId = sectionsRef.current[0]?._tempId
+    }
+    if (!targetTempId) return
+    const sec = sectionsRef.current.find(s => s._tempId === targetTempId)!
+    const pos = sec.items.length + 1
+    const tempId = `item_${Date.now()}`
+    const proposedPrice = Math.round(lmePriceEurKg * grid.coefficient * 100) / 100
+    const lineLabel = buildMetalGridLineLabel(grid)
+    deletedItemKeys.current.delete(`${targetTempId}_${tempId}`)
+    setSectionsSynced(prev => prev.map(s =>
+      s._tempId === targetTempId
+        ? { ...s, items: [...s.items, {
+            _tempId: tempId, id: null,
+            description: lineLabel,
+            quantity: 1,
+            unit: grid.unit,
+            unit_price: proposedPrice,
+            unit_cost_ht: null,
+            vat_rate: defaultVatRate,
+            type: 'material' as const,
+            material_id: grid.catalog_item_id ?? null,
+            labor_rate_id: null,
+            position: pos,
+            length_m: null, width_m: null, height_m: null,
+            dimension_pricing_mode: null,
+            dim_quantity: 1,
+            is_estimated: true,
+            is_internal: false,
+            transport_km: null, transport_conso: null, transport_prix_l: null,
+            metal_grid_id: grid.id,
+            price_pending: false,
+            labor_category: null,
+          }] }
+        : s
+    ))
+    const sectionId = await ensureSectionSaved(targetTempId, qId)
+    if (!sectionId) return
+    await createQuoteItemAndFinalize(targetTempId, tempId, qId, sectionId, {
+      quote_id: qId, section_id: sectionId,
+      type: 'material',
+      material_id: grid.catalog_item_id ?? undefined,
+      description: lineLabel,
+      quantity: 1,
+      unit: grid.unit,
+      unit_price: proposedPrice,
+      vat_rate: defaultVatRate,
+      position: pos,
+      metal_grid_id: grid.id,
+    })
   }
 
   function handleItemChange(sectionTempId: string, itemTempId: string, field: keyof LocalItem, value: string | number | boolean | null) {
@@ -908,7 +1346,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       const sectionId = resolvePersistedSectionId(sec)
       if (!item?.id || sectionId === undefined) return
       if (deletedSectionTempIds.current.has(sectionTempId) || deletedItemKeys.current.has(key) || deletedItemIds.current.has(item.id)) return
-      await upsertQuoteItem({
+      const res = await upsertQuoteItem({
         id: item.id,
         quote_id: qId,
         section_id: sectionId,
@@ -919,13 +1357,21 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         quantity: item.quantity,
         unit: item.unit,
         unit_price: item.unit_price,
+        unit_cost_ht: item.unit_cost_ht,
         vat_rate: item.vat_rate,
         position: item.position,
         length_m: item.length_m,
         width_m: item.width_m,
         height_m: item.height_m,
+        dim_quantity: item.dim_quantity,
         is_internal: item.is_internal,
+        metal_grid_id: item.metal_grid_id ?? null,
+        price_pending: item.price_pending,
+        labor_category: item.labor_category ?? null,
       })
+      setSaveStatus(res.error ? 'error' : 'saved')
+      if (res.error) setErrorMsg(res.error)
+      else setTimeout(() => setSaveStatus('idle'), 2000)
       if (deletedItemIds.current.has(item.id)) {
         await deleteQuoteItemOrReport(item.id, qId)
         return
@@ -972,6 +1418,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const key = `${sectionTempId}_${itemTempId}`
     if (itemDebounces.current[key]) clearTimeout(itemDebounces.current[key])
     pendingItemKeys.current.add(key)
+    setSaveStatus('saving')
     itemDebounces.current[key] = setTimeout(async () => {
       const qId = quoteIdRef.current
       if (!qId) return
@@ -980,7 +1427,10 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       const sectionId = resolvePersistedSectionId(sec)
       if (!item?.id || sectionId === undefined) return
       if (deletedSectionTempIds.current.has(sectionTempId) || deletedItemKeys.current.has(key) || deletedItemIds.current.has(item.id)) return
-      await upsertQuoteItem({ id: item.id, quote_id: qId, section_id: sectionId, type: item.type, material_id: item.material_id, labor_rate_id: item.labor_rate_id, description: item.description, quantity: item.quantity, unit: item.unit, unit_price: item.unit_price, unit_cost_ht: item.unit_cost_ht, vat_rate: item.vat_rate, position: item.position, length_m: item.length_m, width_m: item.width_m, height_m: item.height_m, dim_quantity: item.dim_quantity, is_internal: item.is_internal })
+      const res = await upsertQuoteItem({ id: item.id, quote_id: qId, section_id: sectionId, type: item.type, material_id: item.material_id, labor_rate_id: item.labor_rate_id, description: item.description, quantity: item.quantity, unit: item.unit, unit_price: item.unit_price, unit_cost_ht: item.unit_cost_ht, vat_rate: item.vat_rate, position: item.position, length_m: item.length_m, width_m: item.width_m, height_m: item.height_m, dim_quantity: item.dim_quantity, is_internal: item.is_internal, metal_grid_id: item.metal_grid_id ?? null, price_pending: item.price_pending, labor_category: item.labor_category ?? null })
+      setSaveStatus(res.error ? 'error' : 'saved')
+      if (res.error) setErrorMsg(res.error)
+      else setTimeout(() => setSaveStatus('idle'), 2000)
       if (deletedItemIds.current.has(item.id)) {
         await deleteQuoteItemOrReport(item.id, qId)
         return
@@ -1080,6 +1530,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       is_estimated: false,
       is_internal: !isMat,
       transport_km: null, transport_conso: null, transport_prix_l: null,
+      metal_grid_id: null,
+      price_pending: false,
+      labor_category: null,
     }
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === catalogTarget ? { ...s, items: [...s.items, newItem] } : s
@@ -1136,6 +1589,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           width_m: item.width_m,
           height_m: item.height_m,
           is_internal: item.is_internal,
+          metal_grid_id: item.metal_grid_id ?? null,
+          price_pending: item.price_pending,
+          labor_category: item.labor_category ?? null,
         }))
       }
     }
@@ -1145,10 +1601,64 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
 
   // ─── Send ─────────────────────────────────────────────────────────────────
 
-  async function handleSend() {
+  async function saveCurrentMetalSnapshots(qId: string): Promise<string | null> {
+    if (!hasMetalPricing || metalPriceGrids.length === 0) return null
+
+    const gridMap = Object.fromEntries(metalPriceGrids.map(g => [g.id, g]))
+    const snapshotInputs = sectionsRef.current.flatMap(sec =>
+      sec.items
+        .filter(item => item.metal_grid_id && item.id)
+        .map(item => {
+          const grid = gridMap[item.metal_grid_id!]
+          if (!grid) return null
+          return {
+            quote_item_id: item.id!,
+            quote_id: qId,
+            grid_id: grid.id,
+            metal_code: grid.metal_code as import('@/lib/metal-prices').MetalCode,
+            coefficient: grid.coefficient,
+            validated_price: item.unit_price,
+            show_on_pdf: false,
+          }
+        })
+        .filter(Boolean) as import('@/lib/data/mutations/metal-price-snapshots').SnapshotInput[]
+    )
+
+    if (snapshotInputs.length === 0) return null
+    const result = await saveMetalPriceSnapshots(qId, snapshotInputs)
+    return result.error
+  }
+
+  function getSelectedClientForSend() {
+    return clients.find(c => c.id === clientId) ?? (initialQuote?.client?.id === clientId ? initialQuote.client : null)
+  }
+
+  async function prepareQuoteSend(skipEmailCheck = false, skipCheck = false) {
     if (!clientId) {
       setErrorMsg('Veuillez sélectionner un client avant d\'envoyer le devis.')
       return
+    }
+    const selectedClient = getSelectedClientForSend()
+    if (!selectedClient) {
+      setErrorMsg('Client introuvable. Sélectionnez à nouveau le client.')
+      return
+    }
+    if (!skipEmailCheck && !selectedClient.email?.trim()) {
+      setErrorMsg(null)
+      setEmailRequiredOpen(true)
+      return
+    }
+    if (!skipCheck) {
+      const warnings: string[] = []
+      const allVisible = sections.flatMap(s => s.items.filter(i => !i.is_internal))
+      if (allVisible.length === 0) warnings.push('Le devis ne contient aucune ligne visible.')
+      const pendingCount = allVisible.filter(i => i.price_pending).length
+      if (pendingCount > 0) warnings.push(`${pendingCount} ligne${pendingCount > 1 ? 's' : ''} avec prix à confirmer fournisseur.`)
+      if (warnings.length > 0) {
+        setCheckWarnings(warnings)
+        setCheckModalOpen(true)
+        return
+      }
     }
     setIsSending(true)
     const qId = await ensureQuote()
@@ -1176,10 +1686,26 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     setIsSending(false)
   }
 
+  async function handleSend() {
+    await prepareQuoteSend(false)
+  }
+
+  async function handleClientEmailSaved(email: string) {
+    setClients(prev => prev.map(client => client.id === clientId ? { ...client, email } : client))
+    setEmailRequiredOpen(false)
+    await prepareQuoteSend(true)
+  }
+
   async function confirmQuoteSend(selected: Record<string, string[]>) {
     if (!pendingQuoteId) return
     setIsSending(true)
     setSendModalError(null)
+    const snapshotError = await saveCurrentMetalSnapshots(pendingQuoteId)
+    if (snapshotError) {
+      setIsSending(false)
+      setSendModalError(snapshotError)
+      return
+    }
     const res = await sendQuote(pendingQuoteId, { attachContractIds: selected.contracts ?? [] })
     setIsSending(false)
     if (res.error) { setSendModalError(res.error); return }
@@ -1203,13 +1729,50 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   // ─── AI import ───────────────────────────────────────────────────────────
 
   async function handleAIImport(aiResult: AIQuoteResult) {
-    const matchedClient = findBestClientMatch(clients, aiResult.clientName)
-    if (matchedClient && matchedClient.id !== clientId) {
-      setClientId(matchedClient.id)
-      if (quoteIdRef.current) scheduleHeaderSave({ client_id: matchedClient.id })
+    let resolvedClientId: string | null = null
+    const matchedClient = findBestClientMatch(clients, getAIClientSearch(aiResult))
+    if (matchedClient) {
+      resolvedClientId = matchedClient.id
+    } else {
+      const draftInput = getAIClientDraftInput(aiResult)
+      if (draftInput) {
+        const res = await createClientInline(draftInput)
+        if (res.id) {
+          const createdClient: Client = {
+            id: res.id,
+            organization_id: '',
+            type: draftInput.type,
+            company_name: draftInput.type === 'company' ? draftInput.company_name || null : null,
+            contact_name: draftInput.type === 'company' ? draftInput.contact_name || null : null,
+            first_name: draftInput.first_name || null,
+            last_name: draftInput.last_name || null,
+            email: draftInput.email || null,
+            phone: draftInput.phone || null,
+            siret: draftInput.type === 'company' ? draftInput.siret || null : null,
+            address_line1: draftInput.address_line1 || null,
+            postal_code: draftInput.postal_code || null,
+            city: draftInput.city || null,
+            status: 'prospect',
+            source: 'ai_quote',
+            total_revenue: 0,
+            payment_terms_days: 30,
+            internal_notes: null,
+            created_at: new Date().toISOString(),
+          }
+          setClients(prev => [...prev, createdClient])
+          resolvedClientId = res.id
+        } else if (res.error) {
+          setErrorMsg(res.error)
+        }
+      }
     }
 
-    const qId = await ensureQuote(matchedClient?.id ?? undefined)
+    if (resolvedClientId && resolvedClientId !== clientId) {
+      setClientId(resolvedClientId)
+      if (quoteIdRef.current) scheduleHeaderSave({ client_id: resolvedClientId })
+    }
+
+    const qId = await ensureQuote(resolvedClientId ?? null)
     if (!qId) return
 
     // Mettre à jour le titre si c'est encore le titre par défaut
@@ -1261,6 +1824,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           is_estimated: aiItem.is_estimated ?? false,
           is_internal: isInternal,
           transport_km: null, transport_conso: null, transport_prix_l: null,
+          metal_grid_id: null,
+          price_pending: false,
+          labor_category: null,
         }
         setSectionsSynced(prev => prev.map(s =>
           s._tempId === tempId ? { ...s, items: [...s.items, newItem] } : s
@@ -1269,12 +1835,18 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           quote_id: qId,
           section_id: sectionId,
           type: 'custom',
+          designation: aiItem.designation ?? null,
+          details: aiItem.details ?? null,
           description: aiItem.description,
           quantity: aiItem.quantity,
           unit: aiItem.unit,
           unit_price: aiItem.unit_price,
+          unit_cost_ht: aiItem.unit_cost_ht ?? null,
           vat_rate: aiItem.vat_rate,
           position: itemPos,
+          ai_confidence: aiItem.ai_confidence ?? null,
+          ai_source: aiItem.ai_source ?? (aiItem.is_estimated ? 'ai_estimate' : null),
+          ai_warnings: aiItem.ai_warnings ?? [],
           length_m: aiItem.length_m ?? null,
           width_m: aiItem.width_m ?? null,
           height_m: aiItem.height_m ?? null,
@@ -1292,7 +1864,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     const qId = await ensureQuote()
     if (!qId) return
 
-    // Find or create "Main-d'œuvre" section
+    // Find or create "Main d'oeuvre" section
     const existing = sectionsRef.current.find(s =>
       s.title.toLowerCase().replace(/['-]/g, ' ').includes("main d") ||
       s.title.toLowerCase().includes("main-d")
@@ -1308,8 +1880,8 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       const pos = sectionsRef.current.length + 1
       sectionTempId = `sec_mo_${Date.now()}`
       deletedSectionTempIds.current.delete(sectionTempId)
-      setSectionsSynced(prev => [...prev, { _tempId: sectionTempId, id: null, title: "Main-d'œuvre", position: pos, items: [] }])
-      const res = await upsertQuoteSection({ quote_id: qId, title: "Main-d'œuvre", position: pos })
+      setSectionsSynced(prev => [...prev, { _tempId: sectionTempId, id: null, title: "Main d'oeuvre", position: pos, items: [] }])
+      const res = await upsertQuoteSection({ quote_id: qId, title: "Main d'oeuvre", position: pos })
       sectionId = res.sectionId ?? null
       if (sectionId) {
         if (deletedSectionTempIds.current.has(sectionTempId)) {
@@ -1339,6 +1911,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         position: itemPos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
         is_estimated: false, is_internal: true,
         transport_km: null, transport_conso: null, transport_prix_l: null,
+        metal_grid_id: null,
+        price_pending: false,
+        labor_category: 'atelier' as const,
       }
       setSectionsSynced(prev => prev.map(s =>
         s._tempId === sectionTempId ? { ...s, items: [...s.items, newItem] } : s
@@ -1349,6 +1924,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         description: item.designation,
         quantity: item.quantity, unit: item.unit, unit_price: item.unit_price,
         vat_rate: defaultVatRate, position: itemPos, is_internal: true,
+        labor_category: 'atelier',
       })
     }
 
@@ -1388,6 +1964,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
         is_estimated: false, is_internal: false,
         transport_km: null, transport_conso: null, transport_prix_l: null,
+        metal_grid_id: null,
+        price_pending: false,
+        labor_category: null,
       }
       setSectionsSynced(prev => prev.map(s => s._tempId === targetTempId ? { ...s, items: [...s.items, newItem] } : s))
       await createQuoteItemAndFinalize(targetTempId, tempId, qId, sectionId, { quote_id: qId, section_id: sectionId, type: 'custom', description: newItem.description, quantity: 1, unit: newItem.unit, unit_price: newItem.unit_price, vat_rate: newItem.vat_rate, position: pos })
@@ -1430,6 +2009,10 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           : 100
         const liters = isTransport ? computeFuel({ km: estimatedKm, consumption: conso, pricePerLiter: prixL }).liters : pItem.quantity
         const equipmentCostPerUse = pItem.unit_cost_ht > 0 ? pItem.unit_cost_ht : pItem.unit_price_ht
+        const isInternal = pItem.is_internal || isTransport || isEquipment
+        const laborCategory = isInternal || pItem.item_type === 'labor'
+          ? inferLaborCategory(sectionTitle, pItem.designation)
+          : null
         return {
           _tempId: tempIds[i], id: null,
           description: isTransport ? `Carburant - trajet ${estimatedKm} km` : pItem.designation,
@@ -1444,10 +2027,13 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1,
           unit_cost_ht: isEquipment ? equipmentCostPerUse : pItem.unit_cost_ht ?? null,
           is_estimated: false,
-          is_internal: pItem.is_internal || isTransport || isEquipment,
+          is_internal: isInternal,
           transport_km: isTransport ? estimatedKm : null,
           transport_conso: isTransport ? conso : null,
           transport_prix_l: isTransport ? prixL : null,
+          metal_grid_id: null,
+          price_pending: false,
+          labor_category: laborCategory,
         }
       })
       pending.push({ secTempId, secTitle, secPos, tempIds, newItems })
@@ -1481,6 +2067,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           material_id: item.material_id ?? undefined,
           labor_rate_id: item.labor_rate_id ?? undefined,
           is_internal: item.is_internal,
+          labor_category: item.labor_category,
         })
       }
     }
@@ -1506,8 +2093,10 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       {aiPanelOpen && (
         <AtelierAIPanel
           onImport={handleAIImport}
-          onClose={() => setAIPanelOpen(false)}
+          onClose={() => { setAIPanelOpen(false); setChloeBriefBanner(null); setChloeAutoAnalyze(null) }}
           voiceInputEnabled={modules.voice_input}
+          briefBanner={chloeBriefBanner}
+          autoAnalyzeText={chloeAutoAnalyze}
         />
       )}
 
@@ -1674,6 +2263,127 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         </div>
       )}
 
+      {/* Bandeau variantes */}
+      {(variantGroupId || variantLabel) && variants.length > 0 && (() => {
+        const currentIdx = variants.findIndex(v => v.id === quoteId)
+        const currentVariant = variants[currentIdx]
+        const prevVariant = currentIdx > 0 ? variants[currentIdx - 1] : null
+        const nextVariant = currentIdx < variants.length - 1 ? variants[currentIdx + 1] : null
+        return (
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-50 border border-blue-200 dark:bg-blue-950/30 dark:border-blue-800">
+            <span className="text-blue-700 dark:text-blue-300 font-medium text-xs shrink-0">Variante</span>
+            <div className="flex items-center gap-1 flex-1 min-w-0">
+              {prevVariant ? (
+                <a
+                  href={`/finances/quote-editor?id=${prevVariant.id}`}
+                  title={prevVariant.variant_label ?? prevVariant.title ?? `Devis ${prevVariant.number}`}
+                  className="p-1 rounded-lg text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors shrink-0"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </a>
+              ) : (
+                <span className="p-1 shrink-0 opacity-20 cursor-not-allowed">
+                  <ChevronLeft className="w-4 h-4 text-blue-400" />
+                </span>
+              )}
+              <div className="flex-1 min-w-0 text-center">
+                <span className="inline-block px-3 py-1 rounded-lg bg-blue-600 text-white font-semibold text-xs truncate max-w-full">
+                  {currentVariant?.variant_label ?? currentVariant?.title ?? `Devis ${currentVariant?.number}`}
+                </span>
+                {currentVariant?.total_ht != null && (
+                  <span className="ml-2 text-xs text-blue-500 tabular-nums">{currentVariant.total_ht.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })}</span>
+                )}
+              </div>
+              {nextVariant ? (
+                <a
+                  href={`/finances/quote-editor?id=${nextVariant.id}`}
+                  title={nextVariant.variant_label ?? nextVariant.title ?? `Devis ${nextVariant.number}`}
+                  className="p-1 rounded-lg text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors shrink-0"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </a>
+              ) : (
+                <span className="p-1 shrink-0 opacity-20 cursor-not-allowed">
+                  <ChevronRight className="w-4 h-4 text-blue-400" />
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] text-blue-400 tabular-nums shrink-0">{(currentIdx >= 0 ? currentIdx + 1 : '?')}/{variants.length}</span>
+            {quoteId && (
+              <button
+                onClick={() => setVariantModalOpen(true)}
+                className="px-2 py-1 rounded-lg bg-white border border-blue-300 text-blue-600 text-xs font-medium hover:bg-blue-50 dark:bg-white/5 dark:border-blue-700 dark:text-blue-300 transition-colors flex items-center gap-1 shrink-0"
+                title="Nouvelle variante"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )
+      })()}
+      {!variantGroupId && quoteId && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setVariantModalOpen(true)}
+            className="text-xs text-secondary hover:text-primary flex items-center gap-1.5 transition-colors"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            Créer une variante (option A/B)
+          </button>
+        </div>
+      )}
+
+      {/* Modal création de variante */}
+      {variantModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-panel max-w-md">
+            <button onClick={() => setVariantModalOpen(false)} className="absolute top-6 right-6 text-secondary hover:text-primary">
+              <X className="w-6 h-6" />
+            </button>
+            <h2 className="text-2xl font-bold text-primary mb-1">Nouvelle variante</h2>
+            <p className="text-sm text-secondary mb-5">Ce devis sera dupliqué. Donnez un nom a cette variante (ex : "Version B inox", "Option sans pose").</p>
+            {variantLabel === '' && (
+              <div className="mb-4">
+                <label className="text-xs font-semibold text-secondary uppercase tracking-wide mb-1 block">Nom de la version actuelle</label>
+                <input
+                  type="text"
+                  placeholder="ex : Version A acier"
+                  value={variantLabel}
+                  onChange={e => {
+                    setVariantLabel(e.target.value)
+                    if (quoteId) scheduleHeaderSave({ variant_label: e.target.value })
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
+                />
+              </div>
+            )}
+            <div className="mb-6">
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wide mb-1 block">Nom de la nouvelle variante</label>
+              <input
+                type="text"
+                autoFocus
+                placeholder="ex : Version B inox"
+                value={variantNewLabel}
+                onChange={e => setVariantNewLabel(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleCreateVariant() }}
+                className="w-full px-3 py-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
+              />
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setVariantModalOpen(false)} className="btn-secondary text-sm">Annuler</button>
+              <button
+                onClick={handleCreateVariant}
+                disabled={variantCreating || !variantNewLabel.trim()}
+                className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50"
+              >
+                {variantCreating && <Loader2 className="w-4 h-4 animate-spin" />}
+                Créer la variante
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Topbar */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         {/* Titre + statut sauvegarde */}
@@ -1715,7 +2425,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
               onClick={() => setAIPanelOpen(true)}
               className="btn-primary flex items-center gap-2 whitespace-nowrap text-sm px-3 py-2"
             >
-              <Bot className="w-4 h-4" />
+              <AssistantAvatar assistant="chloe" size={16} />
               {AI_NAME}
             </button>
           )}
@@ -1724,11 +2434,11 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
               onClick={handlePreviewPdf}
               className="px-3 py-2 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:bg-base hover:text-accent transition-all whitespace-nowrap text-sm"
             >
-              <FileDown className="w-4 h-4" /><span className="hidden sm:inline">Aperçu PDF</span>
+              <FileDown className="w-4 h-4" />Aperçu PDF
             </button>
           ) : (
             <span className="px-3 py-2 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center gap-2 opacity-40 cursor-not-allowed whitespace-nowrap text-sm" title="Ajoutez une ligne pour générer le PDF">
-              <FileDown className="w-4 h-4" /><span className="hidden sm:inline">Aperçu PDF</span>
+              <FileDown className="w-4 h-4" />Aperçu PDF
             </span>
           )}
           <ActionButton
@@ -1737,20 +2447,72 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             disabled={isPending}
             className="btn-primary flex items-center gap-2 whitespace-nowrap text-sm px-3 py-2"
           >
-            <Send className="w-4 h-4" />
-            <span className="hidden sm:inline">Envoyer</span>
+            <Send className="w-4 h-4" />Envoyer
           </ActionButton>
         </div>
       </div>
 
       {errorMsg && <p className="text-sm text-red-400 px-2">{errorMsg}</p>}
 
+      <div className="rounded-2xl border border-[var(--elevation-border)] bg-surface/80 dark:bg-white/[0.03] p-3 sm:p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-2 text-sm font-bold text-primary">
+            <FileText className="w-4 h-4 text-accent" />
+            Parcours devis
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 flex-1 lg:max-w-4xl">
+            <button
+              type="button"
+              onClick={() => scrollToQuoteArea('quote-info')}
+              className={`min-h-16 rounded-xl border px-3 py-2 text-left transition-colors ${clientId ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300' : 'border-accent/30 bg-accent/5 text-primary hover:bg-accent/10'}`}
+            >
+              <span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">1 Client</span>
+              <span className="block text-xs font-semibold truncate">{clientId ? 'Sélectionné' : 'À choisir'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => sections.length === 0 ? handleAddSection() : scrollToQuoteArea('quote-lines')}
+              disabled={isPending || isAddingSection}
+              className={`min-h-16 rounded-xl border px-3 py-2 text-left transition-colors disabled:opacity-60 ${visibleItems.length > 0 ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300' : 'border-[var(--elevation-border)] text-primary hover:border-accent/40 hover:bg-accent/5'}`}
+            >
+              <span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">2 Lignes</span>
+              <span className="block text-xs font-semibold truncate">{visibleItems.length > 0 ? `${visibleItems.length} visible${visibleItems.length > 1 ? 's' : ''}` : 'À remplir'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToQuoteArea('quote-recap')}
+              className={`min-h-16 rounded-xl border px-3 py-2 text-left transition-colors ${hasInternalItems ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300' : 'border-[var(--elevation-border)] text-primary hover:border-accent/40 hover:bg-accent/5'}`}
+            >
+              <span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">3 Coûts</span>
+              <span className="block text-xs font-semibold truncate">{hasInternalItems ? `${margePct.toFixed(0)} % marge` : 'À contrôler'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToQuoteArea('quote-checklist')}
+              className={`min-h-16 rounded-xl border px-3 py-2 text-left transition-colors ${pendingSupplierPrices === 0 && visibleItems.length > 0 ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300' : 'border-[var(--elevation-border)] text-primary hover:border-accent/40 hover:bg-accent/5'}`}
+            >
+              <span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">4 Contrôle</span>
+              <span className="block text-xs font-semibold truncate">{pendingSupplierPrices > 0 ? `${pendingSupplierPrices} prix à valider` : 'Checklist'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={isPending || isSending}
+              className="min-h-16 rounded-xl border border-accent/40 bg-accent text-black px-3 py-2 text-left transition-colors hover:bg-accent/90 disabled:opacity-60"
+            >
+              <span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">5 Envoi</span>
+              <span className="block text-xs font-semibold truncate">{quoteId ? 'PDF & email' : 'Créer le devis'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Main layout */}
       <div className="grid grid-cols-1 md:grid-cols-5 lg:grid-cols-12 gap-6 lg:gap-8">
 
         {/* Left panel — order-2 on mobile (Infos + Totaux après les sections) */}
         <div className="md:col-span-2 lg:col-span-4 space-y-6 order-2 md:order-1">
-          <div className="rounded-3xl card p-5 sm:p-8 space-y-5">
+          <div id="quote-info" className="rounded-3xl card p-5 sm:p-8 space-y-5 scroll-mt-24">
             <h3 className="text-lg font-bold text-primary border-b border-[var(--elevation-border)] pb-3">Informations</h3>
             <div className="space-y-4">
               <div className="space-y-2">
@@ -1772,6 +2534,17 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                   <option value="">Sans client</option>
                   {clients.map(c => <option key={c.id} value={c.id}>{clientDisplayName(c)}</option>)}
                 </select>
+                {(() => {
+                  const selClient = clients.find(c => c.id === clientId)
+                  const notes = (selClient as any)?.internal_notes as string | null | undefined
+                  if (!notes) return null
+                  return (
+                    <div className="mt-2 rounded-xl bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-700/40 px-3 py-2 space-y-0.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">Notes internes</span>
+                      <p className="text-xs text-amber-800 dark:text-amber-300 whitespace-pre-wrap leading-relaxed">{notes}</p>
+                    </div>
+                  )
+                })()}
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-secondary">Titre du projet</label>
@@ -1810,7 +2583,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                       .filter(q => q.client_id === clientId && q.id !== quoteId)
                       .map(q => (
                         <option key={q.id} value={q.id}>
-                          {q.number ? `${q.number} — ` : ''}{q.title ?? 'Sans titre'}
+                          {q.number ? `${q.number} · ` : ''}{q.title ?? 'Sans titre'}
                         </option>
                       ))}
                   </select>
@@ -1825,7 +2598,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           </div>
 
           {/* Totals */}
-          <div className="rounded-3xl card p-5 sm:p-8 space-y-4 md:sticky top-24">
+          <div id="quote-recap" className="rounded-3xl card p-5 sm:p-8 space-y-4 md:sticky top-24 scroll-mt-24">
             <h3 className="text-lg font-bold text-primary mb-2">Récapitulatif</h3>
             <div className="flex justify-between text-secondary">
               <span>Total HT</span><span className="tabular-nums">{fmt(totalHt)}</span>
@@ -1940,6 +2713,23 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                   <span>Coût interne</span>
                   <span className="tabular-nums text-red-400">−{fmt(totalInternalHt)}</span>
                 </div>
+                {internalOnlyHt > 0 && internalSaleToDistributeHt !== internalOnlyHt && (
+                  <div className="flex justify-between text-xs text-secondary">
+                    <span>Dont coûts masqués</span>
+                    <span className="tabular-nums">{fmt(internalOnlyHt)}</span>
+                  </div>
+                )}
+                {internalSaleToDistributeHt > 0 && (
+                  <div className="flex justify-between text-xs text-secondary">
+                    <span>Montant interne à vendre</span>
+                    <span className="tabular-nums">{fmt(internalSaleToDistributeHt)}</span>
+                  </div>
+                )}
+                {internalOnlyHt > 0 && internalSaleToDistributeHt <= 0 && (
+                  <p className="rounded-lg bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                    Montants internes déjà répartis dans les lignes visibles.
+                  </p>
+                )}
                 <div className="h-px bg-[var(--elevation-border)]" />
                 <div className="flex justify-between text-sm font-bold">
                   <span className="text-primary">Marge brute</span>
@@ -1953,13 +2743,60 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                     {margePct.toFixed(1)} %
                   </span>
                 </div>
+                {internalSaleToDistributeHt > 0 && (
+                  <>
+                  <button
+                    type="button"
+                    onClick={handleDistributeInternalCostsIntoVisiblePrices}
+                    disabled={!canDistributeInternalCosts}
+                    title="Ajoute le montant vendu des lignes internes aux prix unitaires des lignes visibles, proportionnellement à leur montant."
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-accent/30 bg-accent/8 px-3 py-2 text-xs font-bold text-accent transition-colors hover:bg-accent/12 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    Répartir dans les prix visibles
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleMarkInternalSalesAlreadyDistributed}
+                    title="Neutralise le montant interne à vendre sans modifier les prix visibles."
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--elevation-border)] bg-base/50 px-3 py-2 text-xs font-semibold text-secondary transition-colors hover:text-primary hover:border-accent/40"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Marquer comme intégré
+                  </button>
+                  <p className="text-[11px] leading-snug text-secondary">
+                    Répartition au prorata du montant HT visible actuel. Une fois intégré, le montant interne à vendre est neutralisé pour éviter une double intégration.
+                  </p>
+                  </>
+                )}
                 <p className="text-xs text-amber-500 flex items-center gap-1.5 pt-1">
                   <EyeOff className="w-3 h-3 shrink-0" />
                   Les lignes orange ne figurent pas sur le PDF client.
                 </p>
               </div>
             )}
+
+            {/* Toggle sous-totaux par lot */}
+            {sections.filter(s => s._tempId !== '_unsectioned' && s.title).length > 1 && (
+              <div className="pt-2 mt-2 border-t border-[var(--elevation-border)]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !showSectionSubtotals
+                    setShowSectionSubtotals(next)
+                    if (quoteId) scheduleHeaderSave({ show_section_subtotals: next })
+                  }}
+                  className={`w-full flex items-center justify-between text-xs rounded-lg px-3 py-2 border transition-colors ${showSectionSubtotals ? 'border-accent/40 text-accent bg-accent/5 hover:bg-accent/10' : 'border-[var(--elevation-border)] text-secondary hover:text-primary hover:bg-base/50'}`}
+                >
+                  <span>Sous-totaux par lot sur le PDF</span>
+                  <span className={`w-7 h-4 rounded-full transition-colors flex items-center ${showSectionSubtotals ? 'bg-accent justify-end' : 'bg-[var(--elevation-border)] justify-start'}`}>
+                    <span className="w-3 h-3 rounded-full bg-white mx-0.5 shadow-sm" />
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
+
         </div>
 
         {/* Right: sections — order-1 on mobile (sections en premier) */}
@@ -1994,8 +2831,20 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           )}
 
           {/* Intro text */}
-          <div className="rounded-3xl card p-5 sm:p-8">
-            <label className="text-sm font-semibold text-secondary block mb-3">Texte d'introduction</label>
+          <div className="rounded-3xl card p-5 sm:p-8 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-semibold text-secondary">Texte d&apos;introduction</label>
+              {clauseTemplates.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { setClauseTarget('notes'); setClauseModalOpen(true) }}
+                  className="flex items-center gap-1.5 text-xs text-secondary hover:text-accent transition-colors px-2 py-1 rounded-lg hover:bg-accent/5"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  Insérer une clause
+                </button>
+              )}
+            </div>
             <textarea
               value={notesClient}
               onChange={e => { introTouchedRef.current = true; setNotesClient(e.target.value); scheduleHeaderSave({ notes_client: e.target.value }) }}
@@ -2004,22 +2853,37 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             />
           </div>
 
+          {/* Bandeau cours metaux (F1 + F3) */}
+          {hasMetalPricing && (
+            <MetalPriceBanner
+              grids={metalPriceGrids}
+              onGridSelect={handleMetalGridSelect}
+            />
+          )}
+
+          {/* Snapshots LME (F4) — visibles si le devis a deja ete valide */}
+          {hasMetalPricing && initialMetalSnapshots.length > 0 && (
+            <MetalPriceSnapshotPanel snapshots={initialMetalSnapshots} />
+          )}
+
           {/* Sections */}
+          <div id="quote-lines" className="scroll-mt-24 space-y-6">
           {sections.length === 0 && (
             <div className="rounded-3xl card p-12 text-center space-y-5">
               <p className="text-secondary text-sm">Commencez par ajouter une section ou choisissez une prestation type.</p>
-              <div className="flex items-center justify-center gap-3">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3">
                 <button
                   onClick={handleAddSection}
-                  disabled={isPending}
-                  className="btn-primary flex items-center gap-2 text-sm"
+                  disabled={isPending || isAddingSection}
+                  className="btn-primary flex items-center justify-center gap-2 text-sm min-w-[11rem]"
                 >
-                  <Plus className="w-4 h-4" />Ajouter une section
+                  {isAddingSection ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  Ajouter une section
                 </button>
                 <button
                   onClick={() => { setPrestationSearch(''); setPrestationOpen(true) }}
-                  disabled={isPending}
-                  className="btn-secondary flex items-center gap-2 text-sm"
+                  disabled={isPending || isAddingSection}
+                  className="btn-secondary flex items-center justify-center gap-2 text-sm min-w-[10rem]"
                 >
                   <Layers className="w-4 h-4" />Prestation type
                 </button>
@@ -2073,6 +2937,20 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                             {isEquipment ? 'Équip.' : 'Coût'}
                           </span>
                         )}
+                        {item.is_internal && !isEquipment && (
+                          <select
+                            value={item.labor_category ?? ''}
+                            onChange={e => handleItemChange(sec._tempId, item._tempId, 'labor_category', e.target.value || null)}
+                            title="Catégorie interne"
+                            className={`mt-1 text-[9px] font-bold uppercase tracking-wider border rounded px-1 py-0.5 leading-none bg-transparent focus:outline-none cursor-pointer ${item.labor_category === 'finition' ? 'text-violet-700 border-violet-400/40' : 'text-amber-700 border-amber-400/40'}`}
+                          >
+                            {laborCategoryOptions.map(option => (
+                              <option key={option.value || 'main-d-oeuvre'} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                         <div className="flex-1 flex flex-col gap-1">
                           {isEquipment && equipmentMeta ? (
                             <textarea
@@ -2116,21 +2994,42 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                         </div>
                         <div className="flex flex-col gap-1 pt-0.5">
                           {item.is_estimated && <span title="Prix estimé par l'IA" className="p-1.5 text-amber-500"><Sparkles className="w-3.5 h-3.5" /></span>}
+                          {!item.is_internal && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = !item.price_pending
+                                handleItemChange(sec._tempId, item._tempId, 'price_pending', next)
+                                scheduleItemSave(sec._tempId, item._tempId)
+                              }}
+                              title={item.price_pending ? 'Prix en attente fournisseur (cliquer pour retirer)' : 'Marquer prix à valider fournisseur'}
+                              aria-label={item.price_pending ? 'Retirer le prix en attente fournisseur' : 'Marquer le prix à confirmer fournisseur'}
+                              className={`group relative p-1.5 rounded-full transition-all ${item.price_pending ? 'text-orange-500 bg-orange-500/10 hover:bg-orange-500/15' : 'text-secondary hover:text-orange-500 hover:bg-orange-500/10'}`}>
+                              <ControlTooltip>Prix fournisseur à confirmer. Le devis prévient avant envoi tant que ce point reste ouvert.</ControlTooltip>
+                              <Clock className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button onClick={() => { if (!isEquipment) handleItemChange(sec._tempId, item._tempId, 'is_internal', !item.is_internal) }}
                             disabled={isEquipment}
                             title={isEquipment ? 'Équipement toujours interne' : item.is_internal ? 'Ligne interne (cliquer pour rendre visible)' : 'Rendre interne'}
-                            className={`p-1.5 rounded-full transition-all ${isEquipment ? 'text-purple-600 bg-purple-500/10 cursor-not-allowed' : item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10 hover:bg-emerald-500/15'}`}>
+                            aria-label={isEquipment ? 'Équipement toujours interne' : item.is_internal ? 'Rendre la ligne visible au client' : 'Rendre la ligne interne'}
+                            className={`group relative p-1.5 rounded-full transition-all ${isEquipment ? 'text-purple-600 bg-purple-500/10 cursor-not-allowed' : item.is_internal ? 'text-amber-500 bg-amber-500/10' : 'text-emerald-600 bg-emerald-500/10 hover:bg-emerald-500/15'}`}>
+                            <ControlTooltip>{item.is_internal || isEquipment ? 'Ligne interne : elle compte dans le coût de revient mais n’apparaît pas sur le PDF client.' : 'Ligne visible client. Cliquez pour la passer en coût interne non visible.'}</ControlTooltip>
                             {item.is_internal ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
                           {canUseDimensions && (
                             <button onClick={() => toggleItemExpand(rowKey)} title="Mode / Dimensions"
-                              className={`p-1.5 rounded-full transition-all ${isExpanded ? 'text-accent bg-accent/10' : 'text-secondary hover:text-accent hover:bg-accent/10'}`}>
+                              aria-label="Ouvrir la tarification dimensionnelle"
+                              className={`group relative p-1.5 rounded-full transition-all ${isExpanded ? 'text-accent bg-accent/10' : 'text-secondary hover:text-accent hover:bg-accent/10'}`}>
+                              <ControlTooltip>Tarification dimensionnelle : calcule la quantité depuis longueur, surface ou volume.</ControlTooltip>
                               {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                             </button>
                           )}
                           {item.type === 'custom' && !item.material_id && !item.labor_rate_id && !isEquipment && (
                             <button onClick={() => openSaveCatalog(item)} title="Enregistrer dans le catalogue"
-                              className="p-1.5 rounded-full text-secondary hover:text-accent hover:bg-accent/10 transition-all">
+                              aria-label="Enregistrer cette ligne dans le catalogue"
+                              className="group relative p-1.5 rounded-full text-secondary hover:text-accent hover:bg-accent/10 transition-all">
+                              <ControlTooltip>Enregistre cette ligne libre comme élément réutilisable dans le catalogue.</ControlTooltip>
                               <BookmarkPlus className="w-3.5 h-3.5" />
                             </button>
                           )}
@@ -2181,17 +3080,22 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                             ) : (
                               <NumericInput value={item.unit_price} min={0} decimals={2}
                                 onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_price', v ?? 0)}
-                                className={`w-full h-9 px-2 border rounded-lg outline-none tabular-nums text-right text-sm transition-colors ${item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400 focus:border-amber-400' : 'bg-base border-[var(--elevation-border)] text-primary focus:border-accent'}`}
-                                title={item.is_estimated ? "Prix estimé par l'IA" : undefined} />
+                                className={`w-full h-9 px-2 border rounded-lg outline-none tabular-nums text-right text-sm transition-colors ${item.price_pending ? 'bg-orange-500/5 border-orange-400/40 text-orange-600 dark:text-orange-400 focus:border-orange-400' : item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400 focus:border-amber-400' : 'bg-base border-[var(--elevation-border)] text-primary focus:border-accent'}`}
+                                title={item.price_pending ? 'Prix à valider fournisseur' : item.is_estimated ? "Prix estimé par l'IA" : undefined} />
                             )}
                             {!item.material_id && !item.labor_rate_id && !isEquipment ? (
-                              <NumericInput
-                                value={item.unit_cost_ht ?? undefined}
-                                min={0} decimals={2}
-                                placeholder="coût interne"
-                                onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_cost_ht', v ?? null)}
-                                className="w-full h-7 px-2 bg-transparent border border-dashed border-[var(--elevation-border)] rounded-md outline-none tabular-nums text-right text-[11px] text-secondary/80 focus:border-accent focus:text-primary transition-colors"
-                              />
+                              <div className="group relative">
+                                <NumericInput
+                                  value={item.unit_cost_ht ?? undefined}
+                                  min={0} decimals={2}
+                                  placeholder="coût interne"
+                                  title="Coût de revient unitaire HT"
+                                  aria-label="Coût de revient unitaire HT"
+                                  onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_cost_ht', v ?? null)}
+                                  className="w-full h-7 px-2 bg-transparent border border-dashed border-[var(--elevation-border)] rounded-md outline-none tabular-nums text-right text-[11px] text-secondary/80 focus:border-accent focus:text-primary transition-colors"
+                                />
+                                <ControlTooltip mobileAlign="left">Coût de revient unitaire HT. Il sert à calculer la marge et n’apparaît pas sur le PDF.</ControlTooltip>
+                              </div>
                             ) : item.unit_cost_ht != null && item.unit_price > 0 ? (
                               <span className="text-[10px] tabular-nums text-right text-secondary/70">
                                 coût {fmt(item.unit_cost_ht)}
@@ -2261,16 +3165,21 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                               ) : (
                                 <NumericInput value={item.unit_price} min={0} decimals={2}
                                   onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_price', v ?? 0)}
-                                  className={`w-full p-2 border rounded-lg outline-none tabular-nums text-sm ${item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400' : 'bg-base/50 border-[var(--elevation-border)] text-primary focus:border-accent'}`} />
+                                  className={`w-full p-2 border rounded-lg outline-none tabular-nums text-sm ${item.price_pending ? 'bg-orange-500/5 border-orange-400/40 text-orange-600 dark:text-orange-400' : item.is_estimated ? 'bg-amber-500/5 border-amber-400/40 text-amber-600 dark:text-amber-400' : 'bg-base/50 border-[var(--elevation-border)] text-primary focus:border-accent'}`} />
                               )}
                               {!item.material_id && !item.labor_rate_id && !isEquipment ? (
-                                <NumericInput
-                                  value={item.unit_cost_ht ?? undefined}
-                                  min={0} decimals={2}
-                                  placeholder="coût interne"
-                                  onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_cost_ht', v ?? null)}
-                                  className="w-full px-2 py-1 bg-transparent border border-dashed border-[var(--elevation-border)] rounded-md outline-none tabular-nums text-right text-[11px] text-secondary/80 focus:border-accent focus:text-primary transition-colors"
-                                />
+                                <div className="group relative">
+                                  <NumericInput
+                                    value={item.unit_cost_ht ?? undefined}
+                                    min={0} decimals={2}
+                                    placeholder="coût interne"
+                                    title="Coût de revient unitaire HT"
+                                    aria-label="Coût de revient unitaire HT"
+                                    onChange={v => handleItemChange(sec._tempId, item._tempId, 'unit_cost_ht', v ?? null)}
+                                    className="w-full px-2 py-1 bg-transparent border border-dashed border-[var(--elevation-border)] rounded-md outline-none tabular-nums text-right text-[11px] text-secondary/80 focus:border-accent focus:text-primary transition-colors"
+                                  />
+                                  <ControlTooltip mobileAlign="left">Coût de revient unitaire HT. Il sert à calculer la marge et n’apparaît pas sur le PDF.</ControlTooltip>
+                                </div>
                               ) : item.unit_cost_ht != null && item.unit_price > 0 ? (
                                 <p className="text-[10px] tabular-nums text-right text-secondary/70">
                                   coût {fmt(item.unit_cost_ht)}
@@ -2510,25 +3419,110 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
                   <Package className="w-4 h-4" />Équipement
                 </button>
               </div>
+
+              {/* Sous-total + marge par lot */}
+              {sec._tempId !== '_unsectioned' && sec.items.filter(i => !i.is_internal).length > 0 && (() => {
+                const secVisible = sec.items.filter(i => !i.is_internal && !i.price_pending)
+                const secSousTotal = sec.items.filter(i => !i.is_internal).reduce((s, i) => s + i.quantity * i.unit_price, 0)
+                const secCost = sec.items.reduce((s, i) => {
+                  const cost = i.unit_cost_ht != null ? i.unit_cost_ht : (i.is_internal ? i.unit_price : 0)
+                  return s + i.quantity * cost
+                }, 0)
+                const secMarge = secSousTotal - secCost
+                const secMargePct = secSousTotal > 0 ? (secMarge / secSousTotal) * 100 : 0
+                const secHasInternalItems = sec.items.some(i => i.unit_cost_ht != null || i.is_internal)
+                const isDangerous = secHasInternalItems && secMargePct < 15
+                return (
+                  <div className="pt-2 border-t border-[var(--elevation-border)] mt-2 space-y-1.5">
+                    {showSectionSubtotals && (
+                      <div className="flex justify-between items-center text-sm">
+                          <span className="text-secondary">Sous-total {sec.title && `· ${sec.title}`}</span>
+                        <span className="font-bold text-primary tabular-nums">{fmt(secSousTotal)}</span>
+                      </div>
+                    )}
+                    {secHasInternalItems && (
+                      <div className={`flex justify-between items-center text-xs rounded-lg px-2.5 py-1.5 ${isDangerous ? 'bg-red-500/8 border border-red-500/20' : 'bg-[var(--surface-secondary)]'}`}>
+                        <span className="flex items-center gap-1.5 text-secondary">
+                          <EyeOff className="w-3 h-3" />
+                          Marge lot {sec.title && `· ${sec.title}`}
+                        </span>
+                        <span className="flex items-center gap-2 tabular-nums">
+                          <span className={`font-semibold ${secMarge >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>{fmt(secMarge)}</span>
+                          <span className={`font-bold text-xs px-1.5 py-0.5 rounded-md ${isDangerous ? 'bg-red-500/15 text-red-400' : secMargePct >= 30 ? 'bg-emerald-500/15 text-emerald-500' : 'bg-amber-500/15 text-amber-500'}`}>
+                            {secMargePct.toFixed(0)} %
+                          </span>
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
           ))}
 
           {sections.length > 0 && (
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               <button
                 onClick={handleAddSection}
-                disabled={isPending}
-                className="flex-1 py-4 border-2 border-dashed border-[var(--elevation-border)] rounded-2xl text-secondary font-bold hover:border-accent/50 hover:text-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                disabled={isPending || isAddingSection}
+                className="flex-1 py-4 border-2 border-dashed border-[var(--elevation-border)] rounded-2xl text-secondary font-bold hover:border-accent/50 hover:text-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 disabled:opacity-60 min-w-[13rem]"
               >
-                <Plus className="w-5 h-5" />Ajouter une section
+                {isAddingSection ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+                Ajouter une section
               </button>
               <button
                 onClick={() => { setPrestationSearch(''); setPrestationOpen(true) }}
-                disabled={isPending}
-                className="py-4 px-6 border-2 border-dashed border-[var(--elevation-border)] rounded-2xl text-secondary font-bold hover:border-accent/50 hover:text-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 disabled:opacity-60 whitespace-nowrap"
+                disabled={isPending || isAddingSection}
+                className="py-4 px-6 border-2 border-dashed border-[var(--elevation-border)] rounded-2xl text-secondary font-bold hover:border-accent/50 hover:text-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 disabled:opacity-60 whitespace-nowrap sm:min-w-[12rem]"
               >
                 <Layers className="w-5 h-5" />Prestation type
               </button>
+            </div>
+          )}
+          </div>
+          {/* Demandes de prix fournisseur */}
+          {quoteId && (
+            <div className="rounded-3xl card p-5 sm:p-6">
+              <SupplierPriceRequestsPanel
+                quoteId={quoteId}
+                initialRequests={initialPriceRequests}
+                suppliers={allSuppliers}
+              />
+            </div>
+          )}
+
+          {/* Checklist technique */}
+          {quoteId && (
+            <div id="quote-checklist" className="rounded-3xl card p-5 sm:p-6 scroll-mt-24">
+              <TechnicalChecklistPanel
+                quoteId={quoteId}
+                initialChecklist={(initialQuote as any)?.technical_checklist ?? null}
+                businessProfile={catalogContext.businessProfile}
+              />
+            </div>
+          )}
+
+          {/* Mentions légales BTP */}
+          {orgForMentions && (
+            <div className="rounded-3xl card p-5 sm:p-6">
+              <BtpMentionsPanel
+                quote={{
+                  title,
+                  notes_client: notesClient,
+                  payment_conditions: (initialQuote as any)?.payment_conditions ?? null,
+                  issue_date: initialQuote?.created_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
+                  valid_until: validityDays ? new Date(Date.now() + validityDays * 86400000).toISOString().slice(0, 10) : null,
+                  total_ht: totalHt,
+                  total_ttc: totalTtc,
+                  items: visibleItems.map(i => ({ description: i.description, quantity: i.quantity, unit: i.unit, unit_price: i.unit_price, vat_rate: i.vat_rate })),
+                  client: (() => {
+                    const c = clients.find(cl => cl.id === clientId) ?? null
+                    if (!c) return null
+	                    return { type: (c as any).type ?? null, company_name: (c as any).company_name ?? null, first_name: (c as any).first_name ?? null, last_name: (c as any).last_name ?? null, address_line1: (c as any).address_line1 ?? null, postal_code: (c as any).postal_code ?? null, city: (c as any).city ?? null, siret: (c as any).siret ?? null }
+                  })(),
+                }}
+                org={orgForMentions}
+              />
             </div>
           )}
         </div>
@@ -2583,10 +3577,10 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             <div className="flex justify-end gap-3">
               <button type="button" onClick={() => setShowTransport(false)}
                 className="btn-secondary">Annuler</button>
-              <button type="button" onClick={handleAddTransport}
+              <ActionButton type="button" onClick={handleAddTransport}
                 className="btn-primary flex items-center gap-2">
                 <Plus className="w-4 h-4" />Ajouter la ligne
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -2639,10 +3633,10 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
             <div className="flex justify-end gap-3">
               <button type="button" onClick={() => setShowEquipment(false)}
                 className="btn-secondary">Annuler</button>
-              <button type="button" onClick={handleAddEquipment} disabled={equipmentPurchase <= 0 || equipmentUses <= 0}
+              <ActionButton type="button" onClick={handleAddEquipment} disabled={equipmentPurchase <= 0 || equipmentUses <= 0}
                 className="btn-primary flex items-center gap-2">
                 <Plus className="w-4 h-4" />Ajouter la ligne
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -2805,6 +3799,100 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
           onConfirm={confirmQuoteSend}
         />
       )}
+      <ClientEmailRequiredModal
+        open={emailRequiredOpen}
+        client={getSelectedClientForSend()}
+        documentLabel="le devis"
+        onCancel={() => setEmailRequiredOpen(false)}
+        onSaved={handleClientEmailSaved}
+      />
+
+      {/* Modal clauses réutilisables */}
+      {clauseModalOpen && clauseTemplates.length > 0 && (() => {
+        const categories = [...new Set(clauseTemplates.map(c => c.category ?? 'Général').filter(Boolean))]
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <div className="bg-[var(--surface-primary)] border border-[var(--elevation-border)] rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[80vh]">
+              <div className="flex items-center justify-between p-5 pb-3 border-b border-[var(--elevation-border)]">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center">
+                    <FileText className="w-4 h-4 text-accent" />
+                  </div>
+                  <h2 className="text-base font-semibold text-primary">Insérer une clause</h2>
+                </div>
+                <button onClick={() => setClauseModalOpen(false)} className="text-secondary hover:text-primary transition-colors"><X className="w-5 h-5" /></button>
+              </div>
+              <div className="overflow-y-auto p-4 space-y-4">
+                {categories.map(cat => (
+                  <div key={cat}>
+                    <p className="text-xs font-bold text-secondary uppercase tracking-wider mb-2">{cat}</p>
+                    <div className="space-y-2">
+                      {clauseTemplates.filter(c => (c.category ?? 'Général') === cat).map(clause => (
+                        <button
+                          key={clause.id}
+                          type="button"
+                          onClick={() => {
+                            const separator = clauseTarget === 'notes' ? (notesClient ? '\n\n' : '') : ''
+                            const current = clauseTarget === 'notes' ? notesClient : ''
+                            const next = current + separator + clause.body
+                            if (clauseTarget === 'notes') {
+                              introTouchedRef.current = true
+                              setNotesClient(next)
+                              scheduleHeaderSave({ notes_client: next })
+                            }
+                            setClauseModalOpen(false)
+                          }}
+                          className="w-full text-left p-3.5 rounded-xl border border-[var(--elevation-border)] hover:border-accent/40 hover:bg-accent/5 transition-all group"
+                        >
+                          <p className="text-sm font-semibold text-primary group-hover:text-accent transition-colors">{clause.title}</p>
+                          <p className="text-xs text-secondary mt-1 line-clamp-2 leading-relaxed">{clause.body}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {checkModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-[var(--surface-primary)] border border-[var(--elevation-border)] rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
+            <div>
+              <h2 className="text-base font-semibold text-primary">Avant d&apos;envoyer</h2>
+              <p className="text-sm text-secondary mt-1">Des points nécessitent votre attention.</p>
+            </div>
+            <ul className="space-y-2">
+              {checkWarnings.map((w, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-orange-600 dark:text-orange-400">
+                  <Clock className="w-4 h-4 mt-0.5 shrink-0" />
+                  {w}
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setCheckModalOpen(false)}
+                className="flex-1 h-9 rounded-lg border border-[var(--elevation-border)] text-sm text-secondary hover:text-primary hover:bg-base/50 transition-colors">
+                Corriger
+              </button>
+              <button
+                type="button"
+                onClick={() => { setCheckModalOpen(false); prepareQuoteSend(false, true) }}
+                className="flex-1 h-9 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors">
+                Envoyer quand même
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
+}
+
+function formatGridLabel(label: string, details: string[]) {
+  return details.length > 0 ? `${label} · ${details.join(' · ')}` : label
 }

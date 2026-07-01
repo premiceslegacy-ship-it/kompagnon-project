@@ -5,12 +5,19 @@ self.addEventListener('push', (event) => {
   const { title, body, icon, url } = data
 
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon: icon || '/icon-192.png',
-      badge: '/icon-192.png',
-      data: { url },
-    })
+    Promise.all([
+      self.registration.showNotification(title, {
+        body,
+        icon: icon || '/icon-192.png',
+        badge: '/icon-192.png',
+        data: { url },
+      }),
+      clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+        for (const client of windowClients) {
+          client.postMessage({ type: 'refresh-notifications' })
+        }
+      }),
+    ])
   )
 })
 

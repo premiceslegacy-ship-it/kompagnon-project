@@ -6,7 +6,10 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { APP_NAME } from '@/lib/brand'
 import { dateParis } from '@/lib/utils'
-import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
+import { getPlanningRecipientUserIds, sendPushToUsers } from '@/lib/push'
+import { AIModuleDisabledError, AIProviderCreditError, callAI } from '@/lib/ai/callAI'
+
+type PlanningSource = 'chantier' | 'maintenance'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +27,8 @@ export type PlanningSlotInput = {
 
 export type AIPlanningSlot = PlanningSlotInput & {
   chantierTitle: string     // pour l'affichage dans la preview
+  source?: PlanningSource
+  maintenanceContractId?: string | null
 }
 
 export type AIPlanningDeletion = {
@@ -34,6 +39,9 @@ export type AIPlanningDeletion = {
   startTime?: string | null
   endTime?: string | null
   label: string
+  source?: PlanningSource
+  maintenanceContractId?: string | null
+  maintenanceInterventionId?: string | null
 }
 
 export type AIUnknownPerson = {
@@ -107,6 +115,12 @@ export async function createPlanningSlot(data: PlanningSlotInput): Promise<{ err
   })
 
   if (error) return { error: error.message }
+  const recipients = await getPlanningRecipientUserIds(orgId, { memberId: data.memberId, equipeId: data.equipeId })
+  sendPushToUsers(recipients, {
+    title: 'Nouveau créneau planifié',
+    body: `${data.label} — ${data.plannedDate}${data.startTime ? ` à ${data.startTime}` : ''}`,
+    url: '/mon-espace/dashboard',
+  }, user.id).catch(() => {})
   revalidatePath('/chantiers/planning')
   revalidatePath(`/chantiers/${data.chantierId}`)
   return { error: null }
@@ -173,10 +187,128 @@ export async function createPlanningSlots(slots: PlanningSlotInput[]): Promise<{
   const { error } = await supabase.from('chantier_plannings').insert(rows)
   if (error) return { error: error.message, created: 0 }
 
+  const slotByRecipient = new Map<string, PlanningSlotInput[]>()
+  for (const slot of slots) {
+    const recipients = await getPlanningRecipientUserIds(orgId, { memberId: slot.memberId, equipeId: slot.equipeId })
+    for (const userId of recipients) {
+      const list = slotByRecipient.get(userId) ?? []
+      list.push(slot)
+      slotByRecipient.set(userId, list)
+    }
+  }
+  await Promise.allSettled([...slotByRecipient.entries()].map(([userId, userSlots]) =>
+    sendPushToUsers([userId], {
+      title: 'Nouveaux créneaux planifiés',
+      body: `${userSlots.length} créneau${userSlots.length > 1 ? 'x' : ''} ajouté${userSlots.length > 1 ? 's' : ''}`,
+      url: '/mon-espace/dashboard',
+    }, user.id),
+  ))
+
   revalidatePath('/chantiers/planning')
   for (const chantierId of new Set(slots.map(s => s.chantierId))) {
     revalidatePath(`/chantiers/${chantierId}`)
   }
+  return { error: null, created: slots.length }
+}
+
+export type MaintenancePlanningSlotInput = {
+  maintenanceContractId: string
+  plannedDate: string
+  startTime?: string | null
+  endTime?: string | null
+  label?: string | null
+  notes?: string | null
+  memberId?: string | null
+}
+
+function diffDays(from: string, to: string): number {
+  const fromTime = new Date(`${from}T12:00:00`).getTime()
+  const toTime = new Date(`${to}T12:00:00`).getTime()
+  return Math.round((toTime - fromTime) / 86400000)
+}
+
+function shiftDate(date: string, days: number): string {
+  const d = new Date(`${date}T12:00:00`)
+  d.setDate(d.getDate() + days)
+  return dateParis(d.getTime())
+}
+
+function durationHours(startTime?: string | null, endTime?: string | null, fallback?: number | null): number | null {
+  if (fallback != null && Number.isFinite(Number(fallback))) return Number(fallback)
+  if (!startTime || !endTime) return null
+  const [sh, sm] = startTime.split(':').map(Number)
+  const [eh, em] = endTime.split(':').map(Number)
+  const hours = (eh + em / 60) - (sh + sm / 60)
+  return hours > 0 ? Math.round(hours * 100) / 100 : null
+}
+
+export async function createMaintenancePlanningSlots(slots: MaintenancePlanningSlotInput[]): Promise<{ error: string | null; created: number }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Non authentifié.', created: 0 }
+
+  if (!await hasPermission('chantiers.planning')) {
+    return { error: 'Action non autorisée.', created: 0 }
+  }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.', created: 0 }
+
+  const contractIds = [...new Set(slots.map(s => s.maintenanceContractId).filter(Boolean))]
+  if (contractIds.length === 0) return { error: null, created: 0 }
+
+  const { data: contracts } = await supabase
+    .from('maintenance_contracts')
+    .select('id')
+    .eq('organization_id', orgId)
+    .in('id', contractIds)
+    .neq('status', 'résilié')
+
+  if ((contracts?.length ?? 0) !== contractIds.length) {
+    return { error: 'Contrat entretien introuvable ou non autorisé.', created: 0 }
+  }
+
+  const memberIds = [...new Set(slots.map(s => s.memberId).filter((id): id is string => !!id))]
+  if (memberIds.length > 0) {
+    const { data: members } = await supabase
+      .from('chantier_equipe_membres')
+      .select('id')
+      .eq('organization_id', orgId)
+      .in('id', memberIds)
+    if ((members?.length ?? 0) !== memberIds.length) {
+      return { error: 'Membre introuvable ou non autorisé.', created: 0 }
+    }
+  }
+
+  const rows = slots.map(s => ({
+    maintenance_contract_id: s.maintenanceContractId,
+    organization_id: orgId,
+    created_by: user.id,
+    date_intervention: s.plannedDate,
+    statut: 'planifiée',
+    start_time: s.startTime ?? null,
+    end_time: s.endTime ?? null,
+    duration_hours: durationHours(s.startTime, s.endTime),
+    intervenant_id: s.memberId ?? null,
+    intervenant_member_id: s.memberId ?? null,
+    rapport: null,
+    observations: s.notes ?? s.label ?? null,
+  }))
+
+  const { error } = await supabase.from('maintenance_interventions').insert(rows)
+  if (error) return { error: error.message, created: 0 }
+
+  for (const slot of slots) {
+    await supabase
+      .from('maintenance_contracts')
+      .update({ prochaine_intervention: slot.plannedDate })
+      .eq('id', slot.maintenanceContractId)
+      .eq('organization_id', orgId)
+      .or(`prochaine_intervention.is.null,prochaine_intervention.gte.${slot.plannedDate}`)
+  }
+
+  revalidatePath('/chantiers/planning')
+  revalidatePath('/chantiers/entretien')
   return { error: null, created: slots.length }
 }
 
@@ -235,6 +367,72 @@ export async function createAITournee(
   return { newRouteId, error: null }
 }
 
+export type PlanningSlotUpdateInput = {
+  plannedDate?: string
+  startTime?: string | null
+  endTime?: string | null
+  label?: string
+  teamSize?: number
+  notes?: string | null
+  memberId?: string | null
+  equipeId?: string | null
+}
+
+export async function updatePlanningSlot(id: string, data: PlanningSlotUpdateInput): Promise<{ error: string | null }> {
+  const supabase = await createClient()
+  if (!await hasPermission('chantiers.planning')) return { error: 'Action non autorisée.' }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+
+  const { data: existing } = await supabase
+    .from('chantier_plannings')
+    .select('id, chantier_id, chantiers!inner(organization_id)')
+    .eq('id', id)
+    .single()
+
+  if (!existing || (existing as any).chantiers?.organization_id !== orgId) {
+    return { error: 'Créneau introuvable ou non autorisé.' }
+  }
+
+  if (data.memberId) {
+    const { data: member } = await supabase
+      .from('chantier_equipe_membres')
+      .select('id')
+      .eq('id', data.memberId)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (!member) return { error: 'Membre introuvable ou non autorisé.' }
+  }
+
+  if (data.equipeId) {
+    const { data: equipe } = await supabase
+      .from('chantier_equipes')
+      .select('id')
+      .eq('id', data.equipeId)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (!equipe) return { error: 'Équipe introuvable ou non autorisée.' }
+  }
+
+  const patch: Record<string, unknown> = {}
+  if (data.plannedDate !== undefined) patch.planned_date = data.plannedDate
+  if (data.startTime !== undefined) patch.start_time = data.startTime
+  if (data.endTime !== undefined) patch.end_time = data.endTime
+  if (data.label !== undefined) patch.label = data.label
+  if (data.teamSize !== undefined) patch.team_size = data.teamSize
+  if (data.notes !== undefined) patch.notes = data.notes
+  if (data.memberId !== undefined) { patch.member_id = data.memberId; patch.equipe_id = null }
+  if (data.equipeId !== undefined) { patch.equipe_id = data.equipeId; patch.member_id = null }
+
+  const { error } = await supabase.from('chantier_plannings').update(patch).eq('id', id)
+  if (error) return { error: error.message }
+
+  revalidatePath('/chantiers/planning')
+  revalidatePath(`/chantiers/${(existing as any).chantier_id}`)
+  return { error: null }
+}
+
 export async function deletePlanningSlot(id: string): Promise<{ error: string | null }> {
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
@@ -265,6 +463,214 @@ export async function deletePlanningSlot(id: string): Promise<{ error: string | 
   revalidatePath('/chantiers/planning')
   revalidatePath(`/chantiers/${planning.chantier_id}`)
   return { error: null }
+}
+
+export async function deletePlanningEntry(id: string): Promise<{ error: string | null }> {
+  if (id.startsWith('maintenance:')) {
+    const interventionId = id.replace(/^maintenance:/, '')
+    const supabase = await createClient()
+    const orgId = await getCurrentOrganizationId()
+    if (!orgId) return { error: 'Organisation introuvable.' }
+    if (!await hasPermission('chantiers.planning')) return { error: 'Action non autorisée.' }
+
+    const { data: intervention } = await supabase
+      .from('maintenance_interventions')
+      .select('id')
+      .eq('id', interventionId)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (!intervention) return { error: 'Intervention introuvable ou non autorisée.' }
+
+    const { error } = await supabase
+      .from('maintenance_interventions')
+      .delete()
+      .eq('id', interventionId)
+      .eq('organization_id', orgId)
+    if (error) return { error: error.message }
+    revalidatePath('/chantiers/planning')
+    revalidatePath('/chantiers/entretien')
+    return { error: null }
+  }
+
+  return deletePlanningSlot(id)
+}
+
+export async function duplicatePlanningEntry(
+  id: string,
+  targetDate: string,
+): Promise<{ error: string | null }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Non authentifié.' }
+  if (!await hasPermission('chantiers.planning')) return { error: 'Action non autorisée.' }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+
+  if (id.startsWith('maintenance:')) {
+    const interventionId = id.replace(/^maintenance:/, '')
+    const { data: intervention, error: fetchError } = await supabase
+      .from('maintenance_interventions')
+      .select('maintenance_contract_id, start_time, end_time, duration_hours, intervenant_id, intervenant_member_id, rapport, observations, billable_notes, billable_amount_ht, billable_vat_rate, cost_parts_ht, cost_travel_ht, cost_other_ht')
+      .eq('id', interventionId)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (fetchError) return { error: fetchError.message }
+    if (!intervention) return { error: 'Intervention introuvable.' }
+
+    const { error } = await supabase.from('maintenance_interventions').insert({
+      organization_id: orgId,
+      created_by: user.id,
+      maintenance_contract_id: intervention.maintenance_contract_id,
+      date_intervention: targetDate,
+      statut: 'planifiée',
+      start_time: intervention.start_time,
+      end_time: intervention.end_time,
+      duration_hours: intervention.duration_hours,
+      intervenant_id: intervention.intervenant_member_id ?? intervention.intervenant_id ?? null,
+      intervenant_member_id: intervention.intervenant_member_id ?? intervention.intervenant_id ?? null,
+      rapport: intervention.rapport,
+      observations: intervention.observations,
+      billable_notes: intervention.billable_notes,
+      billable_amount_ht: intervention.billable_amount_ht,
+      billable_vat_rate: intervention.billable_vat_rate,
+      cost_parts_ht: intervention.cost_parts_ht,
+      cost_travel_ht: intervention.cost_travel_ht,
+      cost_other_ht: intervention.cost_other_ht,
+    })
+    if (error) return { error: error.message }
+    await supabase
+      .from('maintenance_contracts')
+      .update({ prochaine_intervention: targetDate })
+      .eq('id', intervention.maintenance_contract_id)
+      .eq('organization_id', orgId)
+      .or(`prochaine_intervention.is.null,prochaine_intervention.gte.${targetDate}`)
+    revalidatePath('/chantiers/planning')
+    revalidatePath('/chantiers/entretien')
+    return { error: null }
+  }
+
+  const { data: slot, error: fetchError } = await supabase
+    .from('chantier_plannings')
+    .select('chantier_id, start_time, end_time, label, team_size, notes, equipe_id, member_id, duration_min, travel_from_prev_min, chantiers!inner(organization_id)')
+    .eq('id', id)
+    .maybeSingle()
+  if (fetchError) return { error: fetchError.message }
+  if (!slot || (slot as any).chantiers?.organization_id !== orgId) {
+    return { error: 'Créneau introuvable ou non autorisé.' }
+  }
+
+  const { error } = await supabase.from('chantier_plannings').insert({
+    chantier_id: slot.chantier_id,
+    planned_date: targetDate,
+    start_time: slot.start_time,
+    end_time: slot.end_time,
+    label: slot.label,
+    team_size: slot.team_size,
+    notes: slot.notes,
+    equipe_id: slot.equipe_id,
+    member_id: slot.member_id,
+    duration_min: slot.duration_min,
+    travel_from_prev_min: slot.travel_from_prev_min,
+    created_by: user.id,
+  })
+  if (error) return { error: error.message }
+  revalidatePath('/chantiers/planning')
+  revalidatePath(`/chantiers/${slot.chantier_id}`)
+  return { error: null }
+}
+
+export async function duplicatePlanningRange(
+  fromDate: string,
+  toDate: string,
+  targetStartDate: string,
+): Promise<{ error: string | null; created: number }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Non authentifié.', created: 0 }
+  if (!await hasPermission('chantiers.planning')) return { error: 'Action non autorisée.', created: 0 }
+
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.', created: 0 }
+  const offset = diffDays(fromDate, targetStartDate)
+
+  const [{ data: chantierSlots, error: chantierError }, { data: maintenanceSlots, error: maintenanceError }] = await Promise.all([
+    supabase
+      .from('chantier_plannings')
+      .select('chantier_id, planned_date, start_time, end_time, label, team_size, notes, equipe_id, member_id, duration_min, travel_from_prev_min, chantiers!inner(organization_id)')
+      .eq('chantiers.organization_id', orgId)
+      .gte('planned_date', fromDate)
+      .lte('planned_date', toDate),
+    supabase
+      .from('maintenance_interventions')
+      .select('maintenance_contract_id, date_intervention, start_time, end_time, duration_hours, intervenant_id, intervenant_member_id, rapport, observations, billable_notes, billable_amount_ht, billable_vat_rate, cost_parts_ht, cost_travel_ht, cost_other_ht')
+      .eq('organization_id', orgId)
+      .gte('date_intervention', fromDate)
+      .lte('date_intervention', toDate)
+      .in('statut', ['planifiée']),
+  ])
+
+  if (chantierError) return { error: chantierError.message, created: 0 }
+  if (maintenanceError) return { error: maintenanceError.message, created: 0 }
+
+  let created = 0
+  const chantierRows = (chantierSlots ?? []).map((slot: any) => ({
+    chantier_id: slot.chantier_id,
+    planned_date: shiftDate(slot.planned_date, offset),
+    start_time: slot.start_time,
+    end_time: slot.end_time,
+    label: slot.label,
+    team_size: slot.team_size,
+    notes: slot.notes,
+    equipe_id: slot.equipe_id,
+    member_id: slot.member_id,
+    duration_min: slot.duration_min,
+    travel_from_prev_min: slot.travel_from_prev_min,
+    created_by: user.id,
+  }))
+  if (chantierRows.length > 0) {
+    const { error } = await supabase.from('chantier_plannings').insert(chantierRows)
+    if (error) return { error: error.message, created }
+    created += chantierRows.length
+  }
+
+  const maintenanceRows = (maintenanceSlots ?? []).map((slot: any) => ({
+    organization_id: orgId,
+    created_by: user.id,
+    maintenance_contract_id: slot.maintenance_contract_id,
+    date_intervention: shiftDate(slot.date_intervention, offset),
+    statut: 'planifiée',
+    start_time: slot.start_time,
+    end_time: slot.end_time,
+    duration_hours: slot.duration_hours,
+    intervenant_id: slot.intervenant_member_id ?? slot.intervenant_id ?? null,
+    intervenant_member_id: slot.intervenant_member_id ?? slot.intervenant_id ?? null,
+    rapport: slot.rapport,
+    observations: slot.observations,
+    billable_notes: slot.billable_notes,
+    billable_amount_ht: slot.billable_amount_ht,
+    billable_vat_rate: slot.billable_vat_rate,
+    cost_parts_ht: slot.cost_parts_ht,
+    cost_travel_ht: slot.cost_travel_ht,
+    cost_other_ht: slot.cost_other_ht,
+  }))
+  if (maintenanceRows.length > 0) {
+    const { error } = await supabase.from('maintenance_interventions').insert(maintenanceRows)
+    if (error) return { error: error.message, created }
+    created += maintenanceRows.length
+    for (const row of maintenanceRows) {
+      await supabase
+        .from('maintenance_contracts')
+        .update({ prochaine_intervention: row.date_intervention })
+        .eq('id', row.maintenance_contract_id)
+        .eq('organization_id', orgId)
+        .or(`prochaine_intervention.is.null,prochaine_intervention.gte.${row.date_intervention}`)
+    }
+  }
+
+  revalidatePath('/chantiers/planning')
+  revalidatePath('/chantiers/entretien')
+  return { error: null, created }
 }
 
 // ─── Tournée ──────────────────────────────────────────────────────────────────
@@ -361,6 +767,12 @@ export async function upsertTourneeSlot(
       .update(row)
       .eq('id', existingId)
     if (error) return { id: null, error: error.message }
+    const recipients = await getPlanningRecipientUserIds(orgId, { memberId: data.memberId, equipeId: data.equipeId })
+    sendPushToUsers(recipients, {
+      title: 'Créneau mis à jour',
+      body: `${data.label} — ${data.plannedDate}${data.startTime ? ` à ${data.startTime}` : ''}`,
+      url: '/mon-espace/dashboard',
+    }, user.id).catch(() => {})
     revalidatePath('/chantiers/planning')
     return { id: existingId, error: null }
   }
@@ -372,6 +784,12 @@ export async function upsertTourneeSlot(
     .single()
 
   if (error) return { id: null, error: error.message }
+  const recipients = await getPlanningRecipientUserIds(orgId, { memberId: data.memberId, equipeId: data.equipeId })
+  sendPushToUsers(recipients, {
+    title: 'Nouveau créneau planifié',
+    body: `${data.label} — ${data.plannedDate}${data.startTime ? ` à ${data.startTime}` : ''}`,
+    url: '/mon-espace/dashboard',
+  }, user.id).catch(() => {})
   revalidatePath('/chantiers/planning')
   return { id: inserted?.id ?? null, error: null }
 }
@@ -587,17 +1005,29 @@ export async function planWeekWithAI(prompt: string, weekMondayDate: string): Pr
     return { slots: [], deletions: [], unknownPeople: [], tours: [], summary: '', error: 'Action non autorisée.' }
   }
 
-  // Récupérer les chantiers actifs pour que Claude puisse les matcher
-  const { data: chantiers } = await supabase
-    .from('chantiers')
-    .select('id, title, city, address_line1, postal_code, status')
-    .eq('organization_id', orgId)
-    .in('status', ['en_cours', 'planifie', 'suspendu'])
-    .order('created_at', { ascending: false })
-    .limit(20)
+  const [{ data: chantiers }, { data: maintenanceContracts }] = await Promise.all([
+    supabase
+      .from('chantiers')
+      .select('id, title, city, address_line1, postal_code, status, is_maintenance')
+      .eq('organization_id', orgId)
+      .eq('is_archived', false)
+      .in('status', ['en_cours', 'planifie', 'suspendu'])
+      .order('created_at', { ascending: false })
+      .limit(30),
+    supabase
+      .from('maintenance_contracts')
+      .select(`
+        id, title, status, site_name, site_address_line1, site_postal_code, site_city, chantier_id,
+        chantier:chantiers!maintenance_contracts_chantier_id_fkey(id, title, city, address_line1, postal_code, status)
+      `)
+      .eq('organization_id', orgId)
+      .neq('status', 'résilié')
+      .order('created_at', { ascending: false })
+      .limit(30),
+  ])
 
-  if (!chantiers?.length) {
-    return { slots: [], deletions: [], summary: '', unknownPeople: [], tours: [], error: 'Aucun chantier actif trouvé. Créez d\'abord un chantier.' }
+  if (!chantiers?.length && !maintenanceContracts?.length) {
+    return { slots: [], deletions: [], summary: '', unknownPeople: [], tours: [], error: 'Aucun chantier ou contrat entretien actif trouvé.' }
   }
 
   // Récupérer les équipes avec leurs membres, et les membres individuels (sans équipe)
@@ -654,32 +1084,62 @@ export async function planWeekWithAI(prompt: string, weekMondayDate: string): Pr
     weekDays[dayNames[i]] = dateParis(d.getTime())
   }
 
-  const chantiersContext = chantiers.map(c => {
+  const chantiersContext = (chantiers ?? []).filter(c => !(c as any).is_maintenance).map(c => {
     const adresse = [c.address_line1, c.postal_code, c.city].filter(Boolean).join(', ')
     return `- ID: ${c.id} | "${c.title}"${adresse ? ` | ${adresse}` : ''}`
-  }).join('\n')
+  }).join('\n') || '(aucun chantier travaux)'
+  const maintenanceContext = (maintenanceContracts ?? []).map((contract: any) => {
+    const chantier = Array.isArray(contract.chantier) ? contract.chantier[0] : contract.chantier
+    const adresse = [
+      contract.site_address_line1 ?? chantier?.address_line1,
+      contract.site_postal_code ?? chantier?.postal_code,
+      contract.site_city ?? chantier?.city,
+    ].filter(Boolean).join(', ')
+    const site = contract.site_name ? ` | site: ${contract.site_name}` : ''
+    const support = chantier?.id ? ` | CHANTIER_ID_SUPPORT: ${chantier.id}` : ''
+    return `- MAINTENANCE_CONTRACT_ID: ${contract.id} | "${contract.title}"${site}${support}${adresse ? ` | ${adresse}` : ''}`
+  }).join('\n') || '(aucun contrat entretien)'
   const weekEndDate = weekDays['dimanche']
 
-  const { data: existingPlannings } = await supabase
-    .from('chantier_plannings')
-    .select(`
-      id, chantier_id, planned_date, start_time, end_time, label,
-      chantier:chantiers!inner(title, organization_id)
-    `)
-    .eq('chantier.organization_id', orgId)
-    .gte('planned_date', weekMondayDate)
-    .lte('planned_date', weekEndDate)
-    .order('planned_date', { ascending: true })
-    .order('start_time', { ascending: true, nullsFirst: false })
+  const [{ data: existingPlannings }, { data: existingMaintenance }] = await Promise.all([
+    supabase
+      .from('chantier_plannings')
+      .select(`
+        id, chantier_id, planned_date, start_time, end_time, label,
+        chantier:chantiers!inner(title, organization_id)
+      `)
+      .eq('chantier.organization_id', orgId)
+      .gte('planned_date', weekMondayDate)
+      .lte('planned_date', weekEndDate)
+      .order('planned_date', { ascending: true })
+      .order('start_time', { ascending: true, nullsFirst: false }),
+    supabase
+      .from('maintenance_interventions')
+      .select('id, maintenance_contract_id, date_intervention, start_time, end_time, observations, intervenant_member_id, contract:maintenance_contracts!inner(title, organization_id)')
+      .eq('contract.organization_id', orgId)
+      .gte('date_intervention', weekMondayDate)
+      .lte('date_intervention', weekEndDate)
+      .in('statut', ['planifiée'])
+      .order('date_intervention', { ascending: true })
+      .order('start_time', { ascending: true, nullsFirst: false }),
+  ])
 
-  const existingContext = (existingPlannings ?? []).map((p: any) => (
+  const existingChantierContext = (existingPlannings ?? []).map((p: any) => (
     `- SLOT_ID: ${p.id} | CHANTIER_ID: ${p.chantier_id} | "${p.chantier?.title ?? 'Chantier'}" | ${p.planned_date} ${p.start_time ?? 'sans heure'}${p.end_time ? `-${p.end_time}` : ''} | ${p.label}`
-  )).join('\n') || '(aucun créneau existant cette semaine)'
+  )).join('\n')
+  const existingMaintenanceContext = (existingMaintenance ?? []).map((p: any) => {
+    const contract = Array.isArray(p.contract) ? p.contract[0] : p.contract
+    return `- SLOT_ID: maintenance:${p.id} | MAINTENANCE_CONTRACT_ID: ${p.maintenance_contract_id} | "${contract?.title ?? 'Entretien'}" | ${p.date_intervention} ${p.start_time ?? 'sans heure'}${p.end_time ? `-${p.end_time}` : ''} | ${p.observations ?? 'Entretien'}`
+  }).join('\n')
+  const existingContext = [existingChantierContext, existingMaintenanceContext].filter(Boolean).join('\n') || '(aucun créneau existant cette semaine)'
 
-  const systemPrompt = `Tu t'appelles Sarah. Tu es chiffreuse et assistante de planification chez ATELIER by Orsayn. Tu dois parser une description de planning en langage naturel et retourner un JSON structure. Tu connais les chantiers, les equipes et les membres de l'organisation. Tu es efficace et tu places les bonnes personnes aux bons endroits.
+  const systemPrompt = `Tu t'appelles Nora. Tu es assistante de planification chez ATELIER by Orsayn. Tu dois parser une description de planning en langage naturel et retourner un JSON structure. Tu connais les chantiers, les equipes et les membres de l'organisation. Tu es efficace et tu places les bonnes personnes aux bons endroits.
 
 Chantiers disponibles (avec adresses si connues) :
 ${chantiersContext}
+
+Contrats entretien disponibles :
+${maintenanceContext}
 
 Équipes disponibles (avec leurs membres) :
 ${equipesContext}
@@ -701,6 +1161,8 @@ Dates de la semaine du ${weekMondayDate} :
 
 Règles d'assignation :
 - Matcher chaque mention de chantier avec l'ID le plus proche dans la liste (correspondance approximative par nom)
+- Si la demande parle d'entretien, maintenance, intervention de contrat ou passage périodique, matcher dans "Contrats entretien disponibles" et créer un slot source="maintenance" avec maintenanceContractId.
+- Sinon créer un slot source="chantier" avec chantierId.
 - Si une mention nomme une **équipe** existante, remplir equipeId avec son EQUIPE_ID, memberId = null
 - Si une mention nomme une **personne individuelle** (prénom/nom) qui figure dans les membres ou membres d'équipe listés, remplir memberId avec son MEMBER_ID, equipeId = null
 - equipeId et memberId sont **mutuellement exclusifs** (jamais les deux dans le même slot)
@@ -726,7 +1188,9 @@ Retourne UNIQUEMENT ce JSON (sans markdown) :
 {
   "slots": [
     {
+      "source": "chantier" | "maintenance",
       "chantierId": "uuid",
+      "maintenanceContractId": "uuid" | null,
       "chantierTitle": "titre pour affichage",
       "plannedDate": "YYYY-MM-DD",
       "startTime": "HH:MM" | null,
@@ -741,7 +1205,9 @@ Retourne UNIQUEMENT ce JSON (sans markdown) :
   "deletions": [
     {
       "id": "slot_id",
+      "source": "chantier" | "maintenance",
       "chantierId": "uuid",
+      "maintenanceContractId": "uuid" | null,
       "chantierTitle": "titre pour affichage",
       "plannedDate": "YYYY-MM-DD",
       "startTime": "HH:MM" | null,
@@ -793,15 +1259,26 @@ Retourne UNIQUEMENT ce JSON (sans markdown) :
     }
 
     // Valider que les chantierId existent bien
-    const validChantierIds = new Set(chantiers.map(c => c.id))
+    const validChantierIds = new Set((chantiers ?? []).map(c => c.id))
+    const validMaintenanceContractIds = new Set((maintenanceContracts ?? []).map(c => c.id))
     const validEquipeIds = new Set(equipes.map(e => e.id))
     const validMemberIds = new Set(allMembresIds)
-    const existingById = new Map((existingPlannings ?? []).map((p: any) => [p.id, p]))
+    const existingById = new Map<string, any>([
+      ...(existingPlannings ?? []).map((p: any) => [p.id, { ...p, source: 'chantier' }] as const),
+      ...(existingMaintenance ?? []).map((p: any) => [`maintenance:${p.id}`, { ...p, source: 'maintenance' }] as const),
+    ])
 
     const validSlots = (parsed.slots ?? [])
-      .filter(s => validChantierIds.has(s.chantierId))
+      .filter(s => {
+        if (s.source === 'maintenance' || s.maintenanceContractId) {
+          return Boolean(s.maintenanceContractId && validMaintenanceContractIds.has(s.maintenanceContractId))
+        }
+        return validChantierIds.has(s.chantierId)
+      })
       .map(s => ({
         ...s,
+        source: (s.source === 'maintenance' || s.maintenanceContractId) ? 'maintenance' as const : 'chantier' as const,
+        maintenanceContractId: s.maintenanceContractId ?? null,
         equipeId: s.equipeId && validEquipeIds.has(s.equipeId) ? s.equipeId : null,
         memberId: s.memberId && validMemberIds.has(s.memberId) ? s.memberId : null,
       }))
@@ -812,9 +1289,27 @@ Retourne UNIQUEMENT ce JSON (sans markdown) :
       .filter(d => existingById.has(d.id))
       .map(d => {
         const existing: any = existingById.get(d.id)
+        if (existing.source === 'maintenance') {
+          const contract = Array.isArray(existing.contract) ? existing.contract[0] : existing.contract
+          return {
+            id: `maintenance:${existing.id}`,
+            source: 'maintenance' as const,
+            chantierId: '',
+            maintenanceContractId: existing.maintenance_contract_id,
+            maintenanceInterventionId: existing.id,
+            chantierTitle: contract?.title ?? d.chantierTitle ?? 'Entretien',
+            plannedDate: existing.date_intervention,
+            startTime: existing.start_time,
+            endTime: existing.end_time,
+            label: existing.observations ?? 'Entretien',
+          }
+        }
         return {
           id: existing.id,
+          source: 'chantier' as const,
           chantierId: existing.chantier_id,
+          maintenanceContractId: null,
+          maintenanceInterventionId: null,
           chantierTitle: existing.chantier?.title ?? d.chantierTitle ?? 'Chantier',
           plannedDate: existing.planned_date,
           startTime: existing.start_time,
@@ -842,6 +1337,9 @@ Retourne UNIQUEMENT ce JSON (sans markdown) :
   } catch (error) {
     if (error instanceof AIModuleDisabledError) {
       return { slots: [], deletions: [], unknownPeople: [], tours: [], summary: '', error: 'Module IA planning désactivé.' }
+    }
+    if (error instanceof AIProviderCreditError && error.aiBillingMode === 'client_owned') {
+      return { slots: [], deletions: [], unknownPeople: [], tours: [], summary: '', error: 'Rechargez vos crédits OpenRouter ou vérifiez la clé OpenRouter de votre organisation pour continuer.' }
     }
 
     console.error('[planWeekWithAI]', error)

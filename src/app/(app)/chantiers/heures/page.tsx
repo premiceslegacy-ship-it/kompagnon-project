@@ -4,12 +4,15 @@ import { hasPermission } from '@/lib/data/queries/membership'
 import HeuresGlobalesClient from './HeuresGlobalesClient'
 
 export default async function HeuresGlobalesPage() {
-  const [pointages, individualMembers, chantiers, canManage] = await Promise.all([
-    getAllPointagesGlobal(),
-    getOrgIndividualMembers(),
-    getChantiers(),
-    hasPermission('chantiers.manage_pointages'),
-  ])
+  const canManage = await hasPermission('chantiers.manage_pointages')
+  const [pointages, individualMembers, chantiers] = canManage
+    ? await Promise.all([
+        getAllPointagesGlobal(),
+        getOrgIndividualMembers(),
+        getChantiers(),
+      ])
+    : [[], [], []]
+
   return (
     <HeuresGlobalesClient
       initialPointages={pointages}

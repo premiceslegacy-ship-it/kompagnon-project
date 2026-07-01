@@ -13,6 +13,7 @@ import {
   normalizeFrenchVatNumber,
   normalizeSiret,
 } from '@/lib/validations/organization'
+import { computeRecurringInvoiceDueDate, normalizePaymentTermsDays } from '@/lib/data/recurring-utils'
 
 // ─── Invoice schemas ──────────────────────────────────────────────────────────
 
@@ -129,6 +130,33 @@ describe('GenerateDepositSchema', () => {
   })
 })
 
+// ─── Recurring invoice utilities ──────────────────────────────────────────────
+
+describe('computeRecurringInvoiceDueDate', () => {
+  it('uses client payment terms first', () => {
+    expect(computeRecurringInvoiceDueDate('2026-06-04', 45, 30)).toBe('2026-07-19')
+  })
+
+  it('falls back to organization payment terms', () => {
+    expect(computeRecurringInvoiceDueDate('2026-06-04', null, 15)).toBe('2026-06-19')
+  })
+
+  it('falls back to 30 days when no terms are configured', () => {
+    expect(computeRecurringInvoiceDueDate('2026-06-04', null, null)).toBe('2026-07-04')
+  })
+
+  it('keeps same-day due date when terms are explicitly 0', () => {
+    expect(computeRecurringInvoiceDueDate('2026-06-04', 0, 30)).toBe('2026-06-04')
+  })
+})
+
+describe('normalizePaymentTermsDays', () => {
+  it('clamps payment terms between 0 and 90 days', () => {
+    expect(normalizePaymentTermsDays(120, null)).toBe(90)
+    expect(normalizePaymentTermsDays(-5, null)).toBe(0)
+  })
+})
+
 // ─── Client schemas ───────────────────────────────────────────────────────────
 
 describe('CreateClientInlineSchema', () => {
@@ -173,10 +201,24 @@ describe('CreateClientInlineSchema', () => {
 
 // ─── Quote schemas ────────────────────────────────────────────────────────────
 
+describe('CreateQuoteSchema', () => {
+  it('accepts empty string clientId as null', () => {
+    const result = CreateQuoteSchema.safeParse({ clientId: '' })
+    expect(result.success).toBe(true)
+    if (result.success) expect(result.data.clientId).toBeNull()
+  })
+})
+
 describe('UpdateQuoteSchema', () => {
   it('accepts a partial update with valid validity_days', () => {
     const result = UpdateQuoteSchema.safeParse({ validity_days: 30 })
     expect(result.success).toBe(true)
+  })
+
+  it('accepts empty string client_id as null', () => {
+    const result = UpdateQuoteSchema.safeParse({ client_id: '' })
+    expect(result.success).toBe(true)
+    if (result.success) expect(result.data.client_id).toBeNull()
   })
 
   it('rejects validity_days > 365', () => {

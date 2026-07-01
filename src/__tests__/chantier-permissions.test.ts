@@ -16,9 +16,12 @@ describe('chantier server-action permission guards', () => {
   const chantiers = source('src/lib/data/mutations/chantiers.ts')
   const planning = source('src/lib/data/mutations/planning.ts')
   const members = source('src/lib/data/mutations/members.ts')
+  const memberQueries = source('src/lib/data/queries/members.ts')
   const team = source('src/lib/data/mutations/team.ts')
   const expenses = source('src/lib/data/mutations/chantier-expenses.ts')
   const jalons = source('src/lib/data/mutations/chantier-jalons.ts')
+  const maintenance = source('src/lib/data/mutations/maintenance.ts')
+  const chantierQueries = source('src/lib/data/queries/chantiers.ts')
 
   it('blocks chantier edit surfaces when chantiers.edit is missing', () => {
     for (const fn of [
@@ -46,6 +49,7 @@ describe('chantier server-action permission guards', () => {
 
   it('keeps pointage permissions split between self and team management', () => {
     expect(functionBody(chantiers, 'createPointage')).toContain("hasPermission('chantiers.pointage')")
+    expect(functionBody(chantiers, 'createPointage')).toContain('userCanPointOnChantier')
     for (const fn of ['createMemberPointageAdmin', 'updatePointage', 'deletePointage']) {
       expect(functionBody(chantiers, fn)).toContain("hasPermission('chantiers.manage_pointages')")
     }
@@ -70,5 +74,21 @@ describe('chantier server-action permission guards', () => {
     expect(functionBody(expenses, 'updateChantierExpense')).toContain("hasPermission('chantiers.expenses.edit')")
     expect(functionBody(expenses, 'deleteChantierExpense')).toContain("hasPermission('chantiers.expenses.delete')")
     expect(functionBody(expenses, 'getReceiptSignedUrl')).toContain("hasPermission('chantiers.expenses.view')")
+  })
+
+  it('protects global pointage visibility and member-space chantier scope', () => {
+    expect(functionBody(chantierQueries, 'getAllPointagesGlobal')).toContain("hasPermission('chantiers.manage_pointages')")
+    expect(memberQueries).toContain('getMemberAccessibleChantiers')
+    expect(functionBody(members, 'createPointageAsMember')).toContain('getMemberAccessibleChantiers')
+  })
+
+  it('protects maintenance production writes with server-side permissions', () => {
+    expect(functionBody(maintenance, 'createMaintenanceContract')).toContain("requirePermission('chantiers.create')")
+    expect(functionBody(maintenance, 'updateMaintenanceContract')).toContain("requirePermission('chantiers.edit')")
+    expect(functionBody(maintenance, 'deleteMaintenanceContract')).toContain("requirePermission('chantiers.delete')")
+    for (const fn of ['createIntervention', 'updateIntervention', 'deleteIntervention']) {
+      expect(functionBody(maintenance, fn)).toContain("requirePermission('chantiers.edit')")
+    }
+    expect(functionBody(maintenance, 'billMaintenanceIntervention')).toContain("requirePermission(invoiceId ? 'invoices.edit' : 'invoices.create')")
   })
 })

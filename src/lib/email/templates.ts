@@ -210,6 +210,7 @@ ${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#A1A1AA;line-
 
 export function buildQuoteAcceptedClientEmail({
   orgName,
+  orgEmail,
   clientName,
   quoteNumber,
   quoteTitle,
@@ -218,6 +219,7 @@ export function buildQuoteAcceptedClientEmail({
   signedAt,
 }: {
   orgName: string
+  orgEmail?: string | null
   clientName: string
   quoteNumber: string | null
   quoteTitle: string | null
@@ -260,7 +262,11 @@ ${renderInfoBox(infoRows, 'success')}
 <p style="${SMALL_P}">
   Cet email vaut confirmation de votre accord. Conservez-le comme preuve d'acceptation.
   Merci encore pour votre confiance, ${escHtml(orgName)} reste à votre écoute pour la suite.
-</p>`
+</p>
+${orgEmail ? `<p style="margin:14px 0 0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;">
+  Pour toute question, n'hésitez pas à nous contacter à
+  <a href="mailto:${escHtml(orgEmail)}" style="color:#FF9F1C;">${escHtml(orgEmail)}</a>.
+</p>` : ''}`
 
   const html = renderEmailShell({
     title: subject,
@@ -660,12 +666,14 @@ ${renderCTA('Ouvrir mon espace →', spaceUrl)}
 
 export function buildMemberMonthlyReportEmail({
   orgName,
+  orgEmail,
   memberFirstName,
   periodLabel,
   totalHours,
   spaceUrl,
 }: {
   orgName: string
+  orgEmail?: string | null
   memberFirstName: string | null
   periodLabel: string
   totalHours: number
@@ -687,7 +695,7 @@ export function buildMemberMonthlyReportEmail({
 </p>
 ${spaceUrl ? renderCTA('Voir mon espace →', spaceUrl) : ''}
 <p style="${SMALL_P}">
-  Pour toute question concernant ce rapport, contactez directement ${escHtml(orgName)}.
+  Pour toute question concernant ce rapport, contactez directement ${escHtml(orgName)}${orgEmail ? ` à <a href="mailto:${escHtml(orgEmail)}" style="color:#FF9F1C;">${escHtml(orgEmail)}</a>` : ''}.
 </p>`
 
   const html = renderEmailShell({

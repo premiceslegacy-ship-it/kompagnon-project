@@ -10,7 +10,7 @@ import { createPlanningSlot, deletePlanningSlot } from '@/lib/data/mutations/pla
 import { createIndividualMember } from '@/lib/data/mutations/members'
 import { getChantierIndividualMembers, getOrgIndividualMembers, type IndividualMember } from '@/lib/data/queries/members'
 import { getTeamMembers, type TeamMember } from '@/lib/data/queries/team'
-import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { getBusinessContext, formatBusinessContextForPrompt } from '@/lib/ai/business-context'
 import { hasPermission } from '@/lib/data/queries/membership'
@@ -18,7 +18,7 @@ import { todayParis } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
-const MODEL = 'anthropic/claude-haiku-4-5'
+const MODEL = 'google/gemini-2.5-flash-lite'
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
@@ -624,6 +624,10 @@ export async function POST(req: NextRequest) {
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return NextResponse.json({ error: 'Organisation introuvable' }, { status: 403 })
 
+  if (!await hasPermission('ai.terrain')) {
+    return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
+  }
+
   if (!process.env.OPENROUTER_API_KEY) {
     return NextResponse.json({ error: 'Clé API IA non configurée' }, { status: 500 })
   }
@@ -818,6 +822,9 @@ ${canViewExpenses ? '' : '- Tu n\'as pas acces aux donnees financieres (couts, m
     }
     if (err instanceof AIRateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 })
+    }
+    if (err instanceof AIProviderCreditError && err.aiBillingMode === 'client_owned') {
+      return NextResponse.json({ error: 'Rechargez vos crédits OpenRouter ou vérifiez la clé OpenRouter de votre organisation pour continuer.' }, { status: 402 })
     }
     console.error('[chantier-assistant]', err)
     return NextResponse.json({ error: 'Erreur IA, veuillez réessayer.' }, { status: 500 })

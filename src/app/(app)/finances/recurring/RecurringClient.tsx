@@ -147,7 +147,7 @@ export default function RecurringClient({
         address_line1: newClientForm.address_line1 || null,
         postal_code: newClientForm.postal_code || null,
         city: newClientForm.city || null,
-        status: 'active', source: null, total_revenue: 0, payment_terms_days: 30,
+        status: 'active', source: null, total_revenue: 0, payment_terms_days: 30, internal_notes: null,
         created_at: new Date().toISOString(),
       }
       setClients(prev => [...prev, newC])

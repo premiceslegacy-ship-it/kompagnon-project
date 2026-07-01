@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { APP_NAME } from '@/lib/brand'
-import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { fetchRAGContext } from '@/lib/ai/rag'
 import { getBusinessContext } from '@/lib/ai/business-context'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 const TEXT_MODEL = 'google/gemini-2.5-flash-lite'
 
@@ -35,6 +36,10 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
+  if (!await hasPermission('ai.manage')) {
+    return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
+  }
+
   if (!process.env.OPENROUTER_API_KEY) return NextResponse.json({ error: 'Clé API IA non configurée' }, { status: 500 })
 
   const { data: membership } = await supabase
@@ -58,11 +63,14 @@ export async function POST(req: NextRequest) {
   const ragSection = ragContext
     ? `\n\n## Mémoire de l'entreprise (chantiers passés similaires) :\n${ragContext}`
     : ''
+  const secondaryActivityContext = businessCtx.secondaryActivityLabels.length > 0
+    ? ` Activités secondaires : ${businessCtx.secondaryActivityLabels.join(', ')}.`
+    : ''
 
   const messages = [
     {
       role: 'system',
-      content: `Tu t'appelles Valentin. Tu es estimateur main-d'oeuvre chez ATELIER by Orsayn. Tu connais les cadences du terrain pour le metier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}. Tu recois la description d'un chantier et une liste de profils de main-d'oeuvre. Tu estimes le nombre d'unites necessaires pour chaque profil (heures, jours, etc.) en te basant sur les cadences reelles du metier. Tu es realiste et legerement conservateur : mieux vaut prevoir un peu large que de se retrouver court. Reponds UNIQUEMENT avec un tableau JSON valide, rien d'autre.${ragSection}`,
+      content: `Tu t'appelles Valentin. Tu es estimateur main-d'oeuvre chez ATELIER by Orsayn. Tu connais les cadences du terrain pour le metier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}.${secondaryActivityContext} Tu recois la description d'un chantier et une liste de profils de main-d'oeuvre. Tu estimes le nombre d'unites necessaires pour chaque profil (heures, jours, etc.) en te basant sur les cadences reelles du metier. Tu es realiste et legerement conservateur : mieux vaut prevoir un peu large que de se retrouver court. Reponds UNIQUEMENT avec un tableau JSON valide, rien d'autre.${ragSection}`,
     },
     {
       role: 'user',
@@ -114,6 +122,9 @@ export async function POST(req: NextRequest) {
     }
     if (err instanceof AIRateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 })
+    }
+    if (err instanceof AIProviderCreditError && err.aiBillingMode === 'client_owned') {
+      return NextResponse.json({ error: 'Rechargez vos crédits OpenRouter ou vérifiez la clé OpenRouter de votre organisation pour continuer.' }, { status: 402 })
     }
     console.error('[ai/estimate-labor]', err)
     return NextResponse.json({ error: "Erreur lors de l'estimation IA" }, { status: 500 })

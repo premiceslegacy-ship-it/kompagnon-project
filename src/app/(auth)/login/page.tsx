@@ -2,7 +2,7 @@
 
 import { useFormState, useFormStatus } from 'react-dom'
 import { useState } from 'react'
-import { AlertCircle, ArrowRight, Loader2, CheckCircle2 } from 'lucide-react'
+import { AlertCircle, ArrowRight, Loader2, CheckCircle2, Eye, EyeOff } from 'lucide-react'
 import { login, signup, type AuthState } from '../actions'
 import { BrandWordmark } from '@/components/brand/BrandMonogram'
 import { LegalFooter } from '@/components/legal/LegalFooter'
@@ -40,6 +40,8 @@ export default function AuthPage() {
   const [mode, setMode] = useState<'login' | 'signup'>('login')
   const [loginState, loginAction] = useFormState(login, initialState)
   const [signupState, signupAction] = useFormState(signup, initialState)
+  const [showLoginPw, setShowLoginPw] = useState(false)
+  const [showSignupPw, setShowSignupPw] = useState(false)
 
   const error = mode === 'login' ? loginState.error : signupState.error
   const message = mode === 'signup' ? signupState.message : undefined
@@ -144,14 +146,23 @@ export default function AuthPage() {
                       Mot de passe oublié ?
                     </a>
                   </div>
-                  <input
-                    name="password"
-                    type="password"
-                    required
-                    autoComplete="current-password"
-                    placeholder="••••••••"
-                    className={inputCls}
-                  />
+                  <div className="relative">
+                    <input
+                      name="password"
+                      type={showLoginPw ? 'text' : 'password'}
+                      required
+                      autoComplete="current-password"
+                      placeholder="••••••••"
+                      className={`${inputCls} pr-12`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPw(v => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+                    >
+                      {showLoginPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="pt-2">
@@ -201,14 +212,23 @@ export default function AuthPage() {
                       Mot de passe
                     </label>
                   </div>
-                  <input
-                    name="password"
-                    type="password"
-                    required
-                    autoComplete="new-password"
-                    placeholder="Minimum 8 caractères"
-                    className={inputCls}
-                  />
+                  <div className="relative">
+                    <input
+                      name="password"
+                      type={showSignupPw ? 'text' : 'password'}
+                      required
+                      autoComplete="new-password"
+                      placeholder="Minimum 8 caractères"
+                      className={`${inputCls} pr-12`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSignupPw(v => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+                    >
+                      {showSignupPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="pt-2">

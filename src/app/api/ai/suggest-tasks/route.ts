@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { APP_NAME } from '@/lib/brand'
-import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { getBusinessContext } from '@/lib/ai/business-context'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 const TEXT_MODEL = 'google/gemini-2.5-flash-lite'
 
@@ -25,6 +26,10 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
+  if (!await hasPermission('ai.terrain')) {
+    return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
+  }
+
   if (!process.env.OPENROUTER_API_KEY) return NextResponse.json({ error: 'Clé API IA non configurée' }, { status: 500 })
 
   const { data: membership } = await supabase
@@ -39,6 +44,9 @@ export async function POST(req: NextRequest) {
   }
 
   const businessCtx = await getBusinessContext(orgId)
+  const secondaryActivityContext = businessCtx.secondaryActivityLabels.length > 0
+    ? ` Activités secondaires : ${businessCtx.secondaryActivityLabels.join(', ')}.`
+    : ''
 
   // Enrichir chaque ligne avec sa classification pour aider l'IA à ordonner les tâches
   const itemsList = items.map((i, idx) => {
@@ -54,7 +62,7 @@ export async function POST(req: NextRequest) {
   const messages = [
     {
       role: 'system',
-      content: `Tu es un assistant expert en gestion de chantier pour une entreprise du métier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}. Tu reçois la liste des prestations d'un devis (avec leur nature : [fourniture] ou [main-d'œuvre]) et tu dois générer une liste de tâches concrètes, ordonnées et actionnables pour réaliser ce chantier, en tenant compte des spécificités de ce métier.
+      content: `Tu es un assistant expert en gestion de chantier pour une entreprise du métier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}.${secondaryActivityContext} Tu reçois la liste des prestations d'un devis (avec leur nature : [fourniture] ou [main-d'œuvre]) et tu dois générer une liste de tâches concrètes, ordonnées et actionnables pour réaliser ce chantier, en tenant compte des spécificités de ce métier.
 Règles d'ordonnancement :
 - Les livraisons de fournitures précèdent toujours les tâches de pose correspondantes
 - La préparation du chantier (protections, balisage, démolition) vient avant les travaux
@@ -112,6 +120,9 @@ Réponds UNIQUEMENT avec un tableau JSON, rien d'autre.`,
     }
     if (err instanceof AIRateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 })
+    }
+    if (err instanceof AIProviderCreditError && err.aiBillingMode === 'client_owned') {
+      return NextResponse.json({ error: 'Rechargez vos crédits OpenRouter ou vérifiez la clé OpenRouter de votre organisation pour continuer.' }, { status: 402 })
     }
     console.error('[ai/suggest-tasks]', err)
     return NextResponse.json({ error: "Erreur lors de la génération des tâches" }, { status: 500 })

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Topbar } from '@/components/layout/Topbar'
+import { SarahWidget } from '@/components/sarah/SarahWidget'
 import type { UserProfile } from '@/lib/data/queries/user'
 import type { OrganizationModules } from '@/lib/organization-modules'
 import type { NotificationsSummary } from '@/lib/data/queries/notifications'
@@ -26,6 +27,8 @@ const EMPTY: NotificationsSummary = {
   chantiersAtRisk: 0,
   maintenanceDue: 0,
   maintenanceBillingPending: 0,
+  dailyBriefPending: false,
+  sarahAlertLines: [],
 }
 
 export function AppShell({
@@ -83,6 +86,13 @@ export function AppShell({
         </div>
       )}
       <div className="grow">{children}</div>
+      {modules.sarah_assistant && (
+        <SarahWidget
+          userName={profile?.full_name ?? null}
+          alertCount={notifications.total}
+          alerts={notifications}
+        />
+      )}
     </>
   )
 }

@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from './clients'
 import { todayParis } from '@/lib/utils'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,10 @@ export type Chantier = {
   default_retention_pct: number
   quote_id: string | null
   created_at: string
+  // Réception chantier
+  reception_status: 'sans_reserve' | 'avec_reserve' | 'reserve_levee' | null
+  reception_at: string | null
+  reception_notes: string | null
   // Contact référent
   contact_name: string | null
   contact_email: string | null
@@ -194,6 +199,7 @@ export async function getChantiers(): Promise<Chantier[]> {
       contact_name, contact_email, contact_phone,
       recurrence, recurrence_times, recurrence_team_size,
       recurrence_duration_h, recurrence_notes,
+      reception_status, reception_at, reception_notes,
       client:clients(id, company_name, email)
     `)
     .eq('organization_id', orgId)
@@ -410,6 +416,8 @@ export async function getOrgTaskTitles(excludeChantierId: string): Promise<strin
 }
 
 export async function getAllPointagesGlobal(opts?: { from?: string; to?: string }): Promise<GlobalPointage[]> {
+  if (!await hasPermission('chantiers.manage_pointages')) return []
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return []
@@ -594,6 +602,8 @@ export type GlobalPlanning = ChantierPlanning & {
   chantier_color_idx: number   // index stable basé sur l'id
   chantier_address_line1: string | null
   chantier_postal_code: string | null
+  member_name?: string | null
+  equipe_name?: string | null
 }
 
 // Alias utilisé dans la vue Tournée
@@ -613,7 +623,9 @@ export async function getAllPlannings(opts?: {
       id, chantier_id, planned_date, start_time, end_time,
       equipe_id, member_id, label, team_size, notes, created_at,
       route_id, route_order, duration_min, travel_from_prev_min,
-      chantier:chantiers!inner(title, city, status, organization_id, address_line1, postal_code)
+      chantier:chantiers!inner(title, city, status, organization_id, address_line1, postal_code),
+      member:chantier_equipe_membres(prenom, name),
+      equipe:chantier_equipes(name)
     `)
     .eq('chantier.organization_id', orgId)
     .order('planned_date', { ascending: true })
@@ -636,7 +648,13 @@ export async function getAllPlannings(opts?: {
     return Math.abs(h) % 12
   }
 
-  const chantierPlannings = (data ?? []).map((row: any) => ({
+  const chantierPlannings = (data ?? []).map((row: any) => {
+    const memberRow = Array.isArray(row.member) ? row.member[0] : row.member
+    const equipeRow = Array.isArray(row.equipe) ? row.equipe[0] : row.equipe
+    const memberName = memberRow
+      ? [memberRow.prenom, memberRow.name].filter(Boolean).join(' ') || null
+      : null
+    return ({
     id: row.id,
     source: 'chantier' as const,
     maintenance_intervention_id: null,
@@ -659,15 +677,18 @@ export async function getAllPlannings(opts?: {
     chantier_city: row.chantier?.city ?? null,
     chantier_status: row.chantier?.status ?? 'planifie',
     chantier_color_idx: colorIdx(row.chantier_id),
+    member_name: memberName,
+    equipe_name: equipeRow?.name ?? null,
     chantier_address_line1: row.chantier?.address_line1 ?? null,
     chantier_postal_code: row.chantier?.postal_code ?? null,
-  }))
+  })})
 
   let maintenanceQuery = supabase
     .from('maintenance_interventions')
     .select(`
       id, date_intervention, start_time, end_time, duration_hours,
       rapport, observations, statut, intervenant_member_id, intervenant_id, intervenant_user_id, created_at,
+      intervenant:chantier_equipe_membres!maintenance_interventions_intervenant_member_id_fkey(prenom, name),
       contract:maintenance_contracts!inner(
         id, title, chantier_id, organization_id, site_address_line1, site_postal_code, site_city,
         chantier:chantiers!maintenance_contracts_chantier_id_fkey(id, title, city, status, address_line1, postal_code)
@@ -692,6 +713,10 @@ export async function getAllPlannings(opts?: {
     const chantier = Array.isArray(contract?.chantier) ? contract.chantier[0] : contract?.chantier
     const supportId = chantier?.id ?? contract?.chantier_id ?? `maintenance:${contract?.id ?? row.id}`
     const notes = row.rapport ?? row.observations ?? null
+    const intervenantRow = Array.isArray(row.intervenant) ? row.intervenant[0] : row.intervenant
+    const memberName = intervenantRow
+      ? [intervenantRow.prenom, intervenantRow.name].filter(Boolean).join(' ') || null
+      : null
     return {
       id: `maintenance:${row.id}`,
       source: 'maintenance' as const,
@@ -703,7 +728,7 @@ export async function getAllPlannings(opts?: {
       end_time: row.end_time ? String(row.end_time).slice(0, 5) : null,
       equipe_id: null,
       member_id: row.intervenant_member_id ?? row.intervenant_id ?? null,
-      label: 'Intervention entretien',
+      label: 'Entretien',
       team_size: 1,
       notes,
       created_at: row.created_at,
@@ -711,12 +736,14 @@ export async function getAllPlannings(opts?: {
       route_order: null,
       duration_min: row.duration_hours ? Math.round(Number(row.duration_hours) * 60) : null,
       travel_from_prev_min: null,
-      chantier_title: contract?.title ? `Entretien - ${contract.title}` : 'Entretien',
+      chantier_title: contract?.title ?? 'Entretien',
       chantier_city: chantier?.city ?? contract?.site_city ?? null,
       chantier_status: chantier?.status ?? 'en_cours',
       chantier_color_idx: colorIdx(supportId),
       chantier_address_line1: chantier?.address_line1 ?? contract?.site_address_line1 ?? null,
       chantier_postal_code: chantier?.postal_code ?? contract?.site_postal_code ?? null,
+      member_name: memberName,
+      equipe_name: null,
     }
   })
 
@@ -744,4 +771,38 @@ export async function getChantierPlannings(chantierId: string): Promise<Chantier
   }
 
   return (data ?? []) as ChantierPlanning[]
+}
+
+// ─── Réserves ─────────────────────────────────────────────────────────────────
+
+export type ChantierReserve = {
+  id: string
+  chantier_id: string
+  description: string
+  lot: string | null
+  status: 'ouverte' | 'levee'
+  resolved_at: string | null
+  resolved_notes: string | null
+  position: number
+  created_at: string
+}
+
+export async function getChantierReserves(chantierId: string): Promise<ChantierReserve[]> {
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return []
+
+  const { data, error } = await supabase
+    .from('chantier_reserves')
+    .select('id, chantier_id, description, lot, status, resolved_at, resolved_notes, position, created_at')
+    .eq('chantier_id', chantierId)
+    .eq('organization_id', orgId)
+    .order('position', { ascending: true })
+
+  if (error) {
+    console.error('[getChantierReserves]', error)
+    return []
+  }
+
+  return (data ?? []) as ChantierReserve[]
 }

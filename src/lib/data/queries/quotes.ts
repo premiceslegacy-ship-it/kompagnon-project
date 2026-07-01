@@ -53,6 +53,9 @@ export type QuoteItem = {
   height_m: number | null
   dim_quantity: number
   is_internal: boolean
+  metal_grid_id: string | null
+  price_pending: boolean
+  labor_category: 'atelier' | 'pose' | 'finition' | 'autre' | null
 }
 
 export type QuoteSection = {
@@ -74,6 +77,19 @@ export type QuoteWithItems = Quote & {
   deposit_rate: number | null
   aid_label: string | null
   aid_amount: number | null
+  show_section_subtotals: boolean
+  variant_group_id: string | null
+  variant_label: string | null
+  technical_checklist: Array<{ id: string; label: string; category: string; checked: boolean }> | null
+}
+
+export type QuoteVariantStub = {
+  id: string
+  number: string | null
+  title: string | null
+  variant_label: string | null
+  status: QuoteStatus
+  total_ht: number | null
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -353,7 +369,7 @@ export async function getAcceptedQuotesWithItems(): Promise<QuoteWithItems[]> {
       .order('position'),
     supabase
       .from('quote_items')
-      .select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal')
+      .select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal, metal_grid_id, price_pending, labor_category')
       .in('quote_id', quoteIds)
       .order('position'),
   ])
@@ -377,6 +393,10 @@ export async function getAcceptedQuotesWithItems(): Promise<QuoteWithItems[]> {
       deposit_rate: null,
       aid_label: null,
       aid_amount: null,
+      show_section_subtotals: false,
+      variant_group_id: null,
+      variant_label: null,
+      technical_checklist: null,
     }
   })
 }
@@ -395,6 +415,9 @@ export async function getQuoteById(id: string): Promise<QuoteWithItems | null> {
       created_at,
       notes_client, payment_conditions, discount_rate, deposit_rate,
       aid_label, aid_amount,
+      show_section_subtotals,
+      variant_group_id, variant_label,
+      technical_checklist,
       client_request_description, client_request_visible_on_pdf,
       client:clients(id, company_name, contact_name, email)
     `)
@@ -412,7 +435,7 @@ export async function getQuoteById(id: string): Promise<QuoteWithItems | null> {
 
   const { data: items } = await supabase
     .from('quote_items')
-    .select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal')
+    .select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal, metal_grid_id, price_pending, labor_category')
     .eq('quote_id', id)
     .order('position')
 
@@ -433,6 +456,10 @@ export async function getQuoteById(id: string): Promise<QuoteWithItems | null> {
     deposit_rate: number | null
     aid_label: string | null
     aid_amount: number | null
+    show_section_subtotals: boolean
+    variant_group_id: string | null
+    variant_label: string | null
+    technical_checklist: Array<{ id: string; label: string; category: string; checked: boolean }> | null
   }
   return {
     ...q,
@@ -440,5 +467,26 @@ export async function getQuoteById(id: string): Promise<QuoteWithItems | null> {
     unsectionedItems: allItems.filter(i => i.section_id === null),
     client_request_description: q.client_request_description ?? null,
     client_request_visible_on_pdf: q.client_request_visible_on_pdf ?? true,
+    show_section_subtotals: q.show_section_subtotals ?? false,
+    variant_group_id: q.variant_group_id ?? null,
+    variant_label: q.variant_label ?? null,
+    technical_checklist: q.technical_checklist ?? null,
   }
+}
+
+export async function getQuoteVariants(variantGroupId: string): Promise<QuoteVariantStub[]> {
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return []
+
+  const { data, error } = await supabase
+    .from('quotes')
+    .select('id, number, title, variant_label, status, total_ht')
+    .eq('organization_id', orgId)
+    .eq('variant_group_id', variantGroupId)
+    .eq('is_archived', false)
+    .order('created_at', { ascending: true })
+
+  if (error) return []
+  return (data ?? []) as QuoteVariantStub[]
 }

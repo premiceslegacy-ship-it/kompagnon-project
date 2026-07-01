@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { resolveCatalogContext, getCatalogAIPromptContext } from '@/lib/catalog-context'
-import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { hasPermission } from '@/lib/data/queries/membership'
+import { buildIndustryQualityPrompt } from '@/lib/ai/industry-context'
 
 const TEXT_MODEL = 'google/gemini-2.5-flash'
 const VISION_MODEL = 'google/gemini-2.5-flash'
@@ -305,6 +306,12 @@ function buildSystemPrompt(ctx: ReturnType<typeof getCatalogAIPromptContext>, sn
 
   const catalogHint = snapshot ? buildExistingCatalogHint(snapshot, ctx) : ''
   const marketHints = buildMarketPriceHints(ctx)
+  const industryQualityPrompt = buildIndustryQualityPrompt({
+    sector: ctx.activityLabel,
+    activityDescription: ctx.activityDescription,
+    businessProfile: ctx.businessProfile,
+    usage: 'catalog',
+  })
 
   return `Tu t'appelles Lea. Tu es assistante catalogue chez ATELIER by Orsayn, experte du secteur "${ctx.activityLabel}" (profil: ${ctx.businessProfile}). Tu connais les nomenclatures, les prix du marche et les bonnes pratiques de catalogage pour ce metier. Tu es precise, rigoureuse, et tu classes les choses au bon endroit du premier coup.
 ${activityLine}
@@ -329,7 +336,7 @@ Catégories habituelles :
 Taux de TVA légaux : ${ctx.vatRates.join(', ')}%
 Modes de tarification dimensionnelle : ${ctx.dimensionModes.join(', ')} (none=forfait/unité, linear=ml, area=m², volume=m³)
 
-${catalogHint ? catalogHint + '\n\n' : ''}${marketHints ? marketHints + '\n\n' : ''}Ta tâche : extraire tous les éléments de catalogue mentionnés dans le texte et les classifier en :
+${industryQualityPrompt ? industryQualityPrompt + '\n' : ''}${catalogHint ? catalogHint + '\n\n' : ''}${marketHints ? marketHints + '\n\n' : ''}Ta tâche : extraire tous les éléments de catalogue mentionnés dans le texte et les classifier en :
 - "material" : ${ctx.materialLabel.toLowerCase()} (achetée et revendue)
 - "service" : ${ctx.serviceLabel.toLowerCase()} (vendue au client)
 - "labor_rate" : ${ctx.laborRateLabel.toLowerCase()} (humain, machine, équipement, sous-traitant)
@@ -409,6 +416,12 @@ function buildPresetsSystemPrompt(ctx: ReturnType<typeof getCatalogAIPromptConte
   const catalogHint = snapshot ? buildExistingCatalogHint(snapshot, ctx) : ''
   const marketHints = buildMarketPriceHints(ctx)
   const allUnits = [...ctx.unitsByKind.service, ...ctx.unitsByKind.material].filter((v, i, a) => a.indexOf(v) === i)
+  const industryQualityPrompt = buildIndustryQualityPrompt({
+    sector: ctx.activityLabel,
+    activityDescription: ctx.activityDescription,
+    businessProfile: ctx.businessProfile,
+    usage: 'catalog',
+  })
 
   return `Tu t'appelles Lea. Tu es assistante catalogue chez ATELIER by Orsayn, experte en chiffrage et organisation commerciale pour les entreprises du secteur "${ctx.activityLabel}" (profil: ${ctx.businessProfile}).
 ${activityLine}
@@ -423,7 +436,7 @@ Catégories habituelles pour les ${ctx.bundleTemplateLabel.toLowerCase()}s : ${c
 Unités disponibles : ${allUnits.join(', ')}
 Taux de TVA légaux : ${ctx.vatRates.join(', ')}%
 
-${catalogHint ? catalogHint + '\n\n' : ''}${marketHints ? marketHints + '\n\n' : ''}Ta tâche : générer entre 5 et 8 ${ctx.bundleTemplateLabel.toLowerCase()}s réalistes, représentatifs du métier "${ctx.activityLabel}" et cohérents avec la description fournie par l'utilisateur.
+${industryQualityPrompt ? industryQualityPrompt + '\n' : ''}${catalogHint ? catalogHint + '\n\n' : ''}${marketHints ? marketHints + '\n\n' : ''}Ta tâche : générer entre 5 et 8 ${ctx.bundleTemplateLabel.toLowerCase()}s réalistes, représentatifs du métier "${ctx.activityLabel}" et cohérents avec la description fournie par l'utilisateur.
 
 Chaque ${ctx.bundleTemplateLabel.toLowerCase()} doit :
 - Avoir un nom professionnel et précis, fidèle au vocabulaire du secteur, en casse phrase française
@@ -527,6 +540,10 @@ export async function POST(req: NextRequest) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Non authentifié.' }, { status: 401 })
+
+    if (!await hasPermission('ai.terrain')) {
+      return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
+    }
 
     if (!await hasPermission('catalog.edit')) {
       return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
@@ -712,6 +729,9 @@ export async function POST(req: NextRequest) {
     }
     if (err instanceof AIRateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 })
+    }
+    if (err instanceof AIProviderCreditError && err.aiBillingMode === 'client_owned') {
+      return NextResponse.json({ error: 'Rechargez vos crédits OpenRouter ou vérifiez la clé OpenRouter de votre organisation pour continuer.' }, { status: 402 })
     }
     console.error('[catalog-extract]', err)
     return NextResponse.json({ error: "Erreur lors de l'analyse IA." }, { status: 500 })

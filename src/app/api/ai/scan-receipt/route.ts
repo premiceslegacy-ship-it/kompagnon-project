@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { hasPermission } from '@/lib/data/queries/membership'
@@ -144,6 +144,7 @@ async function callModel(
     if (err instanceof AIModuleDisabledError) return { error: 'module_disabled' }
     if (err instanceof AIRateLimitError) return { error: 'rate_limited' }
     if (err instanceof AIQuotaExceededError) return { error: 'quota_exceeded' }
+    if (err instanceof AIProviderCreditError && err.aiBillingMode === 'client_owned') return { error: 'openrouter_credits' }
     if (err?.name === 'AbortError') return { error: 'timeout' }
     throw err
   }
@@ -153,6 +154,10 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+
+  if (!await hasPermission('ai.terrain')) {
+    return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
+  }
 
   if (!await hasPermission('chantiers.expenses.create')) {
     return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
@@ -178,7 +183,7 @@ export async function POST(req: NextRequest) {
 
   try {
     let res = await callModel(VISION_MODEL, base64, mimeType, organizationId)
-    if ('error' in res) {
+    if ('error' in res && !['module_disabled', 'rate_limited', 'quota_exceeded', 'openrouter_credits'].includes(res.error)) {
       res = await callModel(VISION_FALLBACK, base64, mimeType, organizationId)
     }
     if ('error' in res) {
@@ -190,6 +195,9 @@ export async function POST(req: NextRequest) {
       }
       if (res.error === 'quota_exceeded') {
         return NextResponse.json({ error: 'Quota mensuel OCR atteint pour cette organisation.' }, { status: 402 })
+      }
+      if (res.error === 'openrouter_credits') {
+        return NextResponse.json({ error: 'Rechargez vos crédits OpenRouter ou vérifiez la clé OpenRouter de votre organisation pour continuer.' }, { status: 402 })
       }
       return NextResponse.json({ error: 'Impossible d\'analyser ce document. Vérifiez que l\'image est lisible.' }, { status: 500 })
     }

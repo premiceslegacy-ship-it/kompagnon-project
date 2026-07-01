@@ -8,16 +8,25 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { canManageLaborRates, hasPermission } from '@/lib/data/queries/membership'
 import { sendEmail } from '@/lib/email'
-import { sendPushToOrg } from '@/lib/push'
+import { sendPushToOrgPermission } from '@/lib/push'
 import {
   buildMemberSpaceInviteEmail,
   buildMemberMonthlyReportEmail,
 } from '@/lib/email/templates'
 import { generateMagicToken, hashToken, getMemberSession, clearMemberSessionCookie } from '@/lib/auth/member-session'
-import { getMemberPointages, getMemberByIdAdmin } from '@/lib/data/queries/members'
+import { getMemberPointages, getMemberByIdAdmin, getMemberAccessibleChantiers } from '@/lib/data/queries/members'
 import MemberHoursReportPDF from '@/components/pdf/MemberHoursReportPDF'
 
 type Result = { error: string | null }
+
+function hoursBetweenTimes(startTime?: string | null, endTime?: string | null): number | null {
+  if (!startTime || !endTime) return null
+  const [sh, sm] = startTime.split(':').map(Number)
+  const [eh, em] = endTime.split(':').map(Number)
+  if ([sh, sm, eh, em].some(n => Number.isNaN(n))) return null
+  const hours = (eh + em / 60) - (sh + sm / 60)
+  return hours > 0 ? Math.round(hours * 10) / 10 : null
+}
 
 // ─── 1. Créer un membre individuel ────────────────────────────────────────────
 
@@ -377,26 +386,127 @@ export async function verifyMemberToken(rawToken: string): Promise<{
 export async function createPointageAsMember(input: {
   memberId: string
   organizationId: string
-  chantierId: string
-  date: string                 // YYYY-MM-DD
-  hours: number
+  chantierId?: string
+  date?: string                 // YYYY-MM-DD
+  hours?: number
   startTime?: string | null    // HH:MM
   description?: string | null
   tacheId?: string | null
+  planningId?: string | null
+  maintenanceInterventionId?: string | null
 }): Promise<Result & { id?: string }> {
-  if (input.hours <= 0 || input.hours > 24) return { error: 'Nombre d\'heures invalide.' }
+  if (!input.memberId) {
+    console.error('[createPointageAsMember] memberId manquant ou vide:', JSON.stringify({ memberId: input.memberId, organizationId: input.organizationId }))
+    return { error: 'Session invalide : identifiant membre manquant. Reconnectez-vous via votre lien.' }
+  }
 
   const admin = createAdminClient()
+
+  const { data: member } = await admin
+    .from('chantier_equipe_membres')
+    .select('id, organization_id, equipe_id, profile_id, taux_horaire, prenom, name')
+    .eq('id', input.memberId)
+    .eq('organization_id', input.organizationId)
+    .maybeSingle()
+
+  if (!member) return { error: 'Membre introuvable.' }
+
+  let chantierId = input.chantierId ?? null
+  let date = input.date ?? null
+  let hours = input.hours ?? null
+  let startTime = input.startTime ?? null
+  let description = input.description ?? null
+  let planningId = input.planningId ?? null
+  let maintenanceInterventionId = input.maintenanceInterventionId ?? null
+
+  if (planningId) {
+    const { data: planning } = await admin
+      .from('chantier_plannings')
+      .select('id, chantier_id, planned_date, start_time, end_time, duration_min, label, member_id, equipe_id, chantier:chantiers!inner(id, title, organization_id)')
+      .eq('id', planningId)
+      .maybeSingle()
+
+    if (!planning || (planning as any).chantier?.organization_id !== input.organizationId) {
+      return { error: 'Créneau introuvable.' }
+    }
+    if (planning.member_id !== input.memberId && (!member.equipe_id || planning.equipe_id !== member.equipe_id)) {
+      return { error: "Ce créneau ne vous est pas affecté." }
+    }
+
+    const pointageOwnerFilter = member.profile_id ? `member_id.eq.${input.memberId},user_id.eq.${member.profile_id}` : `member_id.eq.${input.memberId}`
+    const { data: existing } = await admin
+      .from('chantier_pointages')
+      .select('id')
+      .eq('chantier_planning_id', planningId)
+      .or(pointageOwnerFilter)
+      .maybeSingle()
+    if (existing?.id) return { error: 'Ce créneau a déjà été pointé.' }
+
+    chantierId = planning.chantier_id
+    date = planning.planned_date
+    startTime = planning.start_time ?? null
+    hours = hours ?? (planning.duration_min ? Math.round((Number(planning.duration_min) / 60) * 10) / 10 : hoursBetweenTimes(planning.start_time, planning.end_time))
+    description = description ?? `Créneau planifié - ${planning.label}`
+  }
+
+  if (maintenanceInterventionId) {
+    const { data: intervention } = await admin
+      .from('maintenance_interventions')
+      .select(`
+        id, organization_id, date_intervention, start_time, end_time, duration_hours,
+        intervenant_member_id, intervenant_id, intervenant_user_id, chantier_pointage_id,
+        contract:maintenance_contracts!inner(title, chantier_id)
+      `)
+      .eq('id', maintenanceInterventionId)
+      .eq('organization_id', input.organizationId)
+      .maybeSingle()
+
+    if (!intervention) return { error: 'Intervention introuvable.' }
+    if (
+      (intervention as any).intervenant_member_id !== input.memberId
+      && (intervention as any).intervenant_id !== input.memberId
+      && (!member.profile_id || (intervention as any).intervenant_user_id !== member.profile_id)
+    ) {
+      return { error: "Cette intervention ne vous est pas affectée." }
+    }
+
+    const pointageOwnerFilter = member.profile_id ? `member_id.eq.${input.memberId},user_id.eq.${member.profile_id}` : `member_id.eq.${input.memberId}`
+    const { data: existing } = await admin
+      .from('chantier_pointages')
+      .select('id')
+      .eq('maintenance_intervention_id', maintenanceInterventionId)
+      .or(pointageOwnerFilter)
+      .maybeSingle()
+    if (existing?.id || (intervention as any).chantier_pointage_id) return { error: 'Cette intervention a déjà été pointée.' }
+
+    const contract = Array.isArray((intervention as any).contract) ? (intervention as any).contract[0] : (intervention as any).contract
+    chantierId = contract?.chantier_id ?? null
+    date = (intervention as any).date_intervention
+    startTime = (intervention as any).start_time ?? null
+    hours = hours
+      ?? ((intervention as any).duration_hours ? Math.round(Number((intervention as any).duration_hours) * 10) / 10 : null)
+      ?? hoursBetweenTimes((intervention as any).start_time, (intervention as any).end_time)
+    description = description ?? `Intervention entretien - ${contract?.title ?? 'Entretien'}`
+  }
+
+  if (!chantierId) return { error: 'Chantier introuvable.' }
+  if (!date) return { error: 'Date de pointage manquante.' }
+  if (!hours || hours <= 0 || hours > 24) return { error: 'Nombre d\'heures invalide.' }
 
   // Vérifier que le chantier appartient bien à la même org que le membre
   const { data: chantier } = await admin
     .from('chantiers')
     .select('id, organization_id, title')
-    .eq('id', input.chantierId)
+    .eq('id', chantierId)
     .single()
 
   if (!chantier || chantier.organization_id !== input.organizationId) {
     return { error: 'Chantier introuvable.' }
+  }
+
+  const allowedChantiers = await getMemberAccessibleChantiers(input.memberId, input.organizationId)
+  if (!allowedChantiers.some(c => c.id === chantierId)) {
+    return { error: "Ce chantier n'est pas affecté à votre espace." }
   }
 
   // Résoudre le taux horaire au moment de la saisie
@@ -422,15 +532,17 @@ export async function createPointageAsMember(input: {
   const { data: inserted, error } = await admin
     .from('chantier_pointages')
     .insert({
-      chantier_id:   input.chantierId,
+      chantier_id:   chantierId,
       tache_id:      input.tacheId ?? null,
-      member_id:     input.memberId,
+      member_id:     input.memberId || null,
       user_id:       null,
-      date:          input.date,
-      hours:         input.hours,
-      start_time:    input.startTime ?? null,
-      description:   input.description ?? null,
+      date,
+      hours,
+      start_time:    startTime,
+      description,
       rate_snapshot: rateSnapshot,
+      chantier_planning_id: planningId,
+      maintenance_intervention_id: maintenanceInterventionId,
     })
     .select('id')
     .single()
@@ -440,14 +552,27 @@ export async function createPointageAsMember(input: {
     return { error: "Impossible d'enregistrer le pointage." }
   }
 
-  const memberName = membreRes.data?.name ?? 'Un membre'
-  const chantierTitle = (chantier as any).title ?? 'Chantier'
-  sendPushToOrg(input.organizationId, {
-    title: 'Pointage enregistré',
-    body: `${memberName} a pointé ${input.hours}h — ${chantierTitle}`,
-    url: `/chantiers/${input.chantierId}`,
-  }).catch(() => {})
+  if (maintenanceInterventionId) {
+    await admin
+      .from('maintenance_interventions')
+      .update({ chantier_pointage_id: inserted.id, statut: 'réalisée' })
+      .eq('id', maintenanceInterventionId)
+      .eq('organization_id', input.organizationId)
+  }
 
+  await sendPushToOrgPermission(
+    input.organizationId,
+    'chantiers.manage_pointages',
+    {
+      title: maintenanceInterventionId ? 'Intervention réalisée' : 'Pointage enregistré',
+      body: `${member.prenom ?? member.name ?? 'Un membre'} a pointé ${hours}h`,
+      url: `/chantiers/${chantierId}`,
+    },
+    member.profile_id ?? null,
+  )
+
+  revalidatePath('/mon-espace/dashboard')
+  revalidatePath(`/chantiers/${chantierId}`)
   return { error: null, id: inserted.id }
 }
 
@@ -476,7 +601,7 @@ export async function sendMemberHoursReport(
 
   const { data: org } = await admin
     .from('organizations')
-    .select('name, logo_url, address_line1, postal_code, city')
+    .select('name, email, logo_url, address_line1, postal_code, city')
     .eq('id', member.organization_id)
     .single()
 
@@ -505,6 +630,7 @@ export async function sendMemberHoursReport(
 
   const { subject, html } = buildMemberMonthlyReportEmail({
     orgName: org.name,
+    orgEmail: (org as any).email ?? null,
     memberFirstName: member.prenom ?? null,
     periodLabel,
     totalHours,
@@ -527,15 +653,21 @@ export async function sendMemberHoursReport(
 
 /** Pointage par le membre depuis son espace. Utilise la session cookie. */
 export async function pointMyHoursFromSpace(input: {
-  chantierId: string
-  date: string
-  hours: number
+  chantierId?: string
+  date?: string
+  hours?: number
   startTime?: string | null
   description?: string | null
   tacheId?: string | null
+  planningId?: string | null
+  maintenanceInterventionId?: string | null
 }): Promise<Result & { id?: string }> {
   const session = await getMemberSession()
   if (!session) return { error: 'Session expirée. Reconnectez-vous via votre lien.' }
+  if (!session.memberId) {
+    console.error('[pointMyHoursFromSpace] session sans memberId:', JSON.stringify({ organizationId: session.organizationId }))
+    return { error: 'Session invalide. Reconnectez-vous via votre lien.' }
+  }
 
   return await createPointageAsMember({
     memberId: session.memberId,
@@ -546,6 +678,8 @@ export async function pointMyHoursFromSpace(input: {
     startTime: input.startTime ?? null,
     description: input.description ?? null,
     tacheId: input.tacheId ?? null,
+    planningId: input.planningId ?? null,
+    maintenanceInterventionId: input.maintenanceInterventionId ?? null,
   })
 }
 
@@ -632,6 +766,11 @@ export async function updateMyTaskFromSpace(
         actor_name: actorName,
       },
     })
+    await sendPushToOrgPermission(session.organizationId, 'chantiers.edit', {
+      title: 'Tâche terminée',
+      body: `${actorName} a terminé "${task.title}"${(task.chantier as any)?.title ? ` — ${(task.chantier as any).title}` : ''}`,
+      url: `/chantiers/${task.chantier_id}`,
+    }, member.profile_id ?? null)
   }
 
   revalidatePath('/mon-espace/dashboard')

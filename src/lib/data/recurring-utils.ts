@@ -87,6 +87,28 @@ export function computeNextSendDate(
   return next
 }
 
+export function normalizePaymentTermsDays(
+  clientTermsDays?: number | null,
+  organizationTermsDays?: number | null,
+): number {
+  const terms = clientTermsDays ?? organizationTermsDays ?? 30
+  if (!Number.isFinite(terms)) return 30
+  return Math.max(0, Math.min(90, Math.round(terms)))
+}
+
+export function computeRecurringInvoiceDueDate(
+  issueDate: string,
+  clientTermsDays?: number | null,
+  organizationTermsDays?: number | null,
+): string {
+  const termsDays = normalizePaymentTermsDays(clientTermsDays, organizationTermsDays)
+  const [year, month, day] = issueDate.split('-').map(Number)
+  if (!year || !month || !day) return issueDate
+  const due = new Date(year, month - 1, day)
+  due.setDate(due.getDate() + termsDays)
+  return `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}-${String(due.getDate()).padStart(2, '0')}`
+}
+
 export function frequencyLabel(f: RecurringFrequency): string {
   switch (f) {
     case 'weekly': return 'Hebdomadaire'

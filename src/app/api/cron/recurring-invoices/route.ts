@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 export const dynamic = 'force-dynamic';
 import { verifyCronSecret } from '@/lib/cron-auth'
 import { sendEmail } from '@/lib/email'
-import { computeNextSendDate } from '@/lib/data/recurring-utils'
+import { computeNextSendDate, computeRecurringInvoiceDueDate, normalizePaymentTermsDays } from '@/lib/data/recurring-utils'
 import type { RecurringFrequency } from '@/lib/data/recurring-utils'
 import { APP_SIGNATURE } from '@/lib/brand'
 import { dateParis } from '@/lib/utils'
@@ -43,6 +43,8 @@ export async function POST(req: NextRequest) {
       id, organization_id, client_id, title, frequency, send_day,
       custom_interval_days, next_send_date, requires_confirmation,
       confirmation_delay_days, auto_send_delay_days, currency,
+      client:clients(payment_terms_days),
+      organization:organizations(payment_terms_days),
       items:recurring_invoice_items(description, quantity, unit, unit_price, vat_rate, position)
     `)
     .eq('is_active', true)
@@ -84,6 +86,13 @@ export async function POST(req: NextRequest) {
           sum + i.quantity * i.unit_price * (i.vat_rate / 100),
         0,
       )
+      const client = Array.isArray(model.client) ? model.client[0] : model.client
+      const organization = Array.isArray(model.organization) ? model.organization[0] : model.organization
+      const paymentTermsDays = normalizePaymentTermsDays(
+        client?.payment_terms_days,
+        organization?.payment_terms_days,
+      )
+      const dueDate = computeRecurringInvoiceDueDate(model.next_send_date, paymentTermsDays, null)
 
       const { data: invoiceRow } = await admin
         .from('invoices')
@@ -94,7 +103,8 @@ export async function POST(req: NextRequest) {
           currency: model.currency ?? 'EUR',
           status: 'draft',
           issue_date: model.next_send_date,
-          due_date: model.next_send_date,
+          due_date: dueDate,
+          payment_terms_days: paymentTermsDays,
           total_ht: totalHt,
           total_tva: totalTva,
           total_ttc: totalHt + totalTva,

@@ -44,6 +44,12 @@ export type MemberPlanning = {
   route_order: number | null
   duration_min: number | null
   travel_from_prev_min: number | null
+  pointage_id: string | null
+}
+
+export type MemberAccessibleChantier = {
+  id: string
+  title: string
 }
 
 export type MemberTask = {
@@ -161,7 +167,7 @@ export async function getMemberPlannings(
     .select(`
       id, chantier_id, planned_date, start_time, end_time, label, notes,
       route_id, route_order, duration_min, travel_from_prev_min,
-      chantiers!inner ( title, city, address_line1, postal_code )
+      chantiers!inner ( title, city, address_line1, postal_code, recurrence_notes )
     `)
     .order('planned_date', { ascending: true })
     .order('route_order', { ascending: true, nullsFirst: false })
@@ -206,6 +212,30 @@ export async function getMemberPlannings(
     console.error('[getMemberPlannings maintenance]', maintenanceError)
   }
 
+  const planningIds = (data ?? []).map((r: any) => r.id).filter(Boolean)
+  const maintenanceIds = (maintenanceRows ?? []).map((r: any) => r.id).filter(Boolean)
+
+  const pointageOwnerFilter = profileId ? `member_id.eq.${memberId},user_id.eq.${profileId}` : `member_id.eq.${memberId}`
+  const [{ data: planningPointages }, { data: maintenancePointages }] = await Promise.all([
+    planningIds.length > 0
+      ? supabase
+          .from('chantier_pointages')
+          .select('id, chantier_planning_id')
+          .or(pointageOwnerFilter)
+          .in('chantier_planning_id', planningIds)
+      : Promise.resolve({ data: [] as any[] }),
+    maintenanceIds.length > 0
+      ? supabase
+          .from('chantier_pointages')
+          .select('id, maintenance_intervention_id')
+          .or(pointageOwnerFilter)
+          .in('maintenance_intervention_id', maintenanceIds)
+      : Promise.resolve({ data: [] as any[] }),
+  ])
+
+  const pointageByPlanningId = new Map((planningPointages ?? []).map((p: any) => [p.chantier_planning_id, p.id]))
+  const pointageByMaintenanceId = new Map((maintenancePointages ?? []).map((p: any) => [p.maintenance_intervention_id, p.id]))
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const chantierPlannings = (data ?? []).map((r: any) => ({
     id:             r.id,
@@ -218,11 +248,12 @@ export async function getMemberPlannings(
     start_time:     r.start_time,
     end_time:       r.end_time,
     label:          r.label,
-    notes:          r.notes,
+    notes:          r.notes ?? r.chantiers?.recurrence_notes ?? null,
     route_id:       r.route_id ?? null,
     route_order:    r.route_order ?? null,
     duration_min:   r.duration_min ?? null,
     travel_from_prev_min: r.travel_from_prev_min ?? null,
+    pointage_id:    pointageByPlanningId.get(r.id) ?? null,
   })) as MemberPlanning[]
 
   const maintenancePlannings = (maintenanceRows ?? []).map((r: any) => {
@@ -244,11 +275,111 @@ export async function getMemberPlannings(
       route_order:    null,
       duration_min:   r.duration_hours ? Math.round(Number(r.duration_hours) * 60) : null,
       travel_from_prev_min: null,
+      pointage_id:    pointageByMaintenanceId.get(r.id) ?? null,
     }
   }) as MemberPlanning[]
 
   return [...chantierPlannings, ...maintenancePlannings]
     .sort((a, b) => `${a.planned_date} ${a.start_time ?? '99:99'}`.localeCompare(`${b.planned_date} ${b.start_time ?? '99:99'}`))
+}
+
+/** Chantiers qu'un membre peut voir/pointer depuis /mon-espace. */
+export async function getMemberAccessibleChantiers(
+  memberId: string,
+  organizationId: string,
+): Promise<MemberAccessibleChantier[]> {
+  const admin = createAdminClient()
+  const { data: member } = await admin
+    .from('chantier_equipe_membres')
+    .select('id, organization_id, equipe_id, profile_id')
+    .eq('id', memberId)
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
+  if (!member) return []
+
+  const ids = new Set<string>()
+
+  const directPromise = admin
+    .from('chantier_individual_members')
+    .select('chantier_id, chantier:chantiers!inner(id, organization_id, status, is_archived)')
+    .eq('member_id', memberId)
+    .eq('chantier.organization_id', organizationId)
+    .eq('chantier.is_archived', false)
+    .in('chantier.status', ['en_cours', 'planifie', 'suspendu'])
+
+  const teamPromise = member.equipe_id
+    ? admin
+        .from('chantier_equipe_chantiers')
+        .select('chantier_id, chantier:chantiers!inner(id, organization_id, status, is_archived)')
+        .eq('equipe_id', member.equipe_id)
+        .eq('chantier.organization_id', organizationId)
+        .eq('chantier.is_archived', false)
+        .in('chantier.status', ['en_cours', 'planifie', 'suspendu'])
+    : Promise.resolve({ data: [] as any[] })
+
+  const planningFilters = [
+    `member_id.eq.${memberId}`,
+    member.equipe_id ? `equipe_id.eq.${member.equipe_id}` : null,
+  ].filter(Boolean).join(',')
+
+  const planningPromise = planningFilters
+    ? admin
+        .from('chantier_plannings')
+        .select('chantier_id, chantier:chantiers!inner(id, organization_id, status, is_archived)')
+        .or(planningFilters)
+        .eq('chantier.organization_id', organizationId)
+        .eq('chantier.is_archived', false)
+        .in('chantier.status', ['en_cours', 'planifie', 'suspendu'])
+    : Promise.resolve({ data: [] as any[] })
+
+  const maintenanceFilters = [
+    `intervenant_member_id.eq.${memberId}`,
+    `intervenant_id.eq.${memberId}`,
+    member.profile_id ? `intervenant_user_id.eq.${member.profile_id}` : null,
+  ].filter(Boolean).join(',')
+
+  const maintenancePromise = maintenanceFilters
+    ? admin
+        .from('maintenance_interventions')
+        .select('contract:maintenance_contracts!inner(chantier_id, organization_id, chantier:chantiers!maintenance_contracts_chantier_id_fkey(id, organization_id, status, is_archived))')
+        .or(maintenanceFilters)
+        .eq('organization_id', organizationId)
+    : Promise.resolve({ data: [] as any[] })
+
+  const [directRows, teamRows, planningRows, maintenanceRows] = await Promise.all([
+    directPromise,
+    teamPromise,
+    planningPromise,
+    maintenancePromise,
+  ])
+
+  for (const row of directRows.data ?? []) if ((row as any).chantier_id) ids.add((row as any).chantier_id)
+  for (const row of teamRows.data ?? []) if ((row as any).chantier_id) ids.add((row as any).chantier_id)
+  for (const row of planningRows.data ?? []) if ((row as any).chantier_id) ids.add((row as any).chantier_id)
+  for (const row of maintenanceRows.data ?? []) {
+    const contract = Array.isArray((row as any).contract) ? (row as any).contract[0] : (row as any).contract
+    const chantier = Array.isArray(contract?.chantier) ? contract.chantier[0] : contract?.chantier
+    if (
+      contract?.chantier_id &&
+      chantier?.organization_id === organizationId &&
+      chantier?.is_archived === false &&
+      ['en_cours', 'planifie', 'suspendu'].includes(chantier?.status)
+    ) {
+      ids.add(contract.chantier_id)
+    }
+  }
+
+  if (ids.size === 0) return []
+
+  const { data: chantiers } = await admin
+    .from('chantiers')
+    .select('id, title')
+    .eq('organization_id', organizationId)
+    .in('id', [...ids])
+    .order('title', { ascending: true })
+
+  return (chantiers ?? []) as MemberAccessibleChantier[]
 }
 
 /** Tâches assignées au membre, directement ou via son équipe. */

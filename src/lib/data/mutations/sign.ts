@@ -114,6 +114,7 @@ export async function acceptQuoteByToken(input: AcceptQuoteInput): Promise<Accep
   if (clientEmail && org) {
     const { subject, html } = buildQuoteAcceptedClientEmail({
       orgName: org.name,
+      orgEmail: org.email ?? null,
       clientName,
       quoteNumber: quote.number,
       quoteTitle: quote.title,

@@ -11,9 +11,12 @@ export const CreateClientInlineSchema = z.object({
   last_name: z.string().max(100).optional(),
   email: z.string().email().max(255).optional().or(z.literal('')),
   phone: z.string().max(30).optional(),
+  siret: z.string().max(14).optional(),
   address_line1: z.string().max(255).optional(),
   postal_code: z.string().max(10).optional(),
   city: z.string().max(100).optional(),
+  status: clientStatusSchema.optional(),
+  source: z.string().max(100).optional(),
 }).refine(
   data => !!(data.company_name?.trim() || data.last_name?.trim() || data.first_name?.trim()),
   { message: 'Le nom ou la raison sociale est requis.' }

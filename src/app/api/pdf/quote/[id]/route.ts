@@ -110,7 +110,7 @@ export async function GET(
     client = data as Client | null
   }
 
-  // 4. Also fetch notes_client and payment_conditions (not in QuoteWithItems by default)
+  // 4. Also fetch notes_client and payment_conditions
   const { data: quoteExtra } = await supabase
     .from('quotes')
     .select('notes_client, payment_conditions')

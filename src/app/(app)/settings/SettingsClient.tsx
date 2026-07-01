@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ActionMenu } from '@/components/shared';
 import {
-    Upload, Mail, Trash2, Plus, X, User, Building2, Users, Copy, Check, KeyRound, Save, Loader2, ImageIcon, Globe, Code2, ExternalLink, Inbox, Package, Layers, Wrench, ToggleLeft, ToggleRight, MessageSquare, RefreshCw, ShieldCheck, ChevronDown, Brain, Lock, RotateCcw, Edit3, ArrowUp
+    Upload, Mail, Trash2, Plus, X, User, Building2, Users, Copy, Check, KeyRound, Save, Loader2, ImageIcon, Globe, Code2, ExternalLink, Inbox, Package, Layers, Wrench, ToggleLeft, ToggleRight, MessageSquare, RefreshCw, ShieldCheck, ChevronDown, Brain, Lock, RotateCcw, Edit3, ArrowUp, FileText, Star
 } from 'lucide-react';
 import type { TeamMember } from '@/lib/data/queries/team';
 import type { OrgRole, AllPermissionsData, RoleWithPermissions } from '@/lib/data/queries/roles';
@@ -27,9 +27,18 @@ import ExportComptableModal from '@/components/ExportComptableModal';
 import { upsertEmailTemplate, resetEmailTemplate } from '@/lib/data/mutations/email-templates';
 import type { EmailTemplate, EmailTemplateSlug } from '@/lib/data/queries/emailTemplates';
 import type { WhatsAppConfig } from '@/lib/data/mutations/whatsapp';
+import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids';
+import MetalPriceGridsSettings from '@/components/settings/MetalPriceGridsSettings';
+import ClauseTemplatesSettings from '@/components/settings/ClauseTemplatesSettings';
+import SubscriptionTab from '@/components/settings/SubscriptionTab';
+import type { QuoteClauseTemplate } from '@/lib/data/queries/clause-templates';
+import type { OrganizationModules } from '@/lib/organization-modules';
 import type { CatalogLaborRate, CatalogMaterial, PrestationType } from '@/lib/data/queries/catalog';
+import type { Supplier } from '@/lib/data/queries/suppliers';
 import {
     BUSINESS_ACTIVITIES_BY_PROFILE,
+    getSecondaryActivityOptions,
+    normalizeSecondaryActivityIds,
     resolveBusinessSelection,
     type BusinessActivityId,
     type BusinessProfile,
@@ -85,6 +94,7 @@ type Props = {
     catalogMaterials: CatalogMaterial[];
     catalogLaborRates: CatalogLaborRate[];
     catalogPrestationTypes: PrestationType[];
+    suppliers: Supplier[];
     whatsappConfig: WhatsAppConfig | null;
     catalogContext: ResolvedCatalogContext;
     currentRoleSlug: string | null;
@@ -96,6 +106,13 @@ type Props = {
     canEditRoles: boolean;
     canEditOrg: boolean;
     initialTab: string;
+    initialMetalPriceGrids: MetalPriceGrid[];
+    hasMetalPricing: boolean;
+    initialClauseTemplates: QuoteClauseTemplate[];
+    organizationModules: OrganizationModules | null;
+    stripeLinkStarter: string | null;
+    stripeLinkPro: string | null;
+    stripeLinkExpert: string | null;
 };
 
 function PermissionCategoryAccordion({
@@ -153,7 +170,43 @@ function PermissionCategoryAccordion({
     )
 }
 
-export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab }: Props) {
+function SecondaryActivitiesSelector({
+    currentActivityId,
+    selected,
+    onChange,
+}: {
+    currentActivityId: BusinessActivityId | null
+    selected: BusinessActivityId[]
+    onChange: (next: BusinessActivityId[]) => void
+}) {
+    const others = getSecondaryActivityOptions(currentActivityId)
+    return (
+        <div className="space-y-2">
+            <p className="text-sm font-semibold text-primary">Vous faites aussi</p>
+            <p className="text-xs text-secondary">Optionnel — aide Sarah à mieux contextualiser vos devis sur vos autres activités.</p>
+            <div className="flex flex-wrap gap-2 pt-1">
+                {others.map((a) => {
+                    const checked = selected.includes(a.id)
+                    const cls = checked
+                        ? 'border-accent bg-accent/10 text-accent'
+                        : 'border-[var(--elevation-border)] bg-base dark:bg-white/[0.03] text-secondary hover:text-primary hover:border-accent/40'
+                    return (
+                        <button
+                            key={a.id}
+                            type="button"
+                            onClick={() => onChange(checked ? selected.filter((id) => id !== a.id) : [...selected, a.id])}
+                            className={'px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ' + cls}
+                        >
+                            {a.label}
+                        </button>
+                    )
+                })}
+            </div>
+        </div>
+    )
+}
+
+export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkStarter, stripeLinkPro, stripeLinkExpert }: Props) {
     const router = useRouter()
     const webhookUrl = supabaseUrl
         ? `${supabaseUrl}/functions/v1/whatsapp-webhook`
@@ -214,6 +267,10 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         businessProfile: organization?.business_profile,
     });
     const [openActivityProfile, setOpenActivityProfile] = useState<BusinessProfile>(initialBusinessSelection.businessProfile);
+    const [showSecondaryActivities, setShowSecondaryActivities] = useState<Partial<Record<BusinessProfile, boolean>>>({});
+    const [selectedSecondaryActivities, setSelectedSecondaryActivities] = useState<BusinessActivityId[]>(
+        normalizeSecondaryActivityIds(organization?.secondary_activity_ids, initialBusinessSelection.activity.id)
+    );
 
     const [companyDetails, setCompanyDetails] = useState({
         name: organization?.name ?? '',
@@ -301,6 +358,12 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         defaultQuoteValidityDays: organization?.default_quote_validity_days ?? 30,
     });
     const [autoReminderSaveStatus, setAutoReminderSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+    // ─── Sous-totaux par lot par défaut (migration 126) ──────────────────────
+    const [defaultShowSectionSubtotals, setDefaultShowSectionSubtotals] = useState<boolean>(
+        organization?.default_show_section_subtotals ?? false,
+    );
+    const [subtotalsSaveStatus, setSubtotalsSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
     // ─── Rapport mensuel auto aux membres individuels (migration 073) ──────────
     const [autoMemberReports, setAutoMemberReports] = useState<boolean>(
@@ -622,6 +685,22 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         });
     }
 
+    function handleSaveDefaultShowSectionSubtotals(nextValue: boolean) {
+        setDefaultShowSectionSubtotals(nextValue);
+        setSubtotalsSaveStatus('saving');
+        startTransition(async () => {
+            const result = await updateOrganization({ default_show_section_subtotals: nextValue });
+            if (result.error) {
+                setSubtotalsSaveStatus('error');
+                setDefaultShowSectionSubtotals(prev => !prev);
+                setTimeout(() => setSubtotalsSaveStatus('idle'), 3000);
+            } else {
+                setSubtotalsSaveStatus('saved');
+                setTimeout(() => setSubtotalsSaveStatus('idle'), 2000);
+            }
+        });
+    }
+
     function handleSaveAutoMemberReports(nextValue: boolean) {
         setAutoMemberReports(nextValue);
         setAutoMemberReportsSaveStatus('saving');
@@ -709,6 +788,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 city: companyDetails.city.trim() || null,
                 business_profile: selection.businessProfile,
                 business_activity_id: selection.activity.id,
+                secondary_activity_ids: selectedSecondaryActivities,
                 sector: selection.sectorLabel,
                 label_set: selection.profileConfig.labelSet,
                 unit_set: selection.profileConfig.unitSet,
@@ -1004,6 +1084,11 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 const profile = resolveBusinessSelection({ businessProfile: profileKey }).profileConfig
                                 const open = openActivityProfile === profileKey
                                 const selectedActivityInProfile = activities.find(activity => activity.id === companyDetails.business_activity)
+                                const tier1 = activities.filter((a) => a.tier === 1)
+                                const tier2 = activities.filter((a) => a.tier === 2)
+                                const showSecondary = showSecondaryActivities[profileKey] ?? false
+                                const selectedIsSecondary = tier2.some((a) => a.id === companyDetails.business_activity)
+                                const visibleActivities = showSecondary || selectedIsSecondary ? activities : tier1
                                 return (
                                     <div key={profileKey} className="rounded-2xl border border-[var(--elevation-border)] bg-surface dark:bg-white/[0.03] overflow-hidden">
                                         <button
@@ -1020,28 +1105,51 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                             <ChevronDown className={`w-4 h-4 text-secondary transition-transform ${open ? 'rotate-180' : ''}`} />
                                         </button>
                                         {open && (
-                                            <div className="px-3 pb-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                                                {activities.map((activity) => (
+                                            <div className="px-3 pb-3 space-y-2">
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                    {visibleActivities.map((activity) => (
+                                                        <button
+                                                            key={activity.id}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setSelectedSecondaryActivities((prev) => normalizeSecondaryActivityIds(prev, activity.id))
+                                                                setCompanyDetailsDirty({ ...companyDetails, business_activity: activity.id })
+                                                            }}
+                                                            className={`p-4 rounded-2xl border text-left transition-all ${
+                                                                companyDetails.business_activity === activity.id
+                                                                    ? 'border-accent bg-accent/10 text-primary'
+                                                                    : 'border-[var(--elevation-border)] bg-base dark:bg-white/[0.03] text-secondary hover:text-primary hover:border-accent/40'
+                                                            }`}
+                                                        >
+                                                            <span className="block text-sm font-semibold">{activity.label}</span>
+                                                            <span className="mt-1 block text-xs leading-relaxed opacity-80">{activity.description}</span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                {tier2.length > 0 && !showSecondary && !selectedIsSecondary && (
                                                     <button
-                                                        key={activity.id}
                                                         type="button"
-                                                        onClick={() => setCompanyDetailsDirty({ ...companyDetails, business_activity: activity.id })}
-                                                        className={`p-4 rounded-2xl border text-left transition-all ${
-                                                            companyDetails.business_activity === activity.id
-                                                                ? 'border-accent bg-accent/10 text-primary'
-                                                                : 'border-[var(--elevation-border)] bg-base dark:bg-white/[0.03] text-secondary hover:text-primary hover:border-accent/40'
-                                                        }`}
+                                                        onClick={() => setShowSecondaryActivities((prev) => ({ ...prev, [profileKey]: true }))}
+                                                        className="w-full py-2 text-xs text-secondary hover:text-primary transition-colors text-center"
                                                     >
-                                                        <span className="block text-sm font-semibold">{activity.label}</span>
-                                                        <span className="mt-1 block text-xs leading-relaxed opacity-80">{activity.description}</span>
+                                                        Voir d'autres activités ({tier2.length})
                                                     </button>
-                                                ))}
+                                                )}
                                             </div>
                                         )}
                                     </div>
                                 )
                             })}
                         </div>
+
+                        <SecondaryActivitiesSelector
+                            currentActivityId={companyDetails.business_activity as BusinessActivityId}
+                            selected={selectedSecondaryActivities}
+                            onChange={(next) => {
+                                setSelectedSecondaryActivities(next)
+                                setCompanyDetailsDirty({ ...companyDetails })
+                            }}
+                        />
 
                         <div className="rounded-xl border border-[var(--elevation-border)] bg-surface dark:bg-white/[0.03] p-4">
                             <p className="text-xs font-bold text-secondary uppercase tracking-wider mb-1">Activité de référence</p>
@@ -1331,6 +1439,90 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             );
         }
 
+        if (activeTab === 'devis') {
+            if (!canEditOrg) {
+                return (
+                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8">
+                        <p className="text-secondary text-sm">Vous n&apos;avez pas la permission de modifier ces paramètres.</p>
+                    </div>
+                )
+            }
+            return (
+                <div className="space-y-6">
+                    {/* Préférences devis */}
+                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-6">
+                        <div>
+                            <h2 className="text-2xl font-bold text-primary mb-1">Préférences devis</h2>
+                            <p className="text-sm text-secondary">Valeurs par défaut appliquées à la création de chaque nouveau devis.</p>
+                        </div>
+
+                        <div className="space-y-2">
+                            <p className="text-sm font-semibold text-primary">Validité par défaut</p>
+                            <p className="text-xs text-secondary">Pré-rempli à la création de chaque nouveau devis. Modifiable devis par devis dans l&apos;éditeur.</p>
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={365}
+                                    value={autoReminder.defaultQuoteValidityDays}
+                                    onChange={e => setAutoReminder(a => ({ ...a, defaultQuoteValidityDays: Math.min(365, Math.max(1, Number(e.target.value) || 30)) }))}
+                                    className="w-24 px-4 py-2.5 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all text-center tabular-nums font-bold"
+                                />
+                                <span className="text-sm text-secondary">jours</span>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-4 pt-2 border-t border-[var(--elevation-border)]">
+                            <div>
+                                <p className="text-sm font-semibold text-primary">Sous-totaux par lot</p>
+                                <p className="text-xs text-secondary">Affiche le montant HT de chaque section en bas de chaque lot sur le PDF. Modifiable devis par devis.</p>
+                                {subtotalsSaveStatus === 'saved' && <p className="text-xs text-green-500 font-medium mt-1">Préférence enregistrée.</p>}
+                                {subtotalsSaveStatus === 'error' && <p className="text-xs text-red-500 font-medium mt-1">Erreur lors de l&apos;enregistrement.</p>}
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={defaultShowSectionSubtotals}
+                                onClick={() => handleSaveDefaultShowSectionSubtotals(!defaultShowSectionSubtotals)}
+                                disabled={isPending || subtotalsSaveStatus === 'saving'}
+                                className={`relative flex-shrink-0 w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 ${defaultShowSectionSubtotals ? 'bg-accent' : 'bg-[var(--elevation-border)]'}`}
+                            >
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${defaultShowSectionSubtotals ? 'translate-x-6' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+
+                        <div className="flex justify-end pt-2">
+                            <button onClick={handleSaveAutoReminder} disabled={isPending || autoReminderSaveStatus === 'saving'}
+                                className={`px-8 py-3 rounded-full font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 ${autoReminderSaveStatus === 'saved' ? 'bg-green-500 text-white shadow-green-500/20' : autoReminderSaveStatus === 'error' ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-accent text-black shadow-accent/20'}`}>
+                                <Save className="w-4 h-4" />
+                                {autoReminderSaveStatus === 'saving' ? 'Enregistrement...' : autoReminderSaveStatus === 'saved' ? 'Enregistré !' : autoReminderSaveStatus === 'error' ? 'Erreur' : 'Enregistrer'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Grilles matières métaux */}
+                    {hasMetalPricing && (
+                        <div id="metal-prices" className="rounded-3xl card transition-all duration-300 ease-out p-8">
+                            <h2 className="text-2xl font-bold text-primary mb-2">Prix matières métaux</h2>
+                            <p className="text-sm text-secondary mb-6">
+                                Configurez vos grilles matières avec une source de prix, une matière catalogue et, si utile, un fournisseur. Elles pré-remplissent les lignes matière dans vos devis à partir des cours indicatifs ou d&apos;un prix fixe.
+                            </p>
+                            <MetalPriceGridsSettings
+                                initialGrids={initialMetalPriceGrids}
+                                materials={catalogMaterials}
+                                suppliers={suppliers}
+                            />
+                        </div>
+                    )}
+
+                    {/* Clauses réutilisables */}
+                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8">
+                        <ClauseTemplatesSettings initialClauses={initialClauseTemplates} />
+                    </div>
+                </div>
+            )
+        }
+
         if (activeTab === 'equipe') {
             return (
                 <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8 relative">
@@ -1366,46 +1558,46 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         )}
                     </div>
 
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="border-b border-[var(--elevation-border)]">
-                                    <th className="pb-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Membre</th>
-                                    <th className="pb-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Poste</th>
-                                    <th className="pb-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Rôle</th>
-                                    <th className="pb-4 w-10"></th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-[var(--elevation-border)]">
+                    <div>
+                        {/* En-têtes desktop uniquement */}
+                        <div className="hidden sm:grid sm:grid-cols-[1fr_auto_auto_auto] gap-4 pb-3 border-b border-[var(--elevation-border)]">
+                            <span className="text-sm font-bold text-secondary uppercase tracking-wider">Membre</span>
+                            <span className="text-sm font-bold text-secondary uppercase tracking-wider">Poste</span>
+                            <span className="text-sm font-bold text-secondary uppercase tracking-wider">Rôle</span>
+                            <span className="w-8"></span>
+                        </div>
+                        <div className="divide-y divide-[var(--elevation-border)]">
                                 {members.length === 0 ? (
-                                    <tr>
-                                        <td colSpan={4} className="py-8 text-center text-secondary text-sm">
-                                            Aucun membre pour l&#39;instant.
-                                        </td>
-                                    </tr>
+                                    <p className="py-8 text-center text-secondary text-sm">Aucun membre pour l&apos;instant.</p>
                                 ) : members.map((member) => {
                                     const initials = (member.full_name ?? member.email)
                                         .split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase();
+                                    const displayRoleName = member.role_slug === 'owner' ? 'Propriétaire' : member.role_name;
                                     return (
-                                        <tr key={member.membership_id} className="group">
-                                            <td className="py-4">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold text-sm flex-shrink-0">
-                                                        {initials}
-                                                    </div>
-                                                    <div>
-                                                        <p className="font-bold text-primary">{member.full_name ?? member.email}</p>
-                                                        {member.full_name && <p className="text-xs text-secondary">{member.email}</p>}
-                                                    </div>
+                                        <div key={member.membership_id} className="py-4 flex flex-col sm:grid sm:grid-cols-[1fr_auto_auto_auto] sm:items-center gap-2 sm:gap-4">
+                                            {/* Identité */}
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold text-sm flex-shrink-0">
+                                                    {initials}
                                                 </div>
-                                            </td>
-                                            <td className="py-4 text-sm text-secondary">
-                                                {member.job_title ?? <span className="text-secondary/40">/</span>}
-                                            </td>
-                                            <td className="py-4">
+                                                <div className="min-w-0">
+                                                    <p className="font-bold text-primary truncate">{member.full_name ?? member.email}</p>
+                                                    {member.full_name && <p className="text-xs text-secondary truncate">{member.email}</p>}
+                                                </div>
+                                            </div>
+                                            {/* Poste + Rôle sur mobile : même ligne */}
+                                            <div className="flex items-center gap-2 pl-13 sm:pl-0 sm:contents">
+                                                <span className="text-sm text-secondary sm:hidden font-medium">
+                                                    {member.job_title ?? <span className="text-secondary/40">/</span>}
+                                                </span>
+                                                {/* Poste desktop */}
+                                                <span className="hidden sm:block text-sm text-secondary whitespace-nowrap">
+                                                    {member.job_title ?? <span className="text-secondary/40">/</span>}
+                                                </span>
+                                                {/* Rôle */}
                                                 {(member.role_slug === 'owner' || !canEditRoles) ? (
-                                                    <span className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-accent/10 text-accent border border-accent/20">
-                                                        {member.role_name}
+                                                    <span className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-accent/10 text-accent border border-accent/20 whitespace-nowrap">
+                                                        {displayRoleName}
                                                     </span>
                                                 ) : (
                                                     <select
@@ -1419,8 +1611,22 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                                         ))}
                                                     </select>
                                                 )}
-                                            </td>
-                                            <td className="py-4 text-right">
+                                                {/* Action menu mobile (dans la même ligne) */}
+                                                <div className="sm:hidden ml-auto">
+                                                    {canRemoveMembers && member.role_slug !== 'owner' && (
+                                                        <ActionMenu actions={[
+                                                            {
+                                                                label: "Retirer l'accès",
+                                                                icon: <Trash2 className="w-4 h-4" />,
+                                                                danger: true,
+                                                                onClick: () => handleRemove(member.membership_id),
+                                                            },
+                                                        ]} />
+                                                    )}
+                                                </div>
+                                            </div>
+                                            {/* Action menu desktop */}
+                                            <div className="hidden sm:block text-right">
                                                 {canRemoveMembers && member.role_slug !== 'owner' && (
                                                     <ActionMenu actions={[
                                                         {
@@ -1431,12 +1637,11 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                                         },
                                                     ]} />
                                                 )}
-                                            </td>
-                                        </tr>
+                                            </div>
+                                        </div>
                                     );
                                 })}
-                            </tbody>
-                        </table>
+                        </div>
                     </div>
 
                     {/* Modal invitation email */}
@@ -1699,21 +1904,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                             <Plus className="w-3.5 h-3.5" />Ajouter
                                         </button>
                                     )}
-                                </div>
-                            </div>
-                            <div className="space-y-2 pt-2">
-                                <p className="text-sm font-semibold text-primary">Validité des devis par défaut</p>
-                                <p className="text-xs text-secondary">Pré-rempli à la création de chaque nouveau devis. Modifiable devis par devis dans l&apos;éditeur.</p>
-                                <div className="flex items-center gap-3">
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        max={365}
-                                        value={autoReminder.defaultQuoteValidityDays}
-                                        onChange={e => setAutoReminder(a => ({ ...a, defaultQuoteValidityDays: Math.min(365, Math.max(1, Number(e.target.value) || 30)) }))}
-                                        className="w-24 px-4 py-2.5 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all text-center tabular-nums font-bold"
-                                    />
-                                    <span className="text-sm text-secondary">jours</span>
                                 </div>
                             </div>
                             <p className="text-xs text-secondary bg-base dark:bg-white/5 rounded-xl px-4 py-3">
@@ -3067,6 +3257,19 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             )
         }
 
+        if (activeTab === 'abonnement') {
+            return (
+                <div className="rounded-3xl card p-8">
+                    <SubscriptionTab
+                        modules={organizationModules ?? {} as OrganizationModules}
+                        stripeLinkStarter={stripeLinkStarter}
+                        stripeLinkPro={stripeLinkPro}
+                        stripeLinkExpert={stripeLinkExpert}
+                    />
+                </div>
+            )
+        }
+
         return null;
     };
 
@@ -3082,7 +3285,10 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 <div className="w-full lg:w-64 flex-shrink-0 space-y-2">
                     <button onClick={() => setActiveTab('profil')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'profil' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><User className="w-5 h-5" />Mon profil</button>
                     {canEditOrg && (
+                        <>
                         <button onClick={() => setActiveTab('entreprise')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'entreprise' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Building2 className="w-5 h-5" />Entreprise</button>
+                        <button onClick={() => setActiveTab('devis')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'devis' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><FileText className="w-5 h-5" />Devis</button>
+                        </>
                     )}
                     <button onClick={() => setActiveTab('equipe')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'equipe' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Users className="w-5 h-5" />Équipe</button>
                     {canEditRoles && (
@@ -3094,6 +3300,9 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     <button onClick={() => setActiveTab('formulaire')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'formulaire' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Inbox className="w-5 h-5" />Formulaire public</button>
                     <button onClick={() => setActiveTab('whatsapp')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'whatsapp' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><MessageSquare className="w-5 h-5 text-green-500" />Agent WhatsApp</button>
                     <button onClick={() => setActiveTab('securite')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'securite' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Lock className="w-5 h-5" />Sécurité</button>
+                    {currentRoleSlug === 'owner' && (
+                        <button onClick={() => setActiveTab('abonnement')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'abonnement' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Star className="w-5 h-5" />Abonnement</button>
+                    )}
                 </div>
                 <div className="flex-1">{renderContent()}</div>
             </div>

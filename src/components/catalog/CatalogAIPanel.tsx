@@ -33,7 +33,7 @@ const KIND_LABELS: Record<string, string> = {
 
 const KIND_COLORS: Record<string, string> = {
   material: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
-  service: 'bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20',
+  service: 'bg-violet-500/10 text-violet-600 dark:text-accent border-violet-500/20',
   labor_rate: 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20',
   prestation_type: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20',
   supplier: 'bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-500/20',
@@ -78,6 +78,8 @@ function getItemCategory(item: CatalogDraftItem): string | null | undefined {
 function getCompactTabLabel(label: string): string {
   return label.trim().split(/\s+/)[0] || label
 }
+
+import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 
 type Props = {
   open: boolean
@@ -254,15 +256,28 @@ export default function CatalogAIPanel({
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto animate-in fade-in duration-300" onClick={onClose} />
       {/* Panel */}
-      <div className="absolute bottom-6 right-6 w-full max-w-[480px] flex flex-col rounded-3xl shadow-2xl overflow-hidden border border-[var(--elevation-border)] animate-in slide-in-from-bottom-4 fade-in duration-300 bg-white dark:bg-[#111118] pointer-events-auto"
-        style={{ maxHeight: 'calc(100dvh - 5rem)' }}
+      <div
+        className="absolute bottom-6 left-6 right-6 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 w-full max-w-[480px] flex flex-col rounded-3xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 pointer-events-auto"
+        style={{
+          maxHeight: 'calc(100dvh - 5rem)',
+          background: 'var(--sarah-panel-bg)',
+          backdropFilter: 'blur(var(--sarah-panel-blur, 0px)) saturate(1.4)',
+          WebkitBackdropFilter: 'blur(var(--sarah-panel-blur, 0px)) saturate(1.4)',
+          border: '1px solid var(--sarah-panel-border)',
+          boxShadow: 'var(--sarah-panel-shadow)',
+          color: 'rgb(var(--text-primary))',
+        }}
       >
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--elevation-border)] flex-shrink-0 bg-gradient-to-r from-violet-500/10 to-indigo-500/10">
+      <div
+        className="flex items-center justify-between px-5 py-3.5 flex-shrink-0"
+        style={{
+          background: 'linear-gradient(to bottom, var(--sarah-header-top), var(--sarah-header-bot))',
+          borderBottom: '1px solid var(--sarah-divider)',
+        }}
+      >
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm text-white text-[10px] font-bold">
-            L
-          </div>
+          <AssistantAvatar assistant="lea" size={28} className="!rounded-lg" />
           <div>
             <p className="font-bold text-primary text-sm">Léa <span className="font-normal text-secondary">, assistante catalogue</span></p>
             <p className="text-xs text-secondary">Dictez, écrivez ou importez un document</p>
@@ -305,7 +320,7 @@ export default function CatalogAIPanel({
                   <button
                     onClick={isRecording ? stopRecording : startRecording}
                     disabled={isTranscribing}
-                    className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-gradient-to-br from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700'} disabled:opacity-50`}
+                    className={`w-16 h-16 rounded-full flex items-center justify-center transition-all disabled:opacity-50 ${isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'btn-primary'}`}
                   >
                     {isTranscribing ? <Loader2 className="w-6 h-6 text-white animate-spin" /> : isRecording ? <MicOff className="w-6 h-6 text-white" /> : <Mic className="w-6 h-6 text-white" />}
                   </button>
@@ -330,7 +345,8 @@ export default function CatalogAIPanel({
                   onChange={e => setText(e.target.value)}
                   placeholder="Ex: tôle acier S235 2mm plaque 1m×1m 25,50€ achat marge 40%, service découpe laser au ml à 8€, fournisseur ArcelorMittal contact Paul 0612345678…"
                   rows={8}
-                  className="min-h-[11rem] max-h-[22rem] overflow-y-auto p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-xs resize-y focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
+                  className="min-h-[11rem] max-h-[22rem] overflow-y-auto p-3 rounded-xl text-primary text-xs resize-y focus:outline-none leading-relaxed placeholder:text-secondary/50"
+                  style={fieldStyle}
                 />
               </div>
             )}
@@ -350,11 +366,12 @@ export default function CatalogAIPanel({
                         onChange={e => setPresetsDescription(e.target.value)}
                         placeholder="Ex: on fait surtout des rénovations de salles de bain et des dépannages plomberie urgents…"
                         rows={3}
-                        className="p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-xs resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
+                        className="p-3 rounded-xl text-primary text-xs resize-none focus:outline-none leading-relaxed placeholder:text-secondary/50"
+                        style={fieldStyle}
                       />
                     </div>
-                    <div className="flex items-center gap-2 p-3 rounded-xl bg-violet-500/5 border border-violet-500/10">
-                      <Wand2 className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
+                    <div className="flex items-center gap-2 p-3 rounded-xl bg-[rgb(var(--accent-primary))/5] border border-[rgb(var(--accent-primary))/15]" style={{ background: 'rgb(var(--accent-primary) / 0.05)', borderColor: 'rgb(var(--accent-primary) / 0.15)' }}>
+                      <Wand2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'rgb(var(--accent-primary))' }} />
                       <p className="text-xs text-secondary">Léa propose 5 à 8 {bundlePluralLower}. Passez-les en revue et supprimez ce qui ne convient pas.</p>
                     </div>
                   </>
@@ -374,7 +391,8 @@ export default function CatalogAIPanel({
                       onChange={e => setPresetsDescription(e.target.value)}
                       placeholder="Ex: je veux un modèle de devis pour la pose d&apos;un tableau électrique 13 modules avec remplacement des disjoncteurs, environ 4h de main-d&apos;oeuvre, TVA 10%…"
                       rows={6}
-                      className="p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-xs resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/30 leading-relaxed placeholder:text-secondary/50"
+                      className="p-3 rounded-xl text-primary text-xs resize-none focus:outline-none leading-relaxed placeholder:text-secondary/50"
+                      style={fieldStyle}
                     />
                   </>
                 )}
@@ -387,7 +405,7 @@ export default function CatalogAIPanel({
                 <p className="text-xs text-secondary">PDF, PNG ou JPEG - cahier des charges, catalogue fournisseur, modèle papier scanné…</p>
                 {!file ? (
                   <div
-                    className="border-2 border-dashed border-[var(--elevation-border)] rounded-xl flex flex-col items-center justify-center gap-3 py-8 text-secondary hover:border-violet-400/50 hover:bg-violet-500/5 transition-all cursor-pointer"
+                    className="border-2 border-dashed border-[var(--elevation-border)] rounded-xl flex flex-col items-center justify-center gap-3 py-8 text-secondary hover:border-accent/40 hover:bg-accent/5 transition-all cursor-pointer"
                     onClick={() => fileInputRef.current?.click()}
                     onDragOver={e => e.preventDefault()}
                     onDrop={e => {
@@ -398,12 +416,12 @@ export default function CatalogAIPanel({
                     }}
                   >
                     <input ref={fileInputRef} type="file" accept={ACCEPTED_FILE_TYPES} className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) { setFile(f); setError(null) } }} />
-                    <Upload className="w-5 h-5 text-violet-400" />
+                    <Upload className="w-5 h-5 text-accent" />
                     <p className="text-xs text-center"><span className="font-semibold text-primary">Glissez un document</span><br />ou cliquez pour sélectionner</p>
                   </div>
                 ) : (
                   <div className="flex items-center gap-3 p-3 rounded-xl bg-black/5 dark:bg-white/5 border border-[var(--elevation-border)]">
-                    <FileText className="w-5 h-5 text-violet-500 flex-shrink-0" />
+                    <FileText className="w-5 h-5 text-accent flex-shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-primary truncate">{file.name}</p>
                       <p className="text-xs text-secondary">{(file.size / 1024).toFixed(0)} Ko</p>
@@ -425,7 +443,7 @@ export default function CatalogAIPanel({
               type="button"
               onClick={handleAnalyze}
               disabled={!canAnalyze || isAnalyzing}
-              className="w-full min-h-11 overflow-hidden px-4 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold text-sm hover:from-violet-600 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+              className="w-full min-h-11 overflow-hidden px-4 py-3 rounded-xl btn-primary flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {isAnalyzing ? (
                 <span className="inline-flex min-w-0 max-w-full items-center justify-center gap-2">
@@ -480,7 +498,7 @@ export default function CatalogAIPanel({
                   setPresetsCustomMode(true)
                   setPresetsDescription('')
                 }}
-                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-[var(--elevation-border)] text-xs text-secondary hover:text-primary hover:border-violet-400/40 hover:bg-violet-500/5 transition-all"
+                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-[var(--elevation-border)] text-xs text-secondary hover:text-primary hover:border-accent/30 hover:bg-accent/5 transition-all"
               >
                 <PenLine className="w-3.5 h-3.5" />
                 Ces {bundlePluralLower} ne me conviennent pas, décrire un {bundleSingularLower} précis
@@ -536,7 +554,7 @@ export default function CatalogAIPanel({
             type="button"
             onClick={handleCreateAll}
             disabled={isCreating || items.length === 0}
-            className="w-full min-h-11 overflow-hidden px-4 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-bold text-sm hover:from-violet-600 hover:to-indigo-700 disabled:opacity-60 transition-colors flex items-center justify-center"
+            className="w-full min-h-11 overflow-hidden px-4 py-3 rounded-xl btn-primary flex items-center justify-center disabled:opacity-60"
           >
             {isCreating
               ? (
@@ -640,8 +658,17 @@ function ItemReviewCard({
 
 // ─── Helpers champs ────────────────────────────────────────────────────────────
 
-const fieldCls = 'w-full px-2.5 py-1.5 rounded-lg bg-base dark:bg-white/5 border border-[var(--elevation-border)] text-primary text-xs focus:outline-none focus:ring-1 focus:ring-violet-400/50'
-const lowFieldCls = 'w-full px-2.5 py-1.5 rounded-lg bg-amber-500/5 border border-amber-400/40 text-primary text-xs focus:outline-none focus:ring-1 focus:ring-amber-400/50'
+const fieldCls = 'w-full px-2.5 py-1.5 rounded-lg text-primary text-xs focus:outline-none focus:ring-1 focus:ring-accent/40'
+const fieldStyle: React.CSSProperties = {
+  background: 'var(--sarah-input-bg)',
+  border: '1px solid var(--sarah-input-border)',
+  boxShadow: 'var(--sarah-input-shadow)',
+}
+const lowFieldCls = 'w-full px-2.5 py-1.5 rounded-lg text-primary text-xs focus:outline-none focus:ring-1 focus:ring-amber-400/50'
+const lowFieldStyle: React.CSSProperties = {
+  background: 'rgb(245 158 11 / 0.05)',
+  border: '1px solid rgb(251 191 36 / 0.4)',
+}
 const labelCls = 'text-[10px] font-semibold text-secondary uppercase tracking-wide'
 
 function isLow(item: CatalogDraftItem, field: string) {
@@ -668,17 +695,17 @@ function MaterialFields({ item, patch }: { item: CatalogDraftMaterial; patch: (f
     <>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Désignation" low={isLow(item, 'name')}>
-          <input value={item.name} onChange={e => patch('name', e.target.value)} className={isLow(item, 'name') ? lowFieldCls : fieldCls} />
+          <input value={item.name} onChange={e => patch('name', e.target.value)} className={isLow(item, 'name') ? lowFieldCls : fieldCls} style={isLow(item, 'name') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="Référence">
-          <input value={item.reference ?? ''} onChange={e => patch('reference', e.target.value || null)} className={fieldCls} placeholder="auto" />
+          <input value={item.reference ?? ''} onChange={e => patch('reference', e.target.value || null)} className={fieldCls} style={fieldStyle} placeholder="auto" />
         </Field>
         <Field label="Catégorie" low={isLow(item, 'category')}>
           <input
             list={`cat-list-${item.kind}`}
             value={item.category ?? ''}
             onChange={e => patch('category', e.target.value || null)}
-            className={isLow(item, 'category') ? lowFieldCls : fieldCls}
+            className={isLow(item, 'category') ? lowFieldCls : fieldCls} style={isLow(item, 'category') ? lowFieldStyle : fieldStyle}
             placeholder="Ex: Fournitures chantier"
           />
           <datalist id={`cat-list-${item.kind}`}>
@@ -686,14 +713,14 @@ function MaterialFields({ item, patch }: { item: CatalogDraftMaterial; patch: (f
           </datalist>
         </Field>
         <Field label="Unité" low={isLow(item, 'unit')}>
-          <input value={item.unit} onChange={e => patch('unit', e.target.value)} className={isLow(item, 'unit') ? lowFieldCls : fieldCls} />
+          <input value={item.unit} onChange={e => patch('unit', e.target.value)} className={isLow(item, 'unit') ? lowFieldCls : fieldCls} style={isLow(item, 'unit') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="Coût achat HT (€)" low={isLow(item, 'purchase_price')}>
           <input
             type="number" step="0.01"
             value={item.purchase_price ?? ''}
             onChange={e => patch('purchase_price', parseFloat(e.target.value) || null)}
-            className={isLow(item, 'purchase_price') ? lowFieldCls : fieldCls}
+            className={isLow(item, 'purchase_price') ? lowFieldCls : fieldCls} style={isLow(item, 'purchase_price') ? lowFieldStyle : fieldStyle}
             placeholder="0.00"
           />
         </Field>
@@ -702,7 +729,7 @@ function MaterialFields({ item, patch }: { item: CatalogDraftMaterial; patch: (f
             type="number" step="1"
             value={item.margin_rate ?? ''}
             onChange={e => patch('margin_rate', parseFloat(e.target.value) || 0)}
-            className={isLow(item, 'margin_rate') ? lowFieldCls : fieldCls}
+            className={isLow(item, 'margin_rate') ? lowFieldCls : fieldCls} style={isLow(item, 'margin_rate') ? lowFieldStyle : fieldStyle}
             placeholder="0"
           />
         </Field>
@@ -711,24 +738,24 @@ function MaterialFields({ item, patch }: { item: CatalogDraftMaterial; patch: (f
             type="number" step="0.01"
             value={computedSale}
             onChange={e => patch('sale_price', parseFloat(e.target.value) || null)}
-            className={isLow(item, 'sale_price') ? lowFieldCls : fieldCls}
+            className={isLow(item, 'sale_price') ? lowFieldCls : fieldCls} style={isLow(item, 'sale_price') ? lowFieldStyle : fieldStyle}
             placeholder="calculé auto"
           />
         </Field>
         <Field label="TVA (%)" low={isLow(item, 'vat_rate')}>
-          <select value={item.vat_rate} onChange={e => patch('vat_rate', parseFloat(e.target.value))} className={`${isLow(item, 'vat_rate') ? lowFieldCls : fieldCls} appearance-none`}>
+          <select value={item.vat_rate} onChange={e => patch('vat_rate', parseFloat(e.target.value))} className={`${isLow(item, 'vat_rate') ? lowFieldCls : fieldCls} appearance-none`} style={isLow(item, 'vat_rate') ? lowFieldStyle : fieldStyle}>
             {[0, 5.5, 10, 20].map(r => <option key={r} value={r}>{r}%</option>)}
           </select>
         </Field>
       </div>
       <Field label="Mode tarification" low={isLow(item, 'dimension_pricing_mode')}>
-        <select value={item.dimension_pricing_mode ?? 'none'} onChange={e => patch('dimension_pricing_mode', e.target.value)} className={`${isLow(item, 'dimension_pricing_mode') ? lowFieldCls : fieldCls} appearance-none`}>
+        <select value={item.dimension_pricing_mode ?? 'none'} onChange={e => patch('dimension_pricing_mode', e.target.value)} className={`${isLow(item, 'dimension_pricing_mode') ? lowFieldCls : fieldCls} appearance-none`} style={isLow(item, 'dimension_pricing_mode') ? lowFieldStyle : fieldStyle}>
           {Object.entries(DIM_MODE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
       </Field>
       {item.supplier_name != null && (
         <Field label="Fournisseur">
-          <input value={item.supplier_name} onChange={e => patch('supplier_name', e.target.value || null)} className={fieldCls} />
+          <input value={item.supplier_name} onChange={e => patch('supplier_name', e.target.value || null)} className={fieldCls} style={fieldStyle} />
         </Field>
       )}
     </>
@@ -740,10 +767,10 @@ function LaborRateFields({ item, patch }: { item: CatalogDraftLaborRate; patch: 
     <>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Désignation" low={isLow(item, 'designation')}>
-          <input value={item.designation} onChange={e => patch('designation', e.target.value)} className={isLow(item, 'designation') ? lowFieldCls : fieldCls} />
+          <input value={item.designation} onChange={e => patch('designation', e.target.value)} className={isLow(item, 'designation') ? lowFieldCls : fieldCls} style={isLow(item, 'designation') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="Type" low={isLow(item, 'type')}>
-          <select value={item.type} onChange={e => patch('type', e.target.value)} className={`${isLow(item, 'type') ? lowFieldCls : fieldCls} appearance-none`}>
+          <select value={item.type} onChange={e => patch('type', e.target.value)} className={`${isLow(item, 'type') ? lowFieldCls : fieldCls} appearance-none`} style={isLow(item, 'type') ? lowFieldStyle : fieldStyle}>
             {Object.entries(LABOR_TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </Field>
@@ -752,7 +779,7 @@ function LaborRateFields({ item, patch }: { item: CatalogDraftLaborRate; patch: 
             list="cat-list-labor_rate"
             value={item.category ?? ''}
             onChange={e => patch('category', e.target.value || null)}
-            className={fieldCls}
+            className={fieldCls} style={fieldStyle}
             placeholder="Ex: Taux chantier"
           />
           <datalist id="cat-list-labor_rate">
@@ -760,16 +787,16 @@ function LaborRateFields({ item, patch }: { item: CatalogDraftLaborRate; patch: 
           </datalist>
         </Field>
         <Field label="Unité" low={isLow(item, 'unit')}>
-          <input value={item.unit} onChange={e => patch('unit', e.target.value)} className={isLow(item, 'unit') ? lowFieldCls : fieldCls} />
+          <input value={item.unit} onChange={e => patch('unit', e.target.value)} className={isLow(item, 'unit') ? lowFieldCls : fieldCls} style={isLow(item, 'unit') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="Coût interne (€)" low={isLow(item, 'cost_rate')}>
-          <input type="number" step="0.01" value={item.cost_rate ?? ''} onChange={e => patch('cost_rate', parseFloat(e.target.value) || null)} className={isLow(item, 'cost_rate') ? lowFieldCls : fieldCls} placeholder="0.00" />
+          <input type="number" step="0.01" value={item.cost_rate ?? ''} onChange={e => patch('cost_rate', parseFloat(e.target.value) || null)} className={isLow(item, 'cost_rate') ? lowFieldCls : fieldCls} style={isLow(item, 'cost_rate') ? lowFieldStyle : fieldStyle} placeholder="0.00" />
         </Field>
         <Field label="Taux facturation (€)" low={isLow(item, 'rate')}>
-          <input type="number" step="0.01" value={item.rate ?? ''} onChange={e => patch('rate', parseFloat(e.target.value) || 0)} className={isLow(item, 'rate') ? lowFieldCls : fieldCls} placeholder="0.00" />
+          <input type="number" step="0.01" value={item.rate ?? ''} onChange={e => patch('rate', parseFloat(e.target.value) || 0)} className={isLow(item, 'rate') ? lowFieldCls : fieldCls} style={isLow(item, 'rate') ? lowFieldStyle : fieldStyle} placeholder="0.00" />
         </Field>
         <Field label="TVA (%)" low={isLow(item, 'vat_rate')}>
-          <select value={item.vat_rate} onChange={e => patch('vat_rate', parseFloat(e.target.value))} className={`${isLow(item, 'vat_rate') ? lowFieldCls : fieldCls} appearance-none`}>
+          <select value={item.vat_rate} onChange={e => patch('vat_rate', parseFloat(e.target.value))} className={`${isLow(item, 'vat_rate') ? lowFieldCls : fieldCls} appearance-none`} style={isLow(item, 'vat_rate') ? lowFieldStyle : fieldStyle}>
             {[0, 5.5, 10, 20].map(r => <option key={r} value={r}>{r}%</option>)}
           </select>
         </Field>
@@ -787,29 +814,29 @@ function PrestationTypeFields({ item, patch, patchNested }: {
     <>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Nom" low={isLow(item, 'name')}>
-          <input value={item.name} onChange={e => patch('name', e.target.value)} className={isLow(item, 'name') ? lowFieldCls : fieldCls} />
+          <input value={item.name} onChange={e => patch('name', e.target.value)} className={isLow(item, 'name') ? lowFieldCls : fieldCls} style={isLow(item, 'name') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="Catégorie">
-          <input value={item.category ?? ''} onChange={e => patch('category', e.target.value || null)} className={fieldCls} />
+          <input value={item.category ?? ''} onChange={e => patch('category', e.target.value || null)} className={fieldCls} style={fieldStyle} />
         </Field>
         <Field label="Unité" low={isLow(item, 'unit')}>
-          <input value={item.unit} onChange={e => patch('unit', e.target.value)} className={isLow(item, 'unit') ? lowFieldCls : fieldCls} />
+          <input value={item.unit} onChange={e => patch('unit', e.target.value)} className={isLow(item, 'unit') ? lowFieldCls : fieldCls} style={isLow(item, 'unit') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="TVA (%)" low={isLow(item, 'vat_rate')}>
-          <select value={item.vat_rate} onChange={e => patch('vat_rate', parseFloat(e.target.value))} className={`${isLow(item, 'vat_rate') ? lowFieldCls : fieldCls} appearance-none`}>
+          <select value={item.vat_rate} onChange={e => patch('vat_rate', parseFloat(e.target.value))} className={`${isLow(item, 'vat_rate') ? lowFieldCls : fieldCls} appearance-none`} style={isLow(item, 'vat_rate') ? lowFieldStyle : fieldStyle}>
             {[0, 5.5, 10, 20].map(r => <option key={r} value={r}>{r}%</option>)}
           </select>
         </Field>
         <Field label="Prix HT (€)" low={isLow(item, 'base_price_ht')}>
-          <input type="number" step="0.01" value={item.base_price_ht ?? ''} onChange={e => patch('base_price_ht', parseFloat(e.target.value) || 0)} className={isLow(item, 'base_price_ht') ? lowFieldCls : fieldCls} placeholder="0.00" />
+          <input type="number" step="0.01" value={item.base_price_ht ?? ''} onChange={e => patch('base_price_ht', parseFloat(e.target.value) || 0)} className={isLow(item, 'base_price_ht') ? lowFieldCls : fieldCls} style={isLow(item, 'base_price_ht') ? lowFieldStyle : fieldStyle} placeholder="0.00" />
         </Field>
         <Field label="Coût HT (€)" low={isLow(item, 'base_cost_ht')}>
-          <input type="number" step="0.01" value={item.base_cost_ht ?? ''} onChange={e => patch('base_cost_ht', parseFloat(e.target.value) || 0)} className={isLow(item, 'base_cost_ht') ? lowFieldCls : fieldCls} placeholder="0.00" />
+          <input type="number" step="0.01" value={item.base_cost_ht ?? ''} onChange={e => patch('base_cost_ht', parseFloat(e.target.value) || 0)} className={isLow(item, 'base_cost_ht') ? lowFieldCls : fieldCls} style={isLow(item, 'base_cost_ht') ? lowFieldStyle : fieldStyle} placeholder="0.00" />
         </Field>
       </div>
       {item.description !== undefined && (
         <Field label="Description">
-          <input value={item.description ?? ''} onChange={e => patch('description', e.target.value || null)} className={fieldCls} />
+          <input value={item.description ?? ''} onChange={e => patch('description', e.target.value || null)} className={fieldCls} style={fieldStyle} />
         </Field>
       )}
       {item.lines && item.lines.length > 0 && (
@@ -817,10 +844,10 @@ function PrestationTypeFields({ item, patch, patchNested }: {
           <p className={labelCls}>{item.lines.length} ligne{item.lines.length > 1 ? 's' : ''}</p>
           {item.lines.map((line, i) => (
             <div key={i} className="grid grid-cols-[1fr_60px_60px_80px] gap-1">
-              <input value={line.designation} onChange={e => patchNested('lines', i, 'designation', e.target.value)} className={fieldCls} placeholder="Désignation" />
-              <input type="number" step="0.01" value={line.quantity} onChange={e => patchNested('lines', i, 'quantity', parseFloat(e.target.value) || 1)} className={fieldCls} placeholder="Qté" />
-              <input value={line.unit} onChange={e => patchNested('lines', i, 'unit', e.target.value)} className={fieldCls} placeholder="Unité" />
-              <input type="number" step="0.01" value={line.unit_price_ht ?? ''} onChange={e => patchNested('lines', i, 'unit_price_ht', parseFloat(e.target.value) || null)} className={fieldCls} placeholder="Prix €" />
+              <input value={line.designation} onChange={e => patchNested('lines', i, 'designation', e.target.value)} className={fieldCls} style={fieldStyle} placeholder="Désignation" />
+              <input type="number" step="0.01" value={line.quantity} onChange={e => patchNested('lines', i, 'quantity', parseFloat(e.target.value) || 1)} className={fieldCls} style={fieldStyle} placeholder="Qté" />
+              <input value={line.unit} onChange={e => patchNested('lines', i, 'unit', e.target.value)} className={fieldCls} style={fieldStyle} placeholder="Unité" />
+              <input type="number" step="0.01" value={line.unit_price_ht ?? ''} onChange={e => patchNested('lines', i, 'unit_price_ht', parseFloat(e.target.value) || null)} className={fieldCls} style={fieldStyle} placeholder="Prix €" />
             </div>
           ))}
         </div>
@@ -834,26 +861,26 @@ function SupplierFields({ item, patch }: { item: CatalogDraftSupplier; patch: (f
     <>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Nom" low={isLow(item, 'name')}>
-          <input value={item.name} onChange={e => patch('name', e.target.value)} className={isLow(item, 'name') ? lowFieldCls : fieldCls} />
+          <input value={item.name} onChange={e => patch('name', e.target.value)} className={isLow(item, 'name') ? lowFieldCls : fieldCls} style={isLow(item, 'name') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="Contact" low={isLow(item, 'contact_name')}>
-          <input value={item.contact_name ?? ''} onChange={e => patch('contact_name', e.target.value || null)} className={isLow(item, 'contact_name') ? lowFieldCls : fieldCls} />
+          <input value={item.contact_name ?? ''} onChange={e => patch('contact_name', e.target.value || null)} className={isLow(item, 'contact_name') ? lowFieldCls : fieldCls} style={isLow(item, 'contact_name') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="Email" low={isLow(item, 'email')}>
-          <input type="email" value={item.email ?? ''} onChange={e => patch('email', e.target.value || null)} className={isLow(item, 'email') ? lowFieldCls : fieldCls} />
+          <input type="email" value={item.email ?? ''} onChange={e => patch('email', e.target.value || null)} className={isLow(item, 'email') ? lowFieldCls : fieldCls} style={isLow(item, 'email') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="Téléphone" low={isLow(item, 'phone')}>
-          <input value={item.phone ?? ''} onChange={e => patch('phone', e.target.value || null)} className={isLow(item, 'phone') ? lowFieldCls : fieldCls} />
+          <input value={item.phone ?? ''} onChange={e => patch('phone', e.target.value || null)} className={isLow(item, 'phone') ? lowFieldCls : fieldCls} style={isLow(item, 'phone') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="SIRET" low={isLow(item, 'siret')}>
-          <input value={item.siret ?? ''} onChange={e => patch('siret', e.target.value || null)} className={isLow(item, 'siret') ? lowFieldCls : fieldCls} />
+          <input value={item.siret ?? ''} onChange={e => patch('siret', e.target.value || null)} className={isLow(item, 'siret') ? lowFieldCls : fieldCls} style={isLow(item, 'siret') ? lowFieldStyle : fieldStyle} />
         </Field>
         <Field label="Conditions paiement" low={isLow(item, 'payment_terms')}>
-          <input value={item.payment_terms ?? ''} onChange={e => patch('payment_terms', e.target.value || null)} className={isLow(item, 'payment_terms') ? lowFieldCls : fieldCls} />
+          <input value={item.payment_terms ?? ''} onChange={e => patch('payment_terms', e.target.value || null)} className={isLow(item, 'payment_terms') ? lowFieldCls : fieldCls} style={isLow(item, 'payment_terms') ? lowFieldStyle : fieldStyle} />
         </Field>
       </div>
       <Field label="Adresse">
-        <input value={item.address ?? ''} onChange={e => patch('address', e.target.value || null)} className={fieldCls} />
+        <input value={item.address ?? ''} onChange={e => patch('address', e.target.value || null)} className={fieldCls} style={fieldStyle} />
       </Field>
     </>
   )

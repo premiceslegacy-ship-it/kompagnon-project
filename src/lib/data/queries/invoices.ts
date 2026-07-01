@@ -95,6 +95,7 @@ export type InvoiceWithItems = {
   retention_pct: number | null
   retention_amount: number | null
   market_reference: string | null
+  is_reverse_charge: boolean
   billing_period_key?: string | null
   generation_source?: string | null
   quote_number: string | null
@@ -240,7 +241,7 @@ export async function getInvoiceById(invoiceId: string): Promise<InvoiceWithItem
       id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
       issue_date, due_date, sent_at, paid_at, created_at,
       notes_client, payment_conditions, aid_label, aid_amount, quote_id, chantier_id, client_id,
-      situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference,
+      situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference, is_reverse_charge,
       billing_period_key, generation_source,
       client:clients(id, company_name, contact_name, first_name, last_name, email, phone,
         address_line1, postal_code, city, siret, siren, vat_number, type),

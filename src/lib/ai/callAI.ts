@@ -3,7 +3,7 @@ import { isModuleEnabledAdmin } from '@/lib/data/queries/organization-modules'
 import type { OrganizationModuleKey } from '@/lib/organization-modules'
 import { getOperatorSourceInstance, signOperatorPayload, type OperatorUsageEventPayload } from '@/lib/operator'
 import { checkAIRateLimit } from '@/lib/rate-limit'
-import { AIQuotaExceededError, checkQuota, type QuotaCheckResult } from '@/lib/quota'
+import { AIQuotaExceededError, checkQuota, type AIBillingMode, type QuotaCheckResult } from '@/lib/quota'
 
 export type AIProvider = 'openrouter' | 'mistral'
 export type AIInputKind = 'text' | 'image' | 'audio' | 'mixed'
@@ -23,8 +23,10 @@ export type AIFeature =
   | 'voice_transcription'
   | 'reminder_draft'
   | 'auto_reminder_draft'
+  | 'email_draft'
   | 'chantier_report_summary'
   | 'chantier_assistant'
+  | 'sarah_assistant'
   | 'catalog_extract'
 
 type AIUsageLogStatus = 'success' | 'error'
@@ -79,8 +81,10 @@ const MODULE_BY_FEATURE: Record<AIFeature, OrganizationModuleKey> = {
   voice_transcription: 'voice_input',
   reminder_draft: 'relances_ai',
   auto_reminder_draft: 'relances_ai',
+  email_draft: 'relances_ai',
   chantier_report_summary: 'chantier_report_ai',
   chantier_assistant: 'chantier_assistant',
+  sarah_assistant: 'sarah_assistant',
   catalog_extract: 'catalog_ai',
 }
 
@@ -107,6 +111,20 @@ export class AIRateLimitError extends Error {
     this.feature = feature
     this.limit = limit
     this.windowSeconds = windowSeconds
+  }
+}
+
+export class AIProviderCreditError extends Error {
+  readonly provider: AIProvider
+  readonly aiBillingMode: AIBillingMode
+  readonly status: number | null
+
+  constructor(provider: AIProvider, aiBillingMode: AIBillingMode, status: number | null, message?: string) {
+    super(message ?? 'Crédits ou limite provider IA atteints.')
+    this.name = 'AIProviderCreditError'
+    this.provider = provider
+    this.aiBillingMode = aiBillingMode
+    this.status = status
   }
 }
 
@@ -283,13 +301,23 @@ function withTimeout(timeoutMs: number | undefined) {
 }
 
 export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> {
-  await ensureFeatureEnabled(params.organizationId, params.feature)
-  const quotaCheck = await checkQuota({
-    supabase: createAdminClient(),
-    organizationId: params.organizationId,
-    technicalFeature: params.feature,
-    quantity: params.quotaQuantity ?? 1,
-  })
+  const [quotaCheck, rateLimit] = await Promise.all([
+    checkQuota({
+      supabase: createAdminClient(),
+      organizationId: params.organizationId,
+      technicalFeature: params.feature,
+      quantity: params.quotaQuantity ?? 1,
+    }),
+    checkAIRateLimit({
+      organizationId: params.organizationId,
+      feature: params.feature,
+    }),
+  ])
+
+  if (quotaCheck.aiBillingMode !== 'client_owned') {
+    await ensureFeatureEnabled(params.organizationId, params.feature)
+  }
+
   if (!quotaCheck.allowed && quotaCheck.quotaFeature && quotaCheck.quotaMonthly !== null) {
     throw new AIQuotaExceededError({
       quotaFeature: quotaCheck.quotaFeature,
@@ -298,11 +326,6 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
       requestedQuantity: quotaCheck.requestedQuantity,
     })
   }
-
-  const rateLimit = await checkAIRateLimit({
-    organizationId: params.organizationId,
-    feature: params.feature,
-  })
   if (!rateLimit.allowed) {
     throw new AIRateLimitError(params.feature, rateLimit.limit, rateLimit.windowSeconds)
   }
@@ -324,6 +347,9 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
 
     if (params.provider === 'openrouter') {
       if (!process.env.OPENROUTER_API_KEY) {
+        if (quotaCheck.aiBillingMode === 'client_owned') {
+          throw new AIProviderCreditError('openrouter', quotaCheck.aiBillingMode, null, 'Clé OpenRouter client manquante.')
+        }
         throw new Error('OPENROUTER_API_KEY manquante')
       }
 
@@ -343,7 +369,11 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
         })
 
         if (!response.ok) {
-          throw new Error(`OpenRouter ${response.status}: ${await response.text()}`)
+          const errorText = await response.text()
+          if (quotaCheck.aiBillingMode === 'client_owned' && [401, 402, 429].includes(response.status)) {
+            throw new AIProviderCreditError('openrouter', quotaCheck.aiBillingMode, response.status, `OpenRouter ${response.status}: ${errorText}`)
+          }
+          throw new Error(`OpenRouter ${response.status}: ${errorText}`)
         }
 
         data = await response.json() as T

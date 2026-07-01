@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import type { ImportDocumentRow } from '@/lib/data/mutations/import-documents'
 import { APP_NAME } from '@/lib/brand'
-import { AIModuleDisabledError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 
 const VISION_MODEL = 'google/gemini-2.5-flash-lite'
 const VISION_FALLBACK = 'anthropic/claude-sonnet-4-6'
@@ -61,6 +62,10 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+
+  if (!await hasPermission('ai.manage')) {
+    return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
+  }
 
   if (!process.env.OPENROUTER_API_KEY) return NextResponse.json({ error: 'Clé API IA non configurée' }, { status: 500 })
 
@@ -123,6 +128,9 @@ export async function POST(req: NextRequest) {
       if (err instanceof AIRateLimitError) {
         return { error: 'rate_limited' }
       }
+      if (err instanceof AIProviderCreditError && err.aiBillingMode === 'client_owned') {
+        return { error: 'openrouter_credits' }
+      }
       if (err?.name === 'AbortError') {
         console.warn('[ai/parse-document-pdf] timeout after', MODEL_TIMEOUT_MS, 'ms for model', model)
         return { error: 'timeout' }
@@ -133,7 +141,7 @@ export async function POST(req: NextRequest) {
 
   try {
     let result = await callModel(VISION_MODEL)
-    if ('error' in result) {
+    if ('error' in result && !['module_disabled', 'rate_limited', 'openrouter_credits'].includes(result.error)) {
       console.warn('[ai/parse-document-pdf] Gemini failed, trying fallback Claude')
       result = await callModel(VISION_FALLBACK)
     }
@@ -143,6 +151,9 @@ export async function POST(req: NextRequest) {
       }
       if (result.error === 'rate_limited') {
         return NextResponse.json({ error: 'Trop de requêtes IA pour cette organisation. Réessayez plus tard.' }, { status: 429 })
+      }
+      if (result.error === 'openrouter_credits') {
+        return NextResponse.json({ error: 'Rechargez vos crédits OpenRouter ou vérifiez la clé OpenRouter de votre organisation pour continuer.' }, { status: 402 })
       }
       return NextResponse.json({ error: "Impossible d'analyser ce PDF. Vérifiez que le fichier est lisible." }, { status: 500 })
     }

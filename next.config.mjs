@@ -13,6 +13,16 @@ const nextConfig = {
     async headers() {
         return [
             {
+                // Pages app authentifiées : micro autorisé pour Sarah vocale
+                source: '/(app)/(.*)',
+                headers: [
+                    {
+                        key: 'Permissions-Policy',
+                        value: 'camera=(), microphone=self, geolocation=()',
+                    },
+                ],
+            },
+            {
                 source: '/(.*)',
                 headers: [
                     {
@@ -41,11 +51,11 @@ const nextConfig = {
                         // next/script and react-pdf until a nonce solution is wired up.
                         value: [
                             "default-src 'self'",
-                            "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+                            "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data:",
                             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
                             "font-src 'self' https://fonts.gstatic.com",
                             "img-src 'self' data: blob: https:",
-                            "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com https://openrouter.ai",
+                            "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com https://openrouter.ai https://api.elevenlabs.io wss://api.elevenlabs.io",
                             "frame-ancestors 'none'",
                             "form-action 'self'",
                             "base-uri 'self'",

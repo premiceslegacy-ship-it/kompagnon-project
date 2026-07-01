@@ -26,6 +26,7 @@ export type VatConfig = {
   isVatSubject: boolean
   defaultVatRate: number | null
   defaultQuoteValidityDays?: number | null
+  defaultShowSectionSubtotals?: boolean
 }
 
 /**

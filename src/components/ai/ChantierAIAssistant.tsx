@@ -1,9 +1,10 @@
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Loader2, X, Sparkles, ChevronDown } from 'lucide-react'
+import { Send, Loader2, X, Sparkles, ChevronDown, CheckCircle2 } from 'lucide-react'
 import { cleanMarkdown } from '@/lib/utils'
 import { AI_ASSISTANTS } from '@/lib/brand'
+import { AssistantAvatar } from './AssistantAvatar'
 
 const MARCO = AI_ASSISTANTS.marco
 
@@ -36,6 +37,7 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [briefBanner, setBriefBanner] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -45,6 +47,27 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
 
   useEffect(() => {
     inputRef.current?.focus()
+  }, [])
+
+  // Brief Sarah→Marco : si Sarah a préparé un contexte sur ce chantier, l'injecter comme premier message
+  useEffect(() => {
+    fetch('/api/sarah/briefs?target=marco')
+      .then(r => r.json())
+      .then(({ brief }: { brief: { id: string; payload: { description?: string; chantier_id?: string; chantier_title?: string } } | null }) => {
+        if (!brief?.payload?.description?.trim()) return
+        // Vérifier que le brief concerne bien ce chantier (si chantier_id précisé)
+        if (brief.payload.chantier_id && brief.payload.chantier_id !== chantierId) return
+        const desc = brief.payload.description.trim()
+        setBriefBanner(`Brief transmis par Sarah.`)
+        setInput(desc)
+        fetch('/api/sarah/briefs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ briefId: brief.id }),
+        }).catch(() => {})
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -124,9 +147,7 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--elevation-border)]">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm text-white text-xs font-bold">
-              M
-            </div>
+            <AssistantAvatar assistant="marco" size={32} />
             <div>
               <p className="text-sm font-semibold text-primary">{MARCO.name} <span className="font-normal text-secondary">, {MARCO.role}</span></p>
               <p className="text-xs text-secondary truncate max-w-[200px]">{chantierTitle}</p>
@@ -140,14 +161,20 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
           </button>
         </div>
 
+        {/* Brief banner */}
+        {briefBanner && (
+          <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 px-3 py-2 text-xs text-[var(--accent)]">
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+            <span>{briefBanner}</span>
+          </div>
+        )}
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
           {messages.map(msg => (
             <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               {msg.role === 'assistant' && (
-                <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center mr-2 mt-0.5 shrink-0 text-white text-[10px] font-bold">
-                  M
-                </div>
+                <AssistantAvatar assistant="marco" size={24} className="mr-2 mt-0.5" />
               )}
               <div className={`max-w-[82%] ${msg.role === 'user'
                 ? 'bg-accent text-white rounded-2xl rounded-tr-sm px-3.5 py-2.5'
@@ -168,9 +195,7 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
 
           {loading && (
             <div className="flex justify-start">
-              <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center mr-2 mt-0.5 shrink-0 text-white text-[10px] font-bold">
-                M
-              </div>
+              <AssistantAvatar assistant="marco" size={24} className="mr-2 mt-0.5" />
               <div className="bg-[var(--elevation-border)] rounded-2xl rounded-tl-sm px-3.5 py-3">
                 <Loader2 className="w-4 h-4 animate-spin text-accent" />
               </div>

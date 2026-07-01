@@ -3,7 +3,7 @@ import { Document, Page, View, Text, Image } from '@react-pdf/renderer'
 import type { Organization } from '@/lib/data/queries/organization'
 import type { InvoiceWithItems } from '@/lib/data/queries/invoices'
 import { APP_NAME } from '@/lib/brand'
-import { registerFonts, makePageStyles, DS, pdfText, splitItemDescription, formatDimDetail } from '@/lib/pdf/pdf-design-system'
+import { registerFonts, makePageStyles, DS, pdfText, splitItemDescription, formatDimDetail, fmtCapitalSocial } from '@/lib/pdf/pdf-design-system'
 
 registerFonts()
 
@@ -53,6 +53,7 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
   const S = makePageStyles()
 
   const isVatSubject = organization.is_vat_subject !== false
+  const isReverseCharge = invoice.is_reverse_charge === true
   const isClientPro = invoice.client?.type === 'company'
 
   const invoiceType = invoice.invoice_type ?? 'standard'
@@ -76,23 +77,17 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
     }
   }
   const totalTva = Object.values(vatMap).reduce((s, v) => s + v, 0)
-  const totalTtc = isVatSubject ? totalHt + totalTva : totalHt
+  // En autoliquidation, la TVA est portee par le preneur : le TTC reste egal au HT.
+  const totalTtc = (isVatSubject && !isReverseCharge) ? totalHt + totalTva : totalHt
 
   const orgStreet = organization.address_line1 ?? null
   const orgPostalCity = [organization.postal_code, organization.city].filter(Boolean).join(' ') || null
 
   // ── Construction du footer légal multi-ligne ──
-  const fmtCapital = (v: string | number | null) => {
-    if (v == null) return null
-    const n = typeof v === 'string' ? parseFloat(v.replace(/[\s   ]/g, '').replace(',', '.').replace('€', '')) : v
-    if (isNaN(n)) return null
-    return pdfText(new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(n) + ' €')
-  }
-
   // Ligne 1 : forme juridique + capital social
   const line1Parts: string[] = []
   if (organization.forme_juridique) line1Parts.push(organization.forme_juridique)
-  const capitalFmt = fmtCapital(organization.capital_social)
+  const capitalFmt = fmtCapitalSocial(organization.capital_social)
   if (capitalFmt) line1Parts.push(`Capital social : ${capitalFmt}`)
 
   // Ligne 2 : identifiants (SIRET, RCS, TVA)
@@ -117,6 +112,7 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
     line2Parts.join(' · '),
     insuranceLine,
     organization.certifications,
+    isReverseCharge ? 'Autoliquidation de la TVA — art. 283-2 nonies du CGI. La TVA est due par le preneur assujetti.' : null,
   ].filter((l): l is string => !!l && l.length > 0)
 
   return (
@@ -335,7 +331,12 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
                 <Text style={S.totalsLabel}>Total HT</Text>
                 <Text style={S.totalsValue}>{fmt(totalHt, currency)}</Text>
               </View>
-              {isVatSubject ? (
+              {isReverseCharge ? (
+                <View style={S.totalsRow}>
+                  <Text style={S.totalsLabel}>TVA</Text>
+                  <Text style={[S.totalsValue, { color: DS.color.muted }]}>Autoliquidation</Text>
+                </View>
+              ) : isVatSubject ? (
                 Object.entries(vatMap).map(([rate, amount]) => (
                   <View key={rate} style={S.totalsRow}>
                     <Text style={S.totalsLabel}>TVA {rate}%</Text>
@@ -349,7 +350,7 @@ export default function InvoicePDF({ invoice, organization }: InvoicePDFProps) {
                 </View>
               )}
               <View style={S.totalTtcRow}>
-                <Text style={S.totalTtcLabel}>{isVatSubject ? 'TOTAL TTC' : 'TOTAL HT'}</Text>
+                <Text style={S.totalTtcLabel}>{isReverseCharge ? 'TOTAL NET HT' : isVatSubject ? 'TOTAL TTC' : 'TOTAL HT'}</Text>
                 <Text style={S.totalTtcValue}>{fmt(totalTtc, currency)}</Text>
               </View>
               {!isVatSubject && (

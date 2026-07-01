@@ -17,6 +17,7 @@ export type BusinessActivityId =
   | 'facade'
   | 'charpente'
   | 'depannage_multitechnique'
+  | 'metallerie'
   | 'tolerie'
   | 'chaudronnerie'
   | 'decoupe_laser'
@@ -29,6 +30,7 @@ export type BusinessActivityDefinition = {
   label: string
   description: string
   businessProfile: BusinessProfile
+  tier: 1 | 2
 }
 
 export type CatalogLabelDefinition = {
@@ -62,6 +64,8 @@ export type StarterPresetLine = {
   item_type: 'free' | 'service' | 'material' | 'labor' | 'transport' | 'mixed'
   unit_price_ht?: number
   unit_cost_ht?: number
+  section_title?: string
+  is_internal?: boolean
 }
 
 export type StarterPreset = {
@@ -105,6 +109,13 @@ export type BundleTemplateUi = {
   catalogLaborHint: string     // placeholder du picker catalogue côté ressource
 }
 
+export type StarterClause = {
+  title: string
+  body: string
+  category: string
+  position: number
+}
+
 export type BusinessProfileConfig = {
   activityId: BusinessActivityId
   businessProfile: BusinessProfile
@@ -120,6 +131,7 @@ export type BusinessProfileConfig = {
   }
   defaultCategories: DefaultCategories
   starterPresets: StarterPreset[]
+  starterClauses: StarterClause[]  // initialisé à [] par le forEach si absent
   laborRateUi: LaborRateUi
   bundleTemplateUi: BundleTemplateUi
   resourceTypeOptions: Array<{ value: string; label: string }>
@@ -230,125 +242,155 @@ function buildResourceTypeOptions(ui: LaborRateUi) {
 }
 
 export const BUSINESS_ACTIVITIES: BusinessActivityDefinition[] = [
+  // --- Nettoyage ---
   {
     id: 'nettoyage_bureaux',
     label: 'Nettoyage de bureaux',
     description: 'Entretien régulier, consommables et prestations récurrentes.',
     businessProfile: 'cleaning',
+    tier: 1,
   },
   {
     id: 'vitrerie',
     label: 'Vitrerie',
     description: 'Nettoyage de vitres, vitrines et façades vitrées.',
     businessProfile: 'cleaning',
+    tier: 2,
   },
   {
     id: 'desinfection',
     label: 'Désinfection',
     description: 'Traitements ponctuels ou récurrents de désinfection.',
     businessProfile: 'cleaning',
+    tier: 2,
   },
   {
     id: 'remise_en_etat',
     label: 'Remise en état',
     description: 'Interventions après travaux, sinistres ou états des lieux.',
     businessProfile: 'cleaning',
+    tier: 2,
   },
+  // --- BTP ---
   {
     id: 'renovation',
     label: 'Rénovation',
     description: "Travaux tous corps d'état et interventions multi-lots.",
     businessProfile: 'btp',
+    tier: 1,
   },
   {
     id: 'electricite',
     label: 'Électricité',
     description: 'Installations, dépannages et mises en conformité électriques.',
     businessProfile: 'btp',
-  },
-  {
-    id: 'plomberie',
-    label: 'Plomberie',
-    description: 'Plomberie, sanitaire, chauffage et réseaux.',
-    businessProfile: 'btp',
+    tier: 1,
   },
   {
     id: 'menuiserie',
     label: 'Menuiserie',
     description: 'Pose, fabrication et finitions bois, alu ou PVC.',
     businessProfile: 'btp',
-  },
-  {
-    id: 'maconnerie',
-    label: 'Maçonnerie',
-    description: 'Gros œuvre, dalles, murs et ouvrages maçonnés.',
-    businessProfile: 'btp',
-  },
-  {
-    id: 'peinture',
-    label: 'Peinture',
-    description: 'Préparation, peinture et finitions intérieures ou extérieures.',
-    businessProfile: 'btp',
-  },
-  {
-    id: 'carrelage',
-    label: 'Carrelage',
-    description: 'Sols, faïence, revêtements et finitions associées.',
-    businessProfile: 'btp',
-  },
-  {
-    id: 'facade',
-    label: 'Façade',
-    description: "Ravalement, enduits et isolation par l'extérieur.",
-    businessProfile: 'btp',
+    tier: 1,
   },
   {
     id: 'charpente',
     label: 'Charpente',
     description: 'Charpente, couverture et zinguerie.',
     businessProfile: 'btp',
+    tier: 1,
+  },
+  {
+    id: 'plomberie',
+    label: 'Plomberie',
+    description: 'Plomberie, sanitaire, chauffage et réseaux.',
+    businessProfile: 'btp',
+    tier: 2,
+  },
+  {
+    id: 'maconnerie',
+    label: 'Maçonnerie',
+    description: 'Gros œuvre, dalles, murs et ouvrages maçonnés.',
+    businessProfile: 'btp',
+    tier: 2,
+  },
+  {
+    id: 'peinture',
+    label: 'Peinture',
+    description: 'Préparation, peinture et finitions intérieures ou extérieures.',
+    businessProfile: 'btp',
+    tier: 2,
+  },
+  {
+    id: 'carrelage',
+    label: 'Carrelage',
+    description: 'Sols, faïence, revêtements et finitions associées.',
+    businessProfile: 'btp',
+    tier: 2,
+  },
+  {
+    id: 'facade',
+    label: 'Façade',
+    description: "Ravalement, enduits et isolation par l'extérieur.",
+    businessProfile: 'btp',
+    tier: 2,
   },
   {
     id: 'depannage_multitechnique',
     label: 'Dépannage multitechnique',
     description: "Interventions rapides avec fournitures et main-d'œuvre.",
     businessProfile: 'btp',
+    tier: 2,
   },
+  {
+    id: 'metallerie',
+    label: 'Métallerie',
+    description: 'Garde-corps, portails, escaliers, portillons et ouvrages métalliques posés.',
+    businessProfile: 'btp',
+    tier: 1,
+  },
+  // --- Industrie ---
   {
     id: 'tolerie',
     label: 'Tôlerie',
     description: 'Découpe, pliage et fabrication de pièces en tôle.',
     businessProfile: 'industry',
+    tier: 1,
   },
   {
     id: 'chaudronnerie',
     label: 'Chaudronnerie',
     description: 'Assemblages, ouvrages sur mesure et fabrication métal.',
     businessProfile: 'industry',
-  },
-  {
-    id: 'decoupe_laser',
-    label: 'Découpe laser',
-    description: 'Découpe de précision, séries courtes et pièces unitaires.',
-    businessProfile: 'industry',
-  },
-  {
-    id: 'pliage',
-    label: 'Pliage',
-    description: 'Pliage atelier, réglages machine et reprises.',
-    businessProfile: 'industry',
+    tier: 1,
   },
   {
     id: 'soudure',
     label: 'Soudure',
     description: 'Assemblage, soudure TIG, MIG ou MAG et finitions.',
     businessProfile: 'industry',
+    tier: 1,
+  },
+  {
+    id: 'decoupe_laser',
+    label: 'Découpe laser',
+    description: 'Découpe de précision, séries courtes et pièces unitaires.',
+    businessProfile: 'industry',
+    tier: 2,
+  },
+  {
+    id: 'pliage',
+    label: 'Pliage',
+    description: 'Pliage atelier, réglages machine et reprises.',
+    businessProfile: 'industry',
+    tier: 2,
   },
   {
     id: 'fabrication_atelier',
     label: 'Fabrication atelier',
     description: 'Production, assemblage et contrôle en atelier.',
     businessProfile: 'industry',
+    tier: 2,
   },
 ]
 
@@ -447,6 +489,7 @@ export const BUSINESS_PROFILE_CONFIGS: Record<BusinessProfile, BusinessProfileCo
         ],
       },
     ],
+    starterClauses: [],
     laborRateUi: {
       modalTitle: "Nouvelle ressource interne",
       designationLabel: "Nom de la ressource",
@@ -564,6 +607,7 @@ export const BUSINESS_PROFILE_CONFIGS: Record<BusinessProfile, BusinessProfileCo
         ],
       },
     ],
+    starterClauses: [],
     laborRateUi: {
       modalTitle: "Nouvelle ressource interne",
       designationLabel: "Intitulé de la ressource",
@@ -607,9 +651,9 @@ export const BUSINESS_PROFILE_CONFIGS: Record<BusinessProfile, BusinessProfileCo
       laborRate: ['Ressource interne', 'Ressources internes', 'Nouvelle ressource interne', "Aucune ressource interne pour l'instant", 'Commencez par ajouter vos postes de charge internes.'],
       bundleTemplate: ['Gamme', 'Gammes', 'Nouvelle gamme', "Aucune gamme pour l'instant", 'Créez des gammes réutilisables pour vos chiffrages atelier.'],
     }),
-    unitSet: ['kg', 'ml', 'm²', 'h', 'u', 'forfait', 'jour'],
+    unitSet: ['kg', 't', 'ml', 'm²', 'h', 'u', 'forfait', 'jour'],
     unitSetsByKind: {
-      material: ['kg', 'ml', 'm²', 'u', 'forfait'],
+      material: ['kg', 't', 'ml', 'm²', 'u', 'forfait'],
       service: ['u', 'forfait', 'ml', 'm²', 'h'],
       laborRate: ['h', 'jour', 'u', 'forfait'],
     },
@@ -681,6 +725,7 @@ export const BUSINESS_PROFILE_CONFIGS: Record<BusinessProfile, BusinessProfileCo
         ],
       },
     ],
+    starterClauses: [],
     laborRateUi: {
       modalTitle: "Nouvelle ressource interne",
       designationLabel: "Désignation de la ressource",
@@ -714,6 +759,7 @@ export const BUSINESS_PROFILE_CONFIGS: Record<BusinessProfile, BusinessProfileCo
 
 Object.values(BUSINESS_PROFILE_CONFIGS).forEach((config) => {
   config.resourceTypeOptions = buildResourceTypeOptions(config.laborRateUi)
+  if (!config.starterClauses) config.starterClauses = []
 })
 
 type BusinessActivityConfigOverride = {
@@ -722,6 +768,7 @@ type BusinessActivityConfigOverride = {
   unitSetsByKind?: Partial<BusinessProfileConfig['unitSetsByKind']>
   defaultCategories?: Partial<DefaultCategories>
   starterPresets?: StarterPreset[]
+  starterClauses?: StarterClause[]
   laborRateUi?: Partial<LaborRateUi>
   bundleTemplateUi?: Partial<BundleTemplateUi>
 }
@@ -1541,6 +1588,243 @@ const BUSINESS_ACTIVITY_OVERRIDES: Partial<Record<BusinessActivityId, BusinessAc
       },
     ],
   },
+  metallerie: {
+    labelSet: { catalogSubtitle: 'Fournitures métal, prestations de fabrication et pose pour vos ouvrages.' },
+    unitSet: ['ml', 'm²', 'u', 'h', 'forfait', 'kg', 't', 'jour'],
+    unitSetsByKind: {
+      material: ['kg', 't', 'ml', 'm²', 'u', 'forfait'],
+      service: ['u', 'forfait', 'ml', 'm²', 'h'],
+      laborRate: ['h', 'jour', 'u', 'forfait'],
+    },
+    defaultCategories: {
+      material: ['Tube / profilé', 'Tôle', 'Quincaillerie', 'Finition'],
+      service: ['Fabrication', 'Pose', 'Finition', 'Sous-traitance'],
+      laborRate: ['Atelier', 'Pose', 'Finition'],
+      bundleTemplate: ['Garde-corps', 'Portail', 'Escalier', 'Portillon', 'Divers'],
+    },
+    starterPresets: [
+      // ── Garde-corps ──────────────────────────────────────────────────────────
+      {
+        name: 'Garde-corps droit acier',
+        description: 'Garde-corps acier galvanisé sur mesure, poteau + lisses + main courante, fourniture et pose.',
+        category: 'Garde-corps',
+        unit: 'ml',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { section_title: 'Matières', designation: 'Tube carré 40×40 acier galvanisé S235 (montants)', quantity: 1.2, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Tube plat 40×8 acier (lisses horizontales)', quantity: 0.8, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Main courante tube rond Ø42,4 acier', quantity: 1, unit: 'ml', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Platines de scellement et boulonnerie', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Fabrication', designation: 'Débit et façonnage acier', quantity: 0.5, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Fabrication', designation: 'Soudure MIG acier', quantity: 0.4, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Fabrication', designation: 'Meulage et finition', quantity: 0.2, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Finition', designation: 'Thermolaquage RAL au choix (sous-traitance)', quantity: 1, unit: 'ml', item_type: 'service' },
+          { section_title: 'Pose', designation: 'Pose et scellement', quantity: 0.4, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Pose', designation: 'Calfeutrement et reprise enduit', quantity: 1, unit: 'forfait', item_type: 'service' },
+        ],
+      },
+      {
+        name: 'Garde-corps inox brossé',
+        description: 'Garde-corps inox 316L poli brossé sur mesure, câbles tendus ou barreaux, fourniture et pose.',
+        category: 'Garde-corps',
+        unit: 'ml',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { section_title: 'Matières', designation: 'Tube carré 40×40 inox 316L (montants)', quantity: 1.2, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Main courante tube rond Ø42,4 inox 316L', quantity: 1, unit: 'ml', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Câbles inox Ø5 et embouts sertis', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Platines percées et visserie inox A4', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Fabrication', designation: 'Débit et façonnage inox', quantity: 0.5, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Fabrication', designation: 'Soudure TIG inox', quantity: 0.5, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Fabrication', designation: 'Finition brossé satiné', quantity: 0.3, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Pose', designation: 'Pose et fixation', quantity: 0.4, unit: 'h', item_type: 'labor', is_internal: true },
+        ],
+      },
+      // ── Main courante ─────────────────────────────────────────────────────────
+      {
+        name: 'Main courante acier ou inox',
+        description: 'Main courante tube rond fixée sur support mural, fourniture et pose au ml.',
+        category: 'Garde-corps',
+        unit: 'ml',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { section_title: 'Matières', designation: 'Tube rond Ø42,4 acier ou inox', quantity: 1, unit: 'ml', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Supports muraux et visserie', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Fabrication', designation: 'Façonnage et soudure des embouts', quantity: 0.2, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Finition', designation: 'Thermolaquage ou brossage', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { section_title: 'Pose', designation: 'Pose et scellement supports', quantity: 0.2, unit: 'h', item_type: 'labor', is_internal: true },
+        ],
+      },
+      // ── Portails ──────────────────────────────────────────────────────────────
+      {
+        name: 'Portail battant 2 vantaux acier',
+        description: 'Portail acier 2 vantaux sur mesure, châssis tube + remplissage barreaux, fourniture et pose.',
+        category: 'Portail',
+        unit: 'u',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { section_title: 'Matières', designation: 'Châssis tube carré 60×60 acier S235', quantity: 1, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Barreaux plats 20×8 ou tube Ø20 (remplissage)', quantity: 1, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Gonds soudés et serrure encastrée', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Butée de sol et poignée', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Fabrication', designation: 'Débit, façonnage et soudure châssis', quantity: 4, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Fabrication', designation: 'Assemblage remplissage', quantity: 2, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Finition', designation: 'Thermolaquage RAL au choix (sous-traitance)', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { section_title: 'Pose', designation: 'Pose et réglage des vantaux', quantity: 3, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Pose', designation: 'Scellement platines et coulage', quantity: 1, unit: 'forfait', item_type: 'service' },
+        ],
+      },
+      // ── Portillon ─────────────────────────────────────────────────────────────
+      {
+        name: 'Portillon piéton acier',
+        description: 'Portillon acier sur mesure, serrure et quincaillerie, fourniture et pose.',
+        category: 'Portillon',
+        unit: 'u',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { section_title: 'Matières', designation: 'Châssis tube carré 40×40 acier S235', quantity: 1, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Remplissage barreaux ou tôle perforée', quantity: 1, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Serrure, gonds et poignée', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Fabrication', designation: 'Débit, façonnage et soudure', quantity: 2, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Finition', designation: 'Thermolaquage RAL au choix (sous-traitance)', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { section_title: 'Pose', designation: 'Pose et réglage', quantity: 1.5, unit: 'h', item_type: 'labor', is_internal: true },
+        ],
+      },
+      // ── Escalier ──────────────────────────────────────────────────────────────
+      {
+        name: 'Escalier droit quart tournant acier',
+        description: 'Escalier métallique sur mesure, limon acier + marches + main courante, fourniture et pose.',
+        category: 'Escalier',
+        unit: 'u',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { section_title: 'Matières', designation: 'Limon UPN ou tôle acier S235 plié', quantity: 1, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Marches acier larmé épaisseur 6 mm', quantity: 1, unit: 'u', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Contremarches tôle acier (si fermé)', quantity: 1, unit: 'u', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Main courante tube rond Ø42,4 acier', quantity: 1, unit: 'ml', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Quincaillerie de fixation et platines', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Fabrication', designation: 'Débit limon et découpe marches', quantity: 4, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Fabrication', designation: 'Soudure MIG assemblage', quantity: 4, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Fabrication', designation: 'Meulage finition et préparation surface', quantity: 1, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Finition', designation: 'Thermolaquage ou galvanisation (sous-traitance)', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { section_title: 'Pose', designation: 'Livraison et mise en place', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { section_title: 'Pose', designation: 'Scellement et fixation définitive', quantity: 4, unit: 'h', item_type: 'labor', is_internal: true },
+        ],
+      },
+      // ── Marquise ──────────────────────────────────────────────────────────────
+      {
+        name: 'Marquise acier et verre',
+        description: 'Marquise entrée acier thermolaqué avec remplissage verre trempé feuilleté, fourniture et pose.',
+        category: 'Divers',
+        unit: 'u',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { section_title: 'Matières', designation: 'Châssis tube carré acier thermolaqué', quantity: 1, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Verre trempé feuilleté 10/10 transparent', quantity: 1, unit: 'm²', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Profilé de vitrage et joints EPDM', quantity: 1, unit: 'ml', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Platines et fixations murales', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Fabrication', designation: 'Débit et soudure châssis acier', quantity: 3, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Finition', designation: 'Thermolaquage châssis (sous-traitance)', quantity: 1, unit: 'forfait', item_type: 'service' },
+          { section_title: 'Pose', designation: 'Pose châssis, vitrage et fixation', quantity: 3, unit: 'h', item_type: 'labor', is_internal: true },
+        ],
+      },
+      // ── Clôture ───────────────────────────────────────────────────────────────
+      {
+        name: 'Clôture panneaux rigides acier',
+        description: 'Clôture acier galvanisé panneaux rigides + poteaux + portillon, fourniture et pose au ml.',
+        category: 'Divers',
+        unit: 'ml',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { section_title: 'Matières', designation: 'Panneau grillage rigide galvanisé thermolaqué', quantity: 1, unit: 'u', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Poteau acier galvanisé scellé ou ancré', quantity: 1, unit: 'u', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Accessoires de fixation panneaux', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Pose', designation: 'Implantation et scellement poteaux', quantity: 0.3, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Pose', designation: 'Pose et fixation panneaux', quantity: 0.2, unit: 'h', item_type: 'labor', is_internal: true },
+        ],
+      },
+      // ── Verrière ──────────────────────────────────────────────────────────────
+      {
+        name: 'Verrière atelier acier',
+        description: 'Verrière intérieure style atelier, châssis acier thermolaqué et vitrage feuilleté, fourniture et pose.',
+        category: 'Divers',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { section_title: 'Matières', designation: 'Profilés acier fins pour châssis verrière', quantity: 1, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Vitrage feuilleté clair sur mesure', quantity: 1, unit: 'm²', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Parcloses, joints et visserie', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Fabrication', designation: 'Débit, assemblage et soudure du châssis', quantity: 2, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Fabrication', designation: 'Préparation vitrage et calage', quantity: 0.5, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Finition', designation: 'Thermolaquage RAL au choix (sous-traitance)', quantity: 1, unit: 'm²', item_type: 'service' },
+          { section_title: 'Pose', designation: 'Pose, réglage et fixation sur support', quantity: 1, unit: 'h', item_type: 'labor', is_internal: true },
+        ],
+      },
+      // ── Claustra ──────────────────────────────────────────────────────────────
+      {
+        name: 'Claustra acier design',
+        description: 'Claustra acier découpé laser ou barreaux, fixation mur ou sol, thermolaqué, fourniture et pose.',
+        category: 'Divers',
+        unit: 'm²',
+        vat_rate: 10,
+        profile_kind: 'mixed',
+        lines: [
+          { section_title: 'Matières', designation: 'Tôle ou tube acier S235 (structure)', quantity: 1, unit: 'kg', item_type: 'material' },
+          { section_title: 'Matières', designation: 'Fixations et platines', quantity: 1, unit: 'forfait', item_type: 'material' },
+          { section_title: 'Fabrication', designation: 'Débit, découpe et assemblage', quantity: 1.5, unit: 'h', item_type: 'labor', is_internal: true },
+          { section_title: 'Finition', designation: 'Thermolaquage RAL au choix (sous-traitance)', quantity: 1, unit: 'm²', item_type: 'service' },
+          { section_title: 'Pose', designation: 'Pose et fixation', quantity: 0.5, unit: 'h', item_type: 'labor', is_internal: true },
+        ],
+      },
+    ],
+    starterClauses: [
+      {
+        title: 'Validité des prix matière',
+        category: 'Prix et révision',
+        position: 0,
+        body: 'Les prix indiqués dans ce devis sont établis sur la base des cours des matières premières en vigueur à la date d\'établissement. En cas de variation des cours de l\'acier, de l\'inox ou de l\'aluminium supérieure à 5 % entre la date d\'acceptation et la date de commande des matières, une révision de prix pourra être appliquée sur justificatif fournisseur.',
+      },
+      {
+        title: 'Délai de fabrication',
+        category: 'Délais',
+        position: 1,
+        body: 'Le délai de fabrication court à compter de la réception de l\'acompte, de la validation des plans et du retour des cotes terrain signées. Toute modification des plans ou des dimensions en cours de fabrication peut entraîner un allongement du délai et une révision du prix.',
+      },
+      {
+        title: 'Plans et cotes terrain',
+        category: 'Plans et documents',
+        position: 2,
+        body: 'La fabrication est réalisée sur la base des cotes fournies par le client ou relevées contradictoirement. L\'entreprise ne saurait être tenue responsable d\'un défaut d\'adaptation résultant d\'un relevé de cotes inexact ou d\'une modification du support postérieure au relevé.',
+      },
+      {
+        title: 'Tolérances de fabrication',
+        category: 'Qualité',
+        position: 3,
+        body: 'Les ouvrages sont réalisés conformément aux règles de l\'art et aux tolérances usuelles de la métallurgie (NF EN ISO 13920 classe B sauf indication contraire). Les variations d\'aspect inhérentes aux matériaux (nuances de couleur thermolaquage, traces de soudure visible, légères irrégularités de surface) ne constituent pas un motif de refus de réception.',
+      },
+      {
+        title: 'Sous-traitance finition',
+        category: 'Prix et révision',
+        position: 4,
+        body: 'Les opérations de finition (thermolaquage, galvanisation, traitement de surface) sont confiées à un sous-traitant spécialisé. Les délais et tarifs de ces prestations sont susceptibles d\'évoluer. Un délai supplémentaire de 5 à 10 jours ouvrés est à prévoir pour les opérations de sous-traitance finition.',
+      },
+      {
+        title: 'Réception des travaux',
+        category: 'Réception',
+        position: 5,
+        body: 'La réception des ouvrages est prononcée contradictoirement entre les parties au plus tard 8 jours après la pose, en l\'absence d\'émission de réserves écrites. Passé ce délai, les ouvrages sont réputés acceptés sans réserve. Le règlement du solde est dû à la réception.',
+      },
+    ],
+  },
   depannage_multitechnique: {
     defaultCategories: {
       bundleTemplate: ['Dépannage', 'Entretien', 'Mise en service'],
@@ -1632,6 +1916,39 @@ export function getBusinessActivityById(activityId: string | null | undefined): 
   return BUSINESS_ACTIVITIES.find((activity) => activity.id === activityId) ?? null
 }
 
+export function normalizeSecondaryActivityIds(
+  activityIds: unknown,
+  primaryActivityId?: string | null
+): BusinessActivityId[] {
+  if (!Array.isArray(activityIds)) return []
+
+  const primaryActivity = getBusinessActivityById(primaryActivityId)
+  const selected = new Set<BusinessActivityId>()
+
+  for (const activityId of activityIds) {
+    const activity = typeof activityId === 'string' ? getBusinessActivityById(activityId) : null
+    if (!activity || activity.id === primaryActivity?.id || selected.has(activity.id)) continue
+    selected.add(activity.id)
+  }
+
+  return Array.from(selected)
+}
+
+export function getSecondaryActivityOptions(currentActivityId: string | null | undefined): BusinessActivityDefinition[] {
+  const currentActivity = getBusinessActivityById(currentActivityId)
+  const sourceOrder = new Map(BUSINESS_ACTIVITIES.map((activity, index) => [activity.id, index]))
+
+  return BUSINESS_ACTIVITIES
+    .filter((activity) => activity.id !== currentActivity?.id)
+    .sort((a, b) => {
+      const aSameProfile = currentActivity && a.businessProfile === currentActivity.businessProfile ? 0 : 1
+      const bSameProfile = currentActivity && b.businessProfile === currentActivity.businessProfile ? 0 : 1
+      if (aSameProfile !== bSameProfile) return aSameProfile - bSameProfile
+      if (aSameProfile === 0 && a.tier !== b.tier) return a.tier - b.tier
+      return (sourceOrder.get(a.id) ?? 0) - (sourceOrder.get(b.id) ?? 0)
+    })
+}
+
 export function getDefaultBusinessActivityId(profile: BusinessProfile): BusinessActivityId {
   switch (profile) {
     case 'cleaning':
@@ -1649,13 +1966,21 @@ export function normalizeBusinessProfile(value: string | null | undefined): Busi
   return 'btp'
 }
 
+function normalizeCatalogSearchText(value: string | null | undefined): string {
+  return (value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
 export function inferBusinessProfileFromActivity(activityId: string | null | undefined): BusinessProfile | null {
   const activity = getBusinessActivityById(activityId)
   return activity?.businessProfile ?? null
 }
 
 export function inferBusinessProfileFromSector(sector: string | null | undefined): BusinessProfile {
-  const normalized = (sector ?? '').trim().toLowerCase()
+  const normalized = normalizeCatalogSearchText(sector)
   if (!normalized) return 'btp'
 
   if (
@@ -1679,8 +2004,6 @@ export function inferBusinessProfileFromSector(sector: string | null | undefined
     normalized.includes('tolerie') ||
     normalized.includes('chaudron') ||
     normalized.includes('atelier') ||
-    normalized.includes('métal') ||
-    normalized.includes('metal') ||
     normalized.includes('soudure') ||
     normalized.includes('découpe') ||
     normalized.includes('decoupe') ||
@@ -1696,12 +2019,12 @@ export function inferBusinessActivityId(params: {
   sector?: string | null
   businessProfile?: string | null
 }): BusinessActivityId {
-  const normalizedSector = (params.sector ?? '').trim().toLowerCase()
+  const normalizedSector = normalizeCatalogSearchText(params.sector)
 
-  const directMatch = BUSINESS_ACTIVITIES.find((activity) => activity.label.toLowerCase() === normalizedSector)
+  const directMatch = BUSINESS_ACTIVITIES.find((activity) => normalizeCatalogSearchText(activity.label) === normalizedSector)
   if (directMatch) return directMatch.id
 
-  const containsMatch = BUSINESS_ACTIVITIES.find((activity) => normalizedSector.includes(activity.label.toLowerCase()))
+  const containsMatch = BUSINESS_ACTIVITIES.find((activity) => normalizedSector.includes(normalizeCatalogSearchText(activity.label)))
   if (containsMatch) return containsMatch.id
 
   const resolvedProfile = params.businessProfile
@@ -1782,6 +2105,7 @@ function mergeActivityConfig(base: BusinessProfileConfig, activityId: BusinessAc
       ...base,
       activityId,
       sectorFallback: activitySectorFallback,
+      starterClauses: base.starterClauses,
       laborRateUi: base.laborRateUi,
       bundleTemplateUi: base.bundleTemplateUi,
       resourceTypeOptions: buildResourceTypeOptions(base.laborRateUi),
@@ -1803,6 +2127,7 @@ function mergeActivityConfig(base: BusinessProfileConfig, activityId: BusinessAc
       bundleTemplate: override.defaultCategories?.bundleTemplate ?? base.defaultCategories.bundleTemplate,
     },
     starterPresets: override.starterPresets ?? base.starterPresets,
+    starterClauses: override.starterClauses ?? base.starterClauses,
     laborRateUi,
     bundleTemplateUi: mergeBundleTemplateUi(base.bundleTemplateUi, override.bundleTemplateUi),
     resourceTypeOptions: buildResourceTypeOptions(laborRateUi),

@@ -16,9 +16,10 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   Search, Upload, Download, Users, Euro, Filter,
   FileText, Eye, Edit2, X, Loader2, CheckCircle2, AlertCircle, Building2, Trash2,
-  Target, ArrowRight, UserCheck, ChevronLeft, ChevronRight,
+  Target, ArrowRight, UserCheck, ChevronLeft, ChevronRight, Mail,
 } from 'lucide-react'
 import { ActionButton } from '@/components/ui/ActionButton'
+import EmailComposerModal from './EmailComposerModal'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,11 @@ type Props = {
   canEdit: boolean
   canDelete: boolean
   canImport: boolean
+  canEmail: boolean
+  orgEmail: string | null
+  orgName: string
+  orgSignature: string | null
+  hasAI: boolean
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -689,7 +695,7 @@ function EmptyState({ filtered }: { filtered: boolean }) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function ClientsClient({ initialClients, canCreate, canEdit, canDelete, canImport }: Props) {
+export default function ClientsClient({ initialClients, canCreate, canEdit, canDelete, canImport, canEmail, orgEmail, orgName, orgSignature, hasAI }: Props) {
   const router = useRouter()
   const pathname = usePathname()
   const [searchTerm, setSearchTerm] = useState('')
@@ -704,6 +710,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
   const [editingClient, setEditingClient] = useState<Client | null>(null)
   const [isPending, startTransition] = useTransition()
   const [page, setPage] = useState(1)
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
 
   const PAGE_SIZE = 10
 
@@ -809,6 +816,17 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
       <NewLeadModal isOpen={isNewLeadModalOpen} onClose={() => setIsNewLeadModalOpen(false)} />
       <ImportCSVModal isOpen={isImportCSVModalOpen} onClose={() => setIsImportCSVModalOpen(false)} isLeads={importIsLeads} />
       {editingClient && <EditClientModal client={editingClient} onClose={() => setEditingClient(null)} />}
+      {isEmailModalOpen && (
+        <EmailComposerModal
+          isOpen={isEmailModalOpen}
+          onClose={() => setIsEmailModalOpen(false)}
+          allClients={initialClients}
+          orgEmail={orgEmail}
+          orgName={orgName}
+          orgSignature={orgSignature}
+          hasAI={hasAI}
+        />
+      )}
 
       {/* En-tête */}
       <div className="flex flex-col gap-6">
@@ -845,6 +863,14 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
             <ActionButton onClick={handleExportCSV} className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
               <Download className="w-4 h-4" />Exporter
             </ActionButton>
+            {canEmail && (
+              <button
+                onClick={() => setIsEmailModalOpen(true)}
+                className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap"
+              >
+                <Mail className="w-4 h-4" />Envoyer un email
+              </button>
+            )}
             {canCreate && (
               <button onClick={() => setIsNewLeadModalOpen(true)} className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
                 <Target className="w-4 h-4" />Nouveau Lead

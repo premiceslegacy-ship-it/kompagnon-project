@@ -4,7 +4,7 @@ import type { Organization } from '@/lib/data/queries/organization'
 import type { QuoteWithItems } from '@/lib/data/queries/quotes'
 import type { Client } from '@/lib/data/queries/clients'
 import { APP_NAME } from '@/lib/brand'
-import { registerFonts, makePageStyles, DS, splitItemDescription, formatDimDetail, pdfText } from '@/lib/pdf/pdf-design-system'
+import { registerFonts, makePageStyles, DS, splitItemDescription, formatDimDetail, pdfText, fmtCapitalSocial } from '@/lib/pdf/pdf-design-system'
 
 registerFonts()
 
@@ -109,17 +109,10 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
   const orgPostalCity = [organization.postal_code, organization.city].filter(Boolean).join(' ') || null
 
   // ── Construction du footer légal multi-ligne ──
-  const fmtCapital = (v: string | number | null) => {
-    if (v == null) return null
-    const n = typeof v === 'string' ? parseFloat(v.replace(/[\s   ]/g, '').replace(',', '.').replace('€', '')) : v
-    if (isNaN(n)) return null
-    return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(n) + ' €'
-  }
-
   // Ligne 1 : forme juridique + capital social
   const line1Parts: string[] = []
   if (organization.forme_juridique) line1Parts.push(organization.forme_juridique)
-  const capitalFmt = fmtCapital(organization.capital_social)
+  const capitalFmt = fmtCapitalSocial(organization.capital_social)
   if (capitalFmt) line1Parts.push(`Capital social : ${capitalFmt}`)
 
   // Ligne 2 : identifiants (SIRET, RCS, TVA)
@@ -265,34 +258,51 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
           <Text style={[S.tableHeaderText, S.colTotal]}>Total HT</Text>
         </View>
 
-        {visibleSections.map(section => (
-          <View key={section.id}>
-            {section.title && (
-              <View style={S.sectionRow} wrap={false}>
-                <Text style={S.sectionTitle}>{section.title}</Text>
-              </View>
-            )}
-            {section.items.map(item => (
-              <View key={item.id} style={S.itemRow} wrap={false}>
-                <ItemDescription designation={item.designation} details={item.details} value={item.description} dimDetail={formatDimDetail(item)} S={S} />
-                <Text style={[S.itemTextRight, S.colQty]}>{item.quantity}</Text>
-                <Text style={[S.itemText, S.colUnit, { textAlign: 'center' }]}>{item.unit ?? ''}</Text>
-                <Text style={[S.itemTextRight, S.colPu]}>{fmt(item.unit_price, quote.currency)}</Text>
-                {isVatSubject && <Text style={[S.itemTextRight, S.colVat]}>{item.vat_rate}%</Text>}
-                <Text style={[S.itemTextRight, S.colTotal]}>{fmt(item.quantity * item.unit_price, quote.currency)}</Text>
-              </View>
-            ))}
-          </View>
-        ))}
+        {visibleSections.map(section => {
+          const sectionSubtotalHt = section.items.filter(i => !i.price_pending).reduce((s, i) => s + i.quantity * i.unit_price, 0)
+          return (
+            <View key={section.id}>
+              {section.title && (
+                <View style={S.sectionRow} wrap={false}>
+                  <Text style={S.sectionTitle}>{section.title}</Text>
+                </View>
+              )}
+              {section.items.map(item => (
+                <View key={item.id} style={S.itemRow} wrap={false}>
+                  <ItemDescription designation={item.designation} details={item.details} value={item.description} dimDetail={formatDimDetail(item)} S={S} />
+                  <Text style={[S.itemTextRight, S.colQty]}>{item.quantity}</Text>
+                  <Text style={[S.itemText, S.colUnit, { textAlign: 'center' }]}>{item.unit ?? ''}</Text>
+                  {item.price_pending
+                    ? <Text style={[S.itemTextRight, S.colPu, { color: '#888' }]}>—</Text>
+                    : <Text style={[S.itemTextRight, S.colPu]}>{fmt(item.unit_price, quote.currency)}</Text>}
+                  {isVatSubject && <Text style={[S.itemTextRight, S.colVat]}>{item.price_pending ? '' : `${item.vat_rate}%`}</Text>}
+                  {item.price_pending
+                    ? <Text style={[S.itemTextRight, S.colTotal, { color: '#888', fontStyle: 'italic' }]}>A confirmer</Text>
+                    : <Text style={[S.itemTextRight, S.colTotal]}>{fmt(item.quantity * item.unit_price, quote.currency)}</Text>}
+                </View>
+              ))}
+              {quote.show_section_subtotals && section.title && section.items.length > 0 && (
+                <View style={[S.itemRow, { backgroundColor: DS.color.surface, justifyContent: 'space-between' }]} wrap={false}>
+                  <Text style={[S.totalsLabel, { flex: 1 }]}>Sous-total — {section.title}</Text>
+                  <Text style={S.totalsValue}>{fmt(sectionSubtotalHt, quote.currency)}</Text>
+                </View>
+              )}
+            </View>
+          )
+        })}
 
         {visibleUnsectioned.map(item => (
           <View key={item.id} style={S.itemRow} wrap={false}>
             <ItemDescription designation={item.designation} details={item.details} value={item.description} dimDetail={formatDimDetail(item)} S={S} />
             <Text style={[S.itemTextRight, S.colQty]}>{item.quantity}</Text>
             <Text style={[S.itemText, S.colUnit, { textAlign: 'center' }]}>{item.unit ?? ''}</Text>
-            <Text style={[S.itemTextRight, S.colPu]}>{fmt(item.unit_price, quote.currency)}</Text>
-            {isVatSubject && <Text style={[S.itemTextRight, S.colVat]}>{item.vat_rate}%</Text>}
-            <Text style={[S.itemTextRight, S.colTotal]}>{fmt(item.quantity * item.unit_price, quote.currency)}</Text>
+            {item.price_pending
+              ? <Text style={[S.itemTextRight, S.colPu, { color: '#888' }]}>—</Text>
+              : <Text style={[S.itemTextRight, S.colPu]}>{fmt(item.unit_price, quote.currency)}</Text>}
+            {isVatSubject && <Text style={[S.itemTextRight, S.colVat]}>{item.price_pending ? '' : `${item.vat_rate}%`}</Text>}
+            {item.price_pending
+              ? <Text style={[S.itemTextRight, S.colTotal, { color: '#888', fontStyle: 'italic' }]}>A confirmer</Text>
+              : <Text style={[S.itemTextRight, S.colTotal]}>{fmt(item.quantity * item.unit_price, quote.currency)}</Text>}
           </View>
         ))}
 

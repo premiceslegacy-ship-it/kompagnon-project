@@ -15,8 +15,10 @@ Client BTP
   └── Supabase (DB + Auth + Storage + Edge Functions)  → données isolées
   └── Cloudflare Workers (Next.js via OpenNext)        → app full-stack
   └── Cloudflare Worker (cron relances auto)           → 8h chaque matin
+  └── Cloudflare Worker (cron brief Sarah)             → 7h chaque matin (Pro/Expert uniquement)
   └── Resend (emails transactionnels)                  → devis, factures, invitations
   └── OpenRouter + Mistral (IA)                        → clés Atelier partagées (voir §IA)
+  └── ElevenLabs (Sarah vocale)                        → compte Orsayn centralisé, 1 agent partagé (Pro/Expert uniquement)
   └── Domaine custom                                   → ~€10/an
 ```
 
@@ -75,6 +77,7 @@ Cloudflare Workers — Atelier-Dupont
 > - `OPERATOR_SOURCE_INSTANCE` — **déduit automatiquement du worker-name** fourni dans le protocole (ex: `atelier-weber`)
 > - `VAPID_PRIVATE_KEY` + `NEXT_PUBLIC_VAPID_PUBLIC_KEY` — paire partagée notifications push
 > - `OPENROUTER_API_KEY` + `MISTRAL_API_KEY` — clés IA Atelier partagées (sauf si Client fournit la sienne)
+> - `ELEVENLABS_API_KEY` + `ELEVENLABS_AGENT_ID` — compte ElevenLabs Orsayn centralisé (1 agent partagé, contexte injecté par org). Toujours lu depuis `.env.local`, jamais fourni par le client.
 > - `RESEND_API_KEY` Atelier partagée (sauf si client a son propre compte Resend)
 > - `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET` — générés par Claude si absents du protocole
 
@@ -93,20 +96,30 @@ CRON_SECRET : [laisser vide = Claude génère]
 Clé OpenRouter : Atelier (défaut) / Client (fournir sk-or-xxx)
   → Atelier : clé partagée depuis .env.local, Atelier porte le coût IA
   → Client : le client crée son compte openrouter.ai et fournit sa clé — il paye directement
+  → setup_only avec clé client : possible — injecter la clé via OPENROUTER_API_KEY dans le template setup-only,
+    noter ai_billing_mode = client_owned dans le cockpit. Tous les modules restent à false côté cockpit
+    (l'app ne fera aucun appel IA) mais la clé est disponible si un module est activé ponctuellement.
 Mode facturation IA cockpit : orsayn_shared / client_owned
   → orsayn_shared : coût IA soustrait de la marge dans le cockpit
   → client_owned : conso visible pour pricing, mais coût non porté par Orsayn
+Sarah vocale ElevenLabs : toujours compte Orsayn centralisé, 1 agent partagé pour tous les clients
+  → Pro/Expert standard : quota voice_live_minutes inclus dans le MRR, clés depuis .env.local
+  → Client self-hosted (add-on vocal) : même agent Orsayn, quota voice_live_minutes configuré dans le cockpit et re-facturé avec marge — pas de clés séparées à fournir
+  → Starter / setup_only : widget Sarah ABSENT de l'UI (conditionné sur modules.sarah_assistant) — ni chatbot texte ni vocal, aucun appel ElevenLabs possible
+  → Starter : feature "rédiger un email client" accessible (module relances_ai, quota partagé) — ce n'est pas le widget Sarah
+  → Ne pas oublier au déploiement Pro/Expert : ajouter le domaine client dans ElevenLabs > Agent > Sécurité > Liste d'autorisation
 WhatsApp activé : oui / non
   → Etat actuel : en attente de vérification Meta / routage central Orsayn non livré
   → Mode mutualisé Twilio cible : rien à fournir côté client — routing via webhook central Orsayn
   → Mode propre WABA : Phone Number ID + Access Token Meta/Graph-compatible, permanent
 Offre souscrite : [setup_only | starter | pro | expert]
   → Détermine modules + quota_config dans organization_modules au déploiement (étape C8)
-  → setup_only : tous les modules IA à false — l'app tourne sans IA
-  → starter : 39€/mois — IA web principale, WhatsApp à 0
-  → pro : 89€/mois — + whatsapp_agent (120 msg/mois, 10 min vocal)
-  → expert : 149€/mois — IA illimitée + 500 msg WhatsApp, 40 min vocal, 30 msgs proactifs, OCR WA
+  → setup_only : app complète sans IA — tous les modules IA à false, tous quotas à 0, OPENROUTER_API_KEY optionnel (si client veut sa propre clé pour usage futur)
+  → starter : IA web (devis, relances, planning, catalogue, OCR, rapports chantier) + rédaction emails clients IA — Sarah widget ABSENT (pas de chatbot, pas de vocal ElevenLabs)
+  → pro : Starter + Sarah widget texte (120 appels/mois) + Sarah vocale ElevenLabs (60 min/mois) — WhatsApp suspendu
+  → expert : IA illimitée + Sarah widget texte illimitée + Sarah vocale (300 min/mois) — WhatsApp suspendu
   → facturation électronique gérée séparément par le cockpit
+  → les modules WhatsApp (whatsapp_agent, whatsapp_ocr, whatsapp_proactive) restent à false sur tous les tiers jusqu'à réouverture du canal Meta
 Overflow mode : block (défaut) | upgrade_prompt | charge
   → block : fonctionnalité coupée en fin de quota jusqu'au 1er du mois
   → upgrade_prompt : la fonc continue, email upgrade envoyé, bascule block si non-upgrade 48h
@@ -224,10 +237,10 @@ Après avoir peuplé `company_memory`, je configure `organization_modules.module
 
 | Offre | Modules / quotas |
 |-------|----------------|
-| `setup_only` | Tous modules à `false`, tous quotas à `0` |
-| `starter` | IA web principale, WhatsApp à `0`, quotas starter |
-| `pro` | Starter + `whatsapp_agent`, quotas Pro |
-| `expert` | Tous modules, quotas Expert |
+| `setup_only` | Tous modules à `false`, tous quotas à `0`. OPENROUTER_API_KEY peut être injectée si clé client propre, mais aucun module actif. |
+| `starter` | IA web complète (devis, relances, planning, catalogue, OCR, rapports, emails clients IA) — `sarah_assistant: false` (ni widget chatbot ni vocal), `voice_live: false`, WhatsApp à `false` |
+| `pro` | Starter + `sarah_assistant: true` (Sarah widget texte + vocal ElevenLabs, 120 appels texte + 60 min vocal/mois) — WhatsApp à `false` |
+| `expert` | Tous modules IA à `true`, quotas illimités sauf vocal live (300 min/mois) — WhatsApp à `false` jusqu'à réouverture Meta |
 
 La facturation électronique est configurée séparément dans le cockpit après le tier : `off`, `export_only` ou `b2brouter`.
 
@@ -237,7 +250,7 @@ Si "Essai IA offert : oui" :
 3. Insérer un event dans `operator_client_events` : `event_type = 'trial_started'`, `event_category = 'trial'`
 4. Envoyer l'email `trial-start` via Resend cockpit au contact client
 
-À l'expiration : action manuelle cockpit disponible (`expireOperatorTrial`) ; les crons commerciaux automatiques `trial-expiry-check`, `trial-reminder`, `quota-alerts` sont une cible produit, pas encore des routes livrées dans `src/app/api`.
+À l'expiration : action manuelle cockpit disponible (`expireOperatorTrial`) ; les crons commerciaux automatiques `trial-expiry-check`, `trial-reminder` sont une cible produit, pas encore des routes livrées. `quota-alerts` est livré (voir section crons cockpit).
 
 Le cockpit Orsayn reste la source de vérité pour modifier tier, modules, quotas et configuration e-facturation après déploiement. Le bouton "Appliquer tier" pousse la configuration vers `https://<app-client>/api/operator/config-sync` avec signature HMAC.
 
@@ -358,6 +371,7 @@ Le cockpit Orsayn reste la source de vérité pour modifier tier, modules, quota
 106_chantier_task_assignments.sql         ← Assignations multiples des tâches chantier à des équipes ou membres terrain
 107_org_monthly_objectives.sql            ← Objectifs mensuels organisation : CA, marge, chantiers, heures, objectifs custom
 108_push_subscriptions.sql                ← Abonnements Web Push par user/device (notifications push navigateur)
+109_chantier_periodic_billing.sql         ← Facturation périodique sur chantiers longs (montant période, prochaine facture, clé de déduplication)
 110_quote_items_ai_structure.sql          ← Structure IA sur les lignes de devis (champs enrichis analyse IA)
 111_chantier_retention_default.sql        ← Retenue de garantie par défaut sur chantiers
 112_maintenance_contracts.sql             ← Module contrats entretien/maintenance : contracts + interventions + sites
@@ -367,6 +381,39 @@ Le cockpit Orsayn reste la source de vérité pour modifier tier, modules, quota
 116_recurring_invoice_auto_send_delay.sql ← Délai d'envoi automatique sur les factures récurrentes
 117_clean_maintenance_recurring_titles.sql ← Nettoyage des titres de récurrence maintenance
 118_maintenance_auto_send_delay.sql       ← Délai d'envoi auto spécifique aux contrats entretien
+119_secondary_activity_ids.sql            ← Activités secondaires déclarées par l'organisation (injectées dans le contexte IA)
+120_metal_pricing.sql                     ← Module prix matières métaux : tables cached_metal_prices, metal_price_grids, metal_price_snapshots + flag has_metal_pricing sur organizations
+121_quote_items_metal_grid_id.sql         ← Lien quote_items → grille matière métal utilisée pour le pré-remplissage (metal_grid_id)
+122_metal_pricing_hardening.sql           ← Durcissement sécurité module prix métaux : RLS cached_metal_prices, contraintes CHECK, unicité snapshot par ligne de devis
+123_steel_manual_pricing.sql              ← Support acier (STEEL) à prix manuel sur les grilles métal (source_type lme/manual + manual_price_eur_kg)
+124_metal_price_grids_supplier_catalog_link.sql ← Lien grille métal → fournisseur catalogue (supplier_id FK → suppliers)
+125_security_hardening_anon_revoke.sql          ← Révocation EXECUTE anon sur toutes les fonctions non publiques (triggers, fonctions métier)
+126_quote_section_subtotals.sql                 ← Sous-totaux par section sur les devis
+127_quote_item_price_pending.sql                ← Prix en attente sur les lignes devis
+128_quote_clause_templates.sql                  ← Templates de clauses personnalisées sur les devis
+129_metal_price_grids_enriched.sql              ← Grilles métal enrichies
+130_quote_variants.sql                          ← Variantes de devis (alternatives tarifaires)
+131_allow_metallerie_business_activity.sql      ← Activité métier métallerie autorisée
+132_supplier_price_requests.sql                 ← Demandes de prix fournisseur
+133_quote_technical_checklist.sql               ← Checklist technique sur les devis
+134_quote_item_labor_category.sql               ← Catégorie main-d'oeuvre sur les lignes devis
+135_labor_category_finition.sql                 ← Catégorie finition main-d'oeuvre
+136_client_internal_notes.sql                   ← Notes internes sur les fiches clients
+137_sarah_assistant_module.sql                  ← Module sarah_assistant séparé de chantier_assistant (Pro+)
+138_organization_ai_billing_mode.sql            ← Mode facturation IA par organisation (partagé Atelier / clé client)
+139_ai_permission_and_briefs.sql                ← Permission ai.sarah (accès assistants IA, max 2 membres par org) + table ai_briefs (briefs inter-assistants persistants Sarah→Chloé/Nora/Marco)
+140_voice_live_module.sql                       ← Module voice_live (vocal streaming live Sarah, Pro+ et Expert)
+141_ai_sarah_hardening.sql                      ← RLS ai_briefs limitée aux membres ai.sarah, TTL briefs, max 2 membres ai.sarah par org, unicité daily brief
+142_field_permissions_hardening.sql             ← RLS renforcée sur contrats entretien et pointages globaux (production terrain)
+143_fix_pointage_who_constraint.sql             ← Correctif contrainte chantier_pointages.who
+144_chantier_planning_pointages.sql             ← Lien pointage → créneau planning (chantier_pointages.chantier_planning_id)
+145_email_broadcasts.sql                        ← Envois groupés emails clients (broadcasts)
+146_ai_permissions_split.sql                    ← Découpage ai.sarah en 3 permissions : ai.sarah (widget), ai.manage (pilotage), ai.terrain (terrain)
+147_invoice_reverse_charge.sql                  ← Autoliquidation TVA sous-traitant BTP (art. 283-2 nonies CGI)
+148_chantier_reception_reserves.sql             ← Réception chantier et gestion des réserves BTP
+149_fix_reserves_rls_policy.sql                 ← Correctif RLS chantier_reserves
+150_sarah_action_proposals.sql                  ← Propositions d'actions persistantes Sarah (confirmation explicite avant toute action métier)
+151_sarah_action_proposals_harden_update_policy.sql ← Durcissement RLS : authenticated ne peut que masquer (dismiss) une proposition pending — exécution réservée au service role
 ```
 
 Note historique :
@@ -446,6 +493,7 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `106_chantier_task_assignments.sql`
 - `107_org_monthly_objectives.sql`
 - `108_push_subscriptions.sql`
+- `109_chantier_periodic_billing.sql`
 - `110_quote_items_ai_structure.sql`
 - `111_chantier_retention_default.sql`
 - `112_maintenance_contracts.sql`
@@ -455,6 +503,39 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `116_recurring_invoice_auto_send_delay.sql`
 - `117_clean_maintenance_recurring_titles.sql`
 - `118_maintenance_auto_send_delay.sql`
+- `119_secondary_activity_ids.sql`
+- `120_metal_pricing.sql`
+- `121_quote_items_metal_grid_id.sql`
+- `122_metal_pricing_hardening.sql`
+- `123_steel_manual_pricing.sql`
+- `124_metal_price_grids_supplier_catalog_link.sql`
+- `125_security_hardening_anon_revoke.sql`
+- `126_quote_section_subtotals.sql`
+- `127_quote_item_price_pending.sql`
+- `128_quote_clause_templates.sql`
+- `129_metal_price_grids_enriched.sql`
+- `130_quote_variants.sql`
+- `131_allow_metallerie_business_activity.sql`
+- `132_supplier_price_requests.sql`
+- `133_quote_technical_checklist.sql`
+- `134_quote_item_labor_category.sql`
+- `135_labor_category_finition.sql`
+- `136_client_internal_notes.sql`
+- `137_sarah_assistant_module.sql`
+- `138_organization_ai_billing_mode.sql`
+- `139_ai_permission_and_briefs.sql`
+- `140_voice_live_module.sql`
+- `141_ai_sarah_hardening.sql`
+- `142_field_permissions_hardening.sql`
+- `143_fix_pointage_who_constraint.sql`
+- `144_chantier_planning_pointages.sql`
+- `145_email_broadcasts.sql`
+- `146_ai_permissions_split.sql`
+- `147_invoice_reverse_charge.sql`
+- `148_chantier_reception_reserves.sql`
+- `149_fix_reserves_rls_policy.sql`
+- `150_sarah_action_proposals.sql`
+- `151_sarah_action_proposals_harden_update_policy.sql`
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`
@@ -614,6 +695,79 @@ Effets de ces migrations :
   - **nouvelles variables d'env requises** : `NEXT_PUBLIC_VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY` (voir §3)
   - après migration, les utilisateurs verront le bouton "Activer les pushs" dans le dropdown de la cloche
 
+- `119` :
+  - `organizations.secondary_activity_ids JSONB DEFAULT '[]'` — activités secondaires déclarées, injectées dans le contexte IA uniquement
+  - migration additive, aucun effet de bord
+
+- `120` :
+  - `organizations.has_metal_pricing BOOLEAN NOT NULL DEFAULT false` — flag d'activation du module prix matières (tôliers, métalliers) ; piloté depuis le cockpit Orsayn
+  - nouvelle table `cached_metal_prices` — cache serveur des cours LME (une ligne par métal : ALU, XCU, ZNC, PB), rafraîchi toutes les 10 min par le cron dédié
+  - nouvelle table `metal_price_grids` — grilles matière configurées par l'artisan (métal source + coefficient fournisseur) ; RLS org-scoped
+  - nouvelle table `metal_price_snapshots` — audit immuable des cours LME au moment de la validation du devis (traçabilité art. L. 112-1 CMF) ; RLS org-scoped
+  - **Gating strict :** le bandeau cours, les grilles et le snapshot ne s'affichent que si `has_metal_pricing = true` — activé uniquement depuis le cockpit Orsayn, pour les clients Pro ou Expert tôliers/métalliers. Aucun accès sans activation explicite.
+  - **Nouvelle variable d'env requise** : `METALPRICEAPI_KEY` (voir §3) — uniquement pour les instances où `has_metal_pricing` est activé
+  - **Nouveau cron à planifier** : `POST /api/cron/metal-prices` toutes les 10 min (voir §5.d) — uniquement si au moins un client a le module activé
+
+- `121` :
+  - `quote_items.metal_grid_id UUID REFERENCES metal_price_grids(id) ON DELETE SET NULL` — lien entre une ligne de devis et la grille métal utilisée pour le pré-remplissage ; null pour toutes les autres lignes
+  - migration additive, aucun effet de bord
+
+- `109` :
+  - colonnes sur `chantiers` : `montant_periode_ht`, `libelle_facturation_periode`, `periode_facturation` (`none`/`mensuelle`/`bimestrielle`/`trimestrielle`/`annuelle`), `jour_facturation` (1–31), `prochaine_facturation DATE`
+  - colonnes sur `invoices` : `billing_period_key TEXT` (clé fonctionnelle de période ex: `2026-06`) et `generation_source TEXT` (`chantier_period`, `recurring_model`, `manual`…)
+  - index partiel sur `chantiers` (période active + montant non nul) pour le cron de facturation périodique
+  - contrainte d'unicité sur `invoices(organization_id, chantier_id, billing_period_key)` — empêche la double-génération d'une facture de période
+  - **NOTICE :** migration additive. Tous les chantiers existants restent en `periode_facturation = 'none'`.
+  - **obligatoire avant d'utiliser** : la facturation périodique sur les chantiers longs et la passe `chantier_period` du cron `/api/cron/recurring-invoices`
+
+- `122` :
+  - durcissement sécurité du module prix matières (à appliquer après 120 et 121)
+  - `cached_metal_prices` : RLS activé + accès `anon`/`authenticated` révoqué — le cache n'est lisible que par le service role (route cron + `createAdminClient`)
+  - contraintes `CHECK` sur `metal_code` (ALU/XCU/ZNC/PB), `coefficient` (0 < coeff ≤ 100) et `unit` (kg/m²/ml/pièce/tonne) sur `metal_price_grids` et `metal_price_snapshots`
+  - unicité `quote_item_id` sur `metal_price_snapshots` (une ligne de devis → un seul snapshot) ; doublon éventuels supprimés au push
+  - `show_on_pdf` forcé à `false` sur tous les snapshots existants (la mention PDF client est désactivée par politique — la traçabilité reste interne)
+  - RLS `metal_price_grids` et `metal_price_snapshots` renforcées : filtre `is_active = true` sur les memberships
+
+- `123` :
+  - `metal_price_grids.source_type TEXT NOT NULL DEFAULT 'lme'` — distingue les grilles LME automatiques des grilles à prix manuel (`manual`)
+  - `metal_price_grids.manual_price_eur_kg NUMERIC(10,4)` — prix unitaire saisi manuellement (obligatoire si `source_type = 'manual'`, null sinon)
+  - extension du `CHECK metal_code` pour accepter `STEEL` (acier non coté LME — forcément `source_type = 'manual'`)
+  - `metal_price_snapshots.lme_price_eur_kg` rendu nullable — les snapshots acier n'ont pas de cours LME
+  - **NOTICE :** migration additive. Les grilles existantes reçoivent `source_type = 'lme'` automatiquement.
+
+- `124` :
+  - `metal_price_grids.supplier_id UUID REFERENCES suppliers(id) ON DELETE SET NULL` — lien optionnel entre une grille métal et un fournisseur du catalogue
+  - index partiel sur `supplier_id IS NOT NULL`
+  - **NOTICE :** migration additive, aucun effet de bord.
+
+- `125` :
+  - révocation `EXECUTE` pour le rôle `anon` sur toutes les fonctions non publiques : triggers internes (`auto_set_invoice_number`, `auto_set_quote_number`, `handle_new_user`, `handle_new_user_init`, `initialize_organization_for_user`, `generate_join_code`, `rls_auto_enable`, `sync_prestation_type_totals`, `touch_maintenance_contracts`, `update_client_totals`, `update_client_totals_from_invoice`) et fonctions métier (`generate_invoice_number`, `generate_quote_number`, `check_rate_limit`, `match_company_memory`, `get_user_org_id`, `user_has_permission`)
+  - le rôle `authenticated` conserve ses droits EXECUTE inchangés — aucun impact sur l'app
+  - **NOTICE :** idempotent, sans effet de bord. Les triggers restent fonctionnels (invoqués par Postgres, pas via RPC).
+- `139` :
+  - création de la permission `ai.sarah` (catégorie `ai`) — accordée automatiquement aux owners existants, pas aux autres rôles par défaut
+  - l'owner peut déléguer la permission à un second membre (admin, secrétaire) dans Paramètres > Rôles — max 2 personnes par organisation
+  - création de la table `ai_briefs` (briefs inter-assistants Sarah→Chloé/Nora/Marco) — RLS par organisation, auto-expiration 7 jours gérée en requête
+  - **NOTICE :** les routes IA (Sarah, Chloé, Marco, Nora, Léa) vérifieront désormais `ai.sarah` avant de répondre — les membres sans cette permission reçoivent HTTP 403 avec code `permission_denied`
+- `140` :
+  - ajout de `voice_live` dans `organization_modules.modules` (false par défaut pour tous les clients existants)
+  - ajout de `voice_live_minutes` dans `organization_modules.quota_config` (0 par défaut)
+  - activé par le cockpit Orsayn via config-sync pour les clients Pro et Expert
+  - **nouveau cron à brancher** : `GET /api/cron/sarah-daily-brief` tous les jours à 7h Europe/Paris — génère le brief du jour pour les orgs avec `sarah_assistant: true`, stocké dans `company_memory` (type: `daily_brief`), badge Sarah +1 tant que non lu
+
+- `150` :
+  - nouvelle table `sarah_action_proposals` — Sarah peut proposer des actions depuis le chat ou les crons proactifs ; l'utilisateur confirme explicitement avant toute exécution métier
+  - champs clés : `type`, `risk` (low/medium/high), `title`, `description`, `payload JSONB`, `deep_link`, `status` (pending/executed/dismissed/expired/failed), `dedupe_key` (unicité par org), `expires_at` (TTL 7 jours)
+  - RLS : lecture réservée aux membres avec permission `ai.sarah` ; mise à jour limitée au dismiss (`status = 'dismissed'`) — exécution réservée au service role
+  - index de déduplication : un seul `pending` par `(organization_id, dedupe_key)`
+  - **NOTICE :** migration additive. Les appels IA existants ne sont pas affectés.
+
+- `151` :
+  - durcissement de la politique RLS de `sarah_action_proposals` : remplace l'ancienne policy `ai_member_update` par `ai_member_dismiss` stricte
+  - `authenticated` ne peut mettre à jour que `status` et `dismissed_at`, uniquement vers `dismissed`, uniquement sur des propositions `pending` non expirées
+  - `executed_at` et `error` ne peuvent être écrits que par le service role (côté serveur)
+  - **NOTICE :** idempotent. Le `DROP POLICY IF EXISTS` avant le `CREATE` est sans effet si `150` n'a pas encore été appliquée.
+
 Impact déploiement :
 - `059` : appliquer sur tous les clients existants avec WhatsApp avant de redéployer l'Edge Function — sans ça, le webhook ne peut pas lire `authorized_contacts` ni `use_shared_waba`
 - `067` + `068` : appliquer avant d'utiliser l'onglet Rentabilité, l'assistant IA chantier, les photos rapport et les nouveaux outils WhatsApp — sans ça les inserts sur `chantier_expenses` et `chantier_photos` échoueront
@@ -704,6 +858,7 @@ NEXT_PUBLIC_SUPPORT_EMAIL=...
 NEXT_PUBLIC_PRIVACY_EMAIL=...
 NEXT_PUBLIC_LEGAL_EMAIL=...
 OPENROUTER_API_KEY=sk-or-...          ← clé Atelier partagée
+METALPRICEAPI_KEY=...                  ← uniquement si has_metal_pricing activé (plan Basic 12$/mois, mutualisé entre tous les clients du module) — obtenir sur metalpriceapi.com
 MISTRAL_API_KEY=...                    ← clé Atelier partagée
 CRON_SECRET=...                        ← unique par client (openssl rand -hex 32)
 MEMBER_SESSION_SECRET=...              ← unique par client, signe le cookie de session /mon-espace (openssl rand -hex 32)
@@ -966,6 +1121,38 @@ curl -X POST https://<domaine-du-client.fr>/api/cron/monthly-member-reports \
 ```
 
 > **Pourquoi pas dans le Worker `auto-reminder` ?** Le Worker existant tourne tous les jours (`0 7 * * *` UTC). Pour ce cron mensuel on a besoin d'un schedule différent (1er du mois). Soit créer un Worker dédié, soit utiliser cron-job.org. Le déclenchement reste idempotent : le mois courant est calculé côté serveur, pas de risque d'envoi en double.
+
+### 5.d Cron — rafraîchissement cours LME (module prix matières métaux)
+
+**Concerne uniquement les instances avec `has_metal_pricing = true`.**
+
+`POST /api/cron/metal-prices` force un fetch depuis MetalPriceAPI et met à jour le cache `cached_metal_prices`. L'app a elle-même un cache serveur de 10 min — ce cron n'est nécessaire que pour garantir un rafraîchissement proactif et indépendant du trafic.
+
+**Plan API retenu :** Basic (12 $/mois, 10 000 req/mois, MAJ toutes les 10 min) — mutualisé entre tous les clients du module. Une seule clé `METALPRICEAPI_KEY` côté Atelier, identique sur toutes les instances.
+
+**Planification recommandée — cron-job.org :**
+
+1. Aller sur [cron-job.org](https://cron-job.org) → créer **un seul job** (la clé est Atelier-partagée, le cache est en DB)
+2. URL : `https://<domaine-du-client.fr>/api/cron/metal-prices`
+3. Méthode : `POST`
+4. Header : `x-cron-secret: <CRON_SECRET du client>`
+5. Fréquence : toutes les 10 minutes
+
+> **Alternative :** si tous les clients actifs ont le même `CRON_SECRET` (non recommandé), un seul job suffit. Sinon, créer un job par client. Le coût API est mutualisé côté MetalPriceAPI (une seule clé, un seul quota).
+
+```bash
+# Déclencher manuellement (test ou init)
+curl -X POST https://<domaine-du-client.fr>/api/cron/metal-prices \
+  -H "x-cron-secret: <CRON_SECRET>"
+# Réponse attendue : { "ok": true, "refreshed": 4, "prices": [...] }
+```
+
+**Variables d'env requises (injecter via `--apply-all`) :**
+```
+METALPRICEAPI_KEY=...   ← clé Atelier partagée (obtenir sur metalpriceapi.com, plan Basic)
+```
+
+> **Fallback :** si l'API MetalPriceAPI est indisponible, l'app retourne le dernier cours en cache avec l'horodatage de la dernière mise à jour valide. Le bandeau affiche la mention "Cours du JJ/MM/AAAA" pour indiquer que ce n'est pas le cours du jour.
 
 ### 6. Edge Function WhatsApp
 
@@ -1243,11 +1430,7 @@ Ce mode n'utilise pas le numéro Twilio mutualisé Atelier.
 
 **T-O1 — Créer le projet Supabase opérateur**
 - Nouveau projet Supabase (ex: `orsayn-operator`) dans la même région
-- Appliquer `supabase/operator-migrations/001_operator_usage.sql`
-- Puis appliquer `supabase/operator-migrations/002_operator_client_settings.sql`
-- Puis appliquer `supabase/operator-migrations/003_operator_subscriptions_quotas.sql`
-- Puis appliquer `supabase/operator-migrations/004_operator_einvoicing_config.sql`
-- Puis appliquer `supabase/operator-migrations/005_operator_cockpit_actions.sql`
+- Appliquer dans l'ordre : `001_operator_usage.sql` → `002_operator_client_settings.sql` → `003_operator_subscriptions_quotas.sql` → `004_operator_einvoicing_config.sql` → `005_operator_cockpit_actions.sql` → `006_stripe_subscription_columns.sql` → `007_commercial_events_v2.sql`
 - Récupérer l'URL et la service role key
 
 **Pour un cockpit déjà existant :**
@@ -1297,25 +1480,52 @@ Connexion avec le compte Supabase opérateur dont l'email est dans `OPERATOR_ALL
 
 ### Abonnements, offres et Stripe
 
-Etat réel mai 2026 :
-- le cockpit pilote déjà les tiers (`setup_only`, `starter`, `pro`, `expert`), le MRR, les essais, les quotas, le mode IA et la config e-facturation ;
-- Stripe Billing n'est pas encore intégré au cockpit ;
-- les abonnements offerts, suspensions, résiliations et webhooks Stripe sont cadrés dans `docs/scope-cockpit-stripe-abonnements.md`.
-
 Règle produit retenue :
 - **cockpit = droits produit** (modules, quotas, statut de service, essais, gratuités)
-- **Stripe = argent** (subscription, factures Orsayn, carte, paiement échoué, Customer Portal)
+- **Stripe = argent** (paiement abonnement, renouvellement, résiliation)
 
-Ne pas bloquer un déploiement client sur Stripe tant que le cockpit manuel suffit. Pour les premiers clients, renseigner l'offre et le MRR dans le cockpit, puis appliquer la configuration vers l'instance client via `config-sync`.
+#### Intégration Stripe cockpit (juin 2026)
+
+Stripe est intégré au cockpit via Payment Links + webhook. Flux :
+
+1. Le client choisit un tier sur un Payment Link Stripe
+2. Il saisit **"Identifiant de votre application"** dans le champ personnalisé du paiement (c'est son `source_instance`, ex : `atelier-dupont`)
+3. Stripe envoie `checkout.session.completed` → le webhook cockpit (`/api/webhooks/stripe`) lit le champ, identifie le tier via le Price ID, puis met à jour `operator_client_subscriptions` et synchonise les modules/quotas vers l'instance cliente via `config-sync`
+
+Events Stripe configurés sur le webhook cockpit :
+- `checkout.session.completed` — nouvel abonnement ou upgrade
+- `customer.subscription.updated` — changement de plan
+- `customer.subscription.deleted` — résiliation → tier passe à `setup_only`
+
+Variables cockpit requises (dans `.env.local` + Cloudflare secrets via `--apply-all`) :
+```
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PRICE_STARTER=price_1Thr7dJwMU6o9YwI5LSqnnh4
+STRIPE_PRICE_PRO=price_1ThrAWJwMU6o9YwIboiFGndn
+STRIPE_PRICE_EXPERT=price_1ThrCtJwMU6o9YwIFQrahtnv
+STRIPE_PORTAL_CONFIGURATION_ID=bpc_...  ← ID config portail Stripe dédiée Atelier (Stripe Dashboard → Customer portal → Configurations)
+```
+
+Variables injectées dans **chaque instance cliente** (utilisées pour afficher le bouton upgrade dans l'app) :
+```
+NEXT_PUBLIC_STRIPE_LINK_STARTER=https://buy.stripe.com/...
+NEXT_PUBLIC_STRIPE_LINK_PRO=https://buy.stripe.com/...
+NEXT_PUBLIC_STRIPE_LINK_EXPERT=https://buy.stripe.com/...
+```
+
+> Pour les premiers clients ou les gratuités : continuer à piloter manuellement via le cockpit (`config-sync`). Stripe n'est pas obligatoire pour déployer.
 
 ### Checklist cockpit
 
-- [ ] `001_operator_usage.sql` + `002_operator_client_settings.sql` + `003_operator_subscriptions_quotas.sql` + `004_operator_einvoicing_config.sql` + `005_operator_cockpit_actions.sql` appliqués sur le Supabase opérateur
+- [ ] Migrations cockpit appliquées sur le Supabase opérateur : `001` → `002` → `003` → `004` → `005` → `006_stripe_subscription_columns.sql` → `007_commercial_events_v2.sql`
 - [ ] Tables opérateur créées : `operator_clients`, `operator_usage_events`, `operator_whatsapp_cost_snapshots`, `operator_client_settings`, `operator_client_subscriptions`, `operator_client_quotas`, `operator_quota_usage_events`, `operator_client_events`, `operator_commercial_events`
 - [ ] Colonnes e-facturation présentes sur `operator_client_subscriptions` : `einvoicing_mode`, `einvoicing_environment`, `b2brouter_account_id`, `einvoicing_annuaire_status`
 - [ ] Colonne essai présente : `operator_client_subscriptions.trial_converted`
 - [ ] Colonne pricing IA présente : `operator_client_subscriptions.ai_billing_mode`
+- [ ] Colonnes Stripe présentes : `operator_client_subscriptions.stripe_customer_id` + `stripe_subscription_id` (migration `supabase/operator-migrations/006_stripe_subscription_columns.sql`)
 - [ ] Variables d'env cockpit injectées dans Cloudflare Workers (y compris `RESEND_API_KEY` + `RESEND_FROM_ADDRESS` pour les emails commerciaux)
+- [ ] Variables Stripe cockpit injectées : `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_EXPERT`, `STRIPE_PORTAL_CONFIGURATION_ID`
 - [ ] Page `/orsayn` accessible (renvoie 404 sinon → `OPERATOR_MODE` non reconnu)
 - [ ] Envoyer un appel IA de test depuis une instance cliente → vérifier que l'event apparaît dans le cockpit
 - [ ] Renseigner un `monthly_fee_ht` dans le cockpit → vérifier le calcul de marge
@@ -1325,31 +1535,31 @@ Ne pas bloquer un déploiement client sur Stripe tant que le cockpit manuel suff
 - [ ] Essais : tester les actions manuelles cockpit `activateOperatorTrial`, `convertOperatorTrial`, `expireOperatorTrial`
 - [ ] Crons commerciaux cockpit : non livrés aujourd'hui, à implémenter avant configuration cron-job.org (voir §Crons cockpit ci-dessous)
 
-### Crons cockpit — essais et relances commerciales (cible, non livré)
+### Crons cockpit — alertes quota et relances commerciales
 
-Le cockpit sait déjà activer, convertir et expirer manuellement un essai via les actions serveur. Les routes cron ci-dessous sont la cible produit pour automatiser ces actions ; elles ne sont pas encore présentes dans `src/app/api/cron` au 2026-05-25.
+Ces routes tournent sur le **cockpit Orsayn** (pas sur les instances clientes), via cron-job.org pointant sur `https://orsayn-cockpit.mbebourasam.workers.dev`.
 
-Quand elles seront implémentées, elles tourneront sur le **cockpit Orsayn** (pas sur les instances clientes), via cron-job.org en pointant sur `https://orsayn-cockpit.mbebourasam.workers.dev`.
+**Authentification :** header `x-cron-secret: <CRON_SECRET>` (même secret que les crons clients).
 
-| Route | Fréquence | Rôle |
-|-------|-----------|------|
-| `POST /api/cron/trial-expiry-check` | Tous les jours à 02:00 UTC | Vérifie les essais expirés → désactive modules côté instance + envoie `trial-expired` |
-| `POST /api/cron/trial-reminder` | Tous les jours à 08:00 UTC | Envoie `trial-expiry-7d` à J-7 et `trial-expiry-2d` à J-2 |
-| `POST /api/cron/trial-lapsed-followup` | Tous les jours à 09:00 UTC | Envoie `trial-expired-14d` aux essais expirés sans conversion depuis 14 jours |
-| `POST /api/cron/quota-alerts` | Tous les jours à 10:00 UTC | Envoie `upgrade-prompt-quota` et `upgrade-prompt-wa` aux clients proches ou dépassant leur quota |
+| Route | Statut | Fréquence | Rôle |
+|-------|--------|-----------|------|
+| `POST /api/operator/cron/quota-alerts` | **Livré** | Tous les jours à 10:00 UTC | Détecte les clients à ≥85% de quota → crée une alerte `pending_review` dans le cockpit avec envoi auto J+2 si pas d'action |
+| `POST /api/cron/trial-expiry-check` | Cible | Tous les jours à 02:00 UTC | Vérifie les essais expirés → désactive modules + envoie `trial-expired` |
+| `POST /api/cron/trial-reminder` | Cible | Tous les jours à 08:00 UTC | Envoie `trial-expiry-7d` à J-7 et `trial-expiry-2d` à J-2 |
 
-**Authentification :** header `x-operator-secret: <OPERATOR_INGEST_SECRET>` sur chaque cron.
-
-**Idempotence :** chaque cron vérifie `operator_commercial_events` avant d'envoyer — si l'event du même type pour le même client existe déjà dans la fenêtre de cooldown attendue, l'email ne repart pas.
+**Flux quota-alerts :**
+1. Le cron détecte quota ≥85% → crée `operator_commercial_events` avec `delivery_status = 'pending_review'` et `auto_send_after = maintenant + 2j`
+2. Dans le cockpit `/orsayn` → onglet "Emails" → sous-onglet "En attente" → tu peux éditer le corps, saisir l'email du client, puis envoyer manuellement ou ignorer
+3. Si aucune action avant J+2, le passage suivant du cron envoie automatiquement (si `recipient_email` est renseigné sur l'alerte)
+4. Idempotent : pas de doublon si une alerte `pending_review` du même type existe déjà ce mois pour ce client
 
 ```bash
-# Tester manuellement (remplacer le secret)
-curl -X POST https://orsayn-cockpit.mbebourasam.workers.dev/api/cron/trial-expiry-check \
-  -H "x-operator-secret: <OPERATOR_INGEST_SECRET>"
-
-curl -X POST https://orsayn-cockpit.mbebourasam.workers.dev/api/cron/quota-alerts \
-  -H "x-operator-secret: <OPERATOR_INGEST_SECRET>"
+# Tester manuellement
+curl -X POST https://orsayn-cockpit.mbebourasam.workers.dev/api/operator/cron/quota-alerts \
+  -H "x-cron-secret: <CRON_SECRET>"
 ```
+
+> Pour renseigner l'email d'un client dans une alerte : ouvre l'alerte dans le cockpit → champ "Email destinataire" → "Envoyer maintenant". L'email est alors mémorisé sur l'alerte pour les prochains envois auto.
 
 ---
 
@@ -1823,4 +2033,4 @@ Créer un cron-job.org gratuit → ping `https://<ref>.supabase.co/rest/v1/` tou
 
 | Client | Project Ref | Domaine | Déployé le | Migrations | WhatsApp | Fact. élec. |
 |--------|-------------|---------|------------|------------|---------|------------|
-| Weber Tôlerie (**démo**) | `pyxnmohknxmbpbcuvudg` | localhost | 2024 | 001→118 | ❌ | export_only |
+| Weber Tôlerie (**démo**) | `pyxnmohknxmbpbcuvudg` | localhost | 2024 | 001→125 | ❌ | export_only |

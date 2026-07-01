@@ -115,19 +115,6 @@ function getCommercialTemplate(input: {
   usageCostLabel: string
   suggestedTier: SubscriptionTier
 }) {
-  if (input.eventType === 'upgrade_prompt_wa') {
-    return {
-      template: 'upgrade-prompt-wa',
-      subject: `Atelier : usage WhatsApp à optimiser pour ${input.clientLabel}`,
-      body: [
-        `Bonjour,`,
-        `Je vous écris car l'usage WhatsApp de ${input.clientLabel} commence à devenir significatif sur Atelier.`,
-        `Votre offre actuelle est ${input.tier}. Vu le volume récent, le palier ${input.suggestedTier} peut être plus confortable pour éviter les limites et garder de la marge sur les automatisations.`,
-        `On peut regarder ça ensemble et ajuster l'offre si besoin.`,
-      ],
-    }
-  }
-
   return {
     template: 'upgrade-prompt-quota',
     subject: `Atelier : point usage IA pour ${input.clientLabel}`,
@@ -341,6 +328,7 @@ async function syncClientQuotaConfig(
   appUrl: string | null,
   tier: SubscriptionTier,
   overflowMode: OverflowMode,
+  aiBillingMode: AIBillingMode,
   einvoicingConfig: EinvoicingConfig,
 ): Promise<{ status: 'synced' | 'pending_manual' | 'skipped' | 'failed'; error: string | null }> {
   const operator = createOperatorAdminClient()
@@ -373,12 +361,14 @@ async function syncClientQuotaConfig(
     return { status: 'skipped', error: errorMessage }
   }
 
+  const syncedTier = aiBillingMode === 'client_owned' ? 'expert' : tier
   const body = JSON.stringify({
     source_instance: sourceInstance,
     organization_id: organizationId,
-    modules: getModulesForTier(tier),
-    quota_config: getQuotaConfigForTier(tier),
+    modules: getModulesForTier(syncedTier),
+    quota_config: getQuotaConfigForTier(syncedTier),
     overflow_mode: overflowMode,
+    ai_billing_mode: aiBillingMode,
     einvoicing_config: einvoicingConfig,
   })
   const signature = signOperatorPayload(body, secret)
@@ -517,7 +507,7 @@ export async function upsertOperatorSubscription(formData: FormData) {
     trial_converted: trialConverted,
   })
   await initializeQuotasForTier(sourceInstance, effectiveTier)
-  const syncResult = await syncClientQuotaConfig(sourceInstance, client?.organization_id ?? null, appUrl, effectiveTier, overflowMode, einvoicingConfig)
+  const syncResult = await syncClientQuotaConfig(sourceInstance, client?.organization_id ?? null, appUrl, effectiveTier, overflowMode, aiBillingMode, einvoicingConfig)
   await recordOperatorClientEvent({
     sourceInstance,
     eventCategory: 'subscription',
@@ -639,6 +629,7 @@ export async function activateOperatorTrial(formData: FormData) {
     appUrl,
     'expert',
     subscription.overflowMode,
+    subscription.aiBillingMode,
     subscription.einvoicingConfig,
   )
   await recordOperatorClientEvent({
@@ -697,6 +688,7 @@ export async function convertOperatorTrial(formData: FormData) {
     appUrl,
     targetTier,
     subscription.overflowMode,
+    subscription.aiBillingMode,
     subscription.einvoicingConfig,
   )
   await recordOperatorClientEvent({
@@ -752,6 +744,7 @@ export async function expireOperatorTrial(formData: FormData) {
     appUrl,
     targetTier,
     subscription.overflowMode,
+    subscription.aiBillingMode,
     subscription.einvoicingConfig,
   )
   await recordOperatorClientEvent({
@@ -790,6 +783,7 @@ export async function resyncOperatorClientConfig(formData: FormData) {
     appUrl,
     effectiveTier,
     subscription.overflowMode,
+    subscription.aiBillingMode,
     subscription.einvoicingConfig,
   )
   await recordOperatorClientEvent({
@@ -887,6 +881,155 @@ export async function recordOperatorCommercialAction(formData: FormData) {
   }
 
   revalidatePath('/orsayn')
+}
+
+// ── Module emails cockpit ──────────────────────────────────────────────────────
+
+export async function sendOperatorEmail(formData: FormData) {
+  const user = await getOperatorUser()
+  if (!user) throw new Error('Accès opérateur requis')
+
+  const subject = String(formData.get('subject') ?? '').trim()
+  const bodyText = String(formData.get('bodyText') ?? '').trim()
+  const recipientEmailsRaw = String(formData.get('recipientEmails') ?? '').trim()
+
+  if (!subject) throw new Error('Sujet requis')
+  if (!bodyText) throw new Error('Corps du message requis')
+
+  const recipientEmails = recipientEmailsRaw
+    .split(/[\n,;]+/)
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
+
+  if (recipientEmails.length === 0) throw new Error('Au moins un email destinataire valide requis')
+
+  const apiKey = process.env.RESEND_API_KEY?.trim()
+  const fromAddress = process.env.RESEND_FROM_ADDRESS?.trim()
+  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Orsayn'
+  if (!apiKey || !fromAddress) throw new Error('RESEND non configuré dans le cockpit')
+
+  const resend = new Resend(apiKey)
+  const bodyLines = bodyText.split('\n').filter(Boolean)
+  const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+    ${bodyLines.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}
+    <p style="margin-top:24px;color:#6b7280;font-size:13px">Orsayn</p>
+  </div>`
+
+  const operator = createOperatorAdminClient()
+  let sent = 0
+  let failed = 0
+
+  // Un envoi individuel par destinataire — chaque mail est "personnel"
+  for (const to of recipientEmails) {
+    const { error } = await resend.emails.send({ from: `${fromName} <${fromAddress}>`, to, subject, html })
+    const deliveryStatus = error ? 'failed' : 'sent'
+    if (error) failed++
+    else sent++
+
+    await operator.from('operator_commercial_events').insert({
+      source_instance: String(formData.get('sourceInstance') ?? '').trim() || 'cockpit-broadcast',
+      event_type: 'manual_email',
+      tier_context: String(formData.get('tierContext') ?? '').trim() || null,
+      sent_by: 'operator_manual',
+      actor_email: user.email ?? null,
+      delivery_status: deliveryStatus,
+      email_template: 'manual_free',
+      subject_preview: subject,
+      body_text: bodyText,
+      recipient_email: to,
+      notes: String(formData.get('notes') ?? '').trim() || null,
+      metadata: { delivery_error: error?.message ?? null },
+    })
+  }
+
+  revalidatePath('/orsayn')
+  if (failed > 0 && sent === 0) throw new Error(`Tous les envois ont échoué (${failed})`)
+}
+
+export async function validateQuotaAlert(formData: FormData) {
+  const user = await getOperatorUser()
+  if (!user) throw new Error('Accès opérateur requis')
+
+  const alertId = String(formData.get('alertId') ?? '').trim()
+  const action = String(formData.get('action') ?? '').trim() // 'send' | 'ignore' | 'update_body'
+  if (!alertId) throw new Error('alertId requis')
+
+  const operator = createOperatorAdminClient()
+  const { data: alert } = await operator
+    .from('operator_commercial_events')
+    .select('id, source_instance, subject_preview, body_text, metadata')
+    .eq('id', alertId)
+    .eq('delivery_status', 'pending_review')
+    .maybeSingle()
+
+  if (!alert) throw new Error('Alerte introuvable ou déjà traitée')
+
+  if (action === 'ignore') {
+    await operator
+      .from('operator_commercial_events')
+      .update({ delivery_status: 'ignored', actor_email: user.email ?? null })
+      .eq('id', alertId)
+    revalidatePath('/orsayn')
+    return
+  }
+
+  if (action === 'update_body') {
+    const newBody = String(formData.get('bodyText') ?? '').trim()
+    const newSubject = String(formData.get('subject') ?? '').trim()
+    const recipientEmail = String(formData.get('recipientEmail') ?? '').trim().toLowerCase() || null
+    await operator
+      .from('operator_commercial_events')
+      .update({
+        body_text: newBody || alert.body_text,
+        subject_preview: newSubject || alert.subject_preview,
+        recipient_email: recipientEmail,
+        actor_email: user.email ?? null,
+      })
+      .eq('id', alertId)
+    revalidatePath('/orsayn')
+    return
+  }
+
+  // action === 'send'
+  const recipientEmail = String(formData.get('recipientEmail') ?? '').trim().toLowerCase()
+  if (!recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+    throw new Error('Email destinataire invalide')
+  }
+
+  const subject = alert.subject_preview ?? 'Message Orsayn'
+  const bodyLines = (alert.body_text ?? '').split('\n').filter(Boolean)
+  const apiKey = process.env.RESEND_API_KEY?.trim()
+  const fromAddress = process.env.RESEND_FROM_ADDRESS?.trim()
+  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Orsayn'
+
+  let deliveryStatus: 'sent' | 'failed' | 'skipped' = 'skipped'
+  let deliveryError: string | null = null
+
+  if (apiKey && fromAddress) {
+    const resend = new Resend(apiKey)
+    const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+      ${bodyLines.map((line: string) => `<p>${escapeHtml(line)}</p>`).join('')}
+      <p style="margin-top:24px;color:#6b7280;font-size:13px">Orsayn</p>
+    </div>`
+    const { error } = await resend.emails.send({ from: `${fromName} <${fromAddress}>`, to: recipientEmail, subject, html })
+    deliveryStatus = error ? 'failed' : 'sent'
+    deliveryError = error?.message ?? null
+  }
+
+  const meta = (alert.metadata ?? {}) as Record<string, unknown>
+  await operator
+    .from('operator_commercial_events')
+    .update({
+      delivery_status: deliveryStatus,
+      recipient_email: recipientEmail,
+      actor_email: user.email ?? null,
+      auto_send_after: null,
+      metadata: { ...meta, delivery_error: deliveryError, validated_by: user.email },
+    })
+    .eq('id', alertId)
+
+  revalidatePath('/orsayn')
+  if (deliveryStatus === 'failed') throw new Error(deliveryError ?? 'Envoi échoué')
 }
 
 export async function upsertOperatorClientModules(formData: FormData) {

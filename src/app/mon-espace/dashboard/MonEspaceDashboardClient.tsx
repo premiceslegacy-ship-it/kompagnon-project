@@ -37,6 +37,18 @@ function fmtMin(min: number): string {
   return `${h}h${String(m).padStart(2, '0')}`
 }
 
+function getPlanningHours(planning: MemberPlanning): number | null {
+  if (planning.duration_min != null && planning.duration_min > 0) {
+    return Math.round((planning.duration_min / 60) * 10) / 10
+  }
+  if (!planning.start_time || !planning.end_time) return null
+  const [sh, sm] = planning.start_time.split(':').map(Number)
+  const [eh, em] = planning.end_time.split(':').map(Number)
+  if ([sh, sm, eh, em].some(n => Number.isNaN(n))) return null
+  const hours = (eh + em / 60) - (sh + sm / 60)
+  return hours > 0 ? Math.round(hours * 10) / 10 : null
+}
+
 const dayNames = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam']
 
 function PointageAccordionMembre({
@@ -158,6 +170,8 @@ export default function MonEspaceDashboardClient({
   const [arrivals, setArrivals] = useState<Record<string, string>>({})
   const [quickSavingId, setQuickSavingId] = useState<string | null>(null)
   const [quickError, setQuickError] = useState<string | null>(null)
+  const [slotSavingId, setSlotSavingId] = useState<string | null>(null)
+  const [logoutLoading, setLogoutLoading] = useState(false)
 
   const handlePoint = async () => {
     setPError(null)
@@ -214,6 +228,33 @@ export default function MonEspaceDashboardClient({
     router.refresh()
   }
 
+  const handlePointPlannedSlot = async (planning: MemberPlanning) => {
+    const plannedHours = getPlanningHours(planning)
+    if (!plannedHours) {
+      setQuickError('Ce créneau n’a pas de durée exploitable.')
+      return
+    }
+
+    setSlotSavingId(planning.id)
+    setQuickError(null)
+    const isMaintenance = planning.id.startsWith('maintenance:')
+    const { error } = await pointMyHoursFromSpace({
+      chantierId: planning.chantier_id || undefined,
+      date: planning.planned_date,
+      hours: plannedHours,
+      startTime: planning.start_time ?? null,
+      description: planning.label ? `Créneau planifié - ${planning.label}` : `Créneau planifié - ${planning.chantier_title}`,
+      planningId: isMaintenance ? null : planning.id,
+      maintenanceInterventionId: isMaintenance ? planning.id.replace('maintenance:', '') : null,
+    })
+    setSlotSavingId(null)
+    if (error) {
+      setQuickError(error)
+      return
+    }
+    router.refresh()
+  }
+
   // Rapport mensuel
   const [reportFrom, setReportFrom] = useState(monthStart)
   const [reportTo, setReportTo]     = useState(monthEnd)
@@ -230,6 +271,7 @@ export default function MonEspaceDashboardClient({
   }
 
   const handleLogout = async () => {
+    setLogoutLoading(true)
     await logoutFromMonEspace()
     router.replace('/mon-espace/request-access')
   }
@@ -281,10 +323,11 @@ export default function MonEspaceDashboardClient({
         </div>
         <button
           onClick={handleLogout}
-          className="text-secondary hover:text-primary p-2 rounded-lg hover:bg-[var(--elevation-1)] transition-colors"
+          disabled={logoutLoading}
+          className="text-secondary hover:text-primary p-2 rounded-lg hover:bg-[var(--elevation-1)] transition-colors disabled:opacity-60"
           title="Se déconnecter"
         >
-          <LogOut className="w-4 h-4" />
+          {logoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
         </button>
       </header>
 
@@ -525,29 +568,98 @@ export default function MonEspaceDashboardClient({
             <CalendarDays className="w-3.5 h-3.5" /> Sync agenda
           </a>
         </div>
+        {quickError && <p className="text-xs text-red-500">{quickError}</p>}
         {sortedPlanningDates.length === 0 ? (
           <div className="card p-4 text-sm text-secondary text-center">
             Aucun créneau à venir dans les 3 prochaines semaines.
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="card divide-y divide-[var(--elevation-border)] overflow-hidden">
             {sortedPlanningDates.map(date => {
               const d = new Date(date + 'T00:00:00')
+              const isDateToday = date === today
+              const slots = planningsByDay[date]
               return (
-                <div key={date} className="card p-3">
-                  <p className="text-xs uppercase font-bold text-secondary tracking-wider">
-                    {dayNames[d.getDay()]} {fmtDate(date)}
+                <div key={date} className={`px-4 py-3 ${isDateToday ? 'bg-accent/5' : ''}`}>
+                  <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${isDateToday ? 'text-accent' : 'text-secondary'}`}>
+                    {isDateToday ? "Aujourd'hui" : `${dayNames[d.getDay()]} ${fmtDate(date)}`}
                   </p>
-                  <div className="mt-2 space-y-1">
-                    {planningsByDay[date].map(p => (
-                      <div key={p.id} className="flex items-center gap-2 text-sm">
-                        <span className="text-primary font-semibold">{p.chantier_title}</span>
-                        {p.chantier_city && <span className="text-secondary text-xs">· {p.chantier_city}</span>}
-                        <span className="ml-auto text-secondary text-xs">
-                          {p.start_time ?? '—'}{p.end_time ? `–${p.end_time}` : ''}
-                        </span>
-                      </div>
-                    ))}
+                  <div className="space-y-1.5">
+                    {slots.map(p => {
+                      const address = [p.chantier_address_line1, p.chantier_postal_code, p.chantier_city].filter(Boolean).join(', ')
+                      const mapsUrl = address ? `https://maps.google.com/maps?q=${encodeURIComponent(address)}` : null
+                      const plannedHours = getPlanningHours(p)
+                      const canPointSlot = Boolean(plannedHours && !p.pointage_id)
+                      return (
+                        <div key={p.id} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                          {/* Heure */}
+                          <div className="w-full shrink-0 sm:w-14 sm:text-right">
+                            {p.start_time ? (
+                              <span className="text-xs font-semibold text-primary tabular-nums">
+                                {p.start_time.slice(0, 5)}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-secondary italic">Libre</span>
+                            )}
+                          </div>
+                          {/* Séparateur */}
+                          <div className="hidden w-px h-8 bg-[var(--elevation-border)] shrink-0 sm:block" />
+                          {/* Infos */}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-primary truncate">{p.chantier_title}</p>
+                            {address && (
+                              <p className="flex items-center gap-1 text-xs text-secondary truncate">
+                                <MapPin className="h-2.5 w-2.5 shrink-0" />
+                                <span className="truncate">{address}</span>
+                              </p>
+                            )}
+                            {p.notes && (
+                              <p className="text-xs text-secondary/70 truncate italic">{p.notes}</p>
+                            )}
+                          </div>
+                          {/* Durée + itinéraire */}
+                          <div className="shrink-0 flex flex-wrap items-center justify-end gap-2">
+                            {p.start_time && p.end_time && (() => {
+                              const [sh, sm2] = p.start_time.split(':').map(Number)
+                              const [eh, em] = p.end_time.split(':').map(Number)
+                              const dur = (eh + em / 60) - (sh + sm2 / 60)
+                              return dur > 0 ? (
+                                <span className="text-xs font-semibold text-primary tabular-nums">
+                                  {fmtHours(dur)}
+                                </span>
+                              ) : null
+                            })()}
+                            {!p.end_time && p.start_time && (
+                              <span className="text-xs text-secondary tabular-nums">
+                                {p.start_time.slice(0, 5)}
+                              </span>
+                            )}
+                            {mapsUrl && (
+                              <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
+                                className="p-1.5 rounded-lg text-accent hover:bg-accent/10 transition-colors"
+                                title="Itinéraire">
+                                <Navigation className="h-3.5 w-3.5" />
+                              </a>
+                            )}
+                            {p.pointage_id ? (
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                                <Check className="h-3.5 w-3.5" />
+                                Pointé
+                              </span>
+                            ) : canPointSlot ? (
+                              <button
+                                onClick={() => handlePointPlannedSlot(p)}
+                                disabled={slotSavingId === p.id}
+                                className="btn-primary inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs"
+                              >
+                                {slotSavingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clock className="h-3.5 w-3.5" />}
+                                Pointer
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )

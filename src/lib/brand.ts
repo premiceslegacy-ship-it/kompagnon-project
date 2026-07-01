@@ -1,13 +1,16 @@
 export const APP_NAME = 'ATELIER'
 export const APP_SIGNATURE = 'ATELIER by Orsayn'
-export const AI_NAME = 'Sarah'
 
 export const AI_ASSISTANTS = {
-  sarah: { name: 'Sarah', role: 'Chiffreuse' },
-  marco: { name: 'Marco', role: 'Chef de chantier' },
-  valentin: { name: 'Valentin', role: 'Estimateur MO' },
-  lea: { name: 'Léa', role: 'Assistante catalogue' },
+  sarah:    { name: 'Sarah',   role: 'Secrétaire métier',    avatar: '/brand/sarah-avatar.webp' },
+  chloe:    { name: 'Chloé',   role: 'Chiffreuse',           avatar: '/brand/chloe-avatar.webp' },
+  marco:    { name: 'Marco',   role: 'Chef de chantier',     avatar: '/brand/marco-avatar.webp' },
+  nora:     { name: 'Nora',    role: 'Planificatrice',       avatar: '/brand/nora-avatar.webp' },
+  valentin: { name: 'Valentin',role: 'Estimateur MO',        avatar: null },
+  lea:      { name: 'Léa',     role: 'Assistante catalogue', avatar: '/brand/lea-avatar.webp' },
 } as const
+
+export const AI_NAME = AI_ASSISTANTS.chloe.name
 
 export type BrandBackground = 'light' | 'dark'
 
