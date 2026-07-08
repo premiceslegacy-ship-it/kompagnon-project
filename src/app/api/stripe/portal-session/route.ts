@@ -23,6 +23,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'STRIPE_SECRET_KEY manquant' }, { status: 500 })
   }
 
+  // Sans configuration dédiée, Stripe retombe sur la configuration de portail
+  // par défaut du compte, qui peut exposer d'autres produits que ceux d'Atelier.
+  // On préfère bloquer plutôt que de générer une session mal configurée.
+  const portalConfigId = process.env.STRIPE_PORTAL_CONFIGURATION_ID?.trim()
+  if (!portalConfigId) {
+    return NextResponse.json({ error: 'STRIPE_PORTAL_CONFIGURATION_ID manquant' }, { status: 500 })
+  }
+
   const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
     || process.env.OPERATOR_INGEST_SECRET?.trim()
   if (!secret) {
@@ -73,13 +81,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Aucun abonnement Stripe trouvé pour ce client' }, { status: 404 })
   }
 
-  const portalConfigId = process.env.STRIPE_PORTAL_CONFIGURATION_ID?.trim()
-
   const portalParams: Record<string, string> = {
     customer: data.stripe_customer_id,
     return_url,
+    configuration: portalConfigId,
   }
-  if (portalConfigId) portalParams.configuration = portalConfigId
 
   const stripeRes = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {
     method: 'POST',
