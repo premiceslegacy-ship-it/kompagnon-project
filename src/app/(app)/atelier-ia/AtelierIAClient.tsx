@@ -3,20 +3,27 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Mic, MicOff, FileText, Bot, Loader2, Upload,
+  Mic, MicOff, FileText, Loader2, Upload,
   CheckCircle2, AlertCircle, RotateCcw, ChevronRight, ChevronLeft, X, ImageIcon,
+  Ruler, ClipboardList,
 } from 'lucide-react'
 import {
   createQuoteFromAIResult,
 } from '@/lib/data/mutations/quotes'
 import type { AIQuoteResult } from '@/app/api/ai/analyze-quote/route'
+import type { PlanMeasurementItem, PlanMeasurementResult } from '@/app/api/ai/measure-plan/route'
 import { AI_NAME } from '@/lib/brand'
 import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 import AICreditsErrorModal from '@/components/shared/AICreditsErrorModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type Mode = 'voice' | 'text' | 'pdf'
+type Mode = 'voice' | 'text' | 'pdf' | 'measure'
+type MeasurementSettings = {
+  defaultHeightM: number
+  wastePct: number
+  studSpacingM: number
+}
 
 const ACCEPTED_FILE_TYPES = '.pdf,application/pdf,.png,.jpg,.jpeg,image/png,image/jpeg,image/jpg'
 const ACCEPTED_MIME_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'])
@@ -29,6 +36,96 @@ const splitDetails = (description: string | null | undefined) => {
   return {
     designation: parts[0]?.trim() ?? '',
     details: parts.length > 1 ? parts.slice(1).join('\nComprend : ').trim() : '',
+  }
+}
+
+function roundMeasurement(value: number): number {
+  return Math.round(value * 100) / 100
+}
+
+function tokenizeFormula(expression: string): string[] {
+  const compact = expression.replace(/\s+/g, '')
+  const tokens = compact.match(/[A-Za-z_][A-Za-z0-9_]*|\d+(?:[.,]\d+)?|[()+\-*/]/g) ?? []
+  if (tokens.join('') !== compact) throw new Error('Formule invalide')
+  return tokens
+}
+
+function evaluateFormula(expression: string, variables: Record<string, number>): number {
+  const tokens = tokenizeFormula(expression)
+  let index = 0
+
+  const peek = () => tokens[index]
+  const next = () => tokens[index++]
+
+  function parseFactor(): number {
+    const token = next()
+    if (token == null) throw new Error('Formule incomplète')
+    if (token === '+') return parseFactor()
+    if (token === '-') return -parseFactor()
+    if (token === '(') {
+      const value = parseExpression()
+      if (next() !== ')') throw new Error('Parenthèse manquante')
+      return value
+    }
+    if (/^\d/.test(token)) return Number(token.replace(',', '.'))
+    if (/^[A-Za-z_]/.test(token)) return variables[token] ?? 0
+    throw new Error('Formule invalide')
+  }
+
+  function parseTerm(): number {
+    let value = parseFactor()
+    while (peek() === '*' || peek() === '/') {
+      const op = next()
+      const rhs = parseFactor()
+      if (op === '*') value *= rhs
+      else {
+        if (rhs === 0) throw new Error('Division par zéro')
+        value /= rhs
+      }
+    }
+    return value
+  }
+
+  function parseExpression(): number {
+    let value = parseTerm()
+    while (peek() === '+' || peek() === '-') {
+      const op = next()
+      const rhs = parseTerm()
+      value = op === '+' ? value + rhs : value - rhs
+    }
+    return value
+  }
+
+  const result = parseExpression()
+  if (index !== tokens.length || !Number.isFinite(result)) throw new Error('Formule invalide')
+  return Math.max(0, roundMeasurement(result))
+}
+
+function defaultFormulaForItem(item: PlanMeasurementItem): string {
+  const mode = item.dimension_pricing_mode
+  if (mode === 'linear') return 'L * N * (1 + waste)'
+  if (mode === 'volume') return 'L * W * H * N * (1 + waste)'
+  if (mode === 'area') {
+    if (item.width_m != null) return 'L * W * N * (1 + waste)'
+    if (item.height_m != null) return '(L * H - O) * N * (1 + waste)'
+    return 'A * N * (1 + waste)'
+  }
+  return 'quantity'
+}
+
+function formulaVariablesForItem(item: PlanMeasurementItem, settings: MeasurementSettings): Record<string, number> {
+  const provided = item.formulaVariables ?? {}
+  return {
+    quantity: item.quantity,
+    L: item.length_m ?? provided.L ?? provided.length_m ?? 0,
+    W: item.width_m ?? provided.W ?? provided.width_m ?? 0,
+    H: item.height_m ?? provided.H ?? provided.height_m ?? settings.defaultHeightM,
+    N: item.dim_quantity ?? provided.N ?? provided.dim_quantity ?? 1,
+    A: provided.A ?? provided.area_m2 ?? (item.length_m && item.width_m ? item.length_m * item.width_m : 0),
+    P: provided.P ?? provided.perimeter_m ?? item.length_m ?? 0,
+    O: provided.O ?? provided.openings_m2 ?? 0,
+    waste: settings.wastePct / 100,
+    spacing: settings.studSpacingM,
   }
 }
 
@@ -70,6 +167,125 @@ function Icon3D({
   )
 }
 
+function DocumentChoiceModal({ onClose, onSelectQuote, onSelectMeasure }: {
+  onClose: () => void
+  onSelectQuote: () => void
+  onSelectMeasure: () => void
+}) {
+  return (
+    <div className="modal-overlay">
+      <div className="modal-panel sm:max-w-2xl">
+        <div className="flex items-center justify-between gap-3 px-6 pt-6 pb-4 border-b border-[var(--elevation-border)]">
+          <div>
+            <h2 className="text-base font-bold text-primary">Importer un document</h2>
+            <p className="text-xs text-secondary">Choisissez comment Chloé doit l’analyser</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-base transition-colors"
+            title="Fermer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-6 grid gap-4 sm:grid-cols-2 bg-base/50">
+          <button
+            type="button"
+            onClick={onSelectQuote}
+            className="card p-5 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
+          >
+            <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
+              <ClipboardList className="w-5 h-5 text-accent" />
+            </div>
+            <p className="text-sm font-bold text-primary">Créer un devis classique</p>
+            <p className="text-xs text-secondary mt-1">PDF, CCTP, email client ou cahier des charges. Chloé extrait les postes et prépare le devis.</p>
+            <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-accent">
+              Analyser le document <ChevronRight className="w-4 h-4" />
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onSelectMeasure}
+            className="card p-5 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
+          >
+            <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
+              <Ruler className="w-5 h-5 text-accent" />
+            </div>
+            <p className="text-sm font-bold text-primary">Faire un pré-métré depuis un plan</p>
+            <p className="text-xs text-secondary mt-1">Plan PDF ou photo. Chloé détecte pièces, surfaces et quantités à valider avant devis.</p>
+            <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-accent">
+              Préparer le métré <Ruler className="w-4 h-4" />
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function joinNotes(label: string, values: string[] | undefined) {
+  return values?.length ? `${label} : ${values.join(' ; ')}` : null
+}
+
+function measurementToQuote(measurement: PlanMeasurementResult): AIQuoteResult {
+  const grouped = new Map<string, PlanMeasurementItem[]>()
+  for (const item of measurement.items) {
+    const key = item.roomName?.trim() || 'Général'
+    grouped.set(key, [...(grouped.get(key) ?? []), item])
+  }
+
+  const quoteWarnings = [
+    ...measurement.globalWarnings,
+    ...(measurement.needsCalibration ? ['Échelle ou cotes à confirmer avant devis définitif.'] : []),
+    ...measurement.items
+      .filter(item => item.confidence != null && item.confidence < 0.65)
+      .slice(0, 5)
+      .map(item => `${item.roomName} - ${item.designation} : confiance faible, à vérifier.`),
+  ]
+
+  return {
+    title: measurement.title || 'Pré-métré depuis plan',
+    clientName: null,
+    clientDraft: null,
+    quoteWarnings,
+    sections: [...grouped.entries()].map(([roomName, items]) => ({
+      title: roomName,
+      items: items.map(item => {
+        const details = [
+          item.trade ? `Lot : ${item.trade}` : null,
+          item.formula ? `Formule : ${item.formula}` : null,
+          joinNotes('Hypothèses', item.assumptions),
+          joinNotes('À vérifier', item.warnings),
+          'Prix à renseigner après validation du métré.',
+        ].filter(Boolean).join('\n')
+        return {
+          designation: item.designation,
+          details,
+          description: `${item.designation}\n\nComprend :\n${details}`,
+          quantity: item.quantity,
+          unit: item.unit,
+          unit_price: 0,
+          unit_cost_ht: null,
+          vat_rate: 20,
+          is_estimated: true,
+          is_internal: false,
+          ai_confidence: item.confidence ?? null,
+          ai_source: 'document' as const,
+          ai_warnings: item.warnings ?? [],
+          dim_quantity: item.dim_quantity ?? 1,
+          length_m: item.length_m ?? null,
+          width_m: item.width_m ?? null,
+          height_m: item.height_m ?? null,
+          dimension_pricing_mode: item.dimension_pricing_mode ?? null,
+        }
+      }),
+    })),
+  }
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AtelierIAClient() {
@@ -84,10 +300,14 @@ export default function AtelierIAClient() {
   const [analyzeStage, setAnalyzeStage] = useState('Préparation')
   const [isCreating, setIsCreating] = useState(false)
   const [results, setResults] = useState<AIQuoteResult[]>([])
+  const [measurement, setMeasurement] = useState<PlanMeasurementResult | null>(null)
+  const [measurementSettings, setMeasurementSettings] = useState<MeasurementSettings>({ defaultHeightM: 2.5, wastePct: 8, studSpacingM: 0.6 })
+  const [formulaError, setFormulaError] = useState<string | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [creditsError, setCreditsError] = useState(false)
   const [briefBanner, setBriefBanner] = useState<string | null>(null)
+  const [documentChoiceOpen, setDocumentChoiceOpen] = useState(false)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -181,17 +401,19 @@ export default function AtelierIAClient() {
     setIsAnalyzing(true)
     setError(null)
     setResults([])
+    setMeasurement(null)
+    setFormulaError(null)
     setCurrentIndex(0)
-    setAnalyzeStage(mode === 'pdf' ? 'Lecture du document' : 'Recherche catalogue')
+    setAnalyzeStage(mode === 'pdf' ? 'Lecture du document' : mode === 'measure' ? 'Lecture du plan' : 'Recherche catalogue')
 
     try {
       let res: Response
-      if (mode === 'pdf' && file) {
+      if ((mode === 'pdf' || mode === 'measure') && file) {
         const formData = new FormData()
         formData.append('file', file)
         if (pdfDescription.trim()) formData.append('description', pdfDescription.trim())
-        setAnalyzeStage('OCR et lecture du plan')
-        res = await fetch('/api/ai/analyze-quote', { method: 'POST', body: formData })
+        setAnalyzeStage(mode === 'measure' ? 'Détection pièces et quantités' : 'OCR et lecture du document')
+        res = await fetch(mode === 'measure' ? '/api/ai/measure-plan' : '/api/ai/analyze-quote', { method: 'POST', body: formData })
       } else {
         setAnalyzeStage('Recherche catalogue')
         res = await fetch('/api/ai/analyze-quote', {
@@ -205,6 +427,19 @@ export default function AtelierIAClient() {
       if (!res.ok) {
         if (res.status === 402) { setCreditsError(true); return }
         setError(data.error ?? 'Erreur inconnue')
+      } else if (mode === 'measure') {
+        const nextMeasurement = (data as { measurement?: PlanMeasurementResult }).measurement ?? null
+        if (!nextMeasurement?.items?.length) setError('Aucun métré exploitable trouvé. Essayez un plan plus lisible ou ajoutez des précisions.')
+        else {
+          setFormulaError(null)
+          setMeasurement({
+            ...nextMeasurement,
+            items: nextMeasurement.items.map(item => ({
+              ...item,
+              formula: item.formula?.trim() || defaultFormulaForItem(item),
+            })),
+          })
+        }
       } else setResults((data as { quotes: AIQuoteResult[] }).quotes ?? [])
     } catch {
       setError('Impossible de contacter l\'IA. Vérifiez votre connexion.')
@@ -242,11 +477,33 @@ export default function AtelierIAClient() {
     }
   }
 
+  async function handleCreateMeasurementInEditor() {
+    if (!measurement) return
+    setIsCreating(true)
+    setError(null)
+
+    try {
+      const quoteRes = await createQuoteFromAIResult(measurementToQuote(measurement))
+      if (quoteRes.error || !quoteRes.quoteId) {
+        setError(quoteRes.error ?? 'Impossible de créer le devis')
+        setIsCreating(false)
+        return
+      }
+      const params = new URLSearchParams({ id: quoteRes.quoteId, returnTo: '/atelier-ia' })
+      router.push(`/finances/quote-editor?${params}`)
+    } catch {
+      setError('Erreur lors de la création du devis')
+      setIsCreating(false)
+    }
+  }
+
   function handleReset() {
     setText('')
     setFile(null)
     setPdfDescription('')
     setResults([])
+    setMeasurement(null)
+    setFormulaError(null)
     setCurrentIndex(0)
     setError(null)
   }
@@ -254,18 +511,84 @@ export default function AtelierIAClient() {
   function handleModeChange(m: Mode) {
     if (isRecording) stopRecording()
     setMode(m)
+    setDocumentChoiceOpen(false)
     handleReset()
   }
 
+  function handleDocumentModeClick() {
+    if (isRecording) stopRecording()
+    setDocumentChoiceOpen(true)
+  }
+
+  function updateMeasurementItem(index: number, patch: Partial<PlanMeasurementItem>) {
+    setFormulaError(null)
+    setMeasurement(current => {
+      if (!current) return current
+      return {
+        ...current,
+        items: current.items.map((item, i) => i === index ? { ...item, ...patch } : item),
+      }
+    })
+  }
+
+  function recalculateMeasurementItem(index: number) {
+    setMeasurement(current => {
+      if (!current) return current
+      const item = current.items[index]
+      if (!item) return current
+      try {
+        const formula = item.formula?.trim() || defaultFormulaForItem(item)
+        const quantity = evaluateFormula(formula, formulaVariablesForItem(item, measurementSettings))
+        setFormulaError(null)
+        return {
+          ...current,
+          items: current.items.map((row, i) => i === index ? { ...row, formula, quantity } : row),
+        }
+      } catch (err) {
+        setFormulaError(err instanceof Error ? err.message : 'Formule invalide')
+        return current
+      }
+    })
+  }
+
+  function recalculateAllMeasurementItems() {
+    setMeasurement(current => {
+      if (!current) return current
+      try {
+        const items = current.items.map(item => {
+          const formula = item.formula?.trim() || defaultFormulaForItem(item)
+          return {
+            ...item,
+            formula,
+            quantity: evaluateFormula(formula, formulaVariablesForItem(item, measurementSettings)),
+          }
+        })
+        setFormulaError(null)
+        return { ...current, items }
+      } catch (err) {
+        setFormulaError(err instanceof Error ? err.message : 'Une formule est invalide')
+        return current
+      }
+    })
+  }
+
   const currentQuote = results[currentIndex] ?? null
-  const canAnalyze = mode === 'pdf' ? !!file : text.trim().length >= 5
+  const canAnalyze = mode === 'pdf' || mode === 'measure' ? !!file : text.trim().length >= 5
   const totalItems = currentQuote?.sections.reduce((s: number, sec: AIQuoteResult['sections'][0]) => s + sec.items.length, 0) ?? 0
+  const documentModeActive = mode === 'pdf' || mode === 'measure'
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <main className="flex-1 w-full max-w-[1600px] mx-auto px-4 py-5 sm:px-6 lg:px-8 lg:py-8 space-y-6">
       {creditsError && <AICreditsErrorModal onClose={() => setCreditsError(false)} />}
+      {documentChoiceOpen && (
+        <DocumentChoiceModal
+          onClose={() => setDocumentChoiceOpen(false)}
+          onSelectQuote={() => handleModeChange('pdf')}
+          onSelectMeasure={() => handleModeChange('measure')}
+        />
+      )}
 
       {/* Header */}
       <div className="card overflow-hidden">
@@ -309,18 +632,18 @@ export default function AtelierIAClient() {
                 ] as const).map(({ id, label, icon: IconComp }) => (
                   <button
                     key={id}
-                    onClick={() => handleModeChange(id)}
+                    onClick={() => id === 'pdf' ? handleDocumentModeClick() : handleModeChange(id)}
                     className={`h-11 flex items-center justify-center gap-2 rounded-xl text-sm font-semibold transition-all border ${
-                      mode === id
+                      mode === id || (id === 'pdf' && documentModeActive)
                         ? 'bg-[var(--bg-surface)] dark:bg-white/[0.09] text-primary border-[var(--elevation-border)] shadow-[inset_0_1px_0_var(--inner-highlight),0_3px_0_0_var(--hard-edge),0_3px_0_1px_var(--shadow-ring),0_6px_12px_var(--shadow-drop)]'
                         : 'text-secondary border-transparent hover:text-primary hover:bg-white/[0.04]'
                     }`}
                   >
                     <IconComp
                       className="w-3.5 h-3.5"
-                      style={{ strokeWidth: '2.5', filter: mode === id ? 'var(--icon-depth-filter)' : undefined }}
+                      style={{ strokeWidth: '2.5', filter: mode === id || (id === 'pdf' && documentModeActive) ? 'var(--icon-depth-filter)' : undefined }}
                     />
-                    {label}
+                    {id === 'pdf' && mode === 'measure' ? 'Plan' : label}
                   </button>
                 ))}
               </div>
@@ -382,9 +705,13 @@ export default function AtelierIAClient() {
                   </div>
                 )}
 
-                {mode === 'pdf' && (
+                {(mode === 'pdf' || mode === 'measure') && (
                   <div className="flex-1 flex flex-col gap-2">
-                    <p className="text-xs text-secondary">Importez un cahier des charges PDF ou une photo de plan. {AI_NAME} extrait les postes pour vous.</p>
+                    <p className="text-xs text-secondary">
+                      {mode === 'measure'
+                        ? `Importez un plan PDF ou une photo de plan. ${AI_NAME} prépare un pré-métré à valider.`
+                        : `Importez un cahier des charges PDF, une demande client ou une photo de document. ${AI_NAME} extrait les postes pour vous.`}
+                    </p>
                     {!file ? (
                       <div
                         className="flex-1 min-h-[320px] border-2 border-dashed border-[var(--elevation-border)] rounded-2xl flex flex-col items-center justify-center gap-5 text-secondary hover:border-[rgb(var(--accent-primary)/0.6)] hover:bg-[rgb(var(--accent-primary)/0.04)] transition-all cursor-pointer"
@@ -454,7 +781,9 @@ export default function AtelierIAClient() {
                           <textarea
                             value={pdfDescription}
                             onChange={e => setPdfDescription(e.target.value)}
-                            placeholder="Ex: Concentre-toi sur la partie plomberie. Ignore les pages administratives. TVA à 10% car rénovation d'un logement existant."
+                            placeholder={mode === 'measure'
+                              ? "Ex: Hauteur sous plafond 2,50 m. Fais surtout le placo : cloisons, doublages, plafonds, bandes. Ignore l'électricité."
+                              : "Ex: Concentre-toi sur la partie plomberie. Ignore les pages administratives. TVA à 10% car rénovation d'un logement existant."}
                             rows={5}
                             className="input w-full min-h-[8rem] max-h-[16rem] overflow-y-auto p-3 rounded-xl text-sm resize-y leading-relaxed placeholder:text-secondary/50"
                           />
@@ -486,8 +815,10 @@ export default function AtelierIAClient() {
                   </>
                 ) : (
                   <>
-                    <AssistantAvatar assistant="chloe" size={20} className="border-none bg-transparent shadow-none !rounded-full" />
-                    Confier à {AI_NAME}
+                    {mode === 'measure'
+                      ? <Ruler className="w-5 h-5" style={{ strokeWidth: '2.5' }} />
+                      : <AssistantAvatar assistant="chloe" size={20} className="border-none bg-transparent shadow-none !rounded-full" />}
+                    {mode === 'measure' ? 'Analyser le plan' : `Confier à ${AI_NAME}`}
                   </>
                 )}
               </button>
@@ -501,24 +832,30 @@ export default function AtelierIAClient() {
             <div className="px-5 py-4 border-b border-[var(--elevation-border)] bg-black/[0.025] dark:bg-white/[0.04] flex items-center justify-between gap-4">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-secondary">Sortie</p>
-                <h2 className="text-lg font-bold text-primary mt-0.5">Devis structuré</h2>
+                <h2 className="text-lg font-bold text-primary mt-0.5">{mode === 'measure' ? 'Pré-métré à valider' : 'Devis structuré'}</h2>
               </div>
-              {currentQuote && (
+              {(currentQuote || measurement) && (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-emerald-400 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/25">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  Validé
+                  {mode === 'measure' ? 'À vérifier' : 'Validé'}
                 </span>
               )}
             </div>
 
             <div className="p-5 flex-1 flex flex-col overflow-hidden">
 
-              {!currentQuote && !isAnalyzing && (
+              {!currentQuote && !measurement && !isAnalyzing && (
                 <div className="flex-1 flex flex-col items-center justify-center gap-5 text-secondary">
-                  <AssistantAvatar assistant="chloe" size={80} />
+                  {mode === 'measure'
+                    ? <Icon3D size={80} accent><Ruler className="w-9 h-9 text-[var(--accent-primary)]" /></Icon3D>
+                    : <AssistantAvatar assistant="chloe" size={80} />}
                   <div className="text-center">
-                    <p className="font-semibold text-primary">Prêt à générer</p>
-                    <p className="text-sm text-secondary mt-1.5 max-w-[260px]">Décrivez votre projet à gauche. {AI_NAME} structure le devis ici.</p>
+                    <p className="font-semibold text-primary">{mode === 'measure' ? 'Prêt à mesurer' : 'Prêt à générer'}</p>
+                    <p className="text-sm text-secondary mt-1.5 max-w-[260px]">
+                      {mode === 'measure'
+                        ? 'Importez un plan à gauche. Chloé préparera les quantités à valider ici.'
+                        : `Décrivez votre projet à gauche. ${AI_NAME} structure le devis ici.`}
+                    </p>
                   </div>
                 </div>
               )}
@@ -536,6 +873,237 @@ export default function AtelierIAClient() {
                   />
                   <p className="font-bold text-primary">{AI_NAME} analyse...</p>
                   <p className="text-xs text-secondary">{analyzeStage}</p>
+                </div>
+              )}
+
+              {measurement && mode === 'measure' && (
+                <div className="flex flex-col h-full">
+                  <div className="flex flex-col gap-3 mb-4 shrink-0">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-primary truncate">{measurement.title}</p>
+                        <p className="text-xs text-secondary">
+                          {measurement.rooms.length} pièce{measurement.rooms.length > 1 ? 's' : ''} · {measurement.items.length} ligne{measurement.items.length > 1 ? 's' : ''} de métré
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleReset}
+                        className="btn-secondary h-9 px-3 text-xs flex items-center gap-1.5 shrink-0"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" style={{ strokeWidth: '2.5' }} /> Recommencer
+                      </button>
+                    </div>
+
+                    {(measurement.needsCalibration || measurement.globalWarnings.length > 0) && (
+                      <div className="rounded-2xl border border-amber-500/25 bg-amber-500/10 p-4 space-y-2">
+                        {measurement.needsCalibration && (
+                          <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>Échelle ou cotes à confirmer avant devis définitif.</span>
+                          </div>
+                        )}
+                        {measurement.globalWarnings.slice(0, 4).map((warning, wi) => (
+                          <div key={wi} className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{warning}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="rounded-2xl border border-[var(--elevation-border)] bg-black/[0.025] dark:bg-white/[0.035] p-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                        <div className="flex-1">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-secondary">Paramètres de calcul</p>
+                          <p className="text-xs text-secondary mt-0.5">Variables disponibles : L, W, H, N, A, P, O, waste, spacing.</p>
+                        </div>
+                        <label className="text-[11px] text-secondary font-medium">
+                          H défaut
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={measurementSettings.defaultHeightM}
+                            onChange={e => setMeasurementSettings(s => ({ ...s, defaultHeightM: Math.max(0, Number(e.target.value) || 0) }))}
+                            className="input mt-1 h-9 w-24 px-2 rounded-lg text-xs"
+                          />
+                        </label>
+                        <label className="text-[11px] text-secondary font-medium">
+                          Pertes %
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={measurementSettings.wastePct}
+                            onChange={e => setMeasurementSettings(s => ({ ...s, wastePct: Math.max(0, Number(e.target.value) || 0) }))}
+                            className="input mt-1 h-9 w-24 px-2 rounded-lg text-xs"
+                          />
+                        </label>
+                        <label className="text-[11px] text-secondary font-medium">
+                          Entraxe m
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={measurementSettings.studSpacingM}
+                            onChange={e => setMeasurementSettings(s => ({ ...s, studSpacingM: Math.max(0, Number(e.target.value) || 0) }))}
+                            className="input mt-1 h-9 w-24 px-2 rounded-lg text-xs"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={recalculateAllMeasurementItems}
+                          className="btn-secondary h-9 px-3 text-xs flex items-center gap-1.5"
+                        >
+                          <Ruler className="w-3.5 h-3.5" /> Recalculer tout
+                        </button>
+                      </div>
+                      {formulaError && (
+                        <p className="mt-2 text-xs text-red-500 dark:text-red-400">{formulaError}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto rounded-2xl border border-[var(--elevation-border)]">
+                    <div className="min-w-[820px]">
+                      <div className="grid grid-cols-[130px_190px_90px_80px_1fr_95px] gap-2 px-3 py-2 bg-black/[0.04] dark:bg-white/[0.06] border-b border-[var(--elevation-border)] text-[10px] font-bold uppercase tracking-widest text-secondary">
+                        <span>Pièce</span>
+                        <span>Poste</span>
+                        <span>Qté</span>
+                        <span>Unité</span>
+                        <span>Hypothèses</span>
+                        <span>Confiance</span>
+                      </div>
+                      {measurement.items.map((item, index) => (
+                        <div key={index} className="grid grid-cols-[130px_190px_90px_80px_1fr_95px] gap-2 px-3 py-3 border-b border-[var(--elevation-border)] last:border-b-0 items-start">
+                          <input
+                            value={item.roomName}
+                            onChange={e => updateMeasurementItem(index, { roomName: e.target.value })}
+                            className="input h-9 px-2 rounded-lg text-xs"
+                          />
+                          <div className="space-y-1">
+                            <input
+                              value={item.designation}
+                              onChange={e => updateMeasurementItem(index, { designation: e.target.value })}
+                              className="input h-9 px-2 rounded-lg text-xs font-semibold"
+                            />
+                            <input
+                              value={item.trade}
+                              onChange={e => updateMeasurementItem(index, { trade: e.target.value })}
+                              className="input h-8 px-2 rounded-lg text-[11px] text-secondary"
+                            />
+                          </div>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={Number.isFinite(item.quantity) ? item.quantity : 0}
+                            onChange={e => updateMeasurementItem(index, { quantity: Math.max(0, Number(e.target.value) || 0) })}
+                            className="input h-9 px-2 rounded-lg text-xs tabular-nums"
+                          />
+                          <input
+                            value={item.unit}
+                            onChange={e => updateMeasurementItem(index, { unit: e.target.value })}
+                            className="input h-9 px-2 rounded-lg text-xs"
+                          />
+                          <div className="space-y-1.5">
+                            <div className="grid grid-cols-4 gap-1.5">
+                              {([
+                                ['L', 'length_m'],
+                                ['W', 'width_m'],
+                                ['H', 'height_m'],
+                                ['N', 'dim_quantity'],
+                              ] as const).map(([label, field]) => (
+                                <label key={field} className="text-[10px] text-secondary">
+                                  {label}
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={(item[field] ?? '') as string | number}
+                                    onChange={e => {
+                                      const raw = e.target.value
+                                      const value = raw === '' ? null : Math.max(0, Number(raw) || 0)
+                                      updateMeasurementItem(index, field === 'dim_quantity' ? { dim_quantity: value ?? 1 } : { [field]: value } as Partial<PlanMeasurementItem>)
+                                    }}
+                                    className="input mt-0.5 h-7 px-1.5 rounded-md text-[11px]"
+                                  />
+                                </label>
+                              ))}
+                            </div>
+                            <textarea
+                              value={item.formula ?? defaultFormulaForItem(item)}
+                              onChange={e => updateMeasurementItem(index, { formula: e.target.value })}
+                              rows={1}
+                              className="input w-full min-h-[2.25rem] px-2 py-1.5 rounded-lg text-xs resize-y font-mono"
+                              placeholder="Ex: (L * H - O) * N * (1 + waste)"
+                            />
+                            <textarea
+                              value={(item.assumptions ?? []).join('\n')}
+                              onChange={e => updateMeasurementItem(index, { assumptions: e.target.value.split('\n').map(v => v.trim()).filter(Boolean) })}
+                              rows={2}
+                              className="input w-full min-h-[4.25rem] px-2 py-1.5 rounded-lg text-xs resize-y"
+                              placeholder="Hypothèses utilisées..."
+                            />
+                            {(item.warnings?.length ?? 0) > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {item.warnings!.slice(0, 2).map((warning, wi) => (
+                                  <span key={wi} className="px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-300">{warning}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <span className={`inline-flex w-full justify-center px-2 py-1 rounded-lg text-xs font-semibold border ${
+                              (item.confidence ?? 0) >= 0.8
+                                ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
+                                : (item.confidence ?? 0) >= 0.6
+                                ? 'border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+                                : 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-300'
+                            }`}>
+                              {item.confidence != null ? `${Math.round(item.confidence * 100)}%` : 'n/a'}
+                            </span>
+                            {(item.length_m || item.width_m || item.height_m) && (
+                              <p className="text-[10px] text-secondary leading-snug">
+                                {[item.length_m ? `L ${item.length_m}m` : null, item.width_m ? `l ${item.width_m}m` : null, item.height_m ? `H ${item.height_m}m` : null].filter(Boolean).join(' · ')}
+                              </p>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => recalculateMeasurementItem(index)}
+                              className="btn-secondary h-7 w-full px-2 text-[10px]"
+                            >
+                              Recalculer
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 shrink-0 border-t border-[var(--elevation-border)] pt-4">
+                    <button
+                      onClick={handleCreateMeasurementInEditor}
+                      disabled={isCreating || measurement.items.length === 0}
+                      className="btn-primary w-full h-14 rounded-2xl text-sm font-bold disabled:opacity-60 flex items-center justify-center gap-2.5"
+                    >
+                      {isCreating ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          Création en cours...
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="w-5 h-5" style={{ strokeWidth: '2.5' }} />
+                          Générer le devis depuis ce métré
+                          <ChevronRight className="w-5 h-5" />
+                        </>
+                      )}
+                    </button>
+                    <p className="text-xs text-secondary text-center mt-2">
+                      Le devis sera créé avec les quantités validées. Les prix resteront à renseigner dans l’éditeur.
+                    </p>
+                  </div>
                 </div>
               )}
 
