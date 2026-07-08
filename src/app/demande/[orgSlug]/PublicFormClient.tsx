@@ -1327,6 +1327,22 @@ export default function PublicFormClient({
       setStep2Error('Veuillez sélectionner au moins une prestation ou décrire votre projet.')
       return false
     }
+
+    const dimensionedMats = Object.values(selectedMaterials)
+    const dimensionedLines = Object.values(selectedPrestations).flatMap(p => p.lines)
+    const hasIncompleteDimensions = [...dimensionedMats, ...dimensionedLines].some(item => {
+      const mode = getDimensionMode(item.dimension_pricing_mode, item.dimension_pricing_enabled)
+      if (mode === 'none') return false
+      if (!(item.length_m && item.length_m > 0)) return true
+      if ((mode === 'area' || mode === 'volume') && !(item.width_m && item.width_m > 0)) return true
+      if (mode === 'volume' && !(item.height_m && item.height_m > 0)) return true
+      return false
+    })
+    if (hasIncompleteDimensions) {
+      setStep2Error('Veuillez renseigner des dimensions (longueur/largeur/hauteur) supérieures à zéro pour chaque article sélectionné.')
+      return false
+    }
+
     setStep2Error(null)
     return true
   }
@@ -1484,6 +1500,12 @@ export default function PublicFormClient({
     const description = descParts.join('\n\n')
     fd.set('description', description || 'Demande de devis')
 
+    // Précisions libres envoyées à part (en plus de la description fusionnée
+    // ci-dessus) : permet de générer des lignes de devis IA complémentaires
+    // au catalogue sélectionné, sans reparser la description humaine.
+    const freeformNotes = [freeDescription.trim(), extraNotes.trim()].filter(Boolean).join('\n\n')
+    if (freeformNotes) fd.set('freeform_notes', freeformNotes)
+
     if (catalogItems.length > 0) {
       fd.set('type', 'catalog')
       fd.set('catalog_items', JSON.stringify(catalogItems))
@@ -1502,15 +1524,40 @@ export default function PublicFormClient({
 
   if (success) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
-        <div className="max-w-md w-full bg-white rounded-3xl shadow-lg p-10 text-center space-y-6">
+      <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100 flex items-center justify-center p-8">
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 p-10 text-center space-y-6">
+          {logoUrl && <img src={logoUrl} alt={orgName} className="h-12 mx-auto object-contain" />}
           <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
             <CheckCircle2 className="w-8 h-8 text-green-600" />
           </div>
-          <h2 className="text-2xl font-bold text-gray-900">Demande envoyée !</h2>
-          <p className="text-gray-500">
-            Merci pour votre demande. <strong>{orgName}</strong> vous contactera dans les meilleurs délais.
-          </p>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold text-gray-900">Demande envoyée</h2>
+            <p className="text-gray-500 text-sm">
+              Merci {name.split(' ')[0] || ''}. Un récapitulatif est entre les mains de <strong>{orgName}</strong>.
+            </p>
+          </div>
+          <div className="text-left rounded-2xl bg-slate-50 border border-slate-100 p-4 space-y-3">
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">La suite</p>
+            <div className="flex items-start gap-3">
+              <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center flex-shrink-0">1</span>
+              <p className="text-sm text-gray-600">Votre demande est étudiée par l&apos;équipe.</p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center flex-shrink-0">2</span>
+              <p className="text-sm text-gray-600">Vous êtes recontacté à l&apos;adresse <strong className="text-gray-800">{email}</strong>{phone ? ' ou par téléphone' : ''}.</p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center flex-shrink-0">3</span>
+              <p className="text-sm text-gray-600">Après étude de votre demande, vous recevrez un devis chiffré, que vous pourrez accepter et signer en ligne.</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors"
+          >
+            Envoyer une autre demande
+          </button>
         </div>
       </div>
     )
@@ -1532,6 +1579,7 @@ export default function PublicFormClient({
     prestationTypes.filter(pt => !step2Q || pt.name.toLowerCase().includes(step2Q)),
   )
   const hasCatalog = materials.length > 0 || laborRates.length > 0 || prestationTypes.length > 0
+  const selectionCount = Object.keys(selectedMaterials).length + Object.keys(selectedLaborRates).length + Object.keys(selectedPrestations).length
 
   // ── Récap ───────────────────────────────────────────────────────────────────
 
@@ -1574,13 +1622,17 @@ export default function PublicFormClient({
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gray-50 py-10 px-4">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100 py-10 px-4">
       <div className="max-w-2xl mx-auto space-y-6">
 
         {/* Header */}
         <div className="text-center space-y-3">
-          {logoUrl && <img src={logoUrl} alt={orgName} className="h-16 mx-auto object-contain" />}
-          <h1 className="text-2xl font-bold text-gray-900">Demande de devis</h1>
+          {logoUrl && (
+            <div className="inline-flex items-center justify-center bg-white rounded-2xl shadow-sm border border-slate-100 px-6 py-4">
+              <img src={logoUrl} alt={orgName} className="h-14 object-contain" />
+            </div>
+          )}
+          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Demande de devis</h1>
           <p className="text-base font-semibold text-gray-500">{orgName}</p>
           {welcomeMessage && (
             <p className="text-sm text-gray-600 max-w-prose mx-auto">{welcomeMessage}</p>
@@ -1626,21 +1678,21 @@ export default function PublicFormClient({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-sm font-semibold text-gray-700">Nom complet *</label>
-                  <input type="text" value={name} onChange={e => setName(e.target.value)} className={inputCls} placeholder="Jean Dupont" />
+                  <input type="text" value={name} onChange={e => setName(e.target.value)} className={inputCls} placeholder="Jean Dupont" autoComplete="name" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-semibold text-gray-700">Email *</label>
-                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} className={inputCls} placeholder="jean@exemple.fr" />
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} className={inputCls} placeholder="jean@exemple.fr" autoComplete="email" inputMode="email" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-semibold text-gray-700">Téléphone</label>
-                  <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} className={inputCls} placeholder="06 12 34 56 78" />
+                  <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} className={inputCls} placeholder="06 12 34 56 78" autoComplete="tel" inputMode="tel" />
                 </div>
                 {clientType === 'pro' && (
                   <>
                     <div className="space-y-1">
                       <label className="text-sm font-semibold text-gray-700">Nom de l&apos;entreprise *</label>
-                      <input type="text" value={companyName} onChange={e => setCompanyName(e.target.value)} className={inputCls} placeholder="Weber Tôlerie" />
+                      <input type="text" value={companyName} onChange={e => setCompanyName(e.target.value)} className={inputCls} placeholder="Weber Tôlerie" autoComplete="organization" />
                     </div>
                     <div className="space-y-1 sm:col-span-2">
                       <label className="text-sm font-semibold text-gray-700">SIRET</label>
@@ -1976,16 +2028,16 @@ export default function PublicFormClient({
               <div className="space-y-4">
                 <div className="space-y-1">
                   <label className="text-sm font-semibold text-gray-700">Adresse du chantier</label>
-                  <input type="text" value={chantierAddress} onChange={e => setChantierAddress(e.target.value)} className={inputCls} placeholder="12 rue des Artisans" />
+                  <input type="text" value={chantierAddress} onChange={e => setChantierAddress(e.target.value)} className={inputCls} placeholder="12 rue des Artisans" autoComplete="address-line1" />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-sm font-semibold text-gray-700">Code postal</label>
-                    <input type="text" value={chantierPostalCode} onChange={e => setChantierPostalCode(e.target.value)} className={inputCls} placeholder="75001" />
+                    <input type="text" value={chantierPostalCode} onChange={e => setChantierPostalCode(e.target.value)} className={inputCls} placeholder="75001" autoComplete="postal-code" inputMode="numeric" />
                   </div>
                   <div className="space-y-1">
                     <label className="text-sm font-semibold text-gray-700">Ville</label>
-                    <input type="text" value={chantierCity} onChange={e => setChantierCity(e.target.value)} className={inputCls} placeholder="Paris" />
+                    <input type="text" value={chantierCity} onChange={e => setChantierCity(e.target.value)} className={inputCls} placeholder="Paris" autoComplete="address-level2" />
                   </div>
                 </div>
               </div>
@@ -2093,13 +2145,20 @@ export default function PublicFormClient({
             )}
 
             {step < 4 ? (
-              <button
-                type="button"
-                onClick={goNext}
-                className="flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all shadow-md shadow-blue-600/20"
-              >
-                Suivant <ChevronRight className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-3">
+                {step === 2 && selectionCount > 0 && (
+                  <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-3 py-1.5">
+                    {selectionCount} élément{selectionCount > 1 ? 's' : ''} sélectionné{selectionCount > 1 ? 's' : ''}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={goNext}
+                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all shadow-md shadow-blue-600/20"
+                >
+                  Suivant <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             ) : (
               <button
                 type="button"

@@ -27,7 +27,7 @@ export type ContractTemplate = {
   key: string
   title: string
   type: ContractType
-  trade: 'generique' | 'electricite' | 'plomberie' | 'second_oeuvre' | 'nettoyage' | 'personnalise'
+  trade: 'generique' | 'electricite' | 'plomberie' | 'second_oeuvre' | 'nettoyage' | 'metal' | 'personnalise'
   clauses: ContractClauses
   customSections?: ContractCustomSection[]
   isCustom?: boolean
@@ -482,13 +482,94 @@ Avant chaque campagne d'interventions dans les locaux de {{DONNEUR_ORDRE}}, {{SO
 {{SOUS_TRAITANT}} s'engage à remettre à {{DONNEUR_ORDRE}}, avant toute première intervention, une attestation d'assurance en cours de validité précisant les garanties souscrites. Il en informe {{DONNEUR_ORDRE}} sans délai en cas de modification ou de résiliation de sa couverture.`,
     }),
   },
+  {
+    key: 'sous_traitance_metal',
+    title: 'Contrat de sous-traitance métallerie / chaudronnerie',
+    type: 'sous_traitance',
+    trade: 'metal',
+    clauses: mergeClauses(baseSousTraitance, {
+      objet: `Le présent contrat est conclu en application des dispositions de la loi n° 75-1334 du 31 décembre 1975 relative à la sous-traitance, et a pour objet de définir les conditions dans lesquelles {{SOUS_TRAITANT}} (ci-après "le Sous-traitant") réalise, pour le compte de {{DONNEUR_ORDRE}} (ci-après "le Donneur d'ordre"), des ouvrages de métallerie, serrurerie, chaudronnerie ou construction métallique sur le chantier ou l'opération désignée "{{CHANTIER}}" : fabrication en atelier, traitement de surface, transport et pose des ouvrages métalliques décrits dans les documents contractuels et plans d'exécution annexés.
+
+Les ouvrages seront réalisés conformément aux règles de l'art de la profession et aux normes applicables à la construction métallique, notamment la norme NF EN 1090-1/2 relative à l'exécution des structures en acier et en aluminium, et, le cas échéant, aux Documents Techniques Unifiés (DTU) applicables aux ouvrages de serrurerie-métallerie (DTU 39, DTU 44.1 selon la nature des travaux).
+
+{{SOUS_TRAITANT}} s'engage à fournir, pour tout élément en acier destiné à des ouvrages structurels ou nécessitant une traçabilité matière, un certificat de contrôle matière conforme à la norme NF EN 10204, type 3.1, attestant la conformité aux spécifications de commande et la traçabilité des coulées. Ce certificat sera remis à {{DONNEUR_ORDRE}} avant ou lors de la livraison des ouvrages concernés.
+
+{{SOUS_TRAITANT}} déclare disposer des moyens de fabrication, des qualifications de soudage et des habilitations nécessaires à la nature des ouvrages confiés, notamment les qualifications de soudeurs selon la norme NF EN ISO 9606-1 (aciers) ou NF EN ISO 9606-2 (aluminium et alliages légers) selon le procédé et le métal mis en oeuvre, ainsi que, si le marché l'exige, une qualification de mode opératoire de soudage (QMOS) conforme à la norme NF EN ISO 15609-1.`,
+
+      obligations: `Obligations de {{SOUS_TRAITANT}} :
+{{SOUS_TRAITANT}} s'engage à exécuter la fabrication, le traitement de surface et la pose des ouvrages métalliques avec des matériaux et procédés conformes aux spécifications contractuelles, aux plans d'exécution et aux normes en vigueur (NF EN 1090, DTU applicables).
+{{SOUS_TRAITANT}} s'engage à n'affecter à la réalisation des soudures que du personnel titulaire des qualifications de soudage requises pour le procédé, le métal et la position de soudage concernés, et à en justifier sur demande de {{DONNEUR_ORDRE}}.
+{{SOUS_TRAITANT}} s'engage à appliquer un traitement anticorrosion adapté à l'environnement d'exposition de l'ouvrage (galvanisation à chaud selon NF EN ISO 1461, ou système de peinture selon NF EN ISO 12944), et à respecter les délais de séchage et de manutention prescrits par le fournisseur du système appliqué.
+{{SOUS_TRAITANT}} s'engage à effectuer un contrôle visuel systématique des soudures avant livraison (absence de porosité, morsures, manque de pénétration ou de fusion) et, si le marché le prévoit, à faire réaliser les contrôles non destructifs (ressuage, radiographie, ultrasons) par un organisme compétent.
+{{SOUS_TRAITANT}} s'engage à assurer le transport et la manutention des ouvrages dans des conditions préservant leur intégrité et leur finition, et à signaler immédiatement à {{DONNEUR_ORDRE}} tout dommage constaté avant pose.
+
+Obligations de {{DONNEUR_ORDRE}} :
+{{DONNEUR_ORDRE}} s'engage à fournir à {{SOUS_TRAITANT}} les plans, cotes et contraintes du site nécessaires à l'étude et à la fabrication des ouvrages, ainsi qu'un accès au chantier permettant la pose dans des conditions de sécurité satisfaisantes.
+{{DONNEUR_ORDRE}} s'engage à valider les plans d'exécution ou de fabrication (BAT) soumis par {{SOUS_TRAITANT}} dans un délai raisonnable avant le lancement de la fabrication, tout retard de validation reportant d'autant les délais d'exécution.`,
+
+      securite: `L'exécution des travaux de métallerie, serrurerie et chaudronnerie est réalisée dans le strict respect des dispositions légales et réglementaires relatives à la sécurité sur les chantiers (articles L. 4121-1 et suivants du Code du travail) et des règles de sécurité propres aux opérations de soudage, de meulage et de manutention de charges.
+
+{{SOUS_TRAITANT}} s'engage à n'affecter aux opérations de soudage que du personnel titulaire d'une qualification en cours de validité au sens de la norme NF EN ISO 9606 (ou équivalent), adaptée au procédé, au métal et à la position de soudage requis, et à fournir à {{DONNEUR_ORDRE}}, sur demande, les certificats correspondants.
+
+{{SOUS_TRAITANT}} s'engage à mettre en oeuvre les moyens de protection individuelle et collective adaptés aux risques de soudage, de projection de particules, de meulage et de manutention de charges lourdes (élingues, moyens de levage vérifiés et contrôlés périodiquement conformément à la réglementation applicable aux équipements de levage).
+
+{{SOUS_TRAITANT}} s'engage à respecter les consignes de sécurité propres au chantier "{{CHANTIER}}", le Plan de Prévention ou le PPSPS le cas échéant, et à signaler immédiatement tout accident, incident ou situation dangereuse constatée.
+
+Lorsque la pose implique des travaux en hauteur (garde-corps, escaliers, structures) ou le levage d'ouvrages lourds, {{SOUS_TRAITANT}} s'engage à mettre en oeuvre les moyens de protection contre les chutes et les équipements de levage appropriés, conformes à la réglementation en vigueur, et à faire intervenir uniquement du personnel formé à ces opérations.`,
+
+      assurances: `{{SOUS_TRAITANT}} déclare disposer des assurances professionnelles suivantes, adaptées à la nature des ouvrages de métallerie, serrurerie et chaudronnerie confiés :
+- une assurance responsabilité civile professionnelle couvrant l'activité de fabrication en atelier et les dommages causés aux tiers ;
+- une assurance responsabilité civile chantier couvrant les opérations de pose et de manutention sur site ;
+- une assurance décennale au sens de l'article L. 241-1 du Code des assurances, pour les ouvrages relevant de la garantie décennale prévue aux articles 1792 et suivants du Code civil (notamment structures porteuses, garde-corps, éléments de clos et couvert métalliques) ;
+- le cas échéant, une assurance couvrant spécifiquement les risques de fabrication en atelier (incendie, dommages aux ouvrages en cours de fabrication avant livraison).
+
+{{SOUS_TRAITANT}} atteste que les qualifications de soudage de son personnel (NF EN ISO 9606 ou équivalent) et, si applicable, la qualification de mode opératoire de soudage (QMOS selon NF EN ISO 15609-1) mises en oeuvre pour l'exécution du présent contrat sont en cours de validité.
+
+Les attestations d'assurances, les certificats de qualification de soudage et, pour les ouvrages structurels, le certificat matière EN 10204 type 3.1 seront remis à {{DONNEUR_ORDRE}} avant tout commencement d'exécution ou au plus tard lors de la livraison des ouvrages concernés.`,
+    }),
+  },
+  {
+    key: 'maintenance_metal',
+    title: 'Contrat de maintenance ouvrages métalliques',
+    type: 'maintenance',
+    trade: 'metal',
+    clauses: mergeClauses(baseMaintenance, {
+      objet: `Le présent contrat a pour objet de définir les conditions dans lesquelles {{SOUS_TRAITANT}} (ci-après "le Prestataire") assure les prestations de maintenance, d'entretien préventif et de réparation des ouvrages métalliques (garde-corps, portails, escaliers, structures, serrurerie) au profit de {{DONNEUR_ORDRE}} (ci-après "le Client"), désignés dans les documents annexés au présent contrat.
+
+Les prestations comprennent, selon les modalités précisées aux annexes : le contrôle périodique de l'état des soudures, des fixations et des ancrages, la vérification et le renouvellement des traitements anticorrosion (galvanisation, peinture), le contrôle du fonctionnement des organes mobiles (portails, gonds, systèmes de motorisation le cas échéant) et les réparations ou remises en conformité nécessaires.
+
+Le Prestataire déclare disposer des compétences, qualifications de soudage et moyens techniques nécessaires à l'entretien et à la réparation des ouvrages métalliques objets du présent contrat.`,
+
+      obligations: `Obligations du Prestataire ({{SOUS_TRAITANT}}) :
+{{SOUS_TRAITANT}} s'engage à réaliser les visites de contrôle selon la périodicité convenue, à établir un rapport d'état identifiant notamment les points de corrosion, les soudures dégradées, les fixations desserrées et l'usure des organes mobiles.
+{{SOUS_TRAITANT}} s'engage à n'affecter aux opérations de soudage de réparation que du personnel titulaire des qualifications requises (NF EN ISO 9606 ou équivalent), et à utiliser des matériaux et traitements de finition compatibles avec l'existant.
+{{SOUS_TRAITANT}} s'engage à signaler sans délai à {{DONNEUR_ORDRE}} toute anomalie structurelle mettant en cause la sécurité de l'ouvrage (garde-corps désolidarisé, corrosion perforante, ancrage compromis) et à proposer les mesures conservatoires nécessaires.
+
+Obligations du Client ({{DONNEUR_ORDRE}}) :
+{{DONNEUR_ORDRE}} s'engage à permettre l'accès du Prestataire aux ouvrages objets du contrat, à signaler tout dysfonctionnement ou dommage constaté, et à ne pas faire intervenir un tiers sur ces ouvrages sans en informer préalablement {{SOUS_TRAITANT}}.`,
+
+      securite: `Les interventions de maintenance sur les ouvrages métalliques sont réalisées dans le respect des dispositions légales relatives à la sécurité au travail (articles L. 4121-1 et suivants du Code du travail).
+
+{{SOUS_TRAITANT}} s'engage à n'affecter aux opérations de soudage ou de meulage sur site que du personnel qualifié et équipé des protections individuelles adaptées, et à établir, si l'intervention le justifie, un plan de prévention ou un bon de travail identifiant les risques propres au site (travail en hauteur, coactivité, présence de public).
+
+Lorsque l'intervention porte sur un garde-corps ou tout élément de sécurité, {{SOUS_TRAITANT}} s'engage à maintenir ou rétablir sans délai la protection contre les chutes tant que la réparation n'est pas achevée, y compris par une protection provisoire si nécessaire.`,
+
+      assurances: `{{SOUS_TRAITANT}} déclare disposer d'une assurance responsabilité civile professionnelle couvrant les opérations de maintenance et de réparation d'ouvrages métalliques, ainsi que d'une assurance couvrant les risques spécifiques liés aux opérations de soudage sur site (risque incendie notamment).
+
+{{SOUS_TRAITANT}} atteste que les qualifications de soudage de son personnel intervenant dans le cadre du présent contrat sont en cours de validité, et s'engage à en justifier sur demande de {{DONNEUR_ORDRE}}.`,
+    }),
+  },
 ]
 
 export function resolveTradeFromActivity(activityId: BusinessActivityId | string | null | undefined): ContractTemplate['trade'] {
+  // TODO(vertical-packs) : quand un 2e pack introduira un trade, dériver ce mapping
+  // de getEligibleVerticalPack(activityId)?.contractTrade plutôt que dupliquer la
+  // liste d'activités une 3e fois (déjà dupliquée dans VERTICAL_PACKS.metal.eligibleActivityIds).
+  if (activityId === 'metallerie' || activityId === 'tolerie' || activityId === 'chaudronnerie' || activityId === 'soudure') return 'metal'
   if (activityId === 'electricite') return 'electricite'
   if (activityId === 'plomberie') return 'plomberie'
   if (activityId === 'renovation' || activityId === 'menuiserie' || activityId === 'peinture' || activityId === 'carrelage') return 'second_oeuvre'
-  if (activityId === 'nettoyage') return 'nettoyage'
+  if (activityId === 'nettoyage_bureaux' || activityId === 'vitrerie' || activityId === 'desinfection' || activityId === 'remise_en_etat') return 'nettoyage'
   return 'generique'
 }
 

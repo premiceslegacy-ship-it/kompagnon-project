@@ -39,7 +39,12 @@ export function normalizeOrganizationModules(input: unknown, profile?: string | 
   const defaults = getDefaultModulesForProfile(profile)
 
   return ORGANIZATION_MODULE_KEYS.reduce<OrganizationModules>((acc, key) => {
-    if (key in source) {
+    // WhatsApp suspendu (vérification Meta en attente) : jamais activable, même
+    // via un input explicite { whatsapp_agent: true } — garde serveur, pas
+    // seulement un défaut contournable.
+    if (key.startsWith('whatsapp_')) {
+      acc[key] = false
+    } else if (key in source) {
       acc[key] = source[key] === true
     } else {
       acc[key] = defaults[key]

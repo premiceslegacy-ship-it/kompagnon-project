@@ -10,6 +10,8 @@ export type OrganizationValidationField =
   | 'late_penalty_rate'
   | 'court_competent'
   | 'default_vat_rate'
+  | 'departure_latitude'
+  | 'departure_longitude'
 
 export type OrganizationFieldErrors = Partial<Record<OrganizationValidationField, string>>
 

@@ -3,8 +3,14 @@ import { createClient } from '@/lib/supabase/server'
 import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/membership'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { createPlanningSlot, deletePlanningSlot, updatePlanningSlot } from '@/lib/data/mutations/planning'
-import { createQuote, upsertQuoteItem, upsertQuoteSection } from '@/lib/data/mutations/quotes'
-import { createInvoice, saveInvoiceItems } from '@/lib/data/mutations/invoices'
+import { declareMemberAbsence } from '@/lib/data/mutations/absences'
+import { createQuote, upsertQuoteItem, upsertQuoteSection, markQuoteAccepted, sendQuote } from '@/lib/data/mutations/quotes'
+import { createInvoice, saveInvoiceItems, markInvoicePaid, sendInvoice } from '@/lib/data/mutations/invoices'
+import { createClientInline } from '@/lib/data/mutations/clients'
+import { createChantier, createTache, createChantierNote } from '@/lib/data/mutations/chantiers'
+import { createChantierExpense } from '@/lib/data/mutations/chantier-expenses'
+import { sendQuoteFollowup, markQuoteRefused } from '@/lib/data/mutations/reminders'
+import { getPlanningRecipientUserIds, sendPushToPlanningRecipients } from '@/lib/push'
 import { getMaterials, getLaborRates, getPrestationTypes, type CatalogLaborRate, type CatalogMaterial, type PrestationType } from '@/lib/data/queries/catalog'
 import { getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { dateParis, todayParis } from '@/lib/utils'
@@ -65,6 +71,17 @@ function normalizeSarahActionType(type: string): string {
   if (['planning_week', 'create_week_planning', 'plan_week', 'planning_brief', 'brief_planning'].includes(normalized)) {
     return 'brief_nora'
   }
+  if (['create_client', 'new_client', 'add_client', 'client_add'].includes(normalized)) return 'client_create'
+  if (['create_chantier', 'new_chantier', 'add_chantier'].includes(normalized)) return 'chantier_create'
+  if (['create_task', 'add_task', 'tache_create', 'create_tache'].includes(normalized)) return 'task_create'
+  if (['add_note', 'note_add', 'chantier_note', 'create_note'].includes(normalized)) return 'chantier_note_add'
+  if (['mark_invoice_paid', 'invoice_paid'].includes(normalized)) return 'invoice_mark_paid'
+  if (['mark_quote_accepted', 'quote_accepted'].includes(normalized)) return 'quote_mark_accepted'
+  if (['mark_quote_refused', 'quote_refused'].includes(normalized)) return 'quote_mark_refused'
+  if (['send_quote'].includes(normalized)) return 'quote_send'
+  if (['send_invoice'].includes(normalized)) return 'invoice_send'
+  if (['quote_reminder', 'relance_devis', 'followup_quote'].includes(normalized)) return 'quote_followup'
+  if (['add_expense', 'create_expense', 'expense_create', 'depense_record'].includes(normalized)) return 'expense_record'
   return type
 }
 
@@ -86,8 +103,17 @@ export function deepLinkForSarahAction(type: string, payload: Record<string, unk
 
   if (type === 'open_quote_editor' || type === 'brief_chloe' || type === 'draft_quote') return quoteId ? `/finances/quote-editor?id=${quoteId}` : '/finances/quote-editor'
   if (type === 'open_invoice_editor' || type === 'invoice_reminder' || type === 'draft_invoice') return invoiceId ? `/finances/invoice-editor?id=${invoiceId}` : '/finances'
+  if (type === 'client_create') return '/clients'
+  if (type === 'chantier_create') return '/chantiers'
+  if (type === 'task_create' || type === 'chantier_note_add' || type === 'expense_record') return chantierId ? `/chantiers/${chantierId}` : '/chantiers'
+  if (type === 'invoice_mark_paid' || type === 'invoice_send') return '/finances'
+  if (type === 'quote_mark_accepted' || type === 'quote_mark_refused' || type === 'quote_send') return '/finances'
+  if (type === 'quote_followup') return '/reminders'
   if (type === 'brief_nora') return '/chantiers/planning'
   if (type === 'draft_email' || type === 'email_broadcast') return '/clients'
+  if (type === 'absence_declare') return '/chantiers/planning'
+  if (type === 'planning_replacement_suggest') return '/chantiers/planning'
+  if (type === 'pointage_reminder_prepare') return '/chantiers/heures'
   if (type.startsWith('planning_')) return '/chantiers/planning'
   if (type === 'task_complete' && chantierId) return `/chantiers/${chantierId}`
   if (type === 'brief_marco' && chantierId) return `/chantiers/${chantierId}`
@@ -818,18 +844,86 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
       return { message: 'Le créneau planning a bien été supprimé.', deepLink: proposal.deep_link }
     }
 
+    case 'absence_declare': {
+      const memberId = typeof p.memberId === 'string' ? p.memberId : null
+      const startDate = typeof p.startDate === 'string' ? p.startDate : null
+      const endDate = typeof p.endDate === 'string' ? p.endDate : startDate
+      if (!memberId || !startDate || !endDate) throw new Error('Informations d\'absence incomplètes.')
+
+      const result = await declareMemberAbsence({
+        memberId,
+        startDate,
+        endDate,
+        reason: typeof p.reason === 'string' ? p.reason : null,
+      })
+      if (result.error) throw new Error(result.error)
+
+      await saveAIBriefFromSarah(orgId, 'nora', { description: `Absence déclarée par Sarah : ${proposal.title}`, original_payload: p })
+
+      const conflictCount = result.conflictingSlots?.length ?? 0
+      const message = conflictCount > 0
+        ? `Absence enregistrée. Attention, ${conflictCount} créneau${conflictCount > 1 ? 'x' : ''} déjà planifié${conflictCount > 1 ? 's' : ''} sur cette période reste${conflictCount > 1 ? 'nt' : ''} à traiter.`
+        : 'Absence enregistrée. Aucun créneau existant sur cette période.'
+      return { message, deepLink: proposal.deep_link }
+    }
+
+    case 'planning_replacement_suggest': {
+      const slotId = typeof p.slotId === 'string' ? p.slotId : null
+      const memberId = typeof p.memberId === 'string' ? p.memberId : null
+      if (!memberId) throw new Error('Membre remplaçant manquant.')
+
+      if (slotId) {
+        const patch: Record<string, unknown> = { memberId, equipeId: null }
+        const { error } = await updatePlanningSlot(slotId, patch as any)
+        if (error) throw new Error(error)
+      } else {
+        const { error } = await createPlanningSlot({
+          chantierId: String(p.chantierId ?? ''),
+          plannedDate: String(p.plannedDate ?? ''),
+          startTime: typeof p.startTime === 'string' ? p.startTime : null,
+          endTime: typeof p.endTime === 'string' ? p.endTime : null,
+          label: String(p.label ?? p.memberName ?? 'Remplacement'),
+          teamSize: 1,
+          notes: typeof p.notes === 'string' ? p.notes : null,
+          memberId,
+          equipeId: null,
+        })
+        if (error) throw new Error(error)
+      }
+
+      await saveAIBriefFromSarah(orgId, 'nora', { description: `Remplacement mis en place par Sarah : ${proposal.title}`, original_payload: p })
+      return { message: 'Le remplacement a bien été mis en place.', deepLink: proposal.deep_link }
+    }
+
+    case 'pointage_reminder_prepare': {
+      const memberId = typeof p.memberId === 'string' ? p.memberId : null
+      const memberName = typeof p.memberName === 'string' ? p.memberName : 'ce membre'
+      await saveAIBriefFromSarah(orgId, 'nora', { description: `Rappel de pointage préparé par Sarah pour ${memberName}.`, original_payload: p })
+      if (memberId) {
+        const recipients = await getPlanningRecipientUserIds(orgId, { memberId })
+        if (recipients.userIds.length > 0 || recipients.memberIds.length > 0) {
+          await sendPushToPlanningRecipients(recipients, {
+            title: 'Rappel de pointage',
+            body: typeof p.reminderText === 'string' ? p.reminderText : 'Pense à enregistrer ton pointage pour le créneau prévu.',
+            url: '/mon-espace/dashboard',
+          }).catch(() => {})
+        }
+      }
+      return { message: 'Le rappel de pointage a été envoyé.', deepLink: proposal.deep_link }
+    }
+
     case 'invoice_reminder':
       if (typeof p.invoice_id === 'string' && typeof p.draft_text === 'string') {
         const admin = createAdminClient()
         const { data: invoice } = await admin
           .from('invoices')
-          .select('id, client_id, number, reference, title')
+          .select('id, client_id, number, title')
           .eq('id', p.invoice_id)
           .eq('organization_id', orgId)
           .maybeSingle()
 
         if (!invoice?.client_id) throw new Error('Cette facture n’est pas liée à un client joignable.')
-        const ref = invoice.reference ?? invoice.number ?? invoice.title ?? 'facture'
+        const ref = invoice.number ?? invoice.title ?? 'facture'
         const result = await sendSarahDraftEmail(orgId, {
           client_ids: [invoice.client_id],
           subject: typeof p.subject === 'string' ? p.subject : `Relance facture ${ref}`,
@@ -855,6 +949,149 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
         message: `${result.sent} email${result.sent > 1 ? 's' : ''} envoyé${result.sent > 1 ? 's' : ''}.${result.errors > 0 ? ` ${result.errors} échec${result.errors > 1 ? 's' : ''}.` : ''}`,
         deepLink: proposal.deep_link ?? '/clients',
       }
+    }
+
+    case 'client_create': {
+      const type = p.type === 'individual' ? 'individual' : 'company'
+      const result = await createClientInline({
+        type,
+        company_name: typeof p.company_name === 'string' ? p.company_name : undefined,
+        contact_name: typeof p.contact_name === 'string' ? p.contact_name : undefined,
+        first_name: typeof p.first_name === 'string' ? p.first_name : undefined,
+        last_name: typeof p.last_name === 'string' ? p.last_name : undefined,
+        email: typeof p.email === 'string' ? p.email : undefined,
+        phone: typeof p.phone === 'string' ? p.phone : undefined,
+        siret: typeof p.siret === 'string' ? p.siret : undefined,
+        address_line1: typeof p.address_line1 === 'string' ? p.address_line1 : undefined,
+        postal_code: typeof p.postal_code === 'string' ? p.postal_code : undefined,
+        city: typeof p.city === 'string' ? p.city : undefined,
+        status: (['active', 'prospect', 'lead_hot', 'lead_cold', 'subcontractor', 'inactive'] as const).find(s => s === p.status),
+        source: 'sarah',
+      })
+      if (result.error || !result.id) throw new Error(result.error ?? 'Création du client impossible.')
+      return { message: 'La fiche client a bien été créée. Je vous ouvre sa fiche.', deepLink: `/clients/${result.id}` }
+    }
+
+    case 'chantier_create': {
+      const title = typeof p.title === 'string' ? p.title.trim() : ''
+      if (!title) throw new Error('Le titre du chantier est requis.')
+      const clientId = await findClientIdForSarahDraft(orgId, p)
+      const result = await createChantier({
+        title,
+        clientId,
+        description: typeof p.description === 'string' ? p.description : null,
+        addressLine1: typeof p.address_line1 === 'string' ? p.address_line1 : null,
+        postalCode: typeof p.postal_code === 'string' ? p.postal_code : null,
+        city: typeof p.city === 'string' ? p.city : null,
+        startDate: typeof p.start_date === 'string' ? p.start_date : typeof p.startDate === 'string' ? p.startDate : null,
+        estimatedEndDate: typeof p.estimated_end_date === 'string' ? p.estimated_end_date : null,
+        budgetHt: typeof p.budget_ht === 'number' ? p.budget_ht : undefined,
+      })
+      if (result.error || !result.chantierId) throw new Error(result.error ?? 'Création du chantier impossible.')
+      return { message: 'Le chantier a bien été créé. Je vous ouvre sa fiche.', deepLink: `/chantiers/${result.chantierId}` }
+    }
+
+    case 'task_create': {
+      const chantierId = typeof p.chantierId === 'string' ? p.chantierId : typeof p.chantier_id === 'string' ? p.chantier_id : null
+      const title = typeof p.title === 'string' ? p.title.trim() : ''
+      if (!chantierId) throw new Error('Chantier de la tâche manquant.')
+      if (!title) throw new Error('Le titre de la tâche est requis.')
+      const result = await createTache(chantierId, {
+        title,
+        description: typeof p.description === 'string' ? p.description : null,
+        dueDate: typeof p.due_date === 'string' ? p.due_date : typeof p.dueDate === 'string' ? p.dueDate : null,
+        memberIds: stringArray(p.member_ids ?? p.memberIds),
+        equipeIds: stringArray(p.equipe_ids ?? p.equipeIds),
+      })
+      if (result.error) throw new Error(result.error)
+      return { message: 'La tâche a bien été ajoutée au chantier.', deepLink: `/chantiers/${chantierId}` }
+    }
+
+    case 'chantier_note_add': {
+      const chantierId = typeof p.chantierId === 'string' ? p.chantierId : typeof p.chantier_id === 'string' ? p.chantier_id : null
+      const content = typeof p.content === 'string' ? p.content.trim() : typeof p.note === 'string' ? p.note.trim() : ''
+      if (!chantierId) throw new Error('Chantier de la note manquant.')
+      if (!content) throw new Error('Le contenu de la note est requis.')
+      const result = await createChantierNote(chantierId, content)
+      if (result.error) throw new Error(result.error)
+      return { message: 'La note a bien été ajoutée au chantier.', deepLink: `/chantiers/${chantierId}` }
+    }
+
+    case 'expense_record': {
+      const chantierId = typeof p.chantierId === 'string' ? p.chantierId : typeof p.chantier_id === 'string' ? p.chantier_id : null
+      const label = typeof p.label === 'string' ? p.label.trim() : typeof p.description === 'string' ? p.description.trim() : ''
+      const amountHt = numberOr(p.amount_ht ?? p.amountHt ?? p.amount, NaN)
+      if (!chantierId) throw new Error('Chantier de la dépense manquant.')
+      if (!label) throw new Error('Le libellé de la dépense est requis.')
+      if (!Number.isFinite(amountHt) || amountHt <= 0) throw new Error('Le montant HT de la dépense est requis.')
+      const category = (['materiel', 'sous_traitance', 'location', 'transport', 'autre'] as const)
+        .find(c => c === p.category) ?? 'materiel'
+      const result = await createChantierExpense({
+        chantierId,
+        label,
+        amountHt,
+        category,
+        vatRate: numberOr(p.vat_rate ?? p.vatRate, 20),
+        expenseDate: typeof p.expense_date === 'string' ? p.expense_date : todayParis(),
+        supplierName: typeof p.supplier_name === 'string' ? p.supplier_name : null,
+        notes: typeof p.notes === 'string' ? p.notes : null,
+      })
+      if (result.error) throw new Error(result.error)
+      return { message: 'La dépense a bien été enregistrée sur le chantier.', deepLink: `/chantiers/${chantierId}` }
+    }
+
+    case 'invoice_mark_paid': {
+      const invoiceId = typeof p.invoice_id === 'string' ? p.invoice_id : typeof p.invoiceId === 'string' ? p.invoiceId : null
+      if (!invoiceId) throw new Error('Identifiant de facture manquant.')
+      const result = await markInvoicePaid(invoiceId)
+      if (result.error) throw new Error(result.error)
+      return { message: 'La facture a bien été marquée comme payée.', deepLink: '/finances' }
+    }
+
+    case 'invoice_send': {
+      const invoiceId = typeof p.invoice_id === 'string' ? p.invoice_id : typeof p.invoiceId === 'string' ? p.invoiceId : null
+      if (!invoiceId) throw new Error('Identifiant de facture manquant.')
+      const result = await sendInvoice(invoiceId)
+      if (result.error) throw new Error(result.error)
+      return { message: 'La facture a bien été envoyée au client par email.', deepLink: '/finances' }
+    }
+
+    case 'quote_send': {
+      const quoteId = typeof p.quote_id === 'string' ? p.quote_id : typeof p.quoteId === 'string' ? p.quoteId : null
+      if (!quoteId) throw new Error('Identifiant de devis manquant.')
+      const result = await sendQuote(quoteId)
+      if (result.error) throw new Error(result.error)
+      return { message: 'Le devis a bien été envoyé au client pour signature.', deepLink: '/finances' }
+    }
+
+    case 'quote_mark_accepted': {
+      const quoteId = typeof p.quote_id === 'string' ? p.quote_id : typeof p.quoteId === 'string' ? p.quoteId : null
+      if (!quoteId) throw new Error('Identifiant de devis manquant.')
+      const result = await markQuoteAccepted(quoteId)
+      if (result.error) throw new Error(result.error)
+      return { message: 'Le devis a bien été marqué comme accepté.', deepLink: '/finances' }
+    }
+
+    case 'quote_mark_refused': {
+      const quoteId = typeof p.quote_id === 'string' ? p.quote_id : typeof p.quoteId === 'string' ? p.quoteId : null
+      if (!quoteId) throw new Error('Identifiant de devis manquant.')
+      if (!await hasPermission('quotes.edit')) throw new Error('Permission refusée.')
+      const result = await markQuoteRefused(quoteId)
+      if (result.error) throw new Error(result.error)
+      return { message: 'Le devis a bien été marqué comme refusé.', deepLink: '/finances' }
+    }
+
+    case 'quote_followup': {
+      const quoteId = typeof p.quote_id === 'string' ? p.quote_id : typeof p.quoteId === 'string' ? p.quoteId : null
+      if (!quoteId) throw new Error('Identifiant de devis manquant.')
+      if (!await hasPermission('reminders.send_manual') && !await hasPermission('quotes.send')) {
+        throw new Error('Permission refusée.')
+      }
+      const subject = typeof p.subject === 'string' ? p.subject.trim() : ''
+      const body = typeof p.draft_text === 'string' ? p.draft_text.trim() : typeof p.body === 'string' ? p.body.trim() : ''
+      const result = await sendQuoteFollowup(quoteId, subject && body ? { subject, body } : undefined)
+      if (result.error) throw new Error(result.error)
+      return { message: 'La relance du devis a bien été envoyée au client.', deepLink: '/reminders' }
     }
 
     case 'open_url':

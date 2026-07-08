@@ -11,6 +11,8 @@ import { buildMaterialSelectionPricing, type DimensionPricingMode, type Material
 import { sendAuthEmail } from '@/lib/email'
 import { buildQuoteRequestNotificationEmail } from '@/lib/email/templates'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+import { sendPushToOrgPermission } from '@/lib/push'
+import { callAI } from '@/lib/ai/callAI'
 
 function splitContactName(fullName: string | null | undefined): { firstName: string | null; lastName: string | null } {
   const trimmed = fullName?.trim() ?? ''
@@ -116,6 +118,7 @@ export async function submitQuoteRequest(
   const dimensions = (formData.get('dimensions') as string)?.trim() || null
   const attachment_url = (formData.get('attachment_url') as string)?.trim() || null
   const type = (formData.get('type') as string)?.trim() || 'custom'
+  const freeform_notes = (formData.get('freeform_notes') as string)?.trim() || null
 
   let catalog_items = null
   const catalogItemsRaw = formData.get('catalog_items') as string | null
@@ -176,7 +179,7 @@ export async function submitQuoteRequest(
     name, email, phone, company_name, subject, description,
     prestation_type, dimensions, attachment_url,
     chantier_address_line1, chantier_postal_code, chantier_city,
-    type, catalog_items, attachments,
+    type, catalog_items, attachments, freeform_notes,
     status: 'new',
   })
 
@@ -184,6 +187,14 @@ export async function submitQuoteRequest(
     console.error('[submitQuoteRequest]', error)
     return { error: "Une erreur est survenue. Veuillez réessayer.", success: false }
   }
+
+  // ── Push immédiat : un prospect entrant est l'événement le plus chaud à traiter
+  const requesterLabel = company_name ? `${company_name} (${name})` : name
+  sendPushToOrgPermission(org.id, 'leads.manage', {
+    title: 'Nouvelle demande de devis',
+    body: `${requesterLabel} : ${subject ?? description.slice(0, 90)}`,
+    url: '/requests',
+  }).catch(() => {})
 
   // ── Email de notification à l'artisan
   const notifEmail = (org as { public_form_notification_email?: string | null }).public_form_notification_email
@@ -446,6 +457,64 @@ type CatalogItem = {
     base_width_m: number | null
     base_height_m?: number | null
   }>
+}
+
+type FreeformQuoteLine = {
+  description: string
+  quantity: number
+  unit: string
+  unit_price: number
+  vat_rate: number
+}
+
+/**
+ * Traduit les précisions texte libre d'une demande (en plus du catalogue déjà
+ * sélectionné) en lignes de devis complémentaires estimées par IA. Échec ou
+ * module IA désactivé : retourne un tableau vide, le devis catalogue reste
+ * valable sans cette section (fallback silencieux, jamais bloquant).
+ */
+async function draftLinesFromFreeformNotes(orgId: string, notes: string): Promise<FreeformQuoteLine[]> {
+  try {
+    const { data } = await callAI<any>({
+      organizationId: orgId,
+      provider: 'openrouter',
+      feature: 'quote_analysis',
+      model: 'google/gemini-2.5-flash',
+      inputKind: 'text',
+      request: {
+        body: {
+          messages: [
+            {
+              role: 'system',
+              content: 'Tu es un assistant de devis BTP. On te donne des précisions client en plus d\'un catalogue déjà chiffré séparément. Traduis UNIQUEMENT ces précisions en lignes de devis complémentaires (prestations, matériaux ou contraintes chiffrables non déjà couvertes par un catalogue standard). Estime un prix HT raisonnable pour le marché français si non précisé. Réponds uniquement en JSON strict, sans texte autour : { "lines": [{ "description": string, "quantity": number, "unit": string, "unit_price": number, "vat_rate": number }] }. vat_rate est un pourcentage entier (20 pour 20%, jamais 0.2). Si les précisions ne décrivent rien de chiffrable (ex: juste une contrainte d\'accès sans coût), renvoie { "lines": [] }.',
+            },
+            { role: 'user', content: notes },
+          ],
+          temperature: 0.2,
+          max_tokens: 1200,
+          response_format: { type: 'json_object' },
+        },
+        timeoutMs: 30_000,
+      },
+      metadata: { route: 'quote-requests:draftLinesFromFreeformNotes' },
+    })
+    const raw = data?.choices?.[0]?.message?.content ?? '{}'
+    const parsed = JSON.parse(raw)
+    const lines = Array.isArray(parsed?.lines) ? parsed.lines : []
+    return lines
+      .filter((l: any) => l?.description && Number(l.quantity) > 0)
+      .map((l: any) => ({
+        description: String(l.description).slice(0, 300),
+        quantity: Math.max(0.01, Number(l.quantity) || 1),
+        unit: String(l.unit || 'u').slice(0, 20),
+        unit_price: Math.max(0, Number(l.unit_price) || 0),
+        // Défense contre un modèle qui renverrait une fraction (0.2) au lieu d'un pourcentage (20)
+        vat_rate: (() => { const v = Number(l.vat_rate); return v > 0 && v <= 1 ? v * 100 : (v || 20) })(),
+      }))
+  } catch (err) {
+    console.warn('[draftLinesFromFreeformNotes] analyse IA ignorée', err instanceof Error ? err.message : err)
+    return []
+  }
 }
 
 function getCatalogItemMode(
@@ -740,6 +809,37 @@ export async function createQuoteFromCatalogRequest(
 
     if (visibleItems.length > 0) await adminClient.from('quote_items').insert(visibleItems)
     if (internalItems.length > 0) await adminClient.from('quote_items').insert(internalItems)
+  }
+
+  // Précisions texte libre en plus du catalogue : ajoutées comme section
+  // distincte, générée par IA si le module quote_ai est actif. Prix estimés,
+  // à valider par l'artisan dans l'éditeur — jamais bloquant si l'IA échoue.
+  const freeformNotes = (req as { freeform_notes?: string | null }).freeform_notes?.trim()
+  if (freeformNotes && freeformNotes.length >= 15) {
+    const freeformLines = await draftLinesFromFreeformNotes(orgId, freeformNotes)
+    if (freeformLines.length > 0) {
+      const { data: freeformSection } = await adminClient
+        .from('quote_sections')
+        .insert({ quote_id: newQuote.id, title: 'Précisions complémentaires (estimé IA, à vérifier)', position: 2 })
+        .select('id')
+        .single()
+      if (freeformSection) {
+        await adminClient.from('quote_items').insert(
+          freeformLines.map((line, i) => ({
+            quote_id: newQuote.id,
+            section_id: freeformSection.id,
+            type: 'custom',
+            description: line.description,
+            unit: line.unit,
+            quantity: line.quantity,
+            unit_price: line.unit_price,
+            vat_rate: line.vat_rate,
+            position: i + 1,
+            is_internal: false,
+          })),
+        )
+      }
+    }
   }
 
   await adminClient

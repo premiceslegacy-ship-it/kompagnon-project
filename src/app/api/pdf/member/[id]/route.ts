@@ -3,21 +3,31 @@ import React from 'react'
 import { renderToStream } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 import { createAdminClient } from '@/lib/supabase/admin'
 import MemberHoursReportPDF from '@/components/pdf/MemberHoursReportPDF'
 import type { IndividualMember } from '@/lib/data/queries/members'
 import type { MemberPointage } from '@/lib/data/queries/members'
+import { isValidUuid } from '@/lib/security'
 
 export async function GET(
   req: Request,
   { params }: { params: { id: string } },
 ) {
+  if (!isValidUuid(params.id)) return new NextResponse('Membre introuvable', { status: 404 })
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return new NextResponse('Non authentifié', { status: 401 })
 
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return new NextResponse('Organisation introuvable', { status: 403 })
+
+  // Le rapport d'heures d'un membre expose des données RH (nom, heures, taux) :
+  // réservé aux profils autorisés à consulter les rapports de l'organisation.
+  if (!(await hasPermission('reports.view'))) {
+    return new NextResponse('Accès refusé', { status: 403 })
+  }
 
   const url = new URL(req.url)
   const dateFrom = url.searchParams.get('from') ?? new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
@@ -54,7 +64,10 @@ export async function GET(
         .maybeSingle(),
     ])
 
-    if (!profileRes.data) {
+    // Sécurité (IDOR) : l'utilisateur ciblé DOIT être membre de l'organisation
+    // de l'appelant. Sans ce contrôle, n'importe quel UUID exposait le nom et
+    // les pointages d'un utilisateur d'une autre organisation.
+    if (!profileRes.data || !membershipRes.data) {
       return new NextResponse('Membre introuvable', { status: 404 })
     }
 
@@ -84,17 +97,19 @@ export async function GET(
 
     const linkedMemberId = linkedMemberRow?.id ?? null
 
+    // organization_id récupéré via le join chantier pour contraindre le scope org
     const selectClause = `
       id, chantier_id, tache_id, date, hours, start_time, description, rate_snapshot,
-      chantiers!inner ( title ),
+      chantiers!inner ( title, organization_id ),
       chantier_taches ( title )
     `
 
-    // Pointages via user_id
+    // Pointages via user_id — scoping org obligatoire (le client admin bypasse la RLS)
     let qUser = admin
       .from('chantier_pointages')
       .select(selectClause)
       .eq('user_id', params.id)
+      .eq('chantiers.organization_id', orgId)
       .order('date', { ascending: false })
     if (dateFrom) qUser = qUser.gte('date', dateFrom)
     if (dateTo)   qUser = qUser.lte('date', dateTo)
@@ -107,6 +122,7 @@ export async function GET(
         .from('chantier_pointages')
         .select(selectClause)
         .eq('member_id', linkedMemberId)
+        .eq('chantiers.organization_id', orgId)
         .order('date', { ascending: false })
       if (dateFrom) qMember = qMember.gte('date', dateFrom)
       if (dateTo)   qMember = qMember.lte('date', dateTo)
@@ -199,6 +215,7 @@ export async function GET(
   return new NextResponse(stream as unknown as ReadableStream, {
     headers: {
       'Content-Type': 'application/pdf',
+      'Cache-Control': 'no-store, max-age=0',
       'Content-Disposition': download
         ? `attachment; filename="${fileName}"`
         : `inline; filename="${fileName}"`,

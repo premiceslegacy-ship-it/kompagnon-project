@@ -5,6 +5,7 @@ import { getOrganizationShell } from '@/lib/data/queries/organization';
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules';
 import { getCurrentMembershipContext, getUserPermissions } from '@/lib/data/queries/membership';
 import { AppShell } from '@/components/layout/AppShell';
+import { PushEnableBanner } from '@/components/layout/PushEnableBanner';
 
 export default async function AppLayout({
     children,
@@ -38,6 +39,7 @@ export default async function AppLayout({
                     {children}
                 </AppShell>
                 <Footer orgName={org?.name ?? null} />
+                <PushEnableBanner />
             </div>
         </>
     );

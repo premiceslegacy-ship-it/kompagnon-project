@@ -8,6 +8,7 @@ import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI 
 import { AIQuotaExceededError } from '@/lib/quota'
 import { fetchRAGContext } from '@/lib/ai/rag'
 import { buildIndustryQualityPrompt } from '@/lib/ai/industry-context'
+import { getVerticalPackDefinition } from '@/lib/vertical-packs'
 import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/membership'
 import { METAL_LABELS, type MetalCode } from '@/lib/metal-prices'
 
@@ -78,6 +79,7 @@ type QuoteAIContext = {
   activityDescription: string | null
   secondaryActivityLabels: string[]
   metalPricingPrompt: string
+  verticalPackPrompt: string
   clientsContext: string
 }
 
@@ -458,7 +460,7 @@ function normalizeAIQuote(quote: AIQuoteResult): AIQuoteResult {
 }
 
 // Charge le catalogue, les postes récents et les infos de l'org pour enrichir le contexte IA
-async function loadCatalogContext(orgId: string): Promise<{ context: string; sector: string; activityId: string | null; activityDescription: string | null; secondaryActivityLabels: string[]; metalPricingPrompt: string }> {
+async function loadCatalogContext(orgId: string): Promise<{ context: string; sector: string; activityId: string | null; activityDescription: string | null; secondaryActivityLabels: string[]; metalPricingPrompt: string; verticalPackPrompt: string }> {
   const supabase = await createClient()
 
   const [
@@ -470,7 +472,7 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
   ] = await Promise.all([
     supabase
       .from('organizations')
-      .select('sector, name, business_profile, business_activity_id, secondary_activity_ids, has_metal_pricing')
+      .select('sector, name, business_profile, business_activity_id, secondary_activity_ids, has_metal_pricing, business_vertical_pack')
       .eq('id', orgId)
       .single(),
     supabase
@@ -579,8 +581,10 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
   const metalPricingPrompt = org?.has_metal_pricing
     ? buildMetalPricingPrompt(metalGrids ?? [])
     : ''
+  const verticalPack = getVerticalPackDefinition(org?.business_vertical_pack ?? null)
+  const verticalPackPrompt = verticalPack?.aiPromptGuidance ?? ''
 
-  return { context: lines.join('\n'), sector, activityId: org?.business_activity_id ?? null, activityDescription, secondaryActivityLabels, metalPricingPrompt }
+  return { context: lines.join('\n'), sector, activityId: org?.business_activity_id ?? null, activityDescription, secondaryActivityLabels, metalPricingPrompt, verticalPackPrompt }
 }
 
 function buildMetalPricingPrompt(grids: Array<{ label: string; metal_code: string; coefficient: number; unit: string }>): string {
@@ -646,7 +650,7 @@ async function loadQuoteAIContext(orgId: string): Promise<QuoteAIContext> {
   return value
 }
 
-function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string, activityDescription: string | null, secondaryActivityLabels: string[], metalPricingPrompt: string, clientsContext: string): string {
+function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string, activityDescription: string | null, secondaryActivityLabels: string[], metalPricingPrompt: string, clientsContext: string, verticalPackPrompt: string): string {
   const hasCatalog = catalogContext.trim().length > 0
   const activityContext = activityDescription ? `\nSpécificité métier : ${activityDescription}` : ''
   const secondaryActivityContext = secondaryActivityLabels.length > 0
@@ -662,6 +666,7 @@ function buildSystemPrompt(catalogContext: string, sector: string, ragContext: s
 Tu parles comme un pro du terrain : direct, précis, sans jargon inutile. Tu connais ton métier sur le bout des doigts.
 ${clientContextBlock}
 ${metalPricingPrompt ? `\n${metalPricingPrompt}\n` : ''}
+${verticalPackPrompt ? `\n${verticalPackPrompt}\n` : ''}
 ${industryQualityPrompt ? `\n${industryQualityPrompt}\n` : ''}
 ${hasCatalog ? `
 ${catalogContext}
@@ -889,11 +894,11 @@ export async function POST(req: NextRequest) {
 
   const context = orgId
     ? await loadQuoteAIContext(orgId)
-    : { context: '', sector: 'BTP', activityId: null, activityDescription: null, secondaryActivityLabels: [], metalPricingPrompt: '', clientsContext: '' }
+    : { context: '', sector: 'BTP', activityId: null, activityDescription: null, secondaryActivityLabels: [], metalPricingPrompt: '', verticalPackPrompt: '', clientsContext: '' }
   const ragContext = orgId
     ? await fetchRAGContext(orgId, queryText, { activityId: context.activityId })
     : ''
-  const systemPrompt = buildSystemPrompt(context.context, context.sector, ragContext, context.activityDescription, context.secondaryActivityLabels, context.metalPricingPrompt, context.clientsContext)
+  const systemPrompt = buildSystemPrompt(context.context, context.sector, ragContext, context.activityDescription, context.secondaryActivityLabels, context.metalPricingPrompt, context.clientsContext, context.verticalPackPrompt)
 
   if (contentType.includes('multipart/form-data')) {
     const formData = formDataCache!

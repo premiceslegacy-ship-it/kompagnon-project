@@ -714,6 +714,11 @@ export default function InvoiceEditorClient({
     setItems(prev => [...prev, makeBlankItem()])
   }
 
+  // Ligne de coût interne : comptée dans la marge, absente du PDF client.
+  function addInternalItem() {
+    setItems(prev => [...prev, { ...makeBlankItem(), is_internal: true }])
+  }
+
   function removeItem(id: number) {
     setItems(prev => prev.filter(i => i.id !== id))
   }
@@ -1718,6 +1723,11 @@ export default function InvoiceEditorClient({
             <button onClick={() => { setEquipmentName(''); setEquipmentPurchase(0); setEquipmentUses(100); setShowEquipment(true) }}
               className="flex items-center gap-2 text-sm font-semibold text-purple-600 hover:text-purple-500 transition-colors px-4 py-2 rounded-lg bg-purple-500/10">
               <Package className="w-4 h-4" />Équipement
+            </button>
+            <button type="button" onClick={addInternalItem}
+              title="Ajoute une ligne de coût qui compte dans votre marge mais n'apparaît pas sur la facture client."
+              className="flex items-center gap-2 text-sm font-semibold text-amber-600 hover:text-amber-500 transition-colors px-4 py-2 rounded-lg bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
+              <EyeOff className="w-4 h-4" />Coût interne
             </button>
           </div>
           {hasInternal && (

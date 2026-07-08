@@ -45,7 +45,7 @@ function absolutePayload(payload: PushPayload) {
 async function sendToSubscriptions(subs: Array<{ endpoint: string; p256dh: string; auth: string }>, payload: PushPayload) {
   if (!subs || subs.length === 0) return
   const body = absolutePayload(payload)
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     subs.map((sub) =>
       webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
@@ -53,6 +53,21 @@ async function sendToSubscriptions(subs: Array<{ endpoint: string; p256dh: strin
       )
     )
   )
+
+  // Nettoyage : un abonnement expiré/révoqué répond 404 ou 410 (Gone) — sans
+  // suppression, la table s'accumule d'endpoints morts et chaque envoi futur
+  // retente pour rien indéfiniment.
+  const deadEndpoints: string[] = []
+  results.forEach((result, i) => {
+    if (result.status === 'rejected') {
+      const statusCode = (result.reason as { statusCode?: number } | undefined)?.statusCode
+      if (statusCode === 404 || statusCode === 410) deadEndpoints.push(subs[i].endpoint)
+    }
+  })
+  if (deadEndpoints.length > 0) {
+    const admin = createAdminClient()
+    await admin.from('push_subscriptions').delete().in('endpoint', deadEndpoints)
+  }
 }
 
 export async function sendPushToUser(userId: string, payload: PushPayload) {
@@ -83,6 +98,37 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload, e
     .in('user_id', uniqueUserIds)
 
   await sendToSubscriptions(subs ?? [], payload)
+}
+
+/** Membres sans compte auth (espace /mon-espace) abonnés via member_id. */
+export async function sendPushToMembers(memberIds: string[], payload: PushPayload) {
+  if (!ensureVapidConfigured()) return
+
+  const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))]
+  if (uniqueMemberIds.length === 0) return
+
+  const admin = createAdminClient()
+  const { data: subs } = await admin
+    .from('push_subscriptions')
+    .select('endpoint, p256dh, auth')
+    .in('member_id', uniqueMemberIds)
+
+  await sendToSubscriptions(subs ?? [], payload)
+}
+
+/**
+ * Envoie aux destinataires d'un événement planning, qu'ils aient un compte auth
+ * (user_id) ou non (member_id, intervenants terrain via /mon-espace).
+ */
+export async function sendPushToPlanningRecipients(
+  recipients: { userIds: string[]; memberIds: string[] },
+  payload: PushPayload,
+  excludeUserId?: string | null,
+) {
+  await Promise.all([
+    sendPushToUsers(recipients.userIds, payload, excludeUserId),
+    sendPushToMembers(recipients.memberIds, payload),
+  ])
 }
 
 export async function sendPushToOrgPermission(
@@ -144,34 +190,47 @@ export async function sendPushToOrg(orgId: string, payload: PushPayload, exclude
   await sendToSubscriptions(subs, payload)
 }
 
+export type PlanningRecipients = { userIds: string[]; memberIds: string[] }
+
+/**
+ * Résout les destinataires d'un événement planning. Un membre de
+ * chantier_equipe_membres a un profile_id (compte auth) OU non (intervenant
+ * terrain sans compte, notifié via member_id sur push_subscriptions) — les deux
+ * cas sont couverts pour que personne ne soit silencieusement ignoré.
+ */
 export async function getPlanningRecipientUserIds(
   orgId: string,
   opts: { memberId?: string | null; equipeId?: string | null },
-): Promise<string[]> {
+): Promise<PlanningRecipients> {
   const admin = createAdminClient()
   const userIds = new Set<string>()
+  const memberIds = new Set<string>()
+
+  const collect = (member: { id: string; profile_id: string | null } | null | undefined) => {
+    if (!member) return
+    if (member.profile_id) userIds.add(member.profile_id)
+    else memberIds.add(member.id)
+  }
 
   if (opts.memberId) {
     const { data: member } = await admin
       .from('chantier_equipe_membres')
-      .select('profile_id')
+      .select('id, profile_id')
       .eq('id', opts.memberId)
       .eq('organization_id', orgId)
       .maybeSingle()
-    if (member?.profile_id) userIds.add(member.profile_id)
+    collect(member)
   }
 
   if (opts.equipeId) {
     const { data: members } = await admin
       .from('chantier_equipe_membres')
-      .select('profile_id')
+      .select('id, profile_id')
       .eq('equipe_id', opts.equipeId)
       .eq('organization_id', orgId)
 
-    for (const member of members ?? []) {
-      if (member.profile_id) userIds.add(member.profile_id)
-    }
+    for (const member of members ?? []) collect(member)
   }
 
-  return [...userIds]
+  return { userIds: [...userIds], memberIds: [...memberIds] }
 }

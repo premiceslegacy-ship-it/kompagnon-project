@@ -12,11 +12,14 @@ import {
 } from '@/lib/data/queries/chantiers'
 import ChantierPDF from '@/components/pdf/ChantierPDF'
 import type { ChantierPDFPhoto } from '@/components/pdf/ChantierPDF'
+import { isValidUuid } from '@/lib/security'
 
 export async function GET(
   req: Request,
   { params }: { params: { id: string } },
 ) {
+  if (!isValidUuid(params.id)) return new NextResponse('Chantier introuvable', { status: 404 })
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return new NextResponse('Non authentifié', { status: 401 })

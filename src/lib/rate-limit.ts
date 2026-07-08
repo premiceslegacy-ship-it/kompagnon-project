@@ -69,8 +69,13 @@ export async function checkRateLimit(input: RateLimitInput): Promise<RateLimitRe
 
   if (error) {
     console.error('[rate-limit]', error)
+    // Fail-closed sur les scopes facturants (IA, coûteux) : une erreur RPC ne
+    // doit jamais lever la limite d'un gate de coût (Supabase Free en pause/
+    // saturé aurait sinon exposé un budget IA non borné). Fail-open réservé
+    // aux scopes non facturants (formulaires publics, disponibilité prioritaire).
+    const failClosed = input.scope.startsWith('ai:')
     return {
-      allowed: true,
+      allowed: !failClosed,
       scope: input.scope,
       limit: input.limit,
       windowSeconds: input.windowSeconds,

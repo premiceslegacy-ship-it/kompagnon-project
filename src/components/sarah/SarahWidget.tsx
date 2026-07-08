@@ -7,6 +7,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   Send, Mic, MicOff, X, Eye, ChevronDown,
   AlertCircle, CheckCircle2, ExternalLink, Zap, ChevronRight, PhoneOff,
+  Paperclip, FileText, ImageIcon,
 } from 'lucide-react'
 import type { NotificationsSummary } from '@/lib/data/queries/notifications'
 import { useSarahVoice } from './useSarahVoice'
@@ -68,6 +69,12 @@ type PageContext = {
 }
 
 type SarahAlerts = Partial<NotificationsSummary> & { total?: number }
+
+// Pièce jointe en attente d'envoi dans le chat (image ou PDF, max ~6 Mo)
+type PendingAttachment = { name: string; mimeType: string; dataUrl: string }
+
+const ATTACHMENT_ACCEPT = 'image/jpeg,image/png,image/webp,image/heic,application/pdf'
+const ATTACHMENT_MAX_BYTES = 6 * 1024 * 1024
 
 type PersistedSarahAction = {
   id: string
@@ -212,24 +219,24 @@ function buildGreeting(ctx: PageContext, userName: string | null, alertCount: nu
 
   const { type, title, name, clientName, reference, status, totalTtc, clientType } = ctx.context
   if (type === 'chantier') {
-    const who = clientName ? ` — client : ${clientName}` : ''
-    const state = status ? ` — statut ${status}` : ''
+    const who = clientName ? `, client ${clientName}` : ''
+    const state = status ? ` (statut ${status})` : ''
     return `${salut} Chantier "${title}"${who}${state}.\n\nJe peux vous dire ce qui a été fait, ce qui est prévu, les tâches, le planning et les factures liées.`
   }
   if (type === 'client') {
-    const kind = clientType ? ` — type ${clientType}` : ''
+    const kind = clientType ? ` (${clientType})` : ''
     return `${salut} Fiche client : ${name ?? 'inconnu'}${kind}.\n\nJe peux lister ses devis, ses factures, ses chantiers et l'historique utile.`
   }
   if (type === 'quote') {
     const amount = fmtCurrency(typeof totalTtc === 'string' || typeof totalTtc === 'number' ? totalTtc : null)
-    const state = status ? ` — statut ${status}` : ''
-    const total = amount ? ` — ${amount}` : ''
+    const state = status ? `, statut ${status}` : ''
+    const total = amount ? `, ${amount}` : ''
     return `${salut} Devis ${reference ?? ''}${clientName ? ` pour ${clientName}` : ''}${state}${total}.\n\nJe peux analyser le contenu, les lignes, la marge ou préparer l'envoi.`
   }
   if (type === 'invoice') {
     const amount = fmtCurrency(typeof totalTtc === 'string' || typeof totalTtc === 'number' ? totalTtc : null)
-    const state = status ? ` — statut ${status}` : ''
-    const total = amount ? ` — ${amount}` : ''
+    const state = status ? `, statut ${status}` : ''
+    const total = amount ? `, ${amount}` : ''
     return `${salut} Facture ${reference ?? ''}${clientName ? ` pour ${clientName}` : ''}${state}${total}.\n\nJe peux vérifier l'échéance, les paiements reçus et préparer une relance.`
   }
   return `${salut} Je suis Sarah, votre assistante.\n\nVous êtes sur ${withArticle(ctx.label)}. Posez-moi une question ou demandez-moi d'effectuer une action.`
@@ -779,6 +786,7 @@ function useDrawerLogic({
   const [loading,  setLoading]  = useState(false)
   const [voiceMode, setVoiceMode] = useState(false)
   const [errorCode, setErrorCode] = useState<SarahErrorCode | null>(null)
+  const [attachment, setAttachment] = useState<PendingAttachment | null>(null)
   const historyRef = useRef<{ role: 'user' | 'sarah'; content: string }[]>([])
   const conversationIdRef = useRef(crypto.randomUUID())
   const briefSentRef = useRef(false)
@@ -798,13 +806,15 @@ function useDrawerLogic({
     setMessages(prev => [...prev, { ...msg, id: crypto.randomUUID(), timestamp: new Date() }])
   }, [])
 
-  const sendRaw = useCallback(async (text: string) => {
+  const sendRaw = useCallback(async (text: string, pendingAttachment?: PendingAttachment | null) => {
     if (!text || loading) return
     setInput('')
     setErrorCode(null)
-    push({ role: 'user', content: text })
+    setAttachment(null)
+    const displayText = pendingAttachment ? `${text}\n\nPièce jointe : ${pendingAttachment.name}` : text
+    push({ role: 'user', content: displayText })
     const previousHistory = historyRef.current.slice(-10)
-    historyRef.current = [...historyRef.current, { role: 'user', content: text }]
+    historyRef.current = [...historyRef.current, { role: 'user', content: displayText }]
     setLoading(true)
     try {
       const res = await fetch('/api/ai/sarah-secretary', {
@@ -817,6 +827,7 @@ function useDrawerLogic({
           pageContext: pageCtx.context,
           history: previousHistory,
           conversationId: conversationIdRef.current,
+          ...(pendingAttachment ? { attachment: pendingAttachment } : {}),
         }),
       })
       const data = await res.json()
@@ -832,8 +843,12 @@ function useDrawerLogic({
 
   const send = useCallback((override?: string) => {
     const text = (override ?? input).trim()
-    if (text) sendRaw(text)
-  }, [input, sendRaw])
+    if (text) {
+      sendRaw(text, attachment)
+    } else if (attachment) {
+      sendRaw('Voici un document, pouvez-vous l\'analyser ?', attachment)
+    }
+  }, [input, attachment, sendRaw])
 
   const onKey = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
@@ -956,6 +971,7 @@ function useDrawerLogic({
     messages, input, setInput, loading, voiceMode, setVoiceMode,
     errorCode, bottomRef, inputRef,
     send, onKey, confirmAction, rejectAction,
+    attachment, setAttachment,
   }
 }
 
@@ -963,7 +979,7 @@ function useDrawerLogic({
 
 function PanelContent({ pageCtx, pathname, userName, loading, errorCode, messages, voiceMode,
   input, setInput, onKey, send, setVoiceMode, onClose, inputRef, bottomRef,
-  confirmAction, rejectAction }: {
+  confirmAction, rejectAction, attachment, setAttachment }: {
   pageCtx: PageContext
   pathname: string
   userName: string | null
@@ -981,7 +997,34 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
   bottomRef: React.RefObject<HTMLDivElement | null>
   confirmAction: (id: string) => void
   rejectAction: (id: string) => void
+  attachment: PendingAttachment | null
+  setAttachment: (a: PendingAttachment | null) => void
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
+
+  const onPickFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setAttachmentError(null)
+    if (!ATTACHMENT_ACCEPT.split(',').includes(file.type)) {
+      setAttachmentError('Format non pris en charge. Envoyez une image (JPG, PNG, WebP) ou un PDF.')
+      return
+    }
+    if (file.size > ATTACHMENT_MAX_BYTES) {
+      setAttachmentError('Fichier trop volumineux : 6 Mo maximum.')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : null
+      if (dataUrl) setAttachment({ name: file.name, mimeType: file.type, dataUrl })
+    }
+    reader.onerror = () => setAttachmentError('Impossible de lire ce fichier.')
+    reader.readAsDataURL(file)
+  }, [setAttachment])
+
   // Auto-resize de la zone de saisie : la hauteur suit le contenu (jusqu'au
   // plafond CSS), pour qu'aucune ligne ne soit masquée en haut quand on tape.
   useEffect(() => {
@@ -1047,6 +1090,28 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
 
           {/* Zone saisie */}
           <div className="flex-shrink-0 px-3 pb-3 pt-1.5" style={{ borderTop: '1px solid var(--sarah-divider)' }}>
+            {attachmentError && (
+              <p className="text-[11px] px-1 pb-1.5" style={{ color: 'rgb(var(--danger))' }}>{attachmentError}</p>
+            )}
+            {attachment && (
+              <div className="flex items-center gap-2 mb-1.5 px-2.5 py-1.5 rounded-xl"
+                style={{
+                  background: 'rgba(255,159,28,0.08)',
+                  border: '1px solid rgba(255,159,28,0.25)',
+                }}>
+                {attachment.mimeType === 'application/pdf'
+                  ? <FileText size={13} className="flex-shrink-0 text-accent" />
+                  : attachment.dataUrl.startsWith('data:image')
+                    ? <img src={attachment.dataUrl} alt="" className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
+                    : <ImageIcon size={13} className="flex-shrink-0 text-accent" />}
+                <span className="flex-1 text-[11px] truncate opacity-75">{attachment.name}</span>
+                <button onClick={() => setAttachment(null)}
+                  className="p-1 rounded-lg opacity-45 hover:opacity-80 transition-opacity flex-shrink-0"
+                  title="Retirer la pièce jointe">
+                  <X size={11} style={{ filter: 'var(--sarah-icon-filter)' }} />
+                </button>
+              </div>
+            )}
             <div className="flex items-center gap-2 rounded-2xl px-3.5 py-2.5"
               style={{
                 background: 'var(--sarah-input-bg)',
@@ -1065,10 +1130,16 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
                 style={{ minHeight: 24, maxHeight: 160, caretColor: 'rgb(var(--accent-primary))', color: 'inherit' }}
               />
               <div className="flex items-center gap-1 flex-shrink-0">
+                <input ref={fileInputRef} type="file" accept={ATTACHMENT_ACCEPT} className="hidden" onChange={onPickFile} />
+                <button onClick={() => fileInputRef.current?.click()} disabled={loading}
+                  className="p-1.5 rounded-lg opacity-35 hover:opacity-70 transition-opacity"
+                  title="Joindre une image ou un PDF">
+                  <Paperclip size={14} style={{ filter: 'var(--sarah-icon-filter)' }} />
+                </button>
                 <button onClick={() => setVoiceMode(true)} className="p-1.5 rounded-lg opacity-35 hover:opacity-70 transition-opacity" title="Vocal">
                   <Mic size={14} style={{ filter: 'var(--sarah-icon-filter)' }} />
                 </button>
-                <button onClick={() => send()} disabled={!input.trim() || loading}
+                <button onClick={() => send()} disabled={(!input.trim() && !attachment) || loading}
                   className="p-1.5 rounded-lg transition-all disabled:opacity-20 text-accent hover:bg-accent/10 active:scale-90">
                   <Send size={14} style={{ filter: 'drop-shadow(0px 1px 0px rgba(255,255,255,0.24))' }} />
                 </button>
@@ -1226,12 +1297,18 @@ export function SarahWidget({ userName, alertCount = 0, alerts = null }: {
 
   useEffect(() => {
     let dead = false
-    fetch(`/api/sarah/page-context?pathname=${encodeURIComponent(pathname)}`)
+    // On transmet aussi la query string de la page (ex: ?id=... sur l'éditeur
+    // de devis/facture) : usePathname() seul ne la contient jamais, et ces
+    // éditeurs identifient leur document par un paramètre de requête, pas un
+    // segment de chemin.
+    const query = searchParams.toString()
+    const fullPath = query ? `${pathname}?${query}` : pathname
+    fetch(`/api/sarah/page-context?pathname=${encodeURIComponent(fullPath)}`)
       .then(r => r.json())
       .then((c: PageContext) => { if (!dead) setPageCtx(c) })
       .catch(() => {})
     return () => { dead = true }
-  }, [pathname])
+  }, [pathname, searchParams])
 
   useEffect(() => {
     if (!highlightedActionId) return

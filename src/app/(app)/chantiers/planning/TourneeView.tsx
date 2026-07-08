@@ -46,6 +46,8 @@ import {
 } from '@/lib/data/mutations/planning'
 import { TourneeCard, type TourneeCardMember } from './TourneeCard'
 import { optimizeRouteOrder, buildTourneeWithTravel, estimateTravelMin } from './TourneeOptimizer'
+import { TourneeRouteMap } from '@/components/maps/TourneeRouteMap'
+import { AddressMapPicker } from '@/components/maps/AddressMapPicker'
 
 function fmtMin(min: number): string {
   const h = Math.floor(min / 60)
@@ -102,7 +104,10 @@ interface TourneeViewProps {
   orgDepartureAddress?: string | null
   orgDeparturePostalCode?: string | null
   orgDepartureCity?: string | null
-  routeDepartures?: Record<string, { address: string | null; postal_code: string | null; city: string | null }>
+  orgDepartureLatitude?: number | null
+  orgDepartureLongitude?: number | null
+  routeDepartures?: Record<string, { address: string | null; postal_code: string | null; city: string | null; latitude: number | null; longitude: number | null }>
+  onDeclareAbsent?: (memberId: string, memberName: string) => void
 }
 
 type ModalMode = 'add' | 'edit' | null
@@ -118,7 +123,10 @@ export default function TourneeView({
   orgDepartureAddress,
   orgDeparturePostalCode,
   orgDepartureCity,
+  orgDepartureLatitude,
+  orgDepartureLongitude,
   routeDepartures = {},
+  onDeclareAbsent,
 }: TourneeViewProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -151,6 +159,8 @@ export default function TourneeView({
   const [departureAddress, setDepartureAddress] = useState('')
   const [departurePostalCode, setDeparturePostalCode] = useState('')
   const [departureCity, setDepartureCity] = useState('')
+  const [departureLatitude, setDepartureLatitude] = useState<number | null>(null)
+  const [departureLongitude, setDepartureLongitude] = useState<number | null>(null)
   const [isSavingDeparture, setIsSavingDeparture] = useState(false)
   const [departureSaved, setDepartureSaved] = useState(false)
 
@@ -261,12 +271,16 @@ export default function TourneeView({
   const resolvedDepartureAddress = activeDeparture?.address ?? orgDepartureAddress ?? ''
   const resolvedDeparturePostalCode = activeDeparture?.postal_code ?? orgDeparturePostalCode ?? ''
   const resolvedDepartureCity = activeDeparture?.city ?? orgDepartureCity ?? ''
+  const resolvedDepartureLatitude = activeDeparture?.latitude ?? orgDepartureLatitude ?? null
+  const resolvedDepartureLongitude = activeDeparture?.longitude ?? orgDepartureLongitude ?? null
   const hasDeparture = !!(resolvedDepartureAddress || resolvedDeparturePostalCode || resolvedDepartureCity)
 
   function openDepartureEditor() {
     setDepartureAddress(resolvedDepartureAddress)
     setDeparturePostalCode(resolvedDeparturePostalCode)
     setDepartureCity(resolvedDepartureCity)
+    setDepartureLatitude(resolvedDepartureLatitude)
+    setDepartureLongitude(resolvedDepartureLongitude)
     setDepartureSaved(false)
     setShowDepartureEditor(true)
   }
@@ -279,6 +293,8 @@ export default function TourneeView({
       departureAddress: departureAddress.trim() || null,
       departurePostalCode: departurePostalCode.trim() || null,
       departureCity: departureCity.trim() || null,
+      departureLatitude,
+      departureLongitude,
     })
     setIsSavingDeparture(false)
     setDepartureSaved(true)
@@ -711,6 +727,18 @@ export default function TourneeView({
         </div>
       )}
 
+      {/* Carte de la tournée */}
+      {effectiveRouteId && routeSlots.length > 0 && (
+        <TourneeRouteMap
+          slots={routeSlots}
+          departure={{
+            latitude: orgDepartureLatitude ?? null,
+            longitude: orgDepartureLongitude ?? null,
+          }}
+          className="h-80"
+        />
+      )}
+
       {/* Etat vide */}
       {routeIds.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--elevation-border)] bg-surface px-4 py-14 text-center dark:bg-white/[0.03]">
@@ -764,6 +792,7 @@ export default function TourneeView({
                     members={membersForSlot(slot)}
                     onEdit={canManage ? openEditModal : undefined}
                     onDelete={canManage ? handleDelete : undefined}
+                    onDeclareAbsent={canManage ? onDeclareAbsent : undefined}
                     disabled={isPending}
                   />
                 ))}
@@ -827,7 +856,7 @@ export default function TourneeView({
       {/* Modal point de départ */}
       {showDepartureEditor && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/50">
-          <div className="w-full max-w-md bg-surface rounded-2xl shadow-xl border border-[var(--elevation-border)] overflow-hidden dark:bg-[#121212]">
+          <div className="w-full max-w-lg bg-surface rounded-2xl shadow-xl border border-[var(--elevation-border)] overflow-hidden dark:bg-[#121212]">
             <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--elevation-border)]">
               <div>
                 <h3 className="font-semibold text-primary">Point de départ de la tournée</h3>
@@ -840,42 +869,24 @@ export default function TourneeView({
               </button>
             </div>
 
-            <div className="px-5 py-4 space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-secondary mb-1.5">Adresse</label>
-                <input
-                  type="text"
-                  value={departureAddress}
-                  onChange={e => setDepartureAddress(e.target.value)}
-                  placeholder="12 rue de l'Atelier"
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--elevation-border)] bg-interactive text-sm text-primary focus:outline-none focus:border-accent dark:bg-white/[0.04]"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1.5">Code postal</label>
-                  <input
-                    type="text"
-                    value={departurePostalCode}
-                    onChange={e => setDeparturePostalCode(e.target.value)}
-                    placeholder="75001"
-                    className="w-full px-3 py-2 rounded-lg border border-[var(--elevation-border)] bg-interactive text-sm text-primary focus:outline-none focus:border-accent dark:bg-white/[0.04]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1.5">Ville</label>
-                  <input
-                    type="text"
-                    value={departureCity}
-                    onChange={e => setDepartureCity(e.target.value)}
-                    placeholder="Paris"
-                    className="w-full px-3 py-2 rounded-lg border border-[var(--elevation-border)] bg-interactive text-sm text-primary focus:outline-none focus:border-accent dark:bg-white/[0.04]"
-                  />
-                </div>
-              </div>
-              <p className="text-xs text-secondary">
-                Par défaut, l&apos;adresse de départ configurée dans vos paramètres organisation est utilisée. Vous pouvez la surcharger pour cette tournée spécifique.
-              </p>
+            <div className="px-5 py-4">
+              <AddressMapPicker
+                value={{
+                  address: departureAddress || null,
+                  postalCode: departurePostalCode || null,
+                  city: departureCity || null,
+                  latitude: departureLatitude,
+                  longitude: departureLongitude,
+                }}
+                onChange={(next) => {
+                  setDepartureAddress(next.address ?? '')
+                  setDeparturePostalCode(next.postalCode ?? '')
+                  setDepartureCity(next.city ?? '')
+                  setDepartureLatitude(next.latitude)
+                  setDepartureLongitude(next.longitude)
+                }}
+                helpText="Utilisé pour calculer le trajet vers le premier site. Par défaut, l'adresse de départ de l'organisation est utilisée ; vous pouvez la surcharger pour cette tournée."
+              />
             </div>
 
             <div className="flex gap-2 px-5 py-4 border-t border-[var(--elevation-border)]">

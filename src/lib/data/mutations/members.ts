@@ -11,6 +11,7 @@ import { sendEmail } from '@/lib/email'
 import { sendPushToOrgPermission } from '@/lib/push'
 import {
   buildMemberSpaceInviteEmail,
+  buildMemberSpaceInviteReminderEmail,
   buildMemberMonthlyReportEmail,
 } from '@/lib/email/templates'
 import { generateMagicToken, hashToken, getMemberSession, clearMemberSessionCookie } from '@/lib/auth/member-session'
@@ -304,7 +305,7 @@ export async function sendMemberSpaceInvite(memberId: string): Promise<Result> {
   return sendMemberSpaceInviteUnchecked(memberId)
 }
 
-async function sendMemberSpaceInviteUnchecked(memberId: string): Promise<Result> {
+export async function sendMemberSpaceInviteUnchecked(memberId: string): Promise<Result> {
   const admin = createAdminClient()
 
   const { data: member } = await admin
@@ -351,34 +352,115 @@ async function sendMemberSpaceInviteUnchecked(memberId: string): Promise<Result>
   return { error: null }
 }
 
-/** Vérifie un magic-link et retourne l'identité du membre (sans poser de cookie). */
-export async function verifyMemberToken(rawToken: string): Promise<{
-  memberId: string
-  organizationId: string
-} | null> {
-  if (!rawToken) return null
+/**
+ * Envoie un rappel J-3 pour un token proche de l'expiration (utilisé par le cron).
+ * Le raw token n'étant jamais stocké (seul son hash l'est), impossible de renvoyer
+ * le même lien : on génère un nouveau token et on marque l'ancien comme rappelé.
+ */
+export async function sendMemberSpaceTokenReminder(oldTokenId: string, memberId: string): Promise<Result> {
+  const admin = createAdminClient()
+
+  const { data: member } = await admin
+    .from('chantier_equipe_membres')
+    .select('id, prenom, email, organization_id, organizations:organizations!chantier_equipe_membres_organization_id_fkey(name)')
+    .eq('id', memberId)
+    .single()
+
+  if (!member?.email) {
+    // Marquer quand même pour ne pas retraiter en boucle un membre sans email.
+    await admin.from('member_space_tokens').update({ reminder_sent_at: new Date().toISOString() }).eq('id', oldTokenId)
+    return { error: 'Aucun email associé à ce membre.' }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const orgName: string = (member as any).organizations?.name ?? 'Votre organisation'
+
+  const { raw, hash, expiresAt } = generateMagicToken()
+  const { error: insertError } = await admin
+    .from('member_space_tokens')
+    .insert({ member_id: memberId, token_hash: hash, expires_at: expiresAt.toISOString() })
+
+  if (insertError) {
+    console.error('[sendMemberSpaceTokenReminder] insert token', insertError)
+    return { error: "Impossible de générer le lien de rappel." }
+  }
+
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
+  const spaceUrl = `${baseUrl}/mon-espace?token=${encodeURIComponent(raw)}`
+
+  const { subject, html } = buildMemberSpaceInviteReminderEmail({
+    orgName,
+    memberFirstName: member.prenom ?? null,
+    spaceUrl,
+  })
+
+  const { error: sendError } = await sendEmail({
+    organizationId: member.organization_id,
+    to: member.email,
+    subject,
+    html,
+  })
+
+  // Marqué que l'envoi ait réussi ou non — évite de retraiter en boucle un cas
+  // d'erreur transitoire (ex: adresse invalide) à chaque exécution du cron.
+  await admin
+    .from('member_space_tokens')
+    .update({ reminder_sent_at: new Date().toISOString() })
+    .eq('id', oldTokenId)
+
+  if (sendError) {
+    console.error('[sendMemberSpaceTokenReminder] sendEmail', sendError)
+    return { error: sendError }
+  }
+  return { error: null }
+}
+
+export type VerifyMemberTokenResult =
+  | { status: 'not_found' }
+  | { status: 'expired'; memberId: string; organizationId: string }
+  | { status: 'ok'; memberId: string; organizationId: string }
+
+/** Vérifie un magic-link et retourne son statut (sans poser de cookie). */
+export async function verifyMemberToken(rawToken: string): Promise<VerifyMemberTokenResult> {
+  if (!rawToken) return { status: 'not_found' }
   const admin = createAdminClient()
   const tokenHash = hashToken(rawToken)
 
   const { data: token } = await admin
     .from('member_space_tokens')
-    .select('id, member_id, expires_at, member:chantier_equipe_membres!inner(organization_id)')
+    .select('id, member_id, expires_at, last_used_at, member:chantier_equipe_membres!inner(organization_id)')
     .eq('token_hash', tokenHash)
     .single()
 
-  if (!token) return null
-  if (new Date(token.expires_at).getTime() < Date.now()) return null
-
-  await admin
-    .from('member_space_tokens')
-    .update({ last_used_at: new Date().toISOString() })
-    .eq('id', token.id)
+  if (!token) return { status: 'not_found' }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const organizationId = (token as any).member?.organization_id as string | undefined
-  if (!organizationId) return null
+  if (!organizationId) return { status: 'not_found' }
 
-  return { memberId: token.member_id, organizationId }
+  // Token à usage unique : déjà consommé = même réponse qu'un token introuvable
+  // (ne pas révéler à un attaquant qui aurait intercepté un lien déjà cliqué par
+  // le membre légitime qu'il a "presque" fonctionné).
+  if (token.last_used_at) return { status: 'not_found' }
+
+  if (new Date(token.expires_at).getTime() < Date.now()) {
+    return { status: 'expired', memberId: token.member_id, organizationId }
+  }
+
+  // Consommation atomique : si un autre appel concurrent a consommé ce token
+  // entre le SELECT et ici, cette UPDATE ne touche 0 ligne (garde
+  // .is('last_used_at', null)) et la session n'est pas ouverte deux fois.
+  const { data: consumed } = await admin
+    .from('member_space_tokens')
+    .update({ last_used_at: new Date().toISOString() })
+    .eq('id', token.id)
+    .is('last_used_at', null)
+    .select('id')
+    .maybeSingle()
+
+  if (!consumed) return { status: 'not_found' }
+
+  return { status: 'ok', memberId: token.member_id, organizationId }
 }
 
 // ─── 4. Pointage depuis l'espace membre ──────────────────────────────────────
@@ -683,6 +765,70 @@ export async function pointMyHoursFromSpace(input: {
   })
 }
 
+/**
+ * Persiste l'heure d'arrivée sur site pour un créneau planifié, depuis l'espace membre.
+ * Symétrique de setPlanningArrivedAt (planning.ts) mais pour la session HMAC /mon-espace
+ * (hasPermission() suppose un compte app, inutilisable ici — vérif via appartenance
+ * du créneau au membre, même filtre que createPointageAsMember).
+ * Envoie un push aux managers pour les informer de l'arrivée en temps réel.
+ */
+export async function setPlanningArrivedAtFromSpace(planningId: string): Promise<Result> {
+  const session = await getMemberSession()
+  if (!session) return { error: 'Session expirée. Reconnectez-vous via votre lien.' }
+  if (!session.memberId) return { error: 'Session invalide. Reconnectez-vous via votre lien.' }
+
+  // Créneaux d'entretien préfixés "maintenance:" côté UI : pas de colonne arrived_at
+  // sur maintenance_interventions -> no-op silencieux.
+  if (planningId.startsWith('maintenance:')) return { error: null }
+
+  const admin = createAdminClient()
+
+  const { data: member } = await admin
+    .from('chantier_equipe_membres')
+    .select('id, equipe_id, prenom, name')
+    .eq('id', session.memberId)
+    .eq('organization_id', session.organizationId)
+    .maybeSingle()
+  if (!member) return { error: 'Membre introuvable.' }
+
+  const { data: planning } = await admin
+    .from('chantier_plannings')
+    .select('id, chantier_id, member_id, equipe_id, chantier:chantiers!inner(id, title, organization_id)')
+    .eq('id', planningId)
+    .maybeSingle()
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chantierInfo = (planning as any)?.chantier
+  if (!planning || chantierInfo?.organization_id !== session.organizationId) {
+    return { error: 'Créneau introuvable ou non autorisé.' }
+  }
+  if (planning.member_id !== session.memberId && (!member.equipe_id || planning.equipe_id !== member.equipe_id)) {
+    return { error: "Ce créneau ne vous est pas affecté." }
+  }
+
+  const { error } = await admin
+    .from('chantier_plannings')
+    .update({ arrived_at: new Date().toISOString() })
+    .eq('id', planningId)
+
+  if (error) return { error: error.message }
+
+  const chantierTitle = chantierInfo?.title ?? 'Chantier'
+  await sendPushToOrgPermission(
+    session.organizationId,
+    'chantiers.manage_pointages',
+    {
+      title: 'Arrivée sur site',
+      body: `${member.prenom ?? member.name ?? 'Un membre'} est arrivé sur ${chantierTitle}`,
+      url: `/chantiers/${planning.chantier_id}`,
+    },
+    null,
+  ).catch(() => {})
+
+  revalidatePath('/mon-espace/dashboard')
+  return { error: null }
+}
+
 /** Demande l'envoi du rapport au membre lui-même via son espace. */
 export async function sendMyHoursReportFromSpace(
   dateFrom: string,
@@ -777,6 +923,147 @@ export async function updateMyTaskFromSpace(
   revalidatePath(`/chantiers/${task.chantier_id}`)
   revalidatePath('/dashboard')
   return { error: null }
+}
+
+const MAX_MEMBER_PHOTO_SIZE_BYTES = 10 * 1024 * 1024 // 10 Mo
+const ALLOWED_MEMBER_PHOTO_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'])
+
+type MemberPhotoUploadResult = Result & {
+  photo?: {
+    id: string
+    storage_path: string
+    caption: string | null
+    taken_at: string
+    created_at: string
+    uploaded_by_name: string
+    url: string | null
+  }
+}
+
+/** Upload d'une photo de chantier par un membre individuel (intervenant sans compte). */
+async function uploadPhotoAsMember(input: {
+  memberId: string
+  organizationId: string
+  chantierId: string
+  tacheId?: string | null
+  maintenanceInterventionId?: string | null
+  caption?: string | null
+  file: File
+}): Promise<MemberPhotoUploadResult> {
+  if (!input.memberId) return { error: 'Session invalide. Reconnectez-vous via votre lien.' }
+
+  const admin = createAdminClient()
+
+  const { data: member } = await admin
+    .from('chantier_equipe_membres')
+    .select('id, organization_id, prenom, name')
+    .eq('id', input.memberId)
+    .eq('organization_id', input.organizationId)
+    .maybeSingle()
+  if (!member) return { error: 'Membre introuvable.' }
+
+  const { data: chantier } = await admin
+    .from('chantiers')
+    .select('id, organization_id')
+    .eq('id', input.chantierId)
+    .maybeSingle()
+  if (!chantier || chantier.organization_id !== input.organizationId) {
+    return { error: 'Chantier introuvable.' }
+  }
+
+  const allowedChantiers = await getMemberAccessibleChantiers(input.memberId, input.organizationId)
+  if (!allowedChantiers.some(c => c.id === input.chantierId)) {
+    return { error: "Ce chantier n'est pas affecté à votre espace." }
+  }
+
+  const file = input.file
+  if (!file || file.size === 0) return { error: 'Aucun fichier fourni.' }
+  if (file.size > MAX_MEMBER_PHOTO_SIZE_BYTES) {
+    return { error: 'Photo trop volumineuse (10 Mo maximum).' }
+  }
+  if (!ALLOWED_MEMBER_PHOTO_MIME.has(file.type)) {
+    return { error: 'Format non supporté. Utilisez une photo JPEG, PNG, WEBP ou HEIC.' }
+  }
+
+  const ext = file.name.split('.').pop() ?? 'jpg'
+  const path = `${input.organizationId}/${input.chantierId}/${Date.now()}-membre.${ext}`
+
+  const { error: uploadError } = await admin.storage
+    .from('chantier-photos')
+    .upload(path, file, { upsert: false, contentType: file.type })
+
+  if (uploadError) {
+    console.error('[uploadPhotoAsMember] storage', uploadError)
+    return { error: "Erreur lors de l'envoi de la photo." }
+  }
+
+  const { data: inserted, error: insertError } = await admin
+    .from('chantier_photos')
+    .insert({
+      chantier_id: input.chantierId,
+      tache_id: input.tacheId ?? null,
+      maintenance_intervention_id: input.maintenanceInterventionId ?? null,
+      member_id: input.memberId,
+      uploaded_by: null,
+      storage_path: path,
+      caption: input.caption?.trim() || null,
+    })
+    .select('id, storage_path, caption, taken_at, created_at')
+    .single()
+
+  if (insertError || !inserted) {
+    console.error('[uploadPhotoAsMember] insert', insertError)
+    await admin.storage.from('chantier-photos').remove([path])
+    return { error: "Erreur lors de l'enregistrement de la photo." }
+  }
+
+  const { data: signedData } = await admin.storage
+    .from('chantier-photos')
+    .createSignedUrl(path, 3600)
+
+  revalidatePath(`/chantiers/${input.chantierId}`)
+  revalidatePath('/mon-espace/dashboard')
+
+  const authorName = [member.prenom, member.name].filter(Boolean).join(' ') || member.name
+
+  return {
+    error: null,
+    photo: {
+      id: inserted.id,
+      storage_path: inserted.storage_path,
+      caption: inserted.caption,
+      taken_at: inserted.taken_at,
+      created_at: inserted.created_at,
+      uploaded_by_name: authorName,
+      url: signedData?.signedUrl ?? null,
+    },
+  }
+}
+
+/** Upload d'une photo par le membre depuis son espace. Utilise la session cookie. */
+export async function uploadPhotoFromSpace(formData: FormData): Promise<MemberPhotoUploadResult> {
+  const session = await getMemberSession()
+  if (!session) return { error: 'Session expirée. Reconnectez-vous via votre lien.' }
+  if (!session.memberId) return { error: 'Session invalide. Reconnectez-vous via votre lien.' }
+
+  const file = formData.get('file') as File | null
+  if (!file) return { error: 'Aucun fichier fourni.' }
+  const chantierId = (formData.get('chantierId') as string | null) || ''
+  const caption = (formData.get('caption') as string | null) ?? null
+  const tacheId = (formData.get('tacheId') as string | null) || null
+  const maintenanceInterventionId = (formData.get('maintenanceInterventionId') as string | null) || null
+
+  if (!chantierId) return { error: 'Choisissez un chantier.' }
+
+  return await uploadPhotoAsMember({
+    memberId: session.memberId,
+    organizationId: session.organizationId,
+    chantierId,
+    tacheId,
+    maintenanceInterventionId,
+    caption,
+    file,
+  })
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

@@ -11,5 +11,14 @@
   },
   "observability": {
     "enabled": true
-  }
+  },
+  // Cache Next.js (ISR / unstable_cache / revalidateTag) sur Cloudflare Workers.
+  // Sans ces bindings, incrementalCache/tagCache restent "dummy" (no-op) : chaque
+  // page recalcule tout à chaque requête. Namespaces à créer une fois par instance
+  // déployée (cockpit ou client) : `wrangler kv namespace create NEXT_CACHE_KV` et
+  // `wrangler kv namespace create NEXT_TAG_CACHE_KV`, puis reporter les id ci-dessous.
+  "kv_namespaces": [
+    { "binding": "NEXT_INC_CACHE_KV", "id": "5a526e05657d4d0b944a1f8d8d09b109" },
+    { "binding": "NEXT_TAG_CACHE_KV", "id": "d0c1ba14b0a441679d0ccc9fa0a448e0" }
+  ]
 }

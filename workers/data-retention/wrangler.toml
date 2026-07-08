@@ -1,0 +1,16 @@
+name = "atelier-data-retention"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+
+# Cron : tous les jours à 4h30 UTC.
+# Double rôle : purge des données techniques périmées (rester sous les 500 Mo
+# du plan Supabase Free) + keep-alive quotidien (évite la pause automatique
+# des projets Free après 7 jours sans requête).
+[triggers]
+crons = ["30 4 * * *"]
+
+# Variables d'environnement (valeurs à définir dans le Dashboard Cloudflare)
+# Ne pas mettre les vraies valeurs ici — utiliser `wrangler secret put`
+#
+# wrangler secret put APP_URL
+# wrangler secret put CRON_SECRET

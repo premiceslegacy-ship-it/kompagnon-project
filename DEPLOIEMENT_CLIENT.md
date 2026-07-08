@@ -224,7 +224,7 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 | C4 | Générer `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` uniques si non fournis | Terminal (`openssl rand -hex 32`) | — |
 | C5 | Déployer la Edge Function `whatsapp-webhook` | `supabase functions deploy` | `supabase login` ✅ |
 | C6 | Déployer la Edge Function + injecter les secrets (`OPENROUTER`, `MISTRAL`, `RESEND`, `APP_URL`; `SHARED_WABA_*` seulement en mode Meta/Graph-compatible) | `./scripts/deploy-edge-functions.sh <ref> --resend-key ... --resend-from ... --app-url ...` | `supabase login` ✅ |
-| C7 | Déployer les Workers cron (auto-reminder + embeddings) + injecter `APP_URL` + `CRON_SECRET` | `./scripts/deploy-cron-workers.sh atelier-nomclient --env-file=.env.client-nomclient` | `wrangler login` ✅ |
+| C7 | Déployer les Workers cron (auto-reminder + embeddings + data-retention) + injecter `APP_URL` + `CRON_SECRET` | `./scripts/deploy-cron-workers.sh atelier-nomclient --env-file=.env.client-nomclient` | `wrangler login` ✅ |
 | C8 | Peupler `company_memory` avec le contexte de l'entretien client + configurer `organization_modules` selon l'offre souscrite | Supabase MCP | MCP connecté ✅ |
 | C9 | Vérifier migrations, permissions, buckets, modules IA | Supabase MCP | MCP connecté ✅ |
 | C10 | Afficher récapitulatif final + URL app client + modules actifs ; WhatsApp mutualisé reste en attente tant que le routeur central n'est pas livré | — | — |
@@ -536,6 +536,12 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `149_fix_reserves_rls_policy.sql`
 - `150_sarah_action_proposals.sql`
 - `151_sarah_action_proposals_harden_update_policy.sql`
+
+**Correctifs sécurité — audit backend juillet 2026 (voir `docs/backend-audit-2026-07.md`) :**
+- `156_harden_identity_rls.sql` — bloque l'élévation de privilège via `memberships` (un membre ne peut plus se promouvoir owner/admin via le client anon). **À pousser sur chaque client.**
+- `157_security_definer_search_path.sql` — fixe `search_path` sur les 7 fonctions `SECURITY DEFINER` (dont `get_user_org_id`/`user_has_permission`, appelées dans toutes les policies). **À pousser sur chaque client.**
+- `158_invoice_immutability.sql` — rend les factures émises immuables (trigger) et restreint le DELETE physique aux brouillons. **À pousser sur chaque client.**
+- **Cockpit uniquement** : `supabase/operator-migrations/008_webhook_events.sql` — table d'idempotence des webhooks Stripe. À appliquer sur le **projet Supabase operator** (pas via `supabase db push` du projet client) : lier le projet operator puis pousser, ou l'exécuter dans le SQL editor du projet operator. Sans elle, le webhook Stripe fonctionne mais sans dédup (dégradation sûre, pas de crash).
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`
@@ -1928,6 +1934,30 @@ La majorité des artisans BTP (1-5 personnes) émet 10-50 factures/mois et reço
 
 ---
 
+## ─── CACHE CLOUDFLARE KV (audit perf juillet 2026) ──────────────────────────────
+
+`open-next.config.ts` branche le cache Next (ISR/`unstable_cache`/`revalidateTag`) sur deux
+namespaces Cloudflare KV. Sans eux, le cache est un no-op silencieux (chaque page recalcule
+tout à chaque requête) — c'était le cas jusqu'à juillet 2026. **Chaque Worker (cockpit et
+chaque client) a besoin de ses deux propres namespaces**, comme pour les autres ressources
+per-client.
+
+À créer une fois par instance déployée, avant le premier `wrangler deploy` :
+```bash
+wrangler kv namespace create NEXT_CACHE_KV       # -> id à reporter dans NEXT_INC_CACHE_KV
+wrangler kv namespace create NEXT_TAG_CACHE_KV    # -> id à reporter dans NEXT_TAG_CACHE_KV
+```
+Puis reporter les deux `id` retournés dans `wrangler.jsonc` du client (`kv_namespaces`).
+Le nom du namespace (`NEXT_CACHE_KV`) n'a pas besoin d'être unique par client (c'est un id
+Cloudflare qui distingue les namespaces, pas le nom) — mais chaque client garde ses propres
+`id`, jamais un namespace partagé entre plusieurs organisations.
+
+Note technique : le tag cache KV est "eventually consistent" côté OpenNext (jusqu'à ~60s de
+délai possible sur une revalidation après mutation). Acceptable pour ce produit — aucune vue
+n'a besoin d'une cohérence à la seconde près après une écriture.
+
+---
+
 ## ─── VARIABLES PAR PROJET ───────────────────────────────────────────────────────
 
 | Variable | Source | Partagée ? |
@@ -1968,6 +1998,15 @@ La majorité des artisans BTP (1-5 personnes) émet 10-50 factures/mois et reço
 | `OPERATOR_INGEST_SECRET` | `openssl rand -hex 32` (généré une fois) | **Oui** (même secret partout) |
 | `OPERATOR_CONFIG_SYNC_SECRET` | Secret HMAC pour `/api/operator/config-sync`; en V1 utiliser la même valeur que `OPERATOR_INGEST_SECRET` | **Oui** (même secret partout recommandé) |
 | `OPERATOR_SOURCE_INSTANCE` | Nom court du client (ex: `weber-demo`) — **optionnel**, fallback sur le host de `NEXT_PUBLIC_APP_URL` | Non (unique par client) |
+| `NEXT_PUBLIC_SENTRY_DSN` | Projet Sentry → Settings → Client Keys (DSN) — **optionnel**, suivi désactivé si absent (aucun crash) | **Oui** — un seul compte/projet Sentry Orsayn pour tous les clients (comme VAPID) |
+| `SENTRY_AUTH_TOKEN` | Token d'upload sourcemaps (build time uniquement, jamais dans le Worker runtime) — **optionnel**, `withSentryConfig` ne s'active que si présent | Non (secret local/CI uniquement, jamais dans un `.env.client-xxx`) |
+| `SENTRY_ORG` / `SENTRY_PROJECT` | Slugs Sentry pour l'upload de sourcemaps | Communs (même organisation Sentry Orsayn) |
+| `NEXT_PUBLIC_POSTHOG_KEY` | PostHog → Project Settings → API Keys — **optionnel**, analytics désactivées si absent | **Oui** — un seul compte/projet PostHog Orsayn pour tous les clients (comme VAPID) |
+| `NEXT_PUBLIC_POSTHOG_HOST` | `https://eu.i.posthog.com` par défaut (région EU) | Oui (même valeur partout sauf besoin spécifique) |
+
+**Note observabilité (audit backend juillet 2026)** : Sentry et PostHog utilisent **un seul compte/projet Orsayn partagé entre tous les clients per-client** (choix délibéré : un plan gratuit à surveiller plutôt qu'un par client). Chaque événement est étiqueté avec l'instance déployée (`client_instance` côté PostHog, `environment` côté Sentry — dérivé du host de `NEXT_PUBLIC_APP_URL` côté navigateur, de `OPERATOR_SOURCE_INSTANCE` côté serveur), ce qui permet de filtrer par client dans les deux dashboards sans créer un projet par client. Si un jour un client doit avoir accès à ses propres stats en autonomie, il faudra migrer vers un projet dédié pour ce client précis.
+
+Sentry n'est activé que **côté navigateur** (`src/instrumentation-client.ts`) — pas de `sentry.server.config.ts`/`sentry.edge.config.ts` volontairement : bug non résolu (`AsyncLocalStorage`) sur OpenNext/Cloudflare Workers au moment de l'intégration. Les erreurs serveur restent visibles via les logs Cloudflare (`console.error`) et le journal d'audit (`audit_log`/`activity_log`). PostHog est configuré en suivi de base (pas d'autocapture, pas de session recording) : pageviews automatiques (`src/components/posthog-provider.tsx`) + événements métier explicites via `trackServerEvent`/`trackEvent`.
 
 ---
 

@@ -19,6 +19,7 @@ import {
   Clock,
   Wrench,
   Copy,
+  UserX,
 } from 'lucide-react'
 import type { GlobalPlanning, Chantier, Equipe } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
@@ -27,6 +28,7 @@ import TourneeView from './TourneeView'
 import { planWeekWithAI, createPlanningSlots, createMaintenancePlanningSlots, createAITournee, deletePlanningEntry, duplicatePlanningEntry, duplicatePlanningRange } from '@/lib/data/mutations/planning'
 import type { AIPlanningDeletion, AIPlanningSlot, AIUnknownPerson, AITour } from '@/lib/data/mutations/planning'
 import { createIndividualMember } from '@/lib/data/mutations/members'
+import { declareMemberAbsence, type ConflictingSlot } from '@/lib/data/mutations/absences'
 import { todayParis } from '@/lib/utils'
 import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 
@@ -174,12 +176,14 @@ interface Props {
   orgDepartureAddress?: string | null
   orgDeparturePostalCode?: string | null
   orgDepartureCity?: string | null
-  routeDepartures?: Record<string, { address: string | null; postal_code: string | null; city: string | null }>
+  orgDepartureLatitude?: number | null
+  orgDepartureLongitude?: number | null
+  routeDepartures?: Record<string, { address: string | null; postal_code: string | null; city: string | null; latitude: number | null; longitude: number | null }>
 }
 
 // ─── Composant principal ─────────────────────────────────────────────────────
 
-export default function PlanningGlobalClient({ initialPlannings, chantiers, equipes, individualMembers, planningAiEnabled, orgId, icalToken, canManage, orgDepartureAddress, orgDeparturePostalCode, orgDepartureCity, routeDepartures = {} }: Props) {
+export default function PlanningGlobalClient({ initialPlannings, chantiers, equipes, individualMembers, planningAiEnabled, orgId, icalToken, canManage, orgDepartureAddress, orgDeparturePostalCode, orgDepartureCity, orgDepartureLatitude, orgDepartureLongitude, routeDepartures = {} }: Props) {
   const router = useRouter()
 
   // State
@@ -235,6 +239,17 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   const [duplicateSlot, setDuplicateSlot] = useState<GlobalPlanning | null>(null)
   const [duplicateLoading, setDuplicateLoading] = useState(false)
   const [duplicateError, setDuplicateError] = useState<string | null>(null)
+
+  // ─── Déclaration d'absence ─────────────────────────────────────────────────
+  const [absenceModalOpen, setAbsenceModalOpen] = useState(false)
+  const [absenceMemberId, setAbsenceMemberId] = useState<string | null>(null)
+  const [absenceMemberName, setAbsenceMemberName] = useState('')
+  const [absenceStartDate, setAbsenceStartDate] = useState('')
+  const [absenceEndDate, setAbsenceEndDate] = useState('')
+  const [absenceReason, setAbsenceReason] = useState('')
+  const [absenceLoading, setAbsenceLoading] = useState(false)
+  const [absenceError, setAbsenceError] = useState<string | null>(null)
+  const [absenceConflicts, setAbsenceConflicts] = useState<ConflictingSlot[] | null>(null)
 
   // Modale nouveau membre
   const [newMemberQueue, setNewMemberQueue] = useState<AIUnknownPerson[]>([])
@@ -391,6 +406,43 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
     }
     setDuplicateModalOpen(false)
     setDuplicateSlot(null)
+    router.refresh()
+  }
+
+  function openAbsenceModal(memberId: string, memberName: string) {
+    const today = getLocalDateStr(new Date())
+    setAbsenceMemberId(memberId)
+    setAbsenceMemberName(memberName)
+    setAbsenceStartDate(today)
+    setAbsenceEndDate(today)
+    setAbsenceReason('')
+    setAbsenceError(null)
+    setAbsenceConflicts(null)
+    setAbsenceModalOpen(true)
+  }
+
+  function closeAbsenceModal() {
+    setAbsenceModalOpen(false)
+    setAbsenceMemberId(null)
+    setAbsenceConflicts(null)
+  }
+
+  async function handleDeclareAbsenceConfirm() {
+    if (!absenceMemberId || !absenceStartDate || !absenceEndDate) return
+    setAbsenceLoading(true)
+    setAbsenceError(null)
+    const result = await declareMemberAbsence({
+      memberId: absenceMemberId,
+      startDate: absenceStartDate,
+      endDate: absenceEndDate,
+      reason: absenceReason || null,
+    })
+    setAbsenceLoading(false)
+    if (result.error) {
+      setAbsenceError(result.error)
+      return
+    }
+    setAbsenceConflicts(result.conflictingSlots ?? [])
     router.refresh()
   }
 
@@ -879,6 +931,8 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
           orgDepartureAddress={orgDepartureAddress}
           orgDeparturePostalCode={orgDeparturePostalCode}
           orgDepartureCity={orgDepartureCity}
+          orgDepartureLatitude={orgDepartureLatitude}
+          orgDepartureLongitude={orgDepartureLongitude}
           routeDepartures={routeDepartures}
           onPlanningsChange={(updated) => {
             const dateStr = getLocalDateStr(selectedDate)
@@ -887,6 +941,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
               ...updated,
             ])
           }}
+          onDeclareAbsent={canManage ? openAbsenceModal : undefined}
         />
       ) : effectiveView === 'semaine' && !isMobile ? (
         <SemaineView
@@ -896,6 +951,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
           nowH={nowH}
           onDeletePlanning={canManage ? handleDeletePlanning : undefined}
           onDuplicatePlanning={canManage ? openDuplicateSlot : undefined}
+          onDeclareAbsent={canManage ? openAbsenceModal : undefined}
         />
       ) : effectiveView === 'jour' || effectiveView === 'semaine' ? (
         // Vue jour (desktop) ou mini-calendrier + jour (mobile, y compris quand on tape "Semaine")
@@ -914,6 +970,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
             nowH={nowH}
             onDeletePlanning={canManage ? handleDeletePlanning : undefined}
             onDuplicatePlanning={canManage ? openDuplicateSlot : undefined}
+            onDeclareAbsent={canManage ? openAbsenceModal : undefined}
             onSwipeDay={isMobile ? (dir) => {
               const d = new Date(selectedDate)
               d.setDate(d.getDate() + dir)
@@ -979,6 +1036,106 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
                 Dupliquer
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal déclaration d'absence ── */}
+      {absenceModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-panel sm:max-w-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-primary flex items-center gap-2">
+                <UserX className="w-4 h-4 text-accent" />
+                Déclarer une absence
+              </h2>
+              <button onClick={closeAbsenceModal} className="p-1.5 rounded-lg text-secondary hover:text-primary hover:bg-[var(--elevation-1)]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {absenceConflicts === null ? (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-secondary">Membre</label>
+                  <p className="text-sm font-medium text-primary">{absenceMemberName}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-secondary">Début</label>
+                    <input
+                      type="date"
+                      className="input w-full text-sm"
+                      value={absenceStartDate}
+                      onChange={e => {
+                        setAbsenceStartDate(e.target.value)
+                        if (absenceEndDate < e.target.value) setAbsenceEndDate(e.target.value)
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-secondary">Fin</label>
+                    <input
+                      type="date"
+                      className="input w-full text-sm"
+                      min={absenceStartDate}
+                      value={absenceEndDate}
+                      onChange={e => setAbsenceEndDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-secondary">Motif (optionnel)</label>
+                  <textarea
+                    className="input w-full text-sm min-h-[70px]"
+                    value={absenceReason}
+                    onChange={e => setAbsenceReason(e.target.value)}
+                    placeholder="Congés, maladie, etc."
+                  />
+                </div>
+                {absenceError && <p className="text-sm text-red-500">{absenceError}</p>}
+                <div className="flex gap-2 justify-end">
+                  <button onClick={closeAbsenceModal} className="btn-secondary text-sm px-4 py-2">Annuler</button>
+                  <button
+                    onClick={handleDeclareAbsenceConfirm}
+                    disabled={absenceLoading || !absenceStartDate || !absenceEndDate}
+                    className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2"
+                  >
+                    {absenceLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserX className="w-4 h-4" />}
+                    Déclarer l&apos;absence
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                  Absence enregistrée pour {absenceMemberName}.
+                </p>
+                {absenceConflicts.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-secondary">
+                      {absenceConflicts.length} créneau{absenceConflicts.length > 1 ? 'x' : ''} déjà planifié{absenceConflicts.length > 1 ? 's' : ''} sur cette période reste{absenceConflicts.length > 1 ? 'nt' : ''} à traiter :
+                    </p>
+                    <ul className="space-y-1 max-h-40 overflow-y-auto text-sm text-primary">
+                      {absenceConflicts.map(slot => (
+                        <li key={slot.id} className="rounded-lg bg-[var(--elevation-1)] px-2.5 py-1.5">
+                          <span className="font-medium">{slot.chantier_title}</span>
+                          <span className="text-secondary">
+                            {' '}· {new Date(slot.planned_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+                            {slot.start_time && <> · {fmtTime(slot.start_time)}{slot.end_time && ` – ${fmtTime(slot.end_time)}`}</>}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-sm text-secondary">Aucun créneau planifié sur cette période.</p>
+                )}
+                <div className="flex justify-end">
+                  <button onClick={closeAbsenceModal} className="btn-primary text-sm px-4 py-2">Fermer</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1399,6 +1556,7 @@ interface SemaineViewProps {
   nowH: number
   onDeletePlanning?: (planning: GlobalPlanning) => void
   onDuplicatePlanning?: (planning: GlobalPlanning) => void
+  onDeclareAbsent?: (memberId: string, memberName: string) => void
   onSwipeDay?: (dir: 1 | -1) => void
 }
 
@@ -1409,6 +1567,7 @@ function SemaineView({
   nowH,
   onDeletePlanning,
   onDuplicatePlanning,
+  onDeclareAbsent,
   onSwipeDay,
 }: SemaineViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -1629,6 +1788,15 @@ function SemaineView({
                           title="Supprimer ce créneau"
                         >
                           <X className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                      {onDeclareAbsent && p.member_id && (
+                        <button
+                          onClick={() => onDeclareAbsent(p.member_id!, p.member_name ?? 'ce membre')}
+                          className="absolute bottom-1 right-1 rounded bg-white/80 p-0.5 text-amber-600 opacity-0 transition-opacity hover:text-amber-700 group-hover/slot:opacity-100 dark:bg-black/50 dark:text-amber-400"
+                          title="Déclarer une absence"
+                        >
+                          <UserX className="w-2.5 h-2.5" />
                         </button>
                       )}
                       <p className={`text-[9px] font-semibold leading-tight ${col.text} opacity-90 truncate ${onDuplicatePlanning ? 'pl-4' : ''} pr-4`}>

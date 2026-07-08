@@ -47,6 +47,7 @@ function RequestCard({ request }: { request: QuoteRequest }) {
   }
 
   const isCatalog = request.type === 'catalog'
+  const hasFreeformNotes = Boolean(request.freeform_notes?.trim())
   const attachmentLabel = request.attachments?.[0]?.filename ?? request.attachment_url?.split('/').pop() ?? 'fichier joint'
 
   const handleConvert = () => {
@@ -315,7 +316,9 @@ function RequestCard({ request }: { request: QuoteRequest }) {
                 {isConverting
                   ? <><Loader2 className="w-4 h-4 animate-spin" />Conversion...</>
                   : isCatalog
-                    ? <><Package className="w-4 h-4" />Créer client + devis catalogue</>
+                    ? hasFreeformNotes
+                      ? <><Package className="w-4 h-4" />Créer client + devis (catalogue + IA)</>
+                      : <><Package className="w-4 h-4" />Créer client + devis catalogue</>
                     : <><Zap className="w-4 h-4" />Convertir en lead + devis</>
                 }
               </button>

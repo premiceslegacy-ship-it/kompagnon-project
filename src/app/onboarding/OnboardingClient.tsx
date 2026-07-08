@@ -13,6 +13,7 @@ import type { OrgRole } from '@/lib/data/queries/roles'
 import { createClient } from '@/lib/supabase/client'
 import {
   BUSINESS_ACTIVITIES_BY_PROFILE,
+  getBusinessActivityById,
   getSecondaryActivityOptions,
   normalizeSecondaryActivityIds,
   resolveBusinessSelection,
@@ -40,6 +41,22 @@ import { LEGAL_VAT_RATES } from '@/lib/utils'
 
 const inputCls =
   'w-full px-4 py-3 bg-white/[0.06] border border-white/[0.08] focus:border-accent/50 focus:ring-1 focus:ring-accent/20 rounded-xl text-white text-sm outline-none transition-all placeholder:text-white/20'
+
+// Recommandation onboarding (docs/scope-verticales-prioritaires.md) : mettre en avant
+// 5 familles commerciales prioritaires plutôt que les 21 activités à plat. Le code
+// garde toutes les activités ; ceci ne change que l'ordre de présentation.
+// activityIds à plusieurs entrées = sous-choix affiché une fois la famille sélectionnée
+// (ex: métal regroupe 3 activités de profils différents, cf. pack "metal").
+// Électricité tertiaire substituée par Nettoyage (2026-07-06) : le produit a
+// aujourd'hui plus de profondeur nettoyage (contrats dédiés) que sur l'électricité
+// tertiaire (aucun pack, pas de suivi habilitations B1/B2/BR).
+const PRIORITY_FAMILIES: { label: string; description: string; activityIds: BusinessActivityId[] }[] = [
+  { label: 'Métallerie / tôlerie / chaudronnerie', description: 'Garde-corps, portails, escaliers, ouvrages métalliques, fabrication atelier.', activityIds: ['metallerie', 'tolerie', 'chaudronnerie'] },
+  { label: 'Rénovation / entreprise générale', description: "Travaux tous corps d'état et interventions multi-lots.", activityIds: ['renovation'] },
+  { label: 'Menuiserie / fermetures / agencement', description: 'Pose, fabrication et finitions bois, alu ou PVC.', activityIds: ['menuiserie'] },
+  { label: 'CVC / maintenance technique', description: 'Plomberie, sanitaire, chauffage, contrats d\'entretien et interventions.', activityIds: ['plomberie'] },
+  { label: 'Nettoyage', description: 'Entretien régulier, consommables et prestations récurrentes.', activityIds: ['nettoyage_bureaux'] },
+]
 
 const JOB_TITLES = [
   { value: 'commercial',        label: 'Commercial' },
@@ -98,6 +115,10 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
   const [selectedSecondaryActivities, setSelectedSecondaryActivities] = useState<BusinessActivityId[]>([])
   const [openActivityProfile, setOpenActivityProfile] = useState<BusinessProfile>('btp')
   const [showSecondaryActivities, setShowSecondaryActivities] = useState<Partial<Record<BusinessProfile, boolean>>>({})
+  // Affiche l'accordéon complet (21 activités) au lieu des 5 familles prioritaires,
+  // soit parce que l'utilisateur a cliqué "Autre activité", soit parce que l'activité
+  // déjà sélectionnée (ex: navigation retour) n'appartient à aucune famille prioritaire.
+  const [showOtherActivities, setShowOtherActivities] = useState(false)
   const [siret, setSiret] = useState('')
   const [vatNumber, setVatNumber] = useState('')
   const [email, setEmail] = useState(initialEmail ?? '')
@@ -246,6 +267,71 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
     return <p className="text-xs text-danger/90">{fieldErrors[field]}</p>
   }
 
+  function selectActivity(activityId: BusinessActivityId) {
+    setSelectedActivity(activityId)
+    setSelectedSecondaryActivities((prev) => normalizeSecondaryActivityIds(prev, activityId))
+    setFieldError('name')
+  }
+
+  function PriorityActivityPicker() {
+    return (
+      <div className="space-y-2">
+        {PRIORITY_FAMILIES.map((family) => {
+          const isSingleChoice = family.activityIds.length === 1
+          const isSelectedFamily = family.activityIds.includes(selectedActivity as BusinessActivityId)
+          return (
+            <div key={family.label} className="rounded-xl border border-white/[0.08] bg-white/[0.035] overflow-hidden">
+              <button
+                type="button"
+                onClick={() => { if (isSingleChoice) selectActivity(family.activityIds[0]) }}
+                className={`w-full flex items-center justify-between gap-3 px-4 py-3 text-left transition-colors ${
+                  isSelectedFamily ? 'bg-accent/10' : 'hover:bg-white/[0.03]'
+                }`}
+              >
+                <span>
+                  <span className={`block text-sm font-semibold ${isSelectedFamily ? 'text-accent' : 'text-white/75'}`}>
+                    {family.label}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-white/35">{family.description}</span>
+                </span>
+              </button>
+              {!isSingleChoice && (
+                <div className="px-3 pb-3 flex flex-wrap gap-2">
+                  {family.activityIds.map((activityId) => {
+                    const activity = getBusinessActivityById(activityId)
+                    if (!activity) return null
+                    const checked = selectedActivity === activityId
+                    return (
+                      <button
+                        key={activityId}
+                        type="button"
+                        onClick={() => selectActivity(activityId)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                          checked
+                            ? 'bg-accent/15 border-accent/40 text-accent'
+                            : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:bg-white/[0.07] hover:text-white/70'
+                        }`}
+                      >
+                        {activity.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })}
+        <button
+          type="button"
+          onClick={() => setShowOtherActivities(true)}
+          className="w-full py-2.5 text-xs text-white/35 hover:text-white/55 transition-colors text-center"
+        >
+          Autre activité
+        </button>
+      </div>
+    )
+  }
+
   function ActivityAccordion() {
     return (
       <div className="space-y-2">
@@ -311,6 +397,13 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
             </div>
           )
         })}
+        <button
+          type="button"
+          onClick={() => setShowOtherActivities(false)}
+          className="w-full py-2.5 text-xs text-white/35 hover:text-white/55 transition-colors text-center"
+        >
+          Revenir aux activités prioritaires
+        </button>
       </div>
     )
   }
@@ -503,7 +596,9 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                   <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
                     Activité de référence <span className="text-accent">*</span>
                   </label>
-                  <ActivityAccordion />
+                  {showOtherActivities || (selectedActivity && !PRIORITY_FAMILIES.some((f) => f.activityIds.includes(selectedActivity)))
+                    ? <ActivityAccordion />
+                    : <PriorityActivityPicker />}
                   <p className="text-xs text-white/35">
                     Choisissez l’activité qui correspond le mieux à votre entreprise. Vous pourrez ensuite chiffrer plusieurs types de prestations.
                   </p>

@@ -10,7 +10,7 @@
 #   ./scripts/deploy-cron-workers.sh atelier-weber --app-url=https://weber-tolerie.fr --cron-secret=abc123
 #
 # Ce que fait ce script :
-#   Pour chaque Worker cron (auto-reminder, embeddings) :
+#   Pour chaque Worker cron (auto-reminder, embeddings, data-retention) :
 #     1. Patch temporaire du name dans wrangler.toml
 #     2. wrangler secret put APP_URL + CRON_SECRET
 #     3. wrangler deploy --name <worker-cron-nomclient>
@@ -118,10 +118,12 @@ deploy_cron_worker() {
   echo "    OK $target_name"
 }
 
-deploy_cron_worker "$ROOT_DIR/workers/auto-reminder" "auto-reminder"
-deploy_cron_worker "$ROOT_DIR/workers/embeddings"    "atelier-embeddings"
+deploy_cron_worker "$ROOT_DIR/workers/auto-reminder"  "auto-reminder"
+deploy_cron_worker "$ROOT_DIR/workers/embeddings"     "atelier-embeddings"
+deploy_cron_worker "$ROOT_DIR/workers/data-retention" "atelier-data-retention"
 
 echo ""
 echo "Workers cron déployés pour $WORKER_NAME :"
-echo "  auto-reminder-${CLIENT_SUFFIX}        — relances + factures récurrentes (8h UTC)"
-echo "  atelier-embeddings-${CLIENT_SUFFIX}   — indexation IA (toutes les heures)"
+echo "  auto-reminder-${CLIENT_SUFFIX}           — relances + factures récurrentes (8h UTC)"
+echo "  atelier-embeddings-${CLIENT_SUFFIX}      — indexation IA (toutes les heures)"
+echo "  atelier-data-retention-${CLIENT_SUFFIX}  — recyclage données + keep-alive Supabase (4h30 UTC)"

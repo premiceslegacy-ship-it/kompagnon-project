@@ -4,6 +4,7 @@ import { verifyCronSecret } from '@/lib/cron-auth'
 import { dateParis, todayParis } from '@/lib/utils'
 import { proposeSarahAction } from '@/lib/sarah/actions'
 import { sendPushToOrgPermission } from '@/lib/push'
+import { CLIENT_NAME_JOIN, clientNameFromJoin } from '@/lib/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
       ] = await Promise.all([
         admin
           .from('invoices')
-          .select('id, number, reference, client_name, total_ttc, total_paid, due_date')
+          .select(`id, number, total_ttc, total_paid, due_date, ${CLIENT_NAME_JOIN}`)
           .eq('organization_id', orgId)
           .eq('is_archived', false)
           .in('status', ['sent', 'partial'])
@@ -74,7 +75,7 @@ export async function GET(req: NextRequest) {
           .limit(5),
         admin
           .from('quotes')
-          .select('id, client_id, number, reference, client_name, total_ttc, sent_at')
+          .select(`id, client_id, number, reference, total_ttc, sent_at, ${CLIENT_NAME_JOIN}`)
           .eq('organization_id', orgId)
           .eq('is_archived', false)
           .in('status', ['sent', 'viewed'])
@@ -83,7 +84,7 @@ export async function GET(req: NextRequest) {
           .limit(5),
         admin
           .from('quotes')
-          .select('id, number, reference, client_name, total_ttc, valid_until')
+          .select(`id, number, reference, total_ttc, valid_until, ${CLIENT_NAME_JOIN}`)
           .eq('organization_id', orgId)
           .eq('is_archived', false)
           .in('status', ['sent', 'viewed'])
@@ -100,7 +101,7 @@ export async function GET(req: NextRequest) {
           .limit(5),
         admin
           .from('chantier_plannings')
-          .select('id, planned_date, start_time, label, chantier:chantiers!inner(id, title, client_name, organization_id, is_archived, status)')
+          .select('id, planned_date, start_time, label, chantier:chantiers!inner(id, title, organization_id, is_archived, status)')
           .eq('chantier.organization_id', orgId)
           .eq('chantier.is_archived', false)
           .not('chantier.status', 'in', '("termine","annule")')
@@ -141,10 +142,15 @@ export async function GET(req: NextRequest) {
           .limit(80),
       ])
 
+      // Résoudre client_name depuis la relation clients (colonne inexistante en base)
+      for (const row of [...(overdueInvoices ?? []), ...(pendingQuotes ?? []), ...(expiringQuotes ?? [])]) {
+        ;(row as any).client_name = clientNameFromJoin((row as any).client)
+      }
+
       for (const inv of overdueInvoices ?? []) {
-        const ref = inv.reference ?? inv.number ?? 'Facture'
+        const ref = inv.number ?? 'Facture'
         const remaining = Math.max(0, Number(inv.total_ttc ?? 0) - Number(inv.total_paid ?? 0))
-        const body = `La facture ${ref} de ${inv.client_name ?? 'ce client'} est en retard depuis le ${inv.due_date}.`
+        const body = `La facture ${ref} de ${(inv as any).client_name ?? 'ce client'} est en retard depuis le ${inv.due_date}.`
         const action = await proposeSarahAction({
           organizationId: orgId,
           type: 'invoice_reminder',
@@ -153,7 +159,7 @@ export async function GET(req: NextRequest) {
           description: `${body} Sarah peut préparer la relance et ouvrir la facture.`,
           payload: {
             invoice_id: inv.id,
-            client_name: inv.client_name,
+            client_name: (inv as any).client_name,
             draft_text: `Bonjour,\n\nJe me permets de vous relancer concernant la facture ${ref}, d'un montant restant dû de ${fmt(remaining || inv.total_ttc)}, échue le ${inv.due_date}.\n\nPouvez-vous me confirmer la date de règlement prévue ?\n\nBien cordialement,`,
           },
           deepLink: `/finances/invoice-editor/${inv.id}`,
@@ -168,7 +174,7 @@ export async function GET(req: NextRequest) {
 
       for (const quote of pendingQuotes ?? []) {
         const ref = quote.reference ?? quote.number ?? 'Devis'
-        const body = `Le devis ${ref} pour ${quote.client_name ?? 'ce client'} attend une réponse.`
+        const body = `Le devis ${ref} pour ${(quote as any).client_name ?? 'ce client'} attend une réponse.`
         const action = await proposeSarahAction({
           organizationId: orgId,
           type: 'draft_email',
@@ -179,7 +185,7 @@ export async function GET(req: NextRequest) {
             quote_id: quote.id,
             client_ids: quote.client_id ? [quote.client_id] : [],
             recipient_filter: quote.client_id ? { mode: 'manual', ids: [quote.client_id] } : undefined,
-            client_name: quote.client_name,
+            client_name: (quote as any).client_name,
             subject: `Relance devis ${ref}`,
             body: `Bonjour,\n\nJe me permets de revenir vers vous concernant le devis ${ref}.\n\nSouhaitez-vous que nous avancions sur ce projet ou avez-vous besoin d'une précision ?\n\nBien cordialement,`,
           },
@@ -198,7 +204,7 @@ export async function GET(req: NextRequest) {
           risk: 'low',
           title: `Vérifier ${ref}`,
           description: `${body} Sarah peut vous ouvrir le devis pour le relancer ou le prolonger.`,
-          payload: { quote_id: quote.id, client_name: quote.client_name },
+          payload: { quote_id: quote.id, client_name: (quote as any).client_name },
           deepLink: `/finances/quote-editor/${quote.id}`,
           dedupeKey: `quote-expiring:${quote.id}:${quote.valid_until}`,
         })

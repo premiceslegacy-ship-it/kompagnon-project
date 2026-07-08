@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { QUOTA_DEFINITIONS } from '@/lib/quota-catalog'
+import { verifyCronSecret } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,12 +10,6 @@ export const dynamic = 'force-dynamic'
 const ALERT_THRESHOLD = 0.85
 // Délai avant envoi automatique si pas d'action : 2 jours
 const AUTO_SEND_DELAY_DAYS = 2
-
-function verifyCronSecret(value: string | null): boolean {
-  const secret = process.env.CRON_SECRET?.trim()
-  if (!secret || !value) return false
-  return value === secret
-}
 
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')

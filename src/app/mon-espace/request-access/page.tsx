@@ -9,6 +9,10 @@ export default function RequestAccessPage({
     ? "Le lien est expiré ou invalide. Demandez-en un nouveau ci-dessous."
     : null
 
+  const successLabel = searchParams.error === 'expired_renewed'
+    ? "Votre lien avait expiré : un nouveau vient de vous être envoyé par email. Vérifiez votre boîte de réception."
+    : null
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md card p-7 space-y-5">
@@ -22,6 +26,11 @@ export default function RequestAccessPage({
         {errorLabel && (
           <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
             {errorLabel}
+          </div>
+        )}
+        {successLabel && (
+          <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400">
+            {successLabel}
           </div>
         )}
         <RequestAccessForm />

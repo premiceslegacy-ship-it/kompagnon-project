@@ -29,6 +29,9 @@ const fmt = (n: number) =>
 function Delta({ current, prev }: { current: number; prev: number }) {
   if (prev === 0 && current === 0) return null
   if (prev === 0) return <span className="text-xs font-semibold text-accent-green">Nouveau</span>
+  // current === 0 avec un mois précédent non nul n'est pas une "chute de 100%"
+  // mais l'absence de données sur la période en cours (ex: début de mois).
+  if (current === 0) return <span className="text-xs text-secondary">Pas encore de donnée ce mois-ci</span>
   const pct = Math.round(((current - prev) / prev) * 100)
   if (pct === 0) return <span className="text-xs text-secondary">= mois préc.</span>
   const up = pct > 0

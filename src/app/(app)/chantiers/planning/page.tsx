@@ -15,9 +15,23 @@ async function computeIcalToken(orgId: string): Promise<string> {
   return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
+// Le planning global charge tout en mémoire côté client et navigue (jour/semaine/mois)
+// sans refaire de requête serveur. On borne donc la requête initiale à une fenêtre
+// large (±6 mois) plutôt que de charger l'historique complet de l'organisation, qui
+// grossit indéfiniment sans que la navigation ne s'en serve réellement au quotidien.
+function planningWindow() {
+  const now = new Date()
+  const from = new Date(now)
+  from.setMonth(from.getMonth() - 6)
+  const to = new Date(now)
+  to.setMonth(to.getMonth() + 6)
+  const toYmd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return { from: toYmd(from), to: toYmd(to) }
+}
+
 export default async function PlanningGlobalPage() {
   const [plannings, chantiers, equipes, individualMembers, modules, orgId, canManage, organization, routeDepartures] = await Promise.all([
-    getAllPlannings(),
+    getAllPlannings(planningWindow()),
     getChantiers(),
     getEquipes(),
     getOrgIndividualMembers(),
@@ -43,6 +57,8 @@ export default async function PlanningGlobalPage() {
       orgDepartureAddress={organization?.departure_address ?? null}
       orgDeparturePostalCode={organization?.departure_postal_code ?? null}
       orgDepartureCity={organization?.departure_city ?? null}
+      orgDepartureLatitude={organization?.departure_latitude ?? null}
+      orgDepartureLongitude={organization?.departure_longitude ?? null}
       routeDepartures={routeDepartures}
     />
   )

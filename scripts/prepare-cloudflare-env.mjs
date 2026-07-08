@@ -70,7 +70,17 @@ const textKeys = [
   'STRIPE_PRICE_STARTER',
   'STRIPE_PRICE_PRO',
   'STRIPE_PRICE_EXPERT',
+  // Observabilité (optionnelles — absentes = suivi désactivé, aucun impact) :
+  'NEXT_PUBLIC_SENTRY_DSN',
+  'NEXT_PUBLIC_POSTHOG_KEY',
+  'NEXT_PUBLIC_POSTHOG_HOST',
 ]
+
+// SENTRY_AUTH_TOKEN / SENTRY_ORG / SENTRY_PROJECT ne sont volontairement PAS
+// dans secretKeys ni textKeys : ils ne servent qu'à l'upload de sourcemaps au
+// BUILD (voir next.config.mjs), jamais au runtime du Worker. Les fournir en
+// variable d'environnement locale/CI au moment de `npm run build`, jamais via
+// `wrangler secret put` sur le Worker déployé.
 
 function readEnvFile(filePath) {
   if (!existsSync(filePath)) return {}

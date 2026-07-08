@@ -15,6 +15,7 @@ import { AIQuotaExceededError } from '@/lib/quota'
 import { getBusinessContext, formatBusinessContextForPrompt } from '@/lib/ai/business-context'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { todayParis } from '@/lib/utils'
+import { CHANTIER_STATUS_LABELS, humanStatus } from '@/lib/status-labels'
 
 export const dynamic = 'force-dynamic'
 
@@ -156,6 +157,20 @@ const TOOLS = [
           role_label: { type: 'string', description: 'Intitulé du rôle ou métier (optionnel, ex: Maçon, Chef de chantier).' },
         },
         required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'send_to_sarah',
+      description: 'Transmettre une information ou une demande à Sarah, la secrétaire de l\'application (facturation, relance client, email, devis, question administrative). À utiliser quand la demande sort du périmètre du chantier : Sarah la retrouvera à l\'ouverture de son chat et la traitera.',
+      parameters: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', description: 'Le message à transmettre à Sarah, formulé clairement avec le contexte du chantier (ex: "Le client du chantier Dupont demande une facture d\'acompte de 30%").' },
+        },
+        required: ['message'],
       },
     },
   },
@@ -611,6 +626,25 @@ async function executeTool(
     return `Membre "${displayName}" ajouté à l'organisation (ID : ${result.id}). Vous pouvez maintenant l'assigner à un créneau en utilisant son nom.`
   }
 
+  if (name === 'send_to_sarah') {
+    const message = (args.message as string | undefined)?.trim()
+    if (!message || message.length < 10) return 'Message trop court pour être transmis à Sarah.'
+
+    const orgId = await getCurrentOrganizationId()
+    if (!orgId) return 'Impossible de transmettre le message pour le moment.'
+
+    const supabase = await createClient()
+    const { error } = await supabase.from('ai_briefs').insert({
+      organization_id: orgId,
+      source_assistant: 'marco',
+      target_assistant: 'sarah',
+      payload: { description: message, chantier_id: chantierId },
+      status: 'pending',
+    })
+    if (error) return 'Impossible de transmettre le message pour le moment.'
+    return `C'est transmis à Sarah : "${message}". Elle le verra dès l'ouverture de son chat.`
+  }
+
   return `Outil "${name}" non reconnu.`
 }
 
@@ -709,7 +743,7 @@ export async function POST(req: NextRequest) {
 ${formatBusinessContextForPrompt(businessCtx)}
 
 Chantier : ${chantier.title}
-Statut : ${chantier.status}
+Statut : ${humanStatus(CHANTIER_STATUS_LABELS, chantier.status)}
 Budget HT : ${chantier.budget_ht ? chantier.budget_ht + '€' : 'non defini'}
 Avancement taches : ${tachesDone}/${taches.length} (${avancementPct}%)
 Heures pointees : ${profitability?.hoursLogged ?? 0}h
@@ -743,6 +777,8 @@ ${canViewExpenses ? '' : '- Tu n\'as pas acces aux donnees financieres (couts, m
 - Si tu ne connais pas les membres ou equipes, appelle d'abord list_members
 - Si add_planning_slot retourne que le membre est inconnu, demande si c'est un nouveau membre. Si oui, collecte prenom, nom, taux horaire (facultatif) et email (facultatif), puis appelle add_member avant de recreer le creneau
 - N'appelle jamais add_member sans confirmation explicite que c'est bien un nouveau membre
+- Si la demande sort du chantier (facturation, relance client, email, devis, administratif), utilise send_to_sarah pour transmettre a Sarah avec le contexte, et dis a l'utilisateur que Sarah prend le relais dans son chat
+- Ne montre jamais un statut technique brut (en_cours, termine, sent...) : dis "en cours", "terminee", "envoye"
 - Chiffre tout ce qui peut l'etre, sois factuel
 - Aucun emoji, aucun symbole decoratif
 - Aucun tiret cadratin : utilise des virgules ou des points a la place`

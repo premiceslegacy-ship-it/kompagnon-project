@@ -14,6 +14,8 @@ import {
   type BusinessActivityId,
   type BusinessProfileConfig,
 } from '@/lib/catalog-context'
+import { seedStarterPresetsIfNeeded, seedStarterClausesIfNeeded } from '@/lib/data/mutations/catalog-seed'
+import { getEligibleVerticalPack } from '@/lib/vertical-packs'
 import {
   normalizeBic,
   normalizeCommercialCourt,
@@ -54,6 +56,7 @@ function buildSlug(name: string): string {
 
 function buildOrganizationCatalogDefaults(activityId: BusinessActivityId) {
   const { activity, profileConfig: config } = resolveBusinessSelection({ activityId })
+  const eligiblePack = getEligibleVerticalPack(activityId)
   return {
     business_activity_id: activity.id,
     business_profile: config.businessProfile,
@@ -61,6 +64,7 @@ function buildOrganizationCatalogDefaults(activityId: BusinessActivityId) {
     unit_set: config.unitSet,
     default_categories: config.defaultCategories,
     starter_presets: config.starterPresets,
+    business_vertical_pack: eligiblePack?.id ?? null,
   }
 }
 
@@ -144,103 +148,6 @@ function buildOrganizationUpdateFromForm(formData: FormData) {
   }
 }
 
-async function seedStarterPresetsIfNeeded(params: {
-  admin: ReturnType<typeof createAdminClient>
-  organizationId: string
-  createdBy: string
-  config: BusinessProfileConfig
-}) {
-  const { admin, organizationId, createdBy, config } = params
-
-  const { count, error: countError } = await admin
-    .from('prestation_types')
-    .select('id', { count: 'exact', head: true })
-    .eq('organization_id', organizationId)
-
-  if (countError) {
-    console.error('[seedStarterPresetsIfNeeded] count error:', countError.message)
-    return
-  }
-
-  if ((count ?? 0) > 0 || config.starterPresets.length === 0) return
-
-  const templatePayload = config.starterPresets.map((preset) => ({
-    organization_id: organizationId,
-    name: preset.name,
-    description: preset.description,
-    unit: preset.unit,
-    category: preset.category,
-    profile_kind: preset.profile_kind,
-    vat_rate: preset.vat_rate,
-    created_by: createdBy,
-  }))
-
-  const { data: insertedTemplates, error: templateError } = await admin
-    .from('prestation_types')
-    .insert(templatePayload)
-    .select('id, name')
-
-  if (templateError) {
-    console.error('[seedStarterPresetsIfNeeded] insert templates error:', templateError.message)
-    return
-  }
-
-  const itemPayload = config.starterPresets.flatMap((preset) => {
-    const template = insertedTemplates?.find((entry) => entry.name === preset.name)
-    if (!template) return []
-
-    return preset.lines.map((line, index) => ({
-      prestation_type_id: template.id,
-      organization_id: organizationId,
-      position: index,
-      section_title: line.section_title ?? '',
-      item_type: line.item_type,
-      designation: line.designation,
-      quantity: line.quantity,
-      unit: line.unit,
-      unit_price_ht: line.unit_price_ht ?? 0,
-      unit_cost_ht: line.unit_cost_ht ?? 0,
-      is_internal: line.is_internal ?? false,
-    }))
-  })
-
-  if (itemPayload.length === 0) return
-
-  const { error: itemError } = await admin
-    .from('prestation_type_items')
-    .insert(itemPayload)
-
-  if (itemError) {
-    console.error('[seedStarterPresetsIfNeeded] insert items error:', itemError.message)
-  }
-}
-
-async function seedStarterClausesIfNeeded(params: {
-  admin: ReturnType<typeof createAdminClient>
-  organizationId: string
-  config: BusinessProfileConfig
-}) {
-  const { admin, organizationId, config } = params
-  if (!config.starterClauses || config.starterClauses.length === 0) return
-
-  const { count } = await admin
-    .from('quote_clause_templates')
-    .select('id', { count: 'exact', head: true })
-    .eq('organization_id', organizationId)
-
-  if ((count ?? 0) > 0) return
-
-  const payload = config.starterClauses.map((clause) => ({
-    organization_id: organizationId,
-    title: clause.title,
-    body: clause.body,
-    category: clause.category,
-    position: clause.position,
-  }))
-
-  const { error } = await admin.from('quote_clause_templates').insert(payload)
-  if (error) console.error('[seedStarterClausesIfNeeded] error:', error.message)
-}
 
 /**
  * Finalise l'onboarding :
@@ -278,16 +185,17 @@ export async function completeOnboarding(formData: FormData) {
 
   // Traiter les invitations (champs invite_email_0, invite_role_0, invite_email_1, …)
   const admin = createAdminClient()
+  const eligiblePack = getEligibleVerticalPack(orgForm.selection.activity.id)
   await seedStarterPresetsIfNeeded({
     admin,
     organizationId,
     createdBy: user.id,
-    config: orgForm.selection.profileConfig,
+    starterPresets: [...orgForm.selection.profileConfig.starterPresets, ...(eligiblePack?.starterPresets ?? [])],
   })
   await seedStarterClausesIfNeeded({
     admin,
     organizationId,
-    config: orgForm.selection.profileConfig,
+    starterClauses: [...(orgForm.selection.profileConfig.starterClauses ?? []), ...(eligiblePack?.starterClauses ?? [])],
   })
   const inviteErrors: string[] = []
 
@@ -414,11 +322,12 @@ export async function skipInvites(formData: FormData) {
     redirect('/onboarding?error=org_update_failed')
   }
 
+  const eligiblePack = getEligibleVerticalPack(orgForm.selection.activity.id)
   await seedStarterPresetsIfNeeded({
     admin: createAdminClient(),
     organizationId,
     createdBy: user.id,
-    config: orgForm.selection.profileConfig,
+    starterPresets: [...orgForm.selection.profileConfig.starterPresets, ...(eligiblePack?.starterPresets ?? [])],
   })
 
   await supabase

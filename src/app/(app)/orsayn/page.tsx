@@ -7,6 +7,7 @@ import {
   resyncOperatorClientConfig,
   upsertOperatorClientSettings,
   upsertOperatorClientModules,
+  upsertOperatorClientVerticalPack,
   upsertOperatorSubscription,
 } from './actions'
 import EmailsTab from './EmailsTab'
@@ -15,6 +16,7 @@ import { getOperatorUser } from '@/lib/operator-auth'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ORGANIZATION_MODULE_KEYS, normalizeOrganizationModules, type OrganizationModules } from '@/lib/organization-modules'
+import { VERTICAL_PACKS, getEligibleVerticalPack } from '@/lib/vertical-packs'
 import {
   QUOTA_DEFINITIONS,
   SUBSCRIPTION_TIERS,
@@ -165,6 +167,8 @@ type ClientRow = {
   lastStatus: string | null
   monthEventCount: number
   modules: OrganizationModules
+  businessActivityId: string | null
+  businessVerticalPackId: string | null
   quotas: OperatorClientQuota[]
   events: OperatorClientEvent[]
   commercialEvents: OperatorCommercialEvent[]
@@ -526,6 +530,19 @@ export default async function OrsaynPage() {
         normalizeOrganizationModules(modulesByOrgId.get(c.organization_id!) ?? {}),
       ])
   )
+
+  // Charger l'activité + pack verticale pour tous les clients ayant un organization_id
+  const { data: verticalPackRows } = orgIds.length > 0
+    ? await admin.from('organizations').select('id, business_activity_id, business_vertical_pack').in('id', orgIds)
+    : { data: [] }
+  const verticalPackByOrgId = new Map(
+    (verticalPackRows ?? []).map((r) => [r.id, { activityId: r.business_activity_id, packId: r.business_vertical_pack }])
+  )
+  const verticalPackBySource = new Map(
+    clients
+      .filter((c) => c.organization_id)
+      .map((c) => [c.source_instance, verticalPackByOrgId.get(c.organization_id!) ?? { activityId: null, packId: null }])
+  )
   const latestEventBySource = new Map<string, OperatorUsageEvent>()
 
   for (const event of recentEvents) {
@@ -612,6 +629,8 @@ export default async function OrsaynPage() {
       lastStatus: latestEvent?.status ?? null,
       monthEventCount: monthEvents.length,
       modules: modulesBySource.get(sourceInstance) ?? normalizeOrganizationModules({}),
+      businessActivityId: verticalPackBySource.get(sourceInstance)?.activityId ?? null,
+      businessVerticalPackId: verticalPackBySource.get(sourceInstance)?.packId ?? null,
       quotas: (quotasBySource[sourceInstance] ?? []).sort((a, b) => {
         const aDef = QUOTA_DEFINITIONS[a.quota_feature]
         const bDef = QUOTA_DEFINITIONS[b.quota_feature]
@@ -1393,6 +1412,38 @@ export default async function OrsaynPage() {
                           </button>
                         </form>
                       )}
+                      {row.organizationId && (() => {
+                        const suggestedPack = getEligibleVerticalPack(row.businessActivityId)
+                        return (
+                          <form action={upsertOperatorClientVerticalPack} className="mt-2 grid gap-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3 backdrop-blur-frost">
+                            <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
+                            <p className="text-xs font-bold uppercase tracking-wide text-secondary font-display mb-1">
+                              Pack verticale métier
+                              {suggestedPack && !row.businessVerticalPackId && (
+                                <span className="ml-2 rounded-pill bg-accent/10 px-2 py-0.5 text-[10px] font-semibold normal-case text-accent">
+                                  Suggéré : {suggestedPack.label}
+                                </span>
+                              )}
+                            </p>
+                            <select
+                              name="vertical_pack_id"
+                              defaultValue={row.businessVerticalPackId ?? ''}
+                              className="rounded-md border border-[var(--elevation-border)] bg-transparent px-2 py-1.5 text-xs text-primary"
+                            >
+                              <option value="">Aucun pack</option>
+                              {Object.values(VERTICAL_PACKS).map((pack) => (
+                                <option key={pack.id} value={pack.id}>{pack.label}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="submit"
+                              className="inline-flex justify-center rounded-pill bg-accent/10 text-accent px-3 py-2 text-xs font-semibold font-display transition hover:bg-accent/20"
+                            >
+                              Appliquer
+                            </button>
+                          </form>
+                        )
+                      })()}
                       <div className="mt-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3">
                         <p className="mb-2 text-xs font-bold uppercase tracking-wide text-secondary font-display">Quotas du mois en cours</p>
                         {row.quotas.length === 0 ? (

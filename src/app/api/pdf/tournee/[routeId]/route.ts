@@ -8,6 +8,7 @@ import { getTourneeRoute } from '@/lib/data/mutations/planning'
 import { estimateTravelMin } from '@/app/(app)/chantiers/planning/TourneeOptimizer'
 import { TourneePDF } from '@/components/pdf/TourneePDF'
 import type { TourneeSlot } from '@/lib/data/queries/chantiers'
+import { isValidUuid } from '@/lib/security'
 
 function colorIdx(id: string): number {
   let h = 0
@@ -19,6 +20,8 @@ export async function GET(
   req: Request,
   { params }: { params: { routeId: string } },
 ) {
+  if (!isValidUuid(params.routeId)) return new NextResponse('Tournée introuvable', { status: 404 })
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return new NextResponse('Non authentifié', { status: 401 })
@@ -71,6 +74,7 @@ export async function GET(
     route_order: row.route_order,
     duration_min: row.duration_min,
     travel_from_prev_min: row.travel_from_prev_min,
+    arrived_at: null,
     chantier_title: row.chantier?.title ?? '-',
     chantier_city: row.chantier?.city ?? null,
     chantier_status: row.chantier?.status ?? 'planifie',

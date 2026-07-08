@@ -246,26 +246,32 @@ const NotificationBell = ({ notifications, onNavigate }: { notifications: Notifi
     };
 
     async function handleEnablePush() {
-        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
-        const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
-        if (!vapidKey) return
+        // Tout échec (souscription refusée, SW indisponible, réseau) doit rester
+        // silencieux : un rejet non géré ici part en erreur Sentry côté client.
+        try {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+            const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+            if (!vapidKey) return
 
-        const permission = await Notification.requestPermission()
-        setPushPermission(permission as PushPermission)
-        if (permission !== 'granted') return
+            const permission = await Notification.requestPermission()
+            setPushPermission(permission as PushPermission)
+            if (permission !== 'granted') return
 
-        const reg = await navigator.serviceWorker.register('/sw.js')
-        await navigator.serviceWorker.ready
-        const existing = await reg.pushManager.getSubscription()
-        const sub = existing ?? await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(vapidKey),
-        })
-        await fetch('/api/push/subscribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(sub.toJSON()),
-        })
+            const reg = await navigator.serviceWorker.register('/sw.js')
+            await navigator.serviceWorker.ready
+            const existing = await reg.pushManager.getSubscription()
+            const sub = existing ?? await reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(vapidKey),
+            })
+            await fetch('/api/push/subscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(sub.toJSON()),
+            })
+        } catch (err) {
+            console.error('[push] activation impossible :', err)
+        }
     }
 
     const total = notifications.total ?? (

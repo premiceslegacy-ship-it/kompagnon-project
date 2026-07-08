@@ -9,6 +9,7 @@ import { getOrganization } from '@/lib/data/queries/organization'
 import { getQuoteById } from '@/lib/data/queries/quotes'
 import { sendEmail } from '@/lib/email'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
+import { sendPushToOrg } from '@/lib/push'
 import QuotePDF from '@/components/pdf/QuotePDF'
 import type { Client } from '@/lib/data/queries/clients'
 import { getClientGreetingName } from '@/lib/client'
@@ -302,6 +303,13 @@ export async function markQuoteRefused(quoteId: string): Promise<Result> {
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
 
+  const { data: quoteBefore } = await supabase
+    .from('quotes')
+    .select('number, title, client:clients(company_name, contact_name)')
+    .eq('id', quoteId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+
   const { error } = await supabase
     .from('quotes')
     .update({ status: 'refused' })
@@ -309,6 +317,17 @@ export async function markQuoteRefused(quoteId: string): Promise<Result> {
     .eq('organization_id', orgId)
 
   if (error) return { error: error.message }
+
+  const { data: { user } } = await supabase.auth.getUser()
+  const client = quoteBefore?.client as { company_name?: string; contact_name?: string } | null
+  const clientLabel = client?.company_name ?? client?.contact_name ?? null
+  const quoteNum = quoteBefore?.number ?? quoteId.slice(0, 8)
+  sendPushToOrg(orgId, {
+    title: `Devis ${quoteNum} refusé`,
+    body: clientLabel ?? quoteBefore?.title ?? '',
+    url: '/finances',
+  }, user?.id).catch(() => {})
+
   revalidatePath('/reminders')
   revalidatePath('/finances')
   return { error: null }

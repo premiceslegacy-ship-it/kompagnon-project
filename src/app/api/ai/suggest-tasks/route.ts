@@ -68,6 +68,7 @@ Règles d'ordonnancement :
 - La préparation du chantier (protections, balisage, démolition) vient avant les travaux
 - Les finitions (peinture, nettoyage, réception) viennent en dernier
 - Chaque tâche doit être courte (5-8 mots max) et utiliser le vocabulaire propre au métier
+- Aucun emoji, aucun tiret cadratin dans les titres : un tiret simple entouré d'espaces si besoin
 Réponds UNIQUEMENT avec un tableau JSON, rien d'autre.`,
     },
     {

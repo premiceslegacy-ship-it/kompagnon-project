@@ -7,6 +7,7 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { canManageLaborRates, hasPermission } from '@/lib/data/queries/membership'
 import { sendEmail } from '@/lib/email'
 import { buildInviteEmail } from '@/lib/email/templates'
+import { logAuditEvent } from '@/lib/audit-log'
 
 /**
  * Change le rôle d'un membre de l'équipe.
@@ -48,6 +49,15 @@ export async function updateMemberRole(membershipId: string, newRoleId: string):
     return { error: 'Impossible de modifier le rôle. Veuillez réessayer.' }
   }
 
+  logAuditEvent({
+    organizationId: orgId,
+    actorId: user.id,
+    action: 'audit.member.role_changed',
+    entityType: 'membership',
+    entityId: membershipId,
+    metadata: { previous_role_slug: (target as any).roles?.slug ?? null, new_role_id: newRoleId },
+  }).catch(() => {})
+
   revalidatePath('/settings')
   return { error: null }
 }
@@ -69,6 +79,18 @@ export async function sendTeamInvite(email: string, roleId: string): Promise<{ e
 
   const organizationId = await getCurrentOrganizationId()
   if (!organizationId) return { error: 'Organisation introuvable.' }
+
+  // Sécurité : le rôle attribué doit appartenir à l'organisation et ne jamais
+  // être le rôle owner (sinon un membre avec team.invite pourrait faire entrer
+  // quelqu'un directement en dirigeant/admin non prévu).
+  const { data: roleRow } = await supabase
+    .from('roles')
+    .select('id, slug')
+    .eq('id', roleId)
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+  if (!roleRow) return { error: 'Rôle invalide.' }
+  if (roleRow.slug === 'owner') return { error: 'Le rôle dirigeant ne peut pas être attribué par invitation.' }
 
   // Récupérer les infos de l'invitant et de l'organisation
   const { data: profile } = await supabase
@@ -265,6 +287,15 @@ export async function removeMember(membershipId: string): Promise<{ error: strin
     console.error('[removeMember]', error.message)
     return { error: "Impossible de retirer ce membre. Veuillez réessayer." }
   }
+
+  logAuditEvent({
+    organizationId: orgId,
+    actorId: user.id,
+    action: 'audit.member.removed',
+    entityType: 'membership',
+    entityId: membershipId,
+    metadata: { previous_role_slug: (target as any).roles?.slug ?? null },
+  }).catch(() => {})
 
   revalidatePath('/settings')
   return { error: null }
