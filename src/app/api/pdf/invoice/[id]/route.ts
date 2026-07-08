@@ -2,11 +2,14 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
+import { isValidUuid } from '@/lib/security'
 
 export async function GET(
   req: Request,
   { params }: { params: { id: string } },
 ) {
+  if (!isValidUuid(params.id)) return new NextResponse('Facture introuvable', { status: 404 })
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return new NextResponse('Non authentifié', { status: 401 })
@@ -19,11 +22,11 @@ export async function GET(
     .from('invoices')
     .select('organization_id')
     .eq('id', params.id)
-    .single()
+    .maybeSingle()
 
   if (invErr) {
     console.error('[GET /api/pdf/invoice] lookup error:', invErr)
-    return new NextResponse(`Erreur de chargement: ${invErr.message}`, { status: 500 })
+    return new NextResponse('Erreur serveur', { status: 500 })
   }
   if (!inv) return new NextResponse('Facture introuvable', { status: 404 })
   if (inv.organization_id !== orgId) return new NextResponse('Accès refusé', { status: 403 })
@@ -33,7 +36,7 @@ export async function GET(
     result = await renderInvoicePdfBufferById(params.id, orgId)
   } catch (err) {
     console.error('[GET /api/pdf/invoice] render error:', err)
-    return new NextResponse(`Erreur génération PDF: ${err instanceof Error ? err.message : 'inconnue'}`, { status: 500 })
+    return new NextResponse('Erreur génération PDF', { status: 500 })
   }
   if (!result) return new NextResponse('Erreur génération PDF', { status: 500 })
 

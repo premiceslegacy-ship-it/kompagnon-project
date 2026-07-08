@@ -285,6 +285,10 @@ async function fetchLaborCostsForQuoteItems(
   return Object.fromEntries((data ?? []).map(row => [row.id, Number(row.cost_rate ?? row.rate) || 0]))
 }
 
+// Même plafond que getInvoices() : la page finances charge tout en un bloc pour
+// le filtrage/recherche instantané côté client, à borner sur une organisation ancienne.
+const QUOTES_LIST_LIMIT = 500
+
 export async function getQuotes(): Promise<Quote[]> {
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
@@ -302,6 +306,7 @@ export async function getQuotes(): Promise<Quote[]> {
     .eq('organization_id', orgId)
     .eq('is_archived', false)
     .order('created_at', { ascending: false })
+    .limit(QUOTES_LIST_LIMIT)
 
   if (error) {
     console.error('[getQuotes]', error)

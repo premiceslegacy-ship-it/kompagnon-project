@@ -6,7 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { canManageLaborRates, hasPermission, requirePermission } from '@/lib/data/queries/membership'
 import { coerceLegalVatRate, todayParis } from '@/lib/utils'
-import { getPlanningRecipientUserIds, sendPushToOrgPermission, sendPushToUsers } from '@/lib/push'
+import { getPlanningRecipientUserIds, sendPushToOrgPermission, sendPushToPlanningRecipients, sendPushToUsers } from '@/lib/push'
 
 type Result = { error: string | null }
 
@@ -2092,7 +2092,7 @@ export async function createChantierPlanning(
   }
 
   const recipients = await getPlanningRecipientUserIds(orgId, { memberId: data.memberId, equipeId: data.equipeId })
-  sendPushToUsers(recipients, {
+  sendPushToPlanningRecipients(recipients, {
     title: 'Nouveau créneau planifié',
     body: `${data.label.trim()} — ${data.plannedDate}${data.startTime ? ` à ${data.startTime}` : ''}`,
     url: `/mon-espace/dashboard`,

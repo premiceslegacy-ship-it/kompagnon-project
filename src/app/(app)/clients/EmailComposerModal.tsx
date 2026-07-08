@@ -88,8 +88,6 @@ export default function EmailComposerModal({
   const [sendError, setSendError] = useState<string | null>(null)
   const [sent, setSent] = useState<{ count: number; errors: number } | null>(null)
 
-  if (!isOpen) return null
-
   const sarah = AI_ASSISTANTS.sarah
 
   // Contacts avec email filtrés par catégorie + recherche
@@ -114,6 +112,8 @@ export default function EmailComposerModal({
   const visibleIds = useMemo(() => visibleContacts.map(c => c.id), [visibleContacts])
   const allVisibleChecked = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
   const someVisibleChecked = visibleIds.some(id => selectedIds.has(id))
+
+  if (!isOpen) return null
 
   const toggleContact = (id: string) => {
     setSelectedIds(prev => {

@@ -22,6 +22,8 @@ describe('chantier server-action permission guards', () => {
   const jalons = source('src/lib/data/mutations/chantier-jalons.ts')
   const maintenance = source('src/lib/data/mutations/maintenance.ts')
   const chantierQueries = source('src/lib/data/queries/chantiers.ts')
+  const absences = source('src/lib/data/mutations/absences.ts')
+  const planningAgent = source('src/lib/data/mutations/planning-agent.ts')
 
   it('blocks chantier edit surfaces when chantiers.edit is missing', () => {
     for (const fn of [
@@ -90,5 +92,18 @@ describe('chantier server-action permission guards', () => {
       expect(functionBody(maintenance, fn)).toContain("requirePermission('chantiers.edit')")
     }
     expect(functionBody(maintenance, 'billMaintenanceIntervention')).toContain("requirePermission(invoiceId ? 'invoices.edit' : 'invoices.create')")
+  })
+
+  it('protects manager-side absence writes with the planning permission, keeps member self-declare session-scoped', () => {
+    expect(functionBody(absences, 'declareMemberAbsence')).toContain("hasPermission('chantiers.planning')")
+    expect(functionBody(absences, 'deleteMemberAbsence')).toContain("hasPermission('chantiers.planning')")
+    expect(functionBody(absences, 'declareMyAbsenceFromSpace')).not.toMatch(/hasPermission/)
+    expect(functionBody(absences, 'declareMyAbsenceFromSpace')).toContain('getMemberSession')
+  })
+
+  it('protects planning-agent read functions with the planning permission', () => {
+    for (const fn of ['findPlanningConflicts', 'findReplacementCandidates', 'findMissingPointages']) {
+      expect(functionBody(planningAgent, fn)).toContain("hasPermission('chantiers.planning')")
+    }
   })
 })

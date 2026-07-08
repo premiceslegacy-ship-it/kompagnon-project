@@ -4,6 +4,15 @@ import { verifyOperatorSignature } from '@/lib/operator'
 
 export const dynamic = 'force-dynamic'
 
+// Endpoint cockpit (une seule instance, OPERATOR_MODE=true) appelé par chaque
+// instance cliente via createStripePortalSession (src/lib/data/mutations/stripe-portal.ts).
+// Le portail est dynamique par client : on résout le stripe_customer_id à partir
+// du source_instance reçu dans le body, puis on crée une session portail Stripe
+// pour CE client précis. La configuration du portail (moyens de paiement,
+// annulation, changement de plan autorisé ou non) est mutualisée pour toutes
+// les instances Atelier via STRIPE_PORTAL_CONFIGURATION_ID (Stripe Dashboard
+// → Customer portal → Configurations) — elle n'est pas versionnée dans ce repo.
+
 export async function POST(req: NextRequest) {
   if (process.env.OPERATOR_MODE !== 'true') {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })

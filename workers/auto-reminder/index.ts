@@ -6,6 +6,7 @@
  *   1. /api/cron/auto-reminders    — relances devis/factures en retard (IA)
  *   2. /api/cron/recurring-invoices — brouillons récurrents + auto-envoi PDF si délai expiré
  *   3. /api/cron/chantier-period-invoices — brouillons des factures de période chantier
+ *   4. /api/cron/member-token-reminders — rappel J-3 avant expiration des liens magiques membres
  *
  * Variables d'environnement à configurer dans Cloudflare Dashboard :
  *   APP_URL      → URL de l'app (ex: https://atelier-weber.workers.dev)
@@ -51,6 +52,7 @@ async function runAllCrons(env: Env): Promise<void> {
   await callCron(env, '/api/cron/auto-reminders')
   await callCron(env, '/api/cron/recurring-invoices')
   await callCron(env, '/api/cron/chantier-period-invoices')
+  await callCron(env, '/api/cron/member-token-reminders')
 }
 
 async function callCron(env: Env, path: string): Promise<void> {

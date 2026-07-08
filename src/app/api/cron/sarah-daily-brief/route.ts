@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getBusinessContext, formatBusinessContextForPrompt } from '@/lib/ai/business-context'
 import { callAI } from '@/lib/ai/callAI'
 import { verifyCronSecret } from '@/lib/cron-auth'
+import { CLIENT_NAME_JOIN, clientNameFromJoin } from '@/lib/client'
 import { todayParis } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
@@ -66,7 +67,7 @@ export async function GET(req: NextRequest) {
         { data: expiringQuotes },
       ] = await Promise.all([
         admin.from('invoices')
-          .select('reference, client_name, total_ttc, due_date')
+          .select(`number, total_ttc, due_date, ${CLIENT_NAME_JOIN}`)
           .eq('organization_id', orgId)
           .eq('is_archived', false)
           .in('status', ['sent', 'partial'])
@@ -91,7 +92,7 @@ export async function GET(req: NextRequest) {
           .select('chantier_planning_id, chantier_id, date, member_id, user_id')
           .eq('date', today),
         admin.from('quotes')
-          .select('reference, client_name, total_ttc, valid_until')
+          .select(`reference, total_ttc, valid_until, ${CLIENT_NAME_JOIN}`)
           .eq('organization_id', orgId)
           .in('status', ['sent', 'viewed'])
           .lte('valid_until', new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10))
@@ -117,10 +118,10 @@ export async function GET(req: NextRequest) {
         contextLines.push(`Taches en retard : ${dueTasks.map(t => `"${t.title}" — ${(t.chantier as any)?.title ?? '?'}`).join('; ')}`)
       }
       if (overdueInvoices?.length) {
-        contextLines.push(`Factures impayées : ${overdueInvoices.map(i => `${i.reference} (${i.client_name}, ${i.total_ttc}€, échue ${i.due_date})`).join('; ')}`)
+        contextLines.push(`Factures impayées : ${overdueInvoices.map(i => `${i.number} (${clientNameFromJoin((i as any).client) ?? '?'}, ${i.total_ttc}€, échue ${i.due_date})`).join('; ')}`)
       }
       if (expiringQuotes?.length) {
-        contextLines.push(`Devis expirant bientôt : ${expiringQuotes.map(q => `${q.reference} (${q.client_name}, expire ${q.valid_until})`).join('; ')}`)
+        contextLines.push(`Devis expirant bientôt : ${expiringQuotes.map(q => `${q.reference} (${clientNameFromJoin((q as any).client) ?? '?'}, expire ${q.valid_until})`).join('; ')}`)
       }
 
       const userPrompt = `${contextLines.join('\n\n')}

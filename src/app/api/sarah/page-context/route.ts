@@ -3,12 +3,21 @@ import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
 
+import { CHANTIER_STATUS_LABELS, INVOICE_STATUS_LABELS, QUOTE_STATUS_LABELS, humanStatus } from '@/lib/status-labels'
+import { CLIENT_NAME_JOIN, clientNameFromJoin } from '@/lib/client'
+
 export const dynamic = 'force-dynamic'
 
 // Retourne un label contextuel riche pour la page courante, en résolvant les IDs en noms réels
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const pathname = searchParams.get('pathname') ?? '/'
+  // Le client transmet le pathname ET la query string de la page courante
+  // combinés (ex: "/finances/invoice-editor?id=..."), car les éditeurs
+  // identifient leur document par un paramètre de requête, pas un segment
+  // de chemin. On les sépare ici pour retrouver les search params de la page.
+  const rawPathname = searchParams.get('pathname') ?? '/'
+  const [pathname, pageQueryString] = rawPathname.split('?')
+  const pageSearchParams = new URLSearchParams(pageQueryString ?? '')
 
   try {
     const orgId = await getCurrentOrganizationId()
@@ -42,7 +51,7 @@ export async function GET(req: NextRequest) {
             type: 'chantier',
             id: chantierId,
             title: data.title,
-            status: data.status,
+            status: humanStatus(CHANTIER_STATUS_LABELS, data.status),
             clientName,
           },
         })
@@ -73,40 +82,47 @@ export async function GET(req: NextRequest) {
     }
 
     // Éditeur de devis (/finances/quote-editor?id=...)
-    const quoteId = new URL(req.url).searchParams.get('quoteId')
-      ?? pathname.match(/\/quote-editor\/([a-zA-Z0-9_-]+)/)?.[1]
-    if (quoteId || pathname.includes('/quote-editor')) {
+    const isQuoteEditor = pathname.includes('/quote-editor')
+    const quoteId = isQuoteEditor
+      ? pageSearchParams.get('id') ?? pathname.match(/\/quote-editor\/([a-zA-Z0-9_-]+)/)?.[1]
+      : null
+    if (quoteId || isQuoteEditor) {
       if (quoteId) {
         const { data } = await supabase
           .from('quotes')
-          .select('reference, client_name, status, total_ttc')
+          .select(`reference, status, total_ttc, ${CLIENT_NAME_JOIN}`)
           .eq('id', quoteId)
           .eq('organization_id', orgId)
           .single()
         if (data) {
+          const clientName = clientNameFromJoin((data as any).client)
           return NextResponse.json({
-            label: `Devis ${data.reference}${data.client_name ? ` — ${data.client_name}` : ''}`,
-            context: { type: 'quote', id: quoteId, reference: data.reference, status: data.status, clientName: data.client_name, totalTtc: data.total_ttc },
+            label: `Devis ${data.reference}${clientName ? ` — ${clientName}` : ''}`,
+            context: { type: 'quote', id: quoteId, reference: data.reference, status: humanStatus(QUOTE_STATUS_LABELS, data.status), clientName, totalTtc: data.total_ttc },
           })
         }
       }
       return NextResponse.json({ label: 'Editeur de devis', context: { type: 'quote' } })
     }
 
-    // Éditeur de facture
-    const invoiceId = pathname.match(/\/invoice-editor\/([a-zA-Z0-9_-]+)/)?.[1]
-    if (invoiceId || pathname.includes('/invoice-editor')) {
+    // Éditeur de facture (/finances/invoice-editor?id=...)
+    const isInvoiceEditor = pathname.includes('/invoice-editor')
+    const invoiceId = isInvoiceEditor
+      ? pageSearchParams.get('id') ?? pathname.match(/\/invoice-editor\/([a-zA-Z0-9_-]+)/)?.[1]
+      : null
+    if (invoiceId || isInvoiceEditor) {
       if (invoiceId) {
         const { data } = await supabase
           .from('invoices')
-          .select('reference, client_name, status, total_ttc')
+          .select(`number, status, total_ttc, ${CLIENT_NAME_JOIN}`)
           .eq('id', invoiceId)
           .eq('organization_id', orgId)
           .single()
         if (data) {
+          const clientName = clientNameFromJoin((data as any).client)
           return NextResponse.json({
-            label: `Facture ${data.reference}${data.client_name ? ` — ${data.client_name}` : ''}`,
-            context: { type: 'invoice', id: invoiceId, reference: data.reference, status: data.status, clientName: data.client_name, totalTtc: data.total_ttc },
+            label: `Facture ${data.number}${clientName ? ` — ${clientName}` : ''}`,
+            context: { type: 'invoice', id: invoiceId, reference: data.number, status: humanStatus(INVOICE_STATUS_LABELS, data.status), clientName, totalTtc: data.total_ttc },
           })
         }
       }

@@ -179,6 +179,7 @@ export type ChantierPlanning = {
   route_order: number | null
   duration_min: number | null
   travel_from_prev_min: number | null
+  arrived_at: string | null
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -351,6 +352,15 @@ export async function getChantierPointages(chantierId: string): Promise<Pointage
   })
 }
 
+// Plafond d'affichage : un chantier avec suivi photo quotidien sur plusieurs mois
+// peut accumuler des centaines de photos. Sans limite, la fiche chantier attend le
+// chargement de toutes les photos + la génération de toutes leurs URLs signées avant
+// de s'afficher. On affiche les 60 plus récentes ; les usages qui ont besoin de
+// l'intégralité (rapport PDF, envoi photos par email) font leur propre requête directe
+// et ne sont pas affectés. Suite possible : bouton "charger plus" côté client pour
+// consulter les photos plus anciennes sans changer ce plafond serveur.
+const CHANTIER_PHOTOS_INITIAL_LIMIT = 60
+
 export async function getChantierPhotos(chantierId: string): Promise<ChantierPhoto[]> {
   const supabase = await createClient()
 
@@ -359,10 +369,12 @@ export async function getChantierPhotos(chantierId: string): Promise<ChantierPho
     .select(`
       id, chantier_id, tache_id, storage_path, title, caption, taken_at, created_at,
       include_in_report, shared_with_client_at,
-      uploader:profiles(full_name)
+      uploader:profiles(full_name),
+      membre:chantier_equipe_membres(prenom, name)
     `)
     .eq('chantier_id', chantierId)
     .order('created_at', { ascending: false })
+    .limit(CHANTIER_PHOTOS_INITIAL_LIMIT)
 
   if (error) {
     console.error('[getChantierPhotos]', error)
@@ -380,20 +392,25 @@ export async function getChantierPhotos(chantierId: string): Promise<ChantierPho
   const urlMap = new Map<string, string>()
   signedUrls?.forEach(item => { if (item.signedUrl && item.path) urlMap.set(item.path, item.signedUrl) })
 
-  return rows.map(p => ({
-    id: p.id,
-    chantier_id: p.chantier_id,
-    tache_id: p.tache_id,
-    storage_path: p.storage_path,
-    title: p.title ?? null,
-    caption: p.caption,
-    taken_at: p.taken_at,
-    created_at: p.created_at,
-    uploaded_by_name: p.uploader?.full_name ?? 'Inconnu',
-    url: urlMap.get(p.storage_path) ?? null,
-    include_in_report: p.include_in_report ?? false,
-    shared_with_client_at: p.shared_with_client_at ?? null,
-  }))
+  return rows.map(p => {
+    const membreName = p.membre
+      ? `${p.membre.prenom ?? ''} ${p.membre.name}`.trim()
+      : null
+    return {
+      id: p.id,
+      chantier_id: p.chantier_id,
+      tache_id: p.tache_id,
+      storage_path: p.storage_path,
+      title: p.title ?? null,
+      caption: p.caption,
+      taken_at: p.taken_at,
+      created_at: p.created_at,
+      uploaded_by_name: p.uploader?.full_name ?? membreName ?? 'Inconnu',
+      url: urlMap.get(p.storage_path) ?? null,
+      include_in_report: p.include_in_report ?? false,
+      shared_with_client_at: p.shared_with_client_at ?? null,
+    }
+  })
 }
 
 export async function getOrgTaskTitles(excludeChantierId: string): Promise<string[]> {
@@ -622,7 +639,7 @@ export async function getAllPlannings(opts?: {
     .select(`
       id, chantier_id, planned_date, start_time, end_time,
       equipe_id, member_id, label, team_size, notes, created_at,
-      route_id, route_order, duration_min, travel_from_prev_min,
+      route_id, route_order, duration_min, travel_from_prev_min, arrived_at,
       chantier:chantiers!inner(title, city, status, organization_id, address_line1, postal_code),
       member:chantier_equipe_membres(prenom, name),
       equipe:chantier_equipes(name)
@@ -673,6 +690,7 @@ export async function getAllPlannings(opts?: {
     route_order: row.route_order ?? null,
     duration_min: row.duration_min ?? null,
     travel_from_prev_min: row.travel_from_prev_min ?? null,
+    arrived_at: row.arrived_at ?? null,
     chantier_title: row.chantier?.title ?? '-',
     chantier_city: row.chantier?.city ?? null,
     chantier_status: row.chantier?.status ?? 'planifie',
@@ -736,6 +754,7 @@ export async function getAllPlannings(opts?: {
       route_order: null,
       duration_min: row.duration_hours ? Math.round(Number(row.duration_hours) * 60) : null,
       travel_from_prev_min: null,
+      arrived_at: null,
       chantier_title: contract?.title ?? 'Entretien',
       chantier_city: chantier?.city ?? contract?.site_city ?? null,
       chantier_status: chantier?.status ?? 'en_cours',

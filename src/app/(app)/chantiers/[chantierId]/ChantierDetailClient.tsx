@@ -2531,6 +2531,7 @@ export default function ChantierDetailClient({
         route_order: null,
         duration_min: null,
         travel_from_prev_min: null,
+        arrived_at: null,
       }])
     }
     return null

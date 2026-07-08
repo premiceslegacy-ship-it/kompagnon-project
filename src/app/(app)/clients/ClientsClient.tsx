@@ -63,6 +63,43 @@ export function statusBadge(status: string | null) {
 
 const LEAD_STATUSES = ['lead_hot', 'lead_cold', 'prospect']
 
+// ─── Suivi relation ───────────────────────────────────────────────────────────
+// Signale les contacts qui méritent une relance : devis en attente de réponse,
+// ou lead/prospect sans aucune interaction depuis 14 jours.
+
+const FOLLOWUP_IDLE_DAYS = 14
+
+type FollowupState =
+  | { kind: 'pending_quotes'; label: string; cls: string }
+  | { kind: 'idle_lead'; label: string; cls: string }
+  | { kind: 'ok'; label: string; cls: string }
+
+export function followupState(client: Client): FollowupState {
+  if ((client.pending_quotes ?? 0) > 0) {
+    return {
+      kind: 'pending_quotes',
+      label: `${client.pending_quotes} devis en attente`,
+      cls: 'text-warning bg-warning/10 border-warning/20',
+    }
+  }
+  if (LEAD_STATUSES.includes(client.status ?? '')) {
+    const reference = client.last_activity_at ?? client.created_at
+    const idleDays = Math.floor((Date.now() - new Date(reference).getTime()) / 86400000)
+    if (idleDays >= FOLLOWUP_IDLE_DAYS) {
+      return {
+        kind: 'idle_lead',
+        label: client.last_activity_at ? `Sans échange depuis ${idleDays} j` : `Jamais contacté (${idleDays} j)`,
+        cls: 'text-danger bg-danger/10 border-danger/20',
+      }
+    }
+  }
+  return { kind: 'ok', label: '—', cls: 'text-secondary' }
+}
+
+export function needsFollowup(client: Client): boolean {
+  return followupState(client).kind !== 'ok'
+}
+
 const SOURCE_OPTIONS = [
   { value: '', label: 'Non renseignée' },
   { value: 'bouche_a_oreille', label: 'Bouche à oreille' },
@@ -674,7 +711,7 @@ function ImportCSVModal({ isOpen, onClose, isLeads = false }: { isOpen: boolean;
 function EmptyState({ filtered }: { filtered: boolean }) {
   return (
     <tr>
-      <td colSpan={7} className="px-6 py-20 text-center">
+      <td colSpan={8} className="px-6 py-20 text-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-20 h-20 flex items-center justify-center">
             {filtered ? <Filter className="w-10 h-10 text-secondary opacity-20" /> : <Building2 className="w-10 h-10 text-secondary opacity-20" />}
@@ -716,6 +753,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
 
   const statusOptions = [
     { value: 'All',       label: 'Tous' },
+    { value: 'followup',  label: 'À relancer' },
     { value: 'active',    label: 'Clients' },
     { value: 'prospect',  label: 'Prospects' },
     { value: 'lead_hot',  label: 'Leads Chauds' },
@@ -736,7 +774,8 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
       const matchesSearch =
         name.includes(searchTerm.toLowerCase()) ||
         (client.email ?? '').toLowerCase().includes(searchTerm.toLowerCase())
-      const matchesStatus = statusFilter === 'All' || client.status === statusFilter
+      const matchesStatus = statusFilter === 'All'
+        || (statusFilter === 'followup' ? needsFollowup(client) : client.status === statusFilter)
       return matchesSearch && matchesStatus
     })
     .sort((a, b) => {
@@ -752,6 +791,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
   const totalClients   = initialClients.filter(c => c.status === 'active').length
   const totalPipeline  = initialClients.filter(c => LEAD_STATUSES.includes(c.status ?? '')).length
   const totalRevenue   = initialClients.filter(c => c.status === 'active').reduce((acc, c) => acc + (c.total_revenue ?? 0), 0)
+  const totalFollowup  = initialClients.filter(needsFollowup).length
 
   const handleExportCSV = () => {
     const headers = ['ID', 'Entreprise', 'Prénom', 'Nom', 'Email', 'Téléphone', 'Statut', 'Source', 'CA Total']
@@ -904,7 +944,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="rounded-3xl card p-6 flex items-center gap-4">
           <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-accent-green/10">
             <Users className="w-6 h-6 text-accent-green" />
@@ -924,6 +964,20 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
             <p className="text-xs text-secondary">leads + prospects</p>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => { setStatusFilter('followup'); setPage(1) }}
+          className={`rounded-3xl card p-6 flex items-center gap-4 text-left transition-all ${totalFollowup > 0 ? 'hover:ring-1 hover:ring-warning/40 cursor-pointer' : 'cursor-default'}`}
+        >
+          <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-warning/10">
+            <AlertCircle className="w-6 h-6 text-warning" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-secondary uppercase tracking-wider">À relancer</p>
+            <p className="text-2xl font-bold text-primary tabular-nums">{totalFollowup}</p>
+            <p className="text-xs text-secondary">devis en attente + leads dormants</p>
+          </div>
+        </button>
         <div className="rounded-3xl card p-6 flex items-center gap-4">
           <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-blue-500/10">
             <Euro className="w-6 h-6 text-blue-500" />
@@ -954,6 +1008,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Email / Tél.</th>
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden lg:table-cell">Source</th>
+                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Suivi</th>
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">CA Total</th>
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden lg:table-cell">Paiement</th>
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
@@ -988,6 +1043,18 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
                     </td>
                     <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
                       <p className="text-xs text-secondary">{sourceLabel(client.source)}</p>
+                    </td>
+                    <td className="px-4 md:px-6 py-4">
+                      {(() => {
+                        const followup = followupState(client)
+                        return followup.kind === 'ok' ? (
+                          <span className="text-xs text-secondary/60">—</span>
+                        ) : (
+                          <span className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-semibold border whitespace-nowrap ${followup.cls}`}>
+                            {followup.label}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="px-4 md:px-6 py-4 text-right">
                       <p className="text-sm font-bold text-primary tabular-nums">

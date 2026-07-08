@@ -91,3 +91,22 @@ export function isLegacyAutoQuoteIntro(client: ClientLike, intro: string | null 
 
   return buildLegacyQuoteIntroVariants(client).includes(normalizedIntro)
 }
+
+/**
+ * Résout le nom client depuis une relation Supabase `client:clients(...)`,
+ * qui peut arriver en objet ou en tableau selon la forme du join.
+ * Les tables métier (quotes, invoices, chantiers) n'ont PAS de colonne
+ * client_name : le nom se calcule toujours depuis cette relation.
+ */
+export function clientNameFromJoin(joined: unknown): string | null {
+  const client = (Array.isArray(joined) ? joined[0] : joined) as ClientLike | null | undefined
+  if (!client) return null
+  return client.company_name?.trim()
+    || joinName(client.first_name, client.last_name)
+    || client.contact_name?.trim()
+    || client.email?.trim()
+    || null
+}
+
+/** Fragment de select Supabase pour résoudre un nom client via la relation. */
+export const CLIENT_NAME_JOIN = 'client:clients(company_name, first_name, last_name, contact_name, email)'

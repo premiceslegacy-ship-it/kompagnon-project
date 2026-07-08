@@ -92,6 +92,9 @@ export type UpdateOrganizationInput = {
   departure_address?: string | null
   departure_postal_code?: string | null
   departure_city?: string | null
+  // Coordonnées GPS du point de départ (migration 153)
+  departure_latitude?: number | null
+  departure_longitude?: number | null
   // Sous-totaux par lot (migration 126)
   default_show_section_subtotals?: boolean
 }
@@ -184,6 +187,18 @@ function normalizeOrganizationInput(input: UpdateOrganizationInput): {
 
   if (hasInputKey(input, 'secondary_activity_ids')) {
     payload.secondary_activity_ids = normalizeSecondaryActivityIds(input.secondary_activity_ids, input.business_activity_id)
+  }
+
+  if (hasInputKey(input, 'departure_latitude') && input.departure_latitude != null) {
+    if (!Number.isFinite(input.departure_latitude) || input.departure_latitude < -90 || input.departure_latitude > 90) {
+      fieldErrors.departure_latitude = 'Latitude invalide.'
+    }
+  }
+
+  if (hasInputKey(input, 'departure_longitude') && input.departure_longitude != null) {
+    if (!Number.isFinite(input.departure_longitude) || input.departure_longitude < -180 || input.departure_longitude > 180) {
+      fieldErrors.departure_longitude = 'Longitude invalide.'
+    }
   }
 
   return { payload, fieldErrors }

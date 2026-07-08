@@ -23,6 +23,9 @@ export type Client = {
   payment_terms_days: number
   internal_notes: string | null
   created_at: string
+  // Suivi relation : calculés par getClients() à partir des devis/factures
+  last_activity_at?: string | null
+  pending_quotes?: number
 }
 
 /**
@@ -48,9 +51,8 @@ export async function getClients(): Promise<Client[]> {
       .order('created_at', { ascending: false }),
     supabase
       .from('invoices')
-      .select('client_id, total_ttc')
+      .select('client_id, total_ttc, created_at, status')
       .eq('organization_id', orgId)
-      .eq('status', 'paid')
       .eq('is_archived', false),
   ])
 
@@ -59,14 +61,43 @@ export async function getClients(): Promise<Client[]> {
     return []
   }
 
+  // Devis : dernière interaction + devis en attente de réponse par client
+  const { data: quoteRows } = await supabase
+    .from('quotes')
+    .select('client_id, status, created_at, sent_at')
+    .eq('organization_id', orgId)
+    .eq('is_archived', false)
+
   const revenueByClient: Record<string, number> = {}
+  const lastActivityByClient: Record<string, string> = {}
+  const pendingQuotesByClient: Record<string, number> = {}
+
+  const bumpActivity = (clientId: string | null, date: string | null | undefined) => {
+    if (!clientId || !date) return
+    if (!lastActivityByClient[clientId] || date > lastActivityByClient[clientId]) {
+      lastActivityByClient[clientId] = date
+    }
+  }
+
   for (const inv of revenueRows ?? []) {
-    if (inv.client_id) revenueByClient[inv.client_id] = (revenueByClient[inv.client_id] ?? 0) + (inv.total_ttc ?? 0)
+    if (!inv.client_id) continue
+    if (inv.status === 'paid') revenueByClient[inv.client_id] = (revenueByClient[inv.client_id] ?? 0) + (inv.total_ttc ?? 0)
+    bumpActivity(inv.client_id, inv.created_at)
+  }
+
+  for (const q of quoteRows ?? []) {
+    if (!q.client_id) continue
+    bumpActivity(q.client_id, q.sent_at ?? q.created_at)
+    if (q.status === 'sent' || q.status === 'viewed') {
+      pendingQuotesByClient[q.client_id] = (pendingQuotesByClient[q.client_id] ?? 0) + 1
+    }
   }
 
   return (data ?? []).map((c: any) => ({
     ...c,
     total_revenue: revenueByClient[c.id] ?? 0,
+    last_activity_at: lastActivityByClient[c.id] ?? null,
+    pending_quotes: pendingQuotesByClient[c.id] ?? 0,
   } as Client))
 }
 
@@ -101,5 +132,5 @@ export async function getClientById(clientId: string): Promise<Client | null> {
   const total_revenue = paidInvoices.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0)
 
   const { paid_invoices: _inv, ...rest } = data as any
-  return { ...rest, total_revenue } as Client
+  return { ...rest, total_revenue, last_activity_at: null, pending_quotes: 0 } as Client
 }

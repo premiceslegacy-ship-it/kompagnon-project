@@ -6,7 +6,7 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { APP_NAME } from '@/lib/brand'
 import { dateParis } from '@/lib/utils'
-import { getPlanningRecipientUserIds, sendPushToUsers } from '@/lib/push'
+import { getPlanningRecipientUserIds, sendPushToMembers, sendPushToOrgPermission, sendPushToPlanningRecipients, sendPushToUsers } from '@/lib/push'
 import { AIModuleDisabledError, AIProviderCreditError, callAI } from '@/lib/ai/callAI'
 
 type PlanningSource = 'chantier' | 'maintenance'
@@ -62,6 +62,35 @@ export type AIPlanningResult = {
   error?: string
 }
 
+const GENERIC_UNASSIGNED_PLANNING_LABELS = new Set([
+  'equipe',
+  'équipe',
+  'team',
+  'intervenant',
+  'intervenants',
+])
+
+function normalizePlanningLabel(label: string | null | undefined): string {
+  return (label ?? '')
+    .trim()
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+}
+
+function validatePlanningAssigneeLabel(data: {
+  label?: string | null
+  memberId?: string | null
+  equipeId?: string | null
+}): string | null {
+  const label = data.label?.trim()
+  if (!label) return 'Libellé du créneau requis.'
+  if (!data.memberId && !data.equipeId && GENERIC_UNASSIGNED_PLANNING_LABELS.has(normalizePlanningLabel(label))) {
+    return 'Choisissez un membre, une équipe existante, ou saisissez un libellé précis pour ce créneau.'
+  }
+  return null
+}
+
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 export async function createPlanningSlot(data: PlanningSlotInput): Promise<{ error: string | null }> {
@@ -75,6 +104,10 @@ export async function createPlanningSlot(data: PlanningSlotInput): Promise<{ err
 
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
+
+  const validationError = validatePlanningAssigneeLabel(data)
+  if (validationError) return { error: validationError }
+
   const { data: chantier } = await supabase
     .from('chantiers')
     .select('id')
@@ -116,7 +149,7 @@ export async function createPlanningSlot(data: PlanningSlotInput): Promise<{ err
 
   if (error) return { error: error.message }
   const recipients = await getPlanningRecipientUserIds(orgId, { memberId: data.memberId, equipeId: data.equipeId })
-  sendPushToUsers(recipients, {
+  sendPushToPlanningRecipients(recipients, {
     title: 'Nouveau créneau planifié',
     body: `${data.label} — ${data.plannedDate}${data.startTime ? ` à ${data.startTime}` : ''}`,
     url: '/mon-espace/dashboard',
@@ -137,6 +170,10 @@ export async function createPlanningSlots(slots: PlanningSlotInput[]): Promise<{
 
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.', created: 0 }
+
+  const invalidSlot = slots.find(slot => validatePlanningAssigneeLabel(slot))
+  if (invalidSlot) return { error: validatePlanningAssigneeLabel(invalidSlot), created: 0 }
+
   const chantierIds = [...new Set(slots.map(s => s.chantierId))]
   if (chantierIds.length > 0) {
     const { data: chantiers } = await supabase
@@ -187,22 +224,33 @@ export async function createPlanningSlots(slots: PlanningSlotInput[]): Promise<{
   const { error } = await supabase.from('chantier_plannings').insert(rows)
   if (error) return { error: error.message, created: 0 }
 
+  // recipientKey préfixé pour distinguer un compte auth (user:) d'un membre sans
+  // compte (member:) tout en gardant un seul Map pour l'agrégation par destinataire.
   const slotByRecipient = new Map<string, PlanningSlotInput[]>()
   for (const slot of slots) {
     const recipients = await getPlanningRecipientUserIds(orgId, { memberId: slot.memberId, equipeId: slot.equipeId })
-    for (const userId of recipients) {
-      const list = slotByRecipient.get(userId) ?? []
+    for (const userId of recipients.userIds) {
+      const key = `user:${userId}`
+      const list = slotByRecipient.get(key) ?? []
       list.push(slot)
-      slotByRecipient.set(userId, list)
+      slotByRecipient.set(key, list)
+    }
+    for (const memberId of recipients.memberIds) {
+      const key = `member:${memberId}`
+      const list = slotByRecipient.get(key) ?? []
+      list.push(slot)
+      slotByRecipient.set(key, list)
     }
   }
-  await Promise.allSettled([...slotByRecipient.entries()].map(([userId, userSlots]) =>
-    sendPushToUsers([userId], {
+  await Promise.allSettled([...slotByRecipient.entries()].map(([recipientKey, userSlots]) => {
+    const [kind, id] = recipientKey.split(':')
+    const payload = {
       title: 'Nouveaux créneaux planifiés',
       body: `${userSlots.length} créneau${userSlots.length > 1 ? 'x' : ''} ajouté${userSlots.length > 1 ? 's' : ''}`,
       url: '/mon-espace/dashboard',
-    }, user.id),
-  ))
+    }
+    return kind === 'user' ? sendPushToUsers([id], payload, user.id) : sendPushToMembers([id], payload)
+  }))
 
   revalidatePath('/chantiers/planning')
   for (const chantierId of new Set(slots.map(s => s.chantierId))) {
@@ -330,6 +378,9 @@ export async function createAITournee(
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { newRouteId: null, error: 'Organisation introuvable.' }
 
+  const invalidSlot = slots.find(slot => validatePlanningAssigneeLabel(slot))
+  if (invalidSlot) return { newRouteId: null, error: validatePlanningAssigneeLabel(invalidSlot) }
+
   const newRouteId = crypto.randomUUID()
 
   // Enregistrer les métadonnées de la tournée
@@ -387,7 +438,7 @@ export async function updatePlanningSlot(id: string, data: PlanningSlotUpdateInp
 
   const { data: existing } = await supabase
     .from('chantier_plannings')
-    .select('id, chantier_id, chantiers!inner(organization_id)')
+    .select('id, chantier_id, label, member_id, equipe_id, chantiers!inner(organization_id)')
     .eq('id', id)
     .single()
 
@@ -424,6 +475,16 @@ export async function updatePlanningSlot(id: string, data: PlanningSlotUpdateInp
   if (data.notes !== undefined) patch.notes = data.notes
   if (data.memberId !== undefined) { patch.member_id = data.memberId; patch.equipe_id = null }
   if (data.equipeId !== undefined) { patch.equipe_id = data.equipeId; patch.member_id = null }
+
+  const nextLabel = data.label ?? (existing as any).label
+  const nextMemberId = data.memberId !== undefined ? data.memberId : (data.equipeId !== undefined ? null : (existing as any).member_id)
+  const nextEquipeId = data.equipeId !== undefined ? data.equipeId : (data.memberId !== undefined ? null : (existing as any).equipe_id)
+  const validationError = validatePlanningAssigneeLabel({
+    label: nextLabel,
+    memberId: nextMemberId,
+    equipeId: nextEquipeId,
+  })
+  if (validationError) return { error: validationError }
 
   const { error } = await supabase.from('chantier_plannings').update(patch).eq('id', id)
   if (error) return { error: error.message }
@@ -559,6 +620,12 @@ export async function duplicatePlanningEntry(
   if (!slot || (slot as any).chantiers?.organization_id !== orgId) {
     return { error: 'Créneau introuvable ou non autorisé.' }
   }
+  const validationError = validatePlanningAssigneeLabel({
+    label: slot.label,
+    memberId: slot.member_id,
+    equipeId: slot.equipe_id,
+  })
+  if (validationError) return { error: validationError }
 
   const { error } = await supabase.from('chantier_plannings').insert({
     chantier_id: slot.chantier_id,
@@ -628,6 +695,17 @@ export async function duplicatePlanningRange(
     travel_from_prev_min: slot.travel_from_prev_min,
     created_by: user.id,
   }))
+  const invalidChantierRow = chantierRows.find(row => validatePlanningAssigneeLabel({
+    label: row.label,
+    memberId: row.member_id,
+    equipeId: row.equipe_id,
+  }))
+  if (invalidChantierRow) return { error: validatePlanningAssigneeLabel({
+    label: invalidChantierRow.label,
+    memberId: invalidChantierRow.member_id,
+    equipeId: invalidChantierRow.equipe_id,
+  }), created }
+
   if (chantierRows.length > 0) {
     const { error } = await supabase.from('chantier_plannings').insert(chantierRows)
     if (error) return { error: error.message, created }
@@ -706,6 +784,9 @@ export async function upsertTourneeSlot(
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { id: null, error: 'Organisation introuvable.' }
 
+  const validationError = validatePlanningAssigneeLabel(data)
+  if (validationError) return { id: null, error: validationError }
+
   // Vérifier que le chantier appartient bien à l'org
   const { data: chantier } = await supabase
     .from('chantiers')
@@ -768,7 +849,7 @@ export async function upsertTourneeSlot(
       .eq('id', existingId)
     if (error) return { id: null, error: error.message }
     const recipients = await getPlanningRecipientUserIds(orgId, { memberId: data.memberId, equipeId: data.equipeId })
-    sendPushToUsers(recipients, {
+    sendPushToPlanningRecipients(recipients, {
       title: 'Créneau mis à jour',
       body: `${data.label} — ${data.plannedDate}${data.startTime ? ` à ${data.startTime}` : ''}`,
       url: '/mon-espace/dashboard',
@@ -785,7 +866,7 @@ export async function upsertTourneeSlot(
 
   if (error) return { id: null, error: error.message }
   const recipients = await getPlanningRecipientUserIds(orgId, { memberId: data.memberId, equipeId: data.equipeId })
-  sendPushToUsers(recipients, {
+  sendPushToPlanningRecipients(recipients, {
     title: 'Nouveau créneau planifié',
     body: `${data.label} — ${data.plannedDate}${data.startTime ? ` à ${data.startTime}` : ''}`,
     url: '/mon-espace/dashboard',
@@ -919,6 +1000,16 @@ export async function duplicateTournee(
     travel_from_prev_min: s.travel_from_prev_min,
     created_by: user.id,
   }))
+  const invalidRow = rows.find(row => validatePlanningAssigneeLabel({
+    label: row.label,
+    memberId: row.member_id,
+    equipeId: row.equipe_id,
+  }))
+  if (invalidRow) return { newRouteId: null, error: validatePlanningAssigneeLabel({
+    label: invalidRow.label,
+    memberId: invalidRow.member_id,
+    equipeId: invalidRow.equipe_id,
+  }) }
 
   const { error: insertError } = await supabase.from('chantier_plannings').insert(rows)
   if (insertError) return { newRouteId: null, error: insertError.message }
@@ -936,6 +1027,8 @@ export async function upsertTourneeRoute(
     departureAddress: string | null
     departurePostalCode: string | null
     departureCity: string | null
+    departureLatitude?: number | null
+    departureLongitude?: number | null
   },
 ): Promise<{ error: string | null }> {
   if (!await hasPermission('chantiers.planning')) return { error: 'Action non autorisée.' }
@@ -953,10 +1046,35 @@ export async function upsertTourneeRoute(
       departure_address: data.departureAddress,
       departure_postal_code: data.departurePostalCode,
       departure_city: data.departureCity,
+      departure_latitude: data.departureLatitude ?? null,
+      departure_longitude: data.departureLongitude ?? null,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'id' })
 
   if (error) return { error: error.message }
+
+  // Amorce le point de départ par défaut de l'organisation si jamais configuré,
+  // pour que le fallback (PDF, tournées sans surcharge) ait une valeur dès la
+  // première saisie faite depuis cette modale.
+  const { data: org } = await supabase
+    .from('organizations')
+    .select('departure_address')
+    .eq('id', orgId)
+    .maybeSingle()
+
+  if (org && !org.departure_address) {
+    await supabase
+      .from('organizations')
+      .update({
+        departure_address: data.departureAddress,
+        departure_postal_code: data.departurePostalCode,
+        departure_city: data.departureCity,
+        departure_latitude: data.departureLatitude ?? null,
+        departure_longitude: data.departureLongitude ?? null,
+      })
+      .eq('id', orgId)
+  }
+
   revalidatePath('/chantiers/planning')
   return { error: null }
 }
@@ -965,6 +1083,8 @@ export async function getTourneeRoute(routeId: string): Promise<{
   departure_address: string | null
   departure_postal_code: string | null
   departure_city: string | null
+  departure_latitude: number | null
+  departure_longitude: number | null
 } | null> {
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
@@ -972,7 +1092,7 @@ export async function getTourneeRoute(routeId: string): Promise<{
 
   const { data } = await supabase
     .from('tournee_routes')
-    .select('departure_address, departure_postal_code, departure_city')
+    .select('departure_address, departure_postal_code, departure_city, departure_latitude, departure_longitude')
     .eq('id', routeId)
     .eq('organization_id', orgId)
     .maybeSingle()
@@ -980,18 +1100,24 @@ export async function getTourneeRoute(routeId: string): Promise<{
   return data ?? null
 }
 
-export async function getAllTourneeRoutes(): Promise<Record<string, { address: string | null; postal_code: string | null; city: string | null }>> {
+export async function getAllTourneeRoutes(): Promise<Record<string, { address: string | null; postal_code: string | null; city: string | null; latitude: number | null; longitude: number | null }>> {
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return {}
 
   const { data } = await supabase
     .from('tournee_routes')
-    .select('id, departure_address, departure_postal_code, departure_city')
+    .select('id, departure_address, departure_postal_code, departure_city, departure_latitude, departure_longitude')
     .eq('organization_id', orgId)
 
   if (!data) return {}
-  return Object.fromEntries(data.map(r => [r.id, { address: r.departure_address, postal_code: r.departure_postal_code, city: r.departure_city }]))
+  return Object.fromEntries(data.map(r => [r.id, {
+    address: r.departure_address,
+    postal_code: r.departure_postal_code,
+    city: r.departure_city,
+    latitude: r.departure_latitude,
+    longitude: r.departure_longitude,
+  }]))
 }
 
 // ─── Agent IA - Parsing langage naturel ──────────────────────────────────────
@@ -1169,7 +1295,7 @@ Règles d'assignation :
 - Si la personne ou l'équipe mentionnée n'existe pas dans les listes, laisser equipeId et memberId à null, mettre le nom dans label, et ajouter le nom dans unknownPeople
 - start_time et end_time au format "HH:MM", null si non précisé
 - team_size = nombre de personnes (1 si non précisé ou si memberId rempli)
-- label = nom de l'équipe ou des personnes mentionnées, sinon "Équipe"
+- label = nom de l'équipe ou des personnes mentionnées. Si aucun membre/équipe n'est résolu, ne mets jamais "Équipe" seul : utilise un libellé précis comme "Intervenant à préciser - [mission]" ou le nom libre mentionné.
 - Si un créneau couvre "toute la journée", start_time = "08:00", end_time = "17:00"
 - Si "matin" : start_time = "08:00", end_time = "12:00"
 - Si "après-midi" : start_time = "13:00", end_time = "17:00"
@@ -1345,4 +1471,75 @@ Retourne UNIQUEMENT ce JSON (sans markdown) :
     console.error('[planWeekWithAI]', error)
     return { slots: [], deletions: [], unknownPeople: [], tours: [], summary: '', error: 'Réponse IA invalide. Reformulez votre demande.' }
   }
+}
+
+export async function setPlanningArrivedAt(slotId: string, arrivedAt: string): Promise<{ error: string | null }> {
+  if (!await hasPermission('chantiers.manage_pointages')) return { error: 'Action non autorisée.' }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+
+  const { data: { user } } = await supabase.auth.getUser()
+
+  const { data: existing } = await supabase
+    .from('chantier_plannings')
+    .select('id, chantier_id, member:chantier_equipe_membres(prenom, name), chantiers!inner(organization_id, title)')
+    .eq('id', slotId)
+    .single()
+
+  if (!existing || (existing as any).chantiers?.organization_id !== orgId) {
+    return { error: 'Créneau introuvable ou non autorisé.' }
+  }
+
+  const { error } = await supabase
+    .from('chantier_plannings')
+    .update({ arrived_at: arrivedAt })
+    .eq('id', slotId)
+
+  if (error) return { error: error.message }
+
+  const memberInfo = (existing as any).member
+  const memberLabel = memberInfo?.prenom ?? memberInfo?.name ?? 'Un intervenant'
+  const chantierTitle = (existing as any).chantiers?.title ?? 'Chantier'
+  sendPushToOrgPermission(
+    orgId,
+    'chantiers.manage_pointages',
+    {
+      title: 'Arrivée sur site',
+      body: `${memberLabel} est arrivé sur ${chantierTitle}`,
+      url: `/chantiers/${(existing as any).chantier_id}`,
+    },
+    user?.id ?? null,
+  ).catch(() => {})
+
+  revalidatePath('/chantiers/planning')
+  return { error: null }
+}
+
+export async function clearPlanningArrivedAt(slotId: string): Promise<{ error: string | null }> {
+  if (!await hasPermission('chantiers.manage_pointages')) return { error: 'Action non autorisée.' }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return { error: 'Organisation introuvable.' }
+
+  const { data: existing } = await supabase
+    .from('chantier_plannings')
+    .select('id, chantiers!inner(organization_id)')
+    .eq('id', slotId)
+    .single()
+
+  if (!existing || (existing as any).chantiers?.organization_id !== orgId) {
+    return { error: 'Créneau introuvable ou non autorisé.' }
+  }
+
+  const { error } = await supabase
+    .from('chantier_plannings')
+    .update({ arrived_at: null })
+    .eq('id', slotId)
+
+  if (error) return { error: error.message }
+  revalidatePath('/chantiers/planning')
+  return { error: null }
 }

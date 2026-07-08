@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyMemberToken } from '@/lib/data/mutations/members'
+import { verifyMemberToken, sendMemberSpaceInviteUnchecked } from '@/lib/data/mutations/members'
 import { setMemberSessionCookie } from '@/lib/auth/member-session'
 
 export async function GET(req: NextRequest) {
@@ -9,11 +9,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/mon-espace/request-access', req.url))
   }
 
-  const session = await verifyMemberToken(token)
-  if (!session) {
+  const result = await verifyMemberToken(token)
+
+  if (result.status === 'not_found') {
     return NextResponse.redirect(new URL('/mon-espace/request-access?error=invalid_token', req.url))
   }
 
-  await setMemberSessionCookie(session.memberId, session.organizationId)
+  if (result.status === 'expired') {
+    // Auto-renvoi transparent : on connaît déjà le memberId, pas besoin de refaire saisir l'email.
+    await sendMemberSpaceInviteUnchecked(result.memberId).catch(() => {})
+    return NextResponse.redirect(new URL('/mon-espace/request-access?error=expired_renewed', req.url))
+  }
+
+  await setMemberSessionCookie(result.memberId, result.organizationId)
   return NextResponse.redirect(new URL('/mon-espace/dashboard', req.url))
 }

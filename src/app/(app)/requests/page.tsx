@@ -33,6 +33,7 @@ export type QuoteRequest = {
   attachments: RequestAttachment[] | null
   type: string
   catalog_items: CatalogRequestItem[] | null
+  freeform_notes: string | null
   chantier_address_line1: string | null
   chantier_postal_code: string | null
   chantier_city: string | null
@@ -49,7 +50,7 @@ async function getQuoteRequests(): Promise<QuoteRequest[]> {
 
   const { data, error } = await supabase
     .from('quote_requests')
-    .select('id, name, email, phone, company_name, subject, description, prestation_type, dimensions, attachment_url, attachments, type, catalog_items, chantier_address_line1, chantier_postal_code, chantier_city, status, client_id, quote_id, created_at')
+    .select('id, name, email, phone, company_name, subject, description, prestation_type, dimensions, attachment_url, attachments, type, catalog_items, freeform_notes, chantier_address_line1, chantier_postal_code, chantier_city, status, client_id, quote_id, created_at')
     .eq('organization_id', orgId)
     .neq('status', 'archived')
     .order('created_at', { ascending: false })

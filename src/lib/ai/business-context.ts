@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getBusinessActivityById, normalizeSecondaryActivityIds, type BusinessActivityId, type BusinessProfile } from '@/lib/catalog-context'
 import { METAL_LABELS, type MetalCode } from '@/lib/metal-prices'
+import { getVerticalPackDefinition, type VerticalPackId } from '@/lib/vertical-packs'
 
 export type MetalPriceGridContext = {
   label: string
@@ -19,6 +20,8 @@ export type BusinessContext = {
   orgName: string
   hasMetalPricing: boolean
   metalPriceGrids: MetalPriceGridContext[]
+  verticalPackId: VerticalPackId | null
+  verticalPackLabel: string | null
 }
 
 export async function getBusinessContext(orgId: string): Promise<BusinessContext> {
@@ -27,7 +30,7 @@ export async function getBusinessContext(orgId: string): Promise<BusinessContext
   const [{ data: org }, { data: grids }] = await Promise.all([
     supabase
       .from('organizations')
-      .select('name, sector, business_profile, business_activity_id, secondary_activity_ids, has_metal_pricing')
+      .select('name, sector, business_profile, business_activity_id, secondary_activity_ids, has_metal_pricing, business_vertical_pack')
       .eq('id', orgId)
       .single(),
     supabase
@@ -59,6 +62,8 @@ export async function getBusinessContext(orgId: string): Promise<BusinessContext
     unit: g.unit,
   }))
 
+  const verticalPack = getVerticalPackDefinition(org?.business_vertical_pack ?? null)
+
   return {
     businessActivityId: activity?.id ?? null,
     businessProfile: activity?.businessProfile ?? profile ?? 'btp',
@@ -69,6 +74,8 @@ export async function getBusinessContext(orgId: string): Promise<BusinessContext
     orgName: org?.name ?? 'cette entreprise',
     hasMetalPricing,
     metalPriceGrids,
+    verticalPackId: verticalPack?.id ?? null,
+    verticalPackLabel: verticalPack?.label ?? null,
   }
 }
 
@@ -102,6 +109,14 @@ export function formatBusinessContextForPrompt(ctx: BusinessContext): string {
       lines.push('Exemple de warning obligatoire : "Prix matière proposé depuis cours de référence et coefficient client. À valider selon fournisseur, format, épaisseur, coupe et livraison."')
     } else {
       lines.push('Aucune grille matière configurée. Avertir l\'artisan qu\'aucun coefficient n\'est disponible et lui demander de les configurer dans ses paramètres avant de valider le prix.')
+    }
+  }
+
+  if (ctx.verticalPackId) {
+    const pack = getVerticalPackDefinition(ctx.verticalPackId)
+    if (pack) {
+      lines.push('')
+      lines.push(pack.aiPromptGuidance)
     }
   }
 

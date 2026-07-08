@@ -2,11 +2,14 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { renderDgdPdfBufferByChantierId } from '@/lib/pdf/server'
+import { isValidUuid } from '@/lib/security'
 
 export async function GET(
   req: Request,
   { params }: { params: { chantierId: string } },
 ) {
+  if (!isValidUuid(params.chantierId)) return new NextResponse('Chantier introuvable', { status: 404 })
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return new NextResponse('Non authentifie', { status: 401 })

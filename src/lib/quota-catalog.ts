@@ -167,7 +167,11 @@ export const MODULES_BY_TIER: Record<SubscriptionTier, Record<ProductModuleKey, 
     whatsapp_ocr: false,
     whatsapp_proactive: false,
   },
-  expert: Object.fromEntries(PRODUCT_MODULE_KEYS.map((key) => [key, true])) as Record<ProductModuleKey, boolean>,
+  // WhatsApp suspendu (vérification Meta en attente) : exclu explicitement même
+  // en Expert, qui active tous les autres modules par défaut.
+  expert: Object.fromEntries(
+    PRODUCT_MODULE_KEYS.map((key) => [key, !key.startsWith('whatsapp_')])
+  ) as Record<ProductModuleKey, boolean>,
 }
 
 const UNLIMITED = -1

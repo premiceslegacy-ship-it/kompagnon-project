@@ -8,7 +8,7 @@ import { getOrganization } from '@/lib/data/queries/organization'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import QuotePDF from '@/components/pdf/QuotePDF'
 import type { Client } from '@/lib/data/queries/clients'
-import { assertSafeExternalFetchUrl } from '@/lib/security'
+import { assertSafeExternalFetchUrl, isValidUuid } from '@/lib/security'
 import { renderQuotePdfBufferById } from '@/lib/pdf/server'
 
 export const dynamic = 'force-dynamic'
@@ -32,6 +32,8 @@ export async function GET(
   req: Request,
   { params }: { params: { id: string } },
 ) {
+  if (!isValidUuid(params.id)) return new NextResponse('Devis introuvable', { status: 404 })
+
   const url = new URL(req.url)
   const token = url.searchParams.get('token')
   const contractToken = url.searchParams.get('contractToken')

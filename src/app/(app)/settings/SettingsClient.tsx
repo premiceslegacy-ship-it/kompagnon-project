@@ -282,9 +282,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         email: organization?.email ?? '',
         phone: organization?.phone ?? '',
         business_activity: initialBusinessSelection.activity.id as BusinessActivityId,
-        departure_address: organization?.departure_address ?? '',
-        departure_postal_code: organization?.departure_postal_code ?? '',
-        departure_city: organization?.departure_city ?? '',
     });
 
     const [legalDetails, setLegalDetails] = useState({
@@ -819,9 +816,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 signatory_name: signatureDetails.signatory_name.trim() || null,
                 signatory_role: signatureDetails.signatory_role.trim() || null,
                 signature_image: signatureDetails.signature_image,
-                departure_address: companyDetails.departure_address.trim() || null,
-                departure_postal_code: companyDetails.departure_postal_code.trim() || null,
-                departure_city: companyDetails.departure_city.trim() || null,
             });
             if (result.error) {
                 const fieldErrors = result.fieldErrors ?? {};
@@ -1173,19 +1167,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 <OrgFieldError field="email" />
                             </div>
                             <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Téléphone</label><input type="tel" value={companyDetails.phone} onChange={e => setCompanyDetailsDirty({ ...companyDetails, phone: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" /></div>
-                            <div className="space-y-2 md:col-span-2 pt-2">
-                                <label className="text-sm font-semibold text-secondary">Adresse de départ des tournées</label>
-                                <p className="text-xs text-secondary">Point de départ par défaut pour les feuilles de route (dépôt, atelier…). Peut être surchargé par tournée directement depuis le planning.</p>
-                                <input type="text" placeholder="Ex : 15 avenue de l'Atelier" value={companyDetails.departure_address} onChange={e => setCompanyDetailsDirty({ ...companyDetails, departure_address: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-sm font-semibold text-secondary">Code postal (départ)</label>
-                                <input type="text" inputMode="numeric" placeholder="Ex : 69007" value={companyDetails.departure_postal_code} onChange={e => setCompanyDetailsDirty({ ...companyDetails, departure_postal_code: formatPostalCodeInput(e.target.value) })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all tabular-nums" />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-sm font-semibold text-secondary">Ville (départ)</label>
-                                <input type="text" placeholder="Ex : Lyon" value={companyDetails.departure_city} onChange={e => setCompanyDetailsDirty({ ...companyDetails, departure_city: e.target.value })} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" />
-                            </div>
                         </div>
                     </div>
                     <div className="h-px w-full bg-[var(--elevation-border)]"></div>

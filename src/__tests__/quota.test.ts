@@ -31,11 +31,18 @@ describe('quota catalog', () => {
 
 describe('organization modules', () => {
   it('normalizes every module key', () => {
-    const modules = normalizeOrganizationModules({ quote_ai: false, whatsapp_agent: true })
+    const modules = normalizeOrganizationModules({ quote_ai: false })
 
     expect(Object.keys(modules).sort()).toEqual([...ORGANIZATION_MODULE_KEYS].sort())
     expect(modules.quote_ai).toBe(false)
-    expect(modules.whatsapp_agent).toBe(true)
+  })
+
+  it('never activates whatsapp modules, even with an explicit input (module suspendu)', () => {
+    const modules = normalizeOrganizationModules({ whatsapp_agent: true, whatsapp_ocr: true, whatsapp_proactive: true })
+
+    expect(modules.whatsapp_agent).toBe(false)
+    expect(modules.whatsapp_ocr).toBe(false)
+    expect(modules.whatsapp_proactive).toBe(false)
   })
 })
 

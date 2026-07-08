@@ -662,6 +662,52 @@ ${renderCTA('Ouvrir mon espace →', spaceUrl)}
   return { subject, html }
 }
 
+// ─── Espace membre - rappel avant expiration du lien magique ─────────────────
+
+export function buildMemberSpaceInviteReminderEmail({
+  orgName,
+  memberFirstName,
+  spaceUrl,
+}: {
+  orgName: string
+  memberFirstName: string | null
+  spaceUrl: string
+}): { subject: string; html: string } {
+  const subject = `Votre accès ${orgName} expire dans 3 jours`
+
+  const greeting = memberFirstName ? `Bonjour ${escHtml(memberFirstName)},` : 'Bonjour,'
+
+  const body = `
+<h1 style="${H1}">
+  Votre lien d'accès expire bientôt
+</h1>
+<p style="margin:0 0 16px;font-size:15px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;">
+  ${greeting}
+</p>
+<p style="${BODY_P}">
+  Le lien vous donnant accès à votre espace ${escHtml(orgName)} (créneaux, pointage d'heures, rapports) expire dans <strong style="color:#FFFFFF;">3 jours</strong>. Cliquez ci-dessous pour continuer à y accéder.
+</p>
+${renderCTA('Ouvrir mon espace →', spaceUrl)}
+<p style="${SMALL_P}">
+  Passé ce délai, vous devrez redemander un nouveau lien depuis la page d'accès.
+</p>`
+
+  const fallback = `
+<p style="margin:0;font-size:12px;color:#444444;font-family:'Inter',sans-serif;">
+  Lien alternatif :<br/>
+  <a href="${spaceUrl}" style="color:#555555;word-break:break-all;">${spaceUrl}</a>
+</p>`
+
+  const html = renderEmailShell({
+    title: subject,
+    headerName: orgName,
+    bodyHtml: body,
+    fallbackLinkHtml: fallback,
+  })
+
+  return { subject, html }
+}
+
 // ─── Rapport mensuel d'heures (membre individuel) ─────────────────────────────
 
 export function buildMemberMonthlyReportEmail({

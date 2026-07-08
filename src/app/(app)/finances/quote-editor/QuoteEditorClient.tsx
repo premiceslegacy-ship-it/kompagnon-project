@@ -1241,7 +1241,10 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     }
   }
 
-  async function handleAddFreeItem(sectionTempId: string) {
+  // internal = true : ligne de coût interne (comptée dans la marge, absente du
+  // PDF client). Exposé par le bouton "Coût interne" pour que l'artisan n'ait
+  // pas à connaître le bouton œil de chaque ligne.
+  async function handleAddFreeItem(sectionTempId: string, internal = false) {
     const qId = await ensureQuote()
     if (!qId) return
     const sec = sectionsRef.current.find(s => s._tempId === sectionTempId)!
@@ -1251,12 +1254,12 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     deletedItemKeys.current.delete(key)
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: false, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, price_pending: false, labor_category: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: internal, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, price_pending: false, labor_category: null }] }
         : s
     ))
     const sectionId = await ensureSectionSaved(sectionTempId, qId)
     if (!sectionId) return
-    await createQuoteItemAndFinalize(sectionTempId, tempId, qId, sectionId, { quote_id: qId, section_id: sectionId, type: 'custom', description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, position: pos })
+    await createQuoteItemAndFinalize(sectionTempId, tempId, qId, sectionId, { quote_id: qId, section_id: sectionId, type: 'custom', description: '', quantity: 1, unit: 'u', unit_price: 0, vat_rate: defaultVatRate, position: pos, is_internal: internal })
   }
 
   function buildMetalGridLineLabel(grid: MetalPriceGrid) {
@@ -3417,6 +3420,13 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
                   className="flex items-center gap-2 text-sm font-semibold text-purple-600 hover:text-purple-500 px-4 py-2 rounded-full border border-purple-200 dark:border-purple-500/20 bg-purple-500/10 transition-colors"
                 >
                   <Package className="w-4 h-4" />Équipement
+                </button>
+                <button
+                  onClick={() => handleAddFreeItem(sec._tempId, true)}
+                  title="Ajoute une ligne de coût qui compte dans votre marge mais n'apparaît pas sur le PDF client."
+                  className="flex items-center gap-2 text-sm font-semibold text-amber-600 hover:text-amber-500 px-4 py-2 rounded-full border border-amber-200 dark:border-amber-500/20 bg-amber-500/10 transition-colors"
+                >
+                  <EyeOff className="w-4 h-4" />Coût interne
                 </button>
               </div>
 

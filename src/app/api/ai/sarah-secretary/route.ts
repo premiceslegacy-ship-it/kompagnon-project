@@ -10,6 +10,14 @@ import { fetchRAGContext } from '@/lib/ai/rag'
 import { generateEmbedding } from '@/lib/ai/embeddings'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { deepLinkForSarahAction, proposeSarahAction } from '@/lib/sarah/actions'
+import { findReplacementCandidates, findPlanningConflicts, findMissingPointages } from '@/lib/data/mutations/planning-agent'
+import { getMemberAbsences } from '@/lib/data/mutations/absences'
+import { getDashboardStats } from '@/lib/data/queries/dashboard'
+import { clientNameFromJoin } from '@/lib/client'
+
+// Les tables quotes/invoices/chantiers n'ont pas de colonne client_name :
+// le nom se résout via la relation clients (voir clientNameFromJoin).
+const CLIENT_JOIN = 'client:clients(company_name, first_name, last_name, contact_name, email)'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,6 +56,128 @@ const SARAH_TOOLS = [
           query: { type: 'string', description: 'Nom, société ou email du client à rechercher.' },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'find_replacement_candidates',
+      description: 'Chercher qui peut remplacer un membre absent sur un chantier à une date et un horaire donnés. Exclut automatiquement les membres déjà occupés ou déclarés absents sur cette période. Utiliser avant de proposer un remplacement, jamais en devinant une disponibilité.',
+      parameters: {
+        type: 'object',
+        properties: {
+          chantierId: { type: 'string', description: 'ID du chantier concerné (utiliser les IDs [CHANTIER:...] du contexte).' },
+          plannedDate: { type: 'string', description: 'Date du créneau au format YYYY-MM-DD.' },
+          startTime: { type: 'string', description: 'Heure de début HH:MM, si connue.' },
+          endTime: { type: 'string', description: 'Heure de fin HH:MM, si connue.' },
+          excludeMemberId: { type: 'string', description: 'ID du membre absent à ne pas proposer comme remplaçant.' },
+        },
+        required: ['chantierId', 'plannedDate'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'check_planning_conflicts',
+      description: 'Détecter les conflits de planning (même membre ou équipe affecté sur deux créneaux qui se chevauchent) sur une période donnée. Utiliser quand l\'utilisateur demande un point sur les conflits ou avant de préparer un planning cohérent.',
+      parameters: {
+        type: 'object',
+        properties: {
+          fromDate: { type: 'string', description: 'Date de début YYYY-MM-DD.' },
+          toDate: { type: 'string', description: 'Date de fin YYYY-MM-DD.' },
+        },
+        required: ['fromDate', 'toDate'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'check_missing_pointages',
+      description: 'Lister les créneaux planifiés à une date donnée qui n\'ont pas encore de pointage associé. Ne signifie pas que la personne était absente : signale uniquement une absence de pointage à vérifier.',
+      parameters: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', description: 'Date au format YYYY-MM-DD.' },
+        },
+        required: ['date'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'check_member_absences',
+      description: 'Vérifier les absences déjà déclarées pour un membre ou sur une période, avant de proposer un remplacement ou de répondre sur la disponibilité de quelqu\'un.',
+      parameters: {
+        type: 'object',
+        properties: {
+          memberId: { type: 'string', description: 'ID du membre à vérifier, si connu.' },
+          fromDate: { type: 'string', description: 'Début de la période YYYY-MM-DD.' },
+          toDate: { type: 'string', description: 'Fin de la période YYYY-MM-DD.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_documents',
+      description: 'Rechercher des devis ou des factures par référence, nom de client ou statut, au-delà des documents récents du contexte. Utiliser dès que l\'utilisateur mentionne un devis ou une facture introuvable dans le contexte.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['quote', 'invoice', 'both'], description: 'Type de document recherché.' },
+          query: { type: 'string', description: 'Référence, numéro ou nom de client.' },
+          status: { type: 'string', description: 'Filtre statut facultatif : draft, sent, viewed, signed, refused, paid, partial, overdue.' },
+        },
+        required: ['kind'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_chantier_details',
+      description: 'Obtenir le détail complet d\'un chantier : tâches et leur état, planning à venir, dernières notes, dépenses. Utiliser pour toute question précise sur un chantier donné (avancement, ce qui reste à faire, coûts), y compris si le chantier n\'est pas dans le contexte : la recherche par nom fonctionne.',
+      parameters: {
+        type: 'object',
+        properties: {
+          chantierId: { type: 'string', description: 'ID du chantier si connu (IDs [CHANTIER:...] du contexte).' },
+          query: { type: 'string', description: 'Nom (même partiel) du chantier si l\'ID n\'est pas connu.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_client_overview',
+      description: 'Obtenir en un seul appel la situation complète d\'un client précis : ses chantiers actifs, ses factures en attente ou en retard, ses devis en attente. Utiliser systématiquement dès que la question porte sur "ce client a-t-il des factures / chantiers / devis en cours" ou toute question croisant plusieurs sujets pour un même client nommé, plutôt que d\'enchaîner get_chantier_details et search_documents séparément.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Nom, société ou email du client à vérifier.' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_financial_summary',
+      description: 'Donner le chiffre facturé TTC, l\'encaissé, les devis en attente et le nombre de chantiers en cours sur un mois donné. Utiliser pour toute question sur le CA, la facturation, les encaissements ou le nombre de chantiers actifs — ce sont les mêmes chiffres que ceux affichés sur le tableau de bord.',
+      parameters: {
+        type: 'object',
+        properties: {
+          month: { type: 'string', description: 'Mois au format YYYY-MM. Si absent, le mois courant est utilisé.' },
+        },
+        required: [],
       },
     },
   },
@@ -178,6 +308,322 @@ async function executeSarahTool(
       return `[${c.id}] ${name}${c.email ? ` — ${c.email}` : ''}`
     })
     return `Clients trouvés :\n${lines.join('\n')}`
+  }
+
+  if (name === 'find_replacement_candidates') {
+    const chantierId = (args.chantierId as string | undefined)?.trim()
+    const plannedDate = (args.plannedDate as string | undefined)?.trim()
+    if (!chantierId || !plannedDate) return 'Chantier ou date manquant pour chercher un remplaçant.'
+
+    const { candidates, error } = await findReplacementCandidates({
+      chantierId,
+      plannedDate,
+      startTime: (args.startTime as string | undefined) ?? null,
+      endTime: (args.endTime as string | undefined) ?? null,
+      excludeMemberId: (args.excludeMemberId as string | undefined) ?? null,
+    })
+    if (error) return `Erreur : ${error}`
+    if (candidates.length === 0) return 'Aucun membre trouvé dans l\'organisation.'
+
+    const available = candidates.filter(c => !c.exclusionReason)
+    const excluded = candidates.filter(c => c.exclusionReason)
+    const lines = [
+      ...available.map(c => `[MEMBER:${c.memberId}] ${c.name} - ${c.reasons.join(' ')}`),
+      ...excluded.slice(0, 5).map(c => `[MEMBER:${c.memberId}] ${c.name} - écarté : ${c.exclusionReason}`),
+    ]
+    return `Candidats pour ce créneau (disponibilité non confirmée sans donnée positive, à valider avec la personne) :\n${lines.join('\n')}`
+  }
+
+  if (name === 'check_planning_conflicts') {
+    const fromDate = (args.fromDate as string | undefined)?.trim()
+    const toDate = (args.toDate as string | undefined)?.trim()
+    if (!fromDate || !toDate) return 'Période manquante pour vérifier les conflits.'
+
+    const { conflicts, error } = await findPlanningConflicts(fromDate, toDate)
+    if (error) return `Erreur : ${error}`
+    if (conflicts.length === 0) return 'Aucun conflit de planning détecté sur cette période.'
+
+    const lines = conflicts.map(c => `${c.name} le ${c.date} : ${c.slots.map(s => `"${s.chantierTitle}" ${s.startTime ?? '?'}-${s.endTime ?? '?'}`).join(' / ')}`)
+    return `Conflits détectés :\n${lines.join('\n')}`
+  }
+
+  if (name === 'check_missing_pointages') {
+    const date = (args.date as string | undefined)?.trim()
+    if (!date) return 'Date manquante.'
+
+    const { missing, error } = await findMissingPointages(date)
+    if (error) return `Erreur : ${error}`
+    if (missing.length === 0) return `Aucun pointage manquant détecté pour le ${date}.`
+
+    const lines = missing.map(m => `[SLOT:${m.slotId}] "${m.chantierTitle}" - ${m.memberName ?? m.label}${m.startTime ? ` - ${m.startTime}${m.endTime ? `-${m.endTime}` : ''}` : ''}${m.memberId ? ` [MEMBER:${m.memberId}]` : ''}`)
+    return `Pointages manquants pour le ${date} (absence de pointage, pas nécessairement absence réelle) :\n${lines.join('\n')}`
+  }
+
+  if (name === 'check_member_absences') {
+    const absences = await getMemberAbsences({
+      memberId: (args.memberId as string | undefined) ?? undefined,
+      fromDate: (args.fromDate as string | undefined) ?? undefined,
+      toDate: (args.toDate as string | undefined) ?? undefined,
+    })
+    if (absences.length === 0) return 'Aucune absence déclarée trouvée pour cette recherche.'
+    const lines = absences.map(a => `[MEMBER:${a.member_id}] du ${a.start_date} au ${a.end_date}${a.reason ? ` - ${a.reason}` : ''}`)
+    return `Absences déclarées :\n${lines.join('\n')}`
+  }
+
+  if (name === 'search_documents') {
+    const kind = (args.kind as string | undefined) ?? 'both'
+    const query = (args.query as string | undefined)?.trim()
+    const status = (args.status as string | undefined)?.trim()
+    if (!query && !status) return 'Précisez une référence, un client ou un statut à rechercher.'
+
+    const supabase = await createClient()
+    const pattern = query ? `%${query.replace(/[%_]/g, '\\$&')}%` : null
+    const lines: string[] = []
+
+    // Le nom client vit dans la table clients : on résout d'abord les clients
+    // correspondants pour inclure leurs documents dans la recherche.
+    let matchingClientIds: string[] = []
+    if (pattern) {
+      const clientResults = await Promise.all(
+        (['company_name', 'contact_name', 'first_name', 'last_name'] as const).map(column =>
+          supabase.from('clients').select('id').eq('organization_id', orgId).ilike(column, pattern).limit(10),
+        ),
+      )
+      matchingClientIds = [...new Set(clientResults.flatMap(r => (r.data ?? []).map(c => c.id)))]
+    }
+    // "reference" n'existe que sur quotes, pas sur invoices (colonne number
+    // uniquement) : deux filtres distincts pour éviter une erreur PostgREST
+    // silencieuse sur .or() côté invoices.
+    const clientIdFilter = matchingClientIds.length ? [`client_id.in.(${matchingClientIds.join(',')})`] : []
+    const quoteOrFilter = pattern
+      ? [`reference.ilike.${pattern}`, `number.ilike.${pattern}`, ...clientIdFilter].join(',')
+      : null
+    const invoiceOrFilter = pattern
+      ? [`number.ilike.${pattern}`, ...clientIdFilter].join(',')
+      : null
+
+    if (kind === 'quote' || kind === 'both') {
+      let q = supabase
+        .from('quotes')
+        .select(`id, reference, number, status, total_ttc, created_at, valid_until, ${CLIENT_JOIN}`)
+        .eq('organization_id', orgId)
+        .order('created_at', { ascending: false })
+        .limit(8)
+      if (quoteOrFilter) q = q.or(quoteOrFilter)
+      if (status) q = q.eq('status', status)
+      const { data } = await q
+      for (const d of data ?? []) {
+        lines.push(`Devis [${d.id}] ${d.reference ?? d.number ?? '?'} - ${clientNameFromJoin((d as any).client) ?? '?'} - statut ${d.status} - ${d.total_ttc != null ? `${Number(d.total_ttc).toFixed(2)} €` : '?'}${d.valid_until ? ` - valide jusqu'au ${d.valid_until}` : ''}`)
+      }
+    }
+
+    if (kind === 'invoice' || kind === 'both') {
+      let q = supabase
+        .from('invoices')
+        .select(`id, number, status, total_ttc, total_paid, due_date, ${CLIENT_JOIN}`)
+        .eq('organization_id', orgId)
+        .order('created_at', { ascending: false })
+        .limit(8)
+      if (invoiceOrFilter) q = q.or(invoiceOrFilter)
+      if (status) q = q.eq('status', status)
+      const { data } = await q
+      for (const d of data ?? []) {
+        lines.push(`Facture [${d.id}] ${d.number ?? '?'} - ${clientNameFromJoin((d as any).client) ?? '?'} - statut ${d.status} - ${d.total_ttc != null ? `${Number(d.total_ttc).toFixed(2)} €` : '?'}${d.total_paid ? ` (encaissé ${Number(d.total_paid).toFixed(2)} €)` : ''}${d.due_date ? ` - échéance ${d.due_date}` : ''}`)
+      }
+    }
+
+    if (lines.length === 0) return 'Aucun document trouvé pour cette recherche.'
+    return `Documents trouvés :\n${lines.join('\n')}`
+  }
+
+  if (name === 'get_chantier_details') {
+    const chantierIdArg = (args.chantierId as string | undefined)?.trim()
+    const query = (args.query as string | undefined)?.trim()
+    if (!chantierIdArg && !query) return 'Précisez un ID ou un nom de chantier.'
+
+    const supabase = await createClient()
+    let chantier: { id: string; title: string; status: string; budget_ht: number | null; city: string | null; client?: unknown } | null = null
+
+    if (chantierIdArg) {
+      const { data } = await supabase
+        .from('chantiers')
+        .select(`id, title, status, budget_ht, city, ${CLIENT_JOIN}`)
+        .eq('id', chantierIdArg)
+        .eq('organization_id', orgId)
+        .maybeSingle()
+      chantier = data
+    }
+
+    if (!chantier && query) {
+      const pattern = `%${query.replace(/[%_]/g, '\\$&')}%`
+
+      // Le nom de chantier peut être différent du nom du client recherché
+      // (ex: "Opération atelier" pour le client "Groupe Deschamps Industrie") :
+      // on cherche par titre de chantier ET par client associé, pas seulement le titre.
+      const clientMatches = await Promise.all(
+        (['company_name', 'contact_name', 'first_name', 'last_name'] as const).map(column =>
+          supabase.from('clients').select('id').eq('organization_id', orgId).ilike(column, pattern).limit(10),
+        ),
+      )
+      const matchingClientIds = [...new Set(clientMatches.flatMap(r => (r.data ?? []).map(c => c.id)))]
+
+      let q = supabase
+        .from('chantiers')
+        .select(`id, title, status, budget_ht, city, ${CLIENT_JOIN}`)
+        .eq('organization_id', orgId)
+        .eq('is_archived', false)
+        .order('created_at', { ascending: false })
+        .limit(5)
+      q = matchingClientIds.length
+        ? q.or(`title.ilike.${pattern},client_id.in.(${matchingClientIds.join(',')})`)
+        : q.ilike('title', pattern)
+      const { data: matches, error: matchError } = await q
+      if (process.env.NODE_ENV !== 'production' && matchError) {
+        console.log('[sarah get_chantier_details] match error', matchError.message, 'pattern:', pattern)
+      }
+      if (matches && matches.length > 1) {
+        return `Plusieurs chantiers correspondent à "${query}" :\n${matches.map(m => `[CHANTIER:${m.id}] ${m.title} - ${clientNameFromJoin((m as any).client) ?? '?'} - ${m.status}`).join('\n')}\nRelance l'outil avec le chantierId voulu.`
+      }
+      chantier = matches?.[0] ?? null
+    }
+
+    if (!chantier) return 'Chantier introuvable.'
+    const chantierId = chantier.id
+
+    const [{ data: taches }, { data: plannings }, { data: notes }, { data: expenses }] = await Promise.all([
+      supabase.from('chantier_taches').select('id, title, status, due_date').eq('chantier_id', chantierId).order('due_date', { ascending: true, nullsFirst: false }).limit(20),
+      supabase.from('chantier_plannings').select('id, planned_date, start_time, end_time, label').eq('chantier_id', chantierId).gte('planned_date', todayParis()).order('planned_date', { ascending: true }).limit(10),
+      supabase.from('chantier_notes').select('content, created_at').eq('chantier_id', chantierId).order('created_at', { ascending: false }).limit(5),
+      supabase.from('chantier_expenses').select('label, amount_ht, category, expense_date').eq('chantier_id', chantierId).order('expense_date', { ascending: false, nullsFirst: false }).limit(10),
+    ])
+
+    const lines: string[] = [
+      `Chantier "${chantier.title}" - client ${clientNameFromJoin(chantier.client) ?? '?'} - statut ${chantier.status}${chantier.budget_ht ? ` - budget ${Number(chantier.budget_ht).toFixed(0)} € HT` : ''}${chantier.city ? ` - ${chantier.city}` : ''}`,
+    ]
+    if (taches?.length) {
+      const done = taches.filter(t => t.status === 'termine').length
+      lines.push(`Tâches (${done}/${taches.length} terminées) :`)
+      for (const t of taches) lines.push(`  [${t.id}] "${t.title}" - ${t.status}${t.due_date ? ` - échéance ${t.due_date}` : ''}`)
+    } else lines.push('Aucune tâche enregistrée.')
+    if (plannings?.length) {
+      lines.push('Planning à venir :')
+      for (const p of plannings) lines.push(`  ${p.planned_date}${p.start_time ? ` ${String(p.start_time).slice(0, 5)}` : ''}${p.end_time ? `-${String(p.end_time).slice(0, 5)}` : ''} - ${p.label ?? ''}`)
+    }
+    if (notes?.length) {
+      lines.push('Dernières notes :')
+      for (const n of notes) lines.push(`  ${String(n.created_at).slice(0, 10)} : ${String(n.content).replace(/\s+/g, ' ').slice(0, 140)}`)
+    }
+    if (expenses?.length) {
+      const total = expenses.reduce((sum, e) => sum + Number(e.amount_ht ?? 0), 0)
+      lines.push(`Dernières dépenses (total affiché ${total.toFixed(2)} € HT) :`)
+      for (const e of expenses) lines.push(`  ${e.expense_date ?? '?'} - ${e.label} - ${Number(e.amount_ht ?? 0).toFixed(2)} € HT${e.category ? ` (${e.category})` : ''}`)
+    }
+    return lines.join('\n')
+  }
+
+  if (name === 'get_client_overview') {
+    const query = (args.query as string | undefined)?.trim()
+    if (!query) return 'Précisez un nom, une société ou un email de client.'
+
+    const supabase = await createClient()
+    const pattern = `%${query.replace(/[%_]/g, '\\$&')}%`
+    const columns = ['company_name', 'contact_name', 'email', 'first_name', 'last_name'] as const
+    const clientResults = await Promise.all(columns.map(column =>
+      supabase
+        .from('clients')
+        .select('id, company_name, contact_name, first_name, last_name, email')
+        .eq('organization_id', orgId)
+        .ilike(column, pattern)
+        .limit(5),
+    ))
+    const clients = Array.from(
+      new Map(clientResults.flatMap(r => r.data ?? []).map(c => [c.id, c])).values(),
+    )
+
+    if (clients.length === 0) return `Aucun client trouvé pour "${query}".`
+    if (clients.length > 1) {
+      const lines = clients.map(c => {
+        const name = c.company_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ') ?? c.contact_name ?? c.email ?? '?'
+        return `[${c.id}] ${name}`
+      })
+      return `Plusieurs clients correspondent à "${query}" :\n${lines.join('\n')}\nRelance l'outil avec un nom plus précis.`
+    }
+
+    const client = clients[0]
+    const clientName = client.company_name ?? [client.first_name, client.last_name].filter(Boolean).join(' ') ?? client.contact_name ?? client.email ?? query
+
+    const [{ data: chantiers }, { data: quotes }, { data: invoices }] = await Promise.all([
+      supabase
+        .from('chantiers')
+        .select('id, title, status, end_date')
+        .eq('organization_id', orgId)
+        .eq('client_id', client.id)
+        .in('status', ['en_cours', 'planifie'])
+        .order('end_date', { ascending: true, nullsFirst: false }),
+      supabase
+        .from('quotes')
+        .select('id, reference, number, status, total_ttc, valid_until')
+        .eq('organization_id', orgId)
+        .eq('client_id', client.id)
+        .in('status', ['sent', 'viewed'])
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('invoices')
+        .select('id, number, status, total_ttc, total_paid, due_date')
+        .eq('organization_id', orgId)
+        .eq('client_id', client.id)
+        .in('status', ['sent', 'overdue', 'partial'])
+        .order('due_date', { ascending: true, nullsFirst: false }),
+    ])
+
+    const today = todayParis()
+    const lines = [`Situation de ${clientName} :`]
+
+    if (chantiers?.length) {
+      lines.push('Chantiers actifs :')
+      for (const c of chantiers) lines.push(`  [CHANTIER:${c.id}] "${c.title}" - ${c.status} - fin prévue : ${c.end_date ?? 'non définie'}`)
+    } else {
+      lines.push('Aucun chantier actif.')
+    }
+
+    if (invoices?.length) {
+      lines.push('Factures en attente ou en retard :')
+      for (const inv of invoices) {
+        const retard = inv.due_date && inv.due_date < today ? ` (EN RETARD depuis le ${inv.due_date})` : ` (échéance ${inv.due_date ?? 'non définie'})`
+        lines.push(`  [${inv.id}] ${inv.number ?? '?'} - ${fmt(inv.total_ttc)}${retard}`)
+      }
+    } else {
+      lines.push('Aucune facture en attente ou en retard.')
+    }
+
+    if (quotes?.length) {
+      lines.push('Devis en attente de réponse :')
+      for (const q of quotes) lines.push(`  [${q.id}] ${q.reference ?? q.number ?? '?'} - ${fmt(q.total_ttc)}${q.valid_until ? ` - valide jusqu'au ${q.valid_until}` : ''}`)
+    } else {
+      lines.push('Aucun devis en attente de réponse.')
+    }
+
+    return lines.join('\n')
+  }
+
+  if (name === 'get_financial_summary') {
+    const month = (args.month as string | undefined)?.trim() || undefined
+    const stats = await getDashboardStats(month)
+
+    const supabase = await createClient()
+    const { count: chantiersEnCours } = await supabase
+      .from('chantiers')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', orgId)
+      .eq('status', 'en_cours')
+
+    return [
+      `Facturé TTC : ${stats.caMois.toFixed(2)} €`,
+      `Encaissé : ${stats.encaisseMois.toFixed(2)} €`,
+      `Devis en attente de réponse : ${stats.devisEnAttente}`,
+      `Factures en retard : ${stats.facturesEnRetard}`,
+      `Chantiers en cours : ${chantiersEnCours ?? 0}`,
+    ].join('\n')
   }
 
   return `Outil "${name}" non reconnu.`
@@ -311,8 +757,26 @@ Ce que tu peux faire :
 - Proposer des actions concrètes : tu joins une carte d'action au message, et l'utilisateur valide en un seul clic sur cette carte. La carte est la validation, ne demande pas de "oui" en plus.
 - Signaler des anomalies ou urgences détectées dans les données.
 - Résumer la journée ou la semaine à la demande.
+- Créer des fiches clients et prospects, ouvrir des chantiers, ajouter des tâches, des notes internes et des dépenses chantier.
+- Analyser une pièce jointe envoyée dans le chat (photo de chantier, facture fournisseur, devis reçu, document PDF) : décrivez ce que vous y voyez et proposez l'action utile (enregistrer une dépense, créer une note, préparer un devis). La pièce jointe n'est visible que dans le message où elle est envoyée : si l'utilisateur y fait référence plus tard, appuyez-vous sur ce qui a été dit dans la conversation.
+- Suivre la facturation de bout en bout : envoyer un devis ou une facture (uniquement sur demande explicite), marquer un devis accepté ou refusé, marquer une facture payée, relancer un devis ou une facture en attente.
 - Mémoriser des informations importantes via save_memory (préférences client, habitudes, notes durables).
 - Rechercher un client précis via search_client si son nom n'est pas dans les clients récents du contexte.
+- Rechercher n'importe quel devis ou facture via search_documents (par référence, client ou statut) quand le document n'est pas dans le contexte.
+- Consulter le détail complet d'un chantier via get_chantier_details (tâches, planning, notes, dépenses) pour répondre précisément sur son avancement.
+- Consulter la situation complète d'un client via get_client_overview (chantiers actifs, factures en attente/retard, devis en attente) en un seul appel dès que la question croise plusieurs sujets pour ce client.
+- Lire les messages que les autres assistants (Marco, Chloé, Nora) vous transmettent : s'il y a un bloc "Messages des autres assistants" dans le contexte, mentionnez-le spontanément à l'utilisateur et proposez la suite logique.
+- Gérer les absences, remplacements, conflits de planning et pointages manquants avec les outils dédiés (voir section "Planning intelligent" ci-dessous).
+
+Planning intelligent - règles impératives :
+- Une absence ne se déclare que si l'utilisateur le dit explicitement ("Nora est absente", "Marc ne vient pas"). Utilise alors l'action "absence_declare" pour l'enregistrer, avec validation.
+- Un pointage manquant n'est JAMAIS une preuve d'absence. Si l'utilisateur demande "qui n'a pas pointé", utilise check_missing_pointages et présente le résultat comme une absence de pointage à vérifier, jamais comme une absence de la personne.
+- Avant de proposer un remplacement, utilise find_replacement_candidates. N'affirme jamais qu'une personne est "disponible" avec certitude : dis plutôt qu'elle n'est ni absente déclarée ni déjà occupée, et que la disponibilité reste à confirmer avec elle si aucune donnée positive ne le garantit.
+- N'invente jamais d'heures, de disponibilité ou d'horaires. Si une donnée manque, dis-le et propose de vérifier plutôt que d'agir.
+- Pour un remplacement, utilise l'action "planning_replacement_suggest" (payload: { slotId?, chantierId, plannedDate, startTime?, endTime?, memberId, memberName, label?, notes? }) : rien n'est modifié avant validation.
+- Pour un rappel de pointage, utilise l'action "pointage_reminder_prepare" (payload: { memberId, memberName, reminderText? }) : jamais envoyé deux fois pour le même créneau grâce à la déduplication automatique.
+- Pour un point sur les conflits de planning, utilise check_planning_conflicts et résume clairement qui est en double réservation.
+- Si les données sont incomplètes pour conclure (disponibilité incertaine, identité ambiguë), réponds avec ce qui est à vérifier plutôt que de proposer une action automatique.
 
 Ce que tu ne fais PAS (c'est le rôle de Chloé, l'assistante devis) :
 - Générer des lignes de devis techniques détaillées, lots complexes, quantitatifs incertains ou prix unitaires estimés.
@@ -357,6 +821,20 @@ Types d'actions disponibles :
 - "planning_update" : modifier un créneau existant (payload: { slotId, slotLabel, plannedDate?, startTime?, endTime?, label?, teamSize?, notes?, memberId?, memberName?, equipeId?, equipeName? })
 - "planning_delete" : supprimer un créneau existant (payload: { slotId, slotLabel, chantierTitle, plannedDate })
 - "brief_marco" : transmettre un contexte ou une question sur un chantier à Marco (payload: { chantier_id, chantier_title, description })
+- "absence_declare" : déclarer l'absence d'un membre après confirmation explicite de l'utilisateur (payload: { memberId, memberName, startDate, endDate, reason? })
+- "planning_replacement_suggest" : mettre en place un remplacement sur un créneau (payload: { slotId?, chantierId, plannedDate, startTime?, endTime?, memberId, memberName, label?, notes? })
+- "pointage_reminder_prepare" : préparer un rappel de pointage à un membre (payload: { memberId, memberName, reminderText? })
+- "client_create" : créer une fiche client ou prospect, risque faible (payload: { type: "company" | "individual", company_name?, first_name?, last_name?, contact_name?, email?, phone?, siret?, address_line1?, postal_code?, city?, status?: "active" | "prospect" | "lead_hot" | "lead_cold" | "subcontractor" })
+- "chantier_create" : créer un chantier, risque moyen (payload: { title, client_id?, client_name?, description?, address_line1?, postal_code?, city?, start_date?, estimated_end_date?, budget_ht? })
+- "task_create" : ajouter une tâche à un chantier, risque faible (payload: { chantierId, title, description?, due_date?, member_ids?, equipe_ids? })
+- "chantier_note_add" : ajouter une note interne sur un chantier, risque faible (payload: { chantierId, content })
+- "expense_record" : enregistrer une dépense sur un chantier, risque moyen (payload: { chantierId, label, amount_ht, category?: "materiel" | "sous_traitance" | "location" | "transport" | "autre", vat_rate?, expense_date?, supplier_name?, notes? })
+- "invoice_mark_paid" : marquer une facture envoyée comme payée intégralement, risque fort (payload: { invoice_id })
+- "invoice_send" : envoyer une facture au client par email, risque fort (payload: { invoice_id }). Uniquement si l'utilisateur le demande explicitement.
+- "quote_send" : envoyer un devis au client pour signature, risque fort (payload: { quote_id }). Uniquement si l'utilisateur le demande explicitement.
+- "quote_mark_accepted" : marquer un devis comme accepté, risque moyen (payload: { quote_id })
+- "quote_mark_refused" : marquer un devis comme refusé, risque moyen (payload: { quote_id })
+- "quote_followup" : envoyer une relance pour un devis envoyé sans réponse, risque fort (payload: { quote_id, subject?, draft_text? })
 
 Pages de l'app accessibles via "open_url" (utilise l'URL exacte) :
 - Planning global : /chantiers/planning
@@ -373,16 +851,36 @@ Pages de l'app accessibles via "open_url" (utilise l'URL exacte) :
 Règles absolues :
 - La carte d'action EST la confirmation. Quand l'utilisateur demande clairement une action (par exemple "crée un devis pour Dupont avec telle prestation"), renvoie DIRECTEMENT la carte d'action dans le même message, sans poser de question de validation préalable du type "voulez-vous que je le fasse ?". L'utilisateur valide en cliquant sur la carte. Ne demande JAMAIS deux confirmations.
 - Ne pose une question avant la carte QUE s'il manque une information indispensable (client introuvable, prestation ambiguë, quantité absente). Si tout est clair, propose la carte tout de suite.
-- Ton "reply" qui accompagne une carte d'action annonce ce qui va être fait ("Je prépare le devis suivant, validez pour le créer."), il ne redemande pas l'autorisation.
+- Ton "reply" qui accompagne une carte d'action annonce ce qui va être fait ("Voici la fiche prospect prête à créer, validez la carte ci-dessous."), il ne redemande pas l'autorisation. N'écris jamais "Validez-vous", "Confirmez-vous", "Souhaitez-vous que je" ni aucune autre question de permission dans un message qui contient déjà une carte.
 - Ne jamais exécuter une action sensible sans avoir proposé une carte d'action et attendu la confirmation (le clic sur la carte).
 - Pour un email, utilise uniquement les clients/prospects connus dans le contexte. Ne mets jamais une adresse inventée. Prépare une action "draft_email" avec client_ids ou recipient_filter, subject et body. La confirmation humaine déclenchera l'envoi.
 - Ne jamais inventer de données. Si tu ne sais pas, dis-le simplement.
+- Dès qu'une question porte sur un client précis et croise plusieurs sujets (factures ET chantiers, ou "la situation de ce client", ou "a-t-il des trucs en cours"), utilise get_client_overview en un seul appel plutôt que d'enchaîner get_chantier_details puis search_documents séparément : c'est plus fiable et ça évite d'oublier un des deux volets. N'affirme rien depuis un simple survol des listes globales du contexte ("Factures en attente de paiement", "Chantiers actifs") : ces listes couvrent toute l'entreprise, pas un client en particulier, et une lecture rapide fait rater une ligne. Une réponse "aucun(e)" doit toujours venir d'un appel d'outil qui confirme l'absence, jamais d'une simple absence de mention dans le contexte général.
+- Pour tout comptage ("combien de chantiers en cours", "combien de devis en attente"), utilise get_financial_summary plutôt que de compter les lignes d'une liste du contexte : ces listes sont plafonnées et peuvent ne pas représenter le total réel.
+- Ne jamais afficher un statut technique brut du contexte (en_cours, planifie, sent, viewed, draft, overdue...). Traduis-le toujours en français naturel : "en cours", "planifié", "envoyé", "consulté par le client", "brouillon", "en retard". Idem pour tout identifiant ou code interne : ne les montre jamais à l'utilisateur.
 - Si tu proposes "brief_chloe", précise que tu transmets le contexte à Chloé qui proposera directement des lignes de devis à valider dans l'éditeur (ce n'est pas encore un devis enregistré). Renseigne une "description" riche des travaux dans le payload, et si possible "items" et "conditions", car Chloé s'en sert pour bâtir sa proposition. Si tu proposes "draft_quote", précise qu'un brouillon de devis sera créé et ouvert après validation.
 - Réponses courtes : 1 à 3 phrases pour une question simple, 5 lignes maximum pour un résumé ou une préparation de contenu.
 - Si tu détectes des urgences dans le contexte (factures très en retard, tâches échues depuis plusieurs jours, devis expirant demain), signale-les spontanément sans attendre qu'on te pose la question.
 - Pour "ce qui a été fait aujourd'hui", utilise d'abord le bloc "Réalisé aujourd'hui", puis complète avec "Planning du jour" si utile. Ne conclus jamais qu'il ne s'est rien passé si des pointages, tâches terminées, notes ou photos existent.
 - Pour le planning, distingue bien les créneaux planifiés et les créneaux déjà pointés. Un créneau pointé reste un créneau qui a existé aujourd'hui, il n'est simplement plus une urgence à traiter.
 - Pour les entretiens, ne les invente pas : utilise uniquement les contrats/interventions d'entretien présents dans le contexte. Si la demande contient plusieurs entretiens ou une semaine complète, passe par "brief_nora".`
+
+// Filet de sécurité : si le JSON du modèle est tronqué ou illisible, on ne
+// montre jamais le fragment brut à l'utilisateur. Si une action valide est
+// présente malgré un "reply" manquant, on formule la phrase depuis l'action.
+function safeReplyFromRaw(raw: string, action?: unknown): string {
+  if (action && typeof action === 'object') {
+    const description = (action as Record<string, unknown>).description
+    if (typeof description === 'string' && description.trim()) {
+      return `Voici ce que je vous propose : ${description.trim()}. Validez la carte ci-dessous pour confirmer.`
+    }
+  }
+  const trimmed = raw.trim()
+  if (!trimmed || trimmed.startsWith('{') || trimmed.startsWith('"') || trimmed.startsWith('```')) {
+    return "Je n'ai pas réussi à formuler ma réponse correctement. Pouvez-vous reformuler votre demande ?"
+  }
+  return trimmed
+}
 
 function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -406,9 +904,29 @@ function shortText(value: string | null | undefined, max = 160): string | null {
 
 type HistoryEntry = { role: 'user' | 'sarah'; content: string }
 
+// Pièces jointes du chat : images et PDF envoyés en data URL, analysés par le
+// modèle vision. Taille plafonnée pour protéger la mémoire et le quota IA.
+const SARAH_ATTACHMENT_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf']
+const SARAH_ATTACHMENT_MAX_DATAURL = 8_500_000 // ~6 Mo de fichier une fois encodé en base64
+
+type SarahAttachment = { name: string; mimeType: string; dataUrl: string }
+
+function sanitizeSarahAttachment(raw: unknown): SarahAttachment | null {
+  if (!raw || typeof raw !== 'object') return null
+  const att = raw as Record<string, unknown>
+  const mimeType = typeof att.mimeType === 'string' ? att.mimeType.toLowerCase().trim() : ''
+  const dataUrl = typeof att.dataUrl === 'string' ? att.dataUrl : ''
+  if (!SARAH_ATTACHMENT_MIMES.includes(mimeType)) return null
+  if (!dataUrl.startsWith(`data:${mimeType};base64,`)) return null
+  if (dataUrl.length > SARAH_ATTACHMENT_MAX_DATAURL) return null
+  const name = typeof att.name === 'string' && att.name.trim() ? att.name.trim().slice(0, 120) : 'document'
+  return { name, mimeType, dataUrl }
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { message, page, pathname, pageContext, history, conversationId: rawConversationId } = await req.json()
+    const { message, page, pathname, pageContext, history, conversationId: rawConversationId, attachment: rawAttachment } = await req.json()
+    const attachment = sanitizeSarahAttachment(rawAttachment)
     const conversationHistory: HistoryEntry[] = Array.isArray(history) ? history.slice(-10) : []
     const conversationId = typeof rawConversationId === 'string' && rawConversationId.length <= 80
       ? rawConversationId
@@ -437,7 +955,7 @@ export async function POST(req: NextRequest) {
 
     const isFirstMessage = !conversationHistory.some(h => h.role === 'user')
 
-    const [businessCtx, ragContext, dailyBriefResult] = await Promise.all([
+    const [businessCtx, ragContext, dailyBriefResult, incomingBriefsResult] = await Promise.all([
       getBusinessContext(orgId),
       fetchRAGContext(orgId, message, { limit: 4 }),
       // Lire le brief du jour uniquement au premier message de la conversation
@@ -450,6 +968,17 @@ export async function POST(req: NextRequest) {
             .eq('metadata->>date', today)
             .eq('is_active', true)
             .limit(1)
+        : Promise.resolve({ data: null, error: null }),
+      // Messages transmis par les autres assistants (Marco, Chloé, Nora) à Sarah
+      isFirstMessage
+        ? supabase
+            .from('ai_briefs')
+            .select('id, source_assistant, payload, created_at')
+            .eq('organization_id', orgId)
+            .eq('target_assistant', 'sarah')
+            .eq('status', 'pending')
+            .order('created_at', { ascending: false })
+            .limit(5)
         : Promise.resolve({ data: null, error: null }),
     ])
     const businessPrompt = formatBusinessContextForPrompt(businessCtx)
@@ -486,7 +1015,7 @@ export async function POST(req: NextRequest) {
       // Derniers devis
       supabase
         .from('quotes')
-        .select('id, reference, status, total_ttc, client_name, created_at, valid_until')
+        .select(`id, reference, status, total_ttc, created_at, valid_until, ${CLIENT_JOIN}`)
         .eq('organization_id', orgId)
         .order('created_at', { ascending: false })
         .limit(5),
@@ -494,7 +1023,7 @@ export async function POST(req: NextRequest) {
       // Factures en retard ou en attente
       supabase
         .from('invoices')
-        .select('id, reference, status, total_ttc, client_name, due_date')
+        .select(`id, number, status, total_ttc, due_date, ${CLIENT_JOIN}`)
         .eq('organization_id', orgId)
         .in('status', ['sent', 'overdue', 'partial'])
         .order('due_date', { ascending: true })
@@ -503,7 +1032,7 @@ export async function POST(req: NextRequest) {
       // Devis qui expirent dans les 3 prochains jours
       supabase
         .from('quotes')
-        .select('id, reference, client_name, valid_until, total_ttc')
+        .select(`id, reference, valid_until, total_ttc, ${CLIENT_JOIN}`)
         .eq('organization_id', orgId)
         .in('status', ['sent', 'viewed'])
         .gte('valid_until', today)
@@ -512,7 +1041,7 @@ export async function POST(req: NextRequest) {
       // Chantiers actifs
       supabase
         .from('chantiers')
-        .select('id, title, status, client_name, end_date')
+        .select(`id, title, status, end_date, ${CLIENT_JOIN}`)
         .eq('organization_id', orgId)
         .in('status', ['en_cours', 'planifie'])
         .order('end_date', { ascending: true })
@@ -534,7 +1063,7 @@ export async function POST(req: NextRequest) {
       // Planning du jour (avec horaires, label, intervenant)
       supabase
         .from('chantier_plannings')
-        .select('id, planned_date, start_time, end_time, label, team_size, notes, member_id, equipe_id, chantier:chantiers!inner(id, title, organization_id, is_archived, status, client_name), member:chantier_equipe_membres(prenom, name), equipe:chantier_equipes(id, name)')
+        .select('id, planned_date, start_time, end_time, label, team_size, notes, member_id, equipe_id, chantier:chantiers!inner(id, title, organization_id, is_archived, status, client:clients(company_name, first_name, last_name, contact_name, email)), member:chantier_equipe_membres(prenom, name), equipe:chantier_equipes(id, name)')
         .eq('chantier.organization_id', orgId)
         .eq('chantier.is_archived', false)
         .not('chantier.status', 'in', '("termine","annule")')
@@ -543,7 +1072,7 @@ export async function POST(req: NextRequest) {
 
       supabase
         .from('chantier_pointages')
-        .select('id, chantier_planning_id, chantier_id, tache_id, user_id, member_id, date, hours, start_time, description, created_at, profile:profiles(full_name), membre:chantier_equipe_membres(prenom, name), tache:chantier_taches(title), chantier:chantiers!inner(id, title, client_name, organization_id, is_archived, status)')
+        .select('id, chantier_planning_id, chantier_id, tache_id, user_id, member_id, date, hours, start_time, description, created_at, profile:profiles(full_name), membre:chantier_equipe_membres(prenom, name), tache:chantier_taches(title), chantier:chantiers!inner(id, title, organization_id, is_archived, status, client:clients(company_name, first_name, last_name, contact_name, email))')
         .eq('chantier.organization_id', orgId)
         .eq('chantier.is_archived', false)
         .eq('date', today)
@@ -562,7 +1091,7 @@ export async function POST(req: NextRequest) {
 
       supabase
         .from('chantier_notes')
-        .select('id, content, created_at, author:profiles(full_name), chantier:chantiers!inner(id, title, client_name, organization_id, is_archived, status)')
+        .select('id, content, created_at, author:profiles(full_name), chantier:chantiers!inner(id, title, organization_id, is_archived, status, client:clients(company_name, first_name, last_name, contact_name, email))')
         .eq('chantier.organization_id', orgId)
         .eq('chantier.is_archived', false)
         .gte('created_at', `${today}T00:00:00+02:00`)
@@ -572,7 +1101,7 @@ export async function POST(req: NextRequest) {
 
       supabase
         .from('chantier_photos')
-        .select('id, title, caption, taken_at, created_at, uploader:profiles(full_name), tache:chantier_taches(title), chantier:chantiers!inner(id, title, client_name, organization_id, is_archived, status)')
+        .select('id, title, caption, taken_at, created_at, uploader:profiles(full_name), tache:chantier_taches(title), chantier:chantiers!inner(id, title, organization_id, is_archived, status, client:clients(company_name, first_name, last_name, contact_name, email))')
         .eq('chantier.organization_id', orgId)
         .eq('chantier.is_archived', false)
         .gte('created_at', `${today}T00:00:00+02:00`)
@@ -583,7 +1112,7 @@ export async function POST(req: NextRequest) {
       // Planning des 7 prochains jours (hors aujourd'hui)
       supabase
         .from('chantier_plannings')
-        .select('id, planned_date, start_time, end_time, label, team_size, notes, member_id, equipe_id, chantier:chantiers!inner(id, title, organization_id, is_archived, status, client_name), member:chantier_equipe_membres(prenom, name), equipe:chantier_equipes(id, name)')
+        .select('id, planned_date, start_time, end_time, label, team_size, notes, member_id, equipe_id, chantier:chantiers!inner(id, title, organization_id, is_archived, status, client:clients(company_name, first_name, last_name, contact_name, email)), member:chantier_equipe_membres(prenom, name), equipe:chantier_equipes(id, name)')
         .eq('chantier.organization_id', orgId)
         .eq('chantier.is_archived', false)
         .not('chantier.status', 'in', '("termine","annule")')
@@ -604,7 +1133,7 @@ export async function POST(req: NextRequest) {
 
       supabase
         .from('invoices')
-        .select('id, reference, number, title, status, total_ttc, total_paid, issue_date, due_date, client_name')
+        .select(`id, number, title, status, total_ttc, total_paid, issue_date, due_date, ${CLIENT_JOIN}`)
         .eq('organization_id', orgId)
         .eq('is_archived', false)
         .order('issue_date', { ascending: false, nullsFirst: false })
@@ -707,6 +1236,24 @@ export async function POST(req: NextRequest) {
         .order('name', { ascending: true })
         .limit(30),
     ])
+
+    // Normalisation : résoudre client_name depuis la relation clients, en
+    // direct (quotes, invoices, chantiers) comme via un join chantier imbriqué.
+    for (const row of [
+      ...(recentQuotes ?? []), ...(overdueInvoices ?? []), ...(expiringQuotes ?? []),
+      ...(activeChantiers ?? []), ...(recentInvoices ?? []),
+    ]) {
+      ;(row as any).client_name = clientNameFromJoin((row as any).client)
+    }
+    for (const row of [
+      ...(todayPlanning ?? []), ...(weekPlanning ?? []), ...(todayPointages ?? []),
+      ...(todayNotes ?? []), ...(todayPhotos ?? []), ...(lateTasks ?? []),
+    ]) {
+      const chantier = Array.isArray((row as any).chantier) ? (row as any).chantier[0] : (row as any).chantier
+      if (chantier && chantier.client_name === undefined) {
+        chantier.client_name = clientNameFromJoin(chantier.client)
+      }
+    }
 
     const equipeMembersById = new Map<string, string>()
     for (const e of equipes ?? []) {
@@ -879,7 +1426,7 @@ export async function POST(req: NextRequest) {
     if (expiringQuotes?.length) {
       contextLines.push('', 'Devis expirant dans les 3 prochains jours :')
       for (const q of expiringQuotes) {
-        contextLines.push(`  ${q.reference} - ${q.client_name ?? '?'} - expire le ${q.valid_until} - ${fmt(q.total_ttc)}`)
+        contextLines.push(`  ${q.reference} - ${(q as any).client_name ?? '?'} - expire le ${q.valid_until} - ${fmt(q.total_ttc)}`)
       }
     }
 
@@ -888,7 +1435,7 @@ export async function POST(req: NextRequest) {
       contextLines.push('', 'Factures en attente de paiement :')
       for (const inv of overdueInvoices) {
         const retard = inv.due_date && inv.due_date < today ? ` (EN RETARD depuis le ${inv.due_date})` : ` (échéance ${inv.due_date ?? 'non définie'})`
-        contextLines.push(`  [${inv.id}] ${inv.reference} - ${inv.client_name ?? '?'} - ${fmt(inv.total_ttc)}${retard}`)
+        contextLines.push(`  [${inv.id}] ${inv.number} - ${(inv as any).client_name ?? '?'} - ${fmt(inv.total_ttc)}${retard}`)
       }
     }
 
@@ -896,7 +1443,7 @@ export async function POST(req: NextRequest) {
       contextLines.push('', 'Dernières factures :')
       for (const inv of recentInvoices) {
         const paid = inv.total_paid != null && inv.total_paid > 0 ? `, encaissé ${fmt(inv.total_paid)}` : ''
-        contextLines.push(`  [${inv.id}] ${inv.reference ?? inv.number ?? inv.title ?? 'Facture'} - ${inv.client_name ?? '?'} - ${inv.status} - ${fmt(inv.total_ttc)}${paid} - échéance ${inv.due_date ?? 'n/a'}`)
+        contextLines.push(`  [${inv.id}] ${inv.number ?? inv.title ?? 'Facture'} - ${(inv as any).client_name ?? '?'} - ${inv.status} - ${fmt(inv.total_ttc)}${paid} - échéance ${inv.due_date ?? 'n/a'}`)
       }
     }
 
@@ -904,7 +1451,7 @@ export async function POST(req: NextRequest) {
     if (recentQuotes?.length) {
       contextLines.push('', 'Devis récents :')
       for (const q of recentQuotes) {
-        contextLines.push(`  [${q.id}] ${q.reference} - ${q.client_name ?? '?'} - ${q.status} - ${fmt(q.total_ttc)}`)
+        contextLines.push(`  [${q.id}] ${q.reference} - ${(q as any).client_name ?? '?'} - ${q.status} - ${fmt(q.total_ttc)}`)
       }
     }
 
@@ -912,7 +1459,7 @@ export async function POST(req: NextRequest) {
     if (activeChantiers?.length) {
       contextLines.push('', 'Chantiers actifs (utilisez ces IDs pour les actions planning) :')
       for (const c of activeChantiers) {
-        contextLines.push(`  [CHANTIER:${c.id}] ${c.title} - ${c.client_name ?? ''} - fin prévue : ${c.end_date ?? 'non définie'}`)
+        contextLines.push(`  [CHANTIER:${c.id}] ${c.title} - ${(c as any).client_name ?? ''} - fin prévue : ${c.end_date ?? 'non définie'}`)
       }
     }
 
@@ -984,6 +1531,27 @@ export async function POST(req: NextRequest) {
       contextLines.push('  Filtres email autorisés si l’utilisateur vise un groupe : { mode: "all_active" } ou { mode: "by_status", statuses: ["prospect" | "lead_hot" | "lead_cold" | "active" | "subcontractor" | "inactive"] }. Maximum 50 destinataires.')
     }
 
+    // Messages des autres assistants adressés à Sarah — injectés puis marqués consommés
+    const incomingBriefs = ((incomingBriefsResult as any)?.data ?? []) as Array<{ id: string; source_assistant: string; payload: Record<string, unknown>; created_at: string }>
+    if (incomingBriefs.length > 0) {
+      const SOURCE_NAMES: Record<string, string> = { marco: 'Marco (chef de chantier)', chloe: 'Chloé (devis)', nora: 'Nora (planning)' }
+      contextLines.push('', 'Messages des autres assistants (à mentionner à l\'utilisateur) :')
+      for (const brief of incomingBriefs) {
+        const from = SOURCE_NAMES[brief.source_assistant] ?? brief.source_assistant
+        const description = typeof brief.payload?.description === 'string' ? brief.payload.description : JSON.stringify(brief.payload)
+        contextLines.push(`  De ${from}, le ${String(brief.created_at).slice(0, 10)} : ${description}`)
+      }
+      void (async () => {
+        try {
+          await supabase
+            .from('ai_briefs')
+            .update({ status: 'consumed', consumed_at: new Date().toISOString() })
+            .in('id', incomingBriefs.map(b => b.id))
+            .eq('organization_id', orgId)
+        } catch { /* non bloquant */ }
+      })()
+    }
+
     // Brief du jour (premier message uniquement) — injecté dans le contexte et marqué lu
     const dailyBriefRow = (dailyBriefResult as any)?.data?.[0] ?? null
     if (dailyBriefRow?.content && dailyBriefRow.metadata?.read !== true) {
@@ -1003,74 +1571,86 @@ export async function POST(req: NextRequest) {
     const userContext = contextLines.join('\n')
     const memorySavedThisConversation = { done: false }
 
-    const apiMessages: Array<{ role: string; content: string }> = [
+    // Message utilisateur : texte seul, ou multimodal si une pièce jointe est fournie.
+    const userMessageContent: string | Array<Record<string, unknown>> = attachment
+      ? [
+          { type: 'text', text: `${message}\n\n(Pièce jointe fournie : ${attachment.name})` },
+          { type: 'image_url', image_url: { url: attachment.dataUrl } },
+        ]
+      : message
+
+    const apiMessages: Array<{ role: string; content: string | Array<Record<string, unknown>> }> = [
       { role: 'system', content: `${SYSTEM_PROMPT}\n\n---\nCONTEXTE ATELIER (mis à jour à chaque message) :\n${userContext}` },
       ...conversationHistory.slice(0, -1).map(h => ({
         role: h.role === 'user' ? 'user' : 'assistant',
         content: h.content,
       })),
-      { role: 'user', content: message },
+      { role: 'user', content: userMessageContent },
     ]
 
-    // Premier appel avec tools disponibles
-    const result = await callAI<any>({
-      organizationId: orgId,
-      provider: 'openrouter',
-      feature: 'sarah_assistant',
-      model: MODEL,
-      inputKind: 'text',
-      request: {
-        body: {
-          messages: apiMessages,
-          tools: SARAH_TOOLS,
-          tool_choice: 'auto',
-          temperature: 0.3,
-          max_tokens: 600,
-        },
-      },
-    })
+    // Boucle d'outils bornée : un seul aller-retour ne permettait pas à Sarah de
+    // se rattraper si un premier appel d'outil renvoyait un résultat vide ou
+    // insuffisant (ex: chercher un chantier par nom de client puis devoir
+    // enchaîner sur search_documents). On garde les tools disponibles sur
+    // chaque tour, jusqu'à 3 tours d'appels d'outils avant de forcer le JSON final.
+    const loopMessages: Array<{ role: string; content?: string | Array<Record<string, unknown>>; tool_calls?: unknown; tool_call_id?: string }> = [...apiMessages]
+    let assistantMsg: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } | undefined
+    const MAX_TOOL_ROUNDS = 3
 
-    const responseData = result.data as { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } }> }
-    const assistantMsg = responseData?.choices?.[0]?.message
-
-    // Si Sarah appelle des tools, les exécuter puis relancer
-    if (assistantMsg?.tool_calls && assistantMsg.tool_calls.length > 0) {
-      const toolResults: Array<{ role: string; tool_call_id: string; content: string }> = []
-
-      for (const tc of assistantMsg.tool_calls) {
-        let args: Record<string, unknown> = {}
-        try { args = JSON.parse(tc.function.arguments) } catch { /* ignore */ }
-        const toolResult = await executeSarahTool(tc.function.name, args, orgId, memorySavedThisConversation, conversationId)
-        toolResults.push({ role: 'tool', tool_call_id: tc.id, content: toolResult })
-      }
-
-      // Deuxième appel avec résultats des tools — format JSON pour la réponse finale
-      const result2 = await callAI<any>({
+    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+      const isLastAllowedRound = round === MAX_TOOL_ROUNDS
+      const result = await callAI<any>({
         organizationId: orgId,
         provider: 'openrouter',
         feature: 'sarah_assistant',
         model: MODEL,
-        inputKind: 'text',
+        inputKind: attachment && round === 0 ? 'mixed' : 'text',
         request: {
           body: {
-            messages: [
-              ...apiMessages,
-              assistantMsg,
-              ...toolResults,
-            ],
+            messages: loopMessages,
+            // Sur le dernier tour autorisé, on retire les tools pour forcer une
+            // réponse JSON finale plutôt qu'un nouvel appel d'outil.
+            ...(isLastAllowedRound ? {} : { tools: SARAH_TOOLS, tool_choice: 'auto' }),
             temperature: 0.3,
-            max_tokens: 500,
-            response_format: { type: 'json_object' },
+            // Gemini 2.5 Flash consomme des tokens de raisonnement sur ce budget :
+            // trop bas, la réponse JSON arrive tronquée en plein milieu.
+            max_tokens: round === 0 ? 1600 : 1400,
+            ...(isLastAllowedRound ? { response_format: { type: 'json_object' } } : {}),
           },
         },
       })
 
-      const content2 = (result2.data as any)?.choices?.[0]?.message?.content ?? ''
+      const responseData = result.data as { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } }> }
+      assistantMsg = responseData?.choices?.[0]?.message
+
+      if (!assistantMsg?.tool_calls?.length || isLastAllowedRound) break
+
+      loopMessages.push(assistantMsg as any)
+      for (const tc of assistantMsg.tool_calls) {
+        let args: Record<string, unknown> = {}
+        try { args = JSON.parse(tc.function.arguments) } catch { /* ignore */ }
+        const toolResult = await executeSarahTool(tc.function.name, args, orgId, memorySavedThisConversation, conversationId)
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[sarah tool] round ${round} ${tc.function.name}(${tc.function.arguments}) -> ${toolResult.slice(0, 200)}`)
+        }
+        loopMessages.push({ role: 'tool', tool_call_id: tc.id, content: toolResult })
+      }
+    }
+
+    // Si le dernier tour a encore renvoyé des tool_calls (JSON forcé sans tools,
+    // ne devrait pas arriver mais on protège contre un contenu vide).
+    if (assistantMsg?.tool_calls?.length && !assistantMsg?.content) {
+      const parsed2 = { reply: "Je n'ai pas réussi à formuler ma réponse correctement. Pouvez-vous reformuler votre demande ?" }
+      return NextResponse.json(parsed2)
+    }
+
+    if (loopMessages.length > apiMessages.length) {
+      const content2 = assistantMsg?.content ?? ''
       const raw2 = extractJson(content2)
       let parsed2: { reply: string; action?: unknown }
-      try { parsed2 = JSON.parse(raw2) } catch { parsed2 = { reply: raw2 } }
+      try { parsed2 = JSON.parse(raw2) } catch { parsed2 = { reply: safeReplyFromRaw(raw2) } }
       if (typeof parsed2.reply !== 'string' || !parsed2.reply) {
-        parsed2.reply = raw2 || "Je n'ai pas pu formuler de réponse."
+        parsed2.reply = safeReplyFromRaw(raw2, parsed2.action)
       }
 
       parsed2.action = await attachPersistentProposal(orgId, user?.id ?? null, conversationId, parsed2.action)
@@ -1081,9 +1661,9 @@ export async function POST(req: NextRequest) {
     const rawContent = assistantMsg?.content ?? ''
     const raw = extractJson(rawContent)
     let parsed: { reply: string; action?: unknown }
-    try { parsed = JSON.parse(raw) } catch { parsed = { reply: raw } }
+    try { parsed = JSON.parse(raw) } catch { parsed = { reply: safeReplyFromRaw(raw) } }
     if (typeof parsed.reply !== 'string' || !parsed.reply) {
-      parsed.reply = raw || "Je n'ai pas pu formuler de réponse."
+      parsed.reply = safeReplyFromRaw(raw, parsed.action)
     }
 
     parsed.action = await attachPersistentProposal(orgId, user?.id ?? null, conversationId, parsed.action)

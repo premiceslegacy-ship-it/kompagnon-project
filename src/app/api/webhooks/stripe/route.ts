@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { signOperatorPayload } from '@/lib/operator'
+import { constantTimeEqual } from '@/lib/security'
 import { isSubscriptionTier, isOverflowMode, getModulesForTier, getQuotaConfigForTier, getQuotaUnit, QUOTA_FEATURES, type SubscriptionTier } from '@/lib/quota-catalog'
 import { normalizeOrganizationModules } from '@/lib/organization-modules'
 import { normalizeEinvoicingConfigFromDb, DEFAULT_EINVOICING_CONFIG } from '@/lib/einvoicing-config'
@@ -46,7 +47,8 @@ async function verifyStripeSignature(
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
 
-  return computed === signature
+  // Comparaison constant-time (compatible Edge/Workers) — évite les timing attacks
+  return constantTimeEqual(computed, signature)
 }
 
 // ── Mise à jour abonnement + resync config client ─────────────────────────────
@@ -199,11 +201,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 })
   }
 
-  let event: { type: string; data: { object: Record<string, unknown> } }
+  let event: { id?: string; type: string; data: { object: Record<string, unknown> } }
   try {
     event = JSON.parse(rawBody)
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  // Idempotence : Stripe redélivre les webhooks (at-least-once). On enregistre
+  // event.id AVANT traitement ; si déjà présent, on renvoie 200 sans retraiter
+  // (sinon double reset de quotas cockpit / double config-sync).
+  const eventId = event.id
+  if (eventId) {
+    const operatorDb = createOperatorAdminClient()
+    const { data: inserted, error: dedupError } = await operatorDb
+      .from('webhook_events')
+      .insert({ provider: 'stripe', source_id: eventId, event_type: event.type })
+      .select('id')
+      .maybeSingle()
+    if (dedupError && dedupError.code === '23505') {
+      // Conflit sur (provider, source_id) : déjà traité
+      return NextResponse.json({ received: true, duplicate: true })
+    }
+    if (!dedupError && !inserted) {
+      return NextResponse.json({ received: true, duplicate: true })
+    }
   }
 
   try {

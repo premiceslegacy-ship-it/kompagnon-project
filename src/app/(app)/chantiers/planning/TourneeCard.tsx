@@ -15,9 +15,11 @@ import {
   LogIn,
   LogOut,
   Loader2,
+  UserX,
 } from 'lucide-react'
 import type { TourneeSlot } from '@/lib/data/queries/chantiers'
 import { createMemberPointageAdmin, createPointage } from '@/lib/data/mutations/chantiers'
+import { setPlanningArrivedAt, clearPlanningArrivedAt } from '@/lib/data/mutations/planning'
 import { useRouter } from 'next/navigation'
 
 const CHANTIER_COLORS = [
@@ -55,6 +57,7 @@ interface TourneeCardProps {
   members?: TourneeCardMember[]
   onEdit?: (slot: TourneeSlot) => void
   onDelete?: (slotId: string) => void
+  onDeclareAbsent?: (memberId: string, memberName: string) => void
   disabled?: boolean
 }
 
@@ -65,21 +68,22 @@ export type TourneeCardMember = {
   email?: string | null
 }
 
-const STORAGE_KEY = (slotId: string) => `tournee-arrived-${slotId}`
-
-export function TourneeCard({ slot, index, isFirst, members = [], onEdit, onDelete, disabled }: TourneeCardProps) {
+export function TourneeCard({ slot, index, isFirst, members = [], onEdit, onDelete, onDeclareAbsent, disabled }: TourneeCardProps) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const color = CHANTIER_COLORS[slot.chantier_color_idx % CHANTIER_COLORS.length]
 
-  // Arrivée persistée dans localStorage pour survivre aux router.refresh()
+  // Arrivée persistée en base (chantier_plannings.arrived_at) pour survivre au changement d'appareil
   const [arrivedAt, setArrivedAt] = useState<Date | null>(() => {
-    if (typeof window === 'undefined') return null
-    const stored = localStorage.getItem(STORAGE_KEY(slot.id))
-    if (!stored) return null
-    const d = new Date(stored)
+    if (!slot.arrived_at) return null
+    const d = new Date(slot.arrived_at)
     return isNaN(d.getTime()) ? null : d
   })
+
+  useEffect(() => {
+    const d = slot.arrived_at ? new Date(slot.arrived_at) : null
+    setArrivedAt(d && !isNaN(d.getTime()) ? d : null)
+  }, [slot.arrived_at])
   const [isPointing, setIsPointing] = useState(false)
   const [pointageError, setPointageError] = useState<string | null>(null)
   const [pointageDone, setPointageDone] = useState(false)
@@ -125,12 +129,16 @@ export function TourneeCard({ slot, index, isFirst, members = [], onEdit, onDele
     ? `https://maps.google.com/maps?q=${encodeURIComponent(address)}`
     : null
 
-  function handleArrivee() {
+  async function handleArrivee() {
     const now = new Date()
-    localStorage.setItem(STORAGE_KEY(slot.id), now.toISOString())
     setArrivedAt(now)
     setPointageError(null)
     setPointageDone(false)
+    const result = await setPlanningArrivedAt(slot.id, now.toISOString())
+    if (result.error) {
+      setArrivedAt(null)
+      setPointageError(result.error)
+    }
   }
 
   async function handleDepart() {
@@ -184,7 +192,7 @@ export function TourneeCard({ slot, index, isFirst, members = [], onEdit, onDele
     if (result.error) {
       setPointageError(result.error)
     } else {
-      localStorage.removeItem(STORAGE_KEY(slot.id))
+      await clearPlanningArrivedAt(slot.id)
       setPointageDone(true)
       setArrivedAt(null)
       startTransition(() => { router.refresh() })
@@ -319,6 +327,15 @@ export function TourneeCard({ slot, index, isFirst, members = [], onEdit, onDele
                   title="Supprimer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {onDeclareAbsent && slot.member_id && (
+                <button
+                  onClick={() => onDeclareAbsent(slot.member_id!, slot.member_name ?? 'ce membre')}
+                  className="p-1.5 rounded-lg bg-interactive/70 hover:bg-amber-500/10 text-secondary hover:text-amber-600 dark:hover:text-amber-400 transition-colors dark:bg-white/[0.05]"
+                  title="Déclarer une absence"
+                >
+                  <UserX className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>

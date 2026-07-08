@@ -3,6 +3,8 @@ import './globals.css';
 
 export const dynamic = 'force-dynamic';
 import { ThemeProvider } from '@/components/theme-provider';
+import { PostHogProvider } from '@/components/posthog-provider';
+import { SentryInit } from '@/components/sentry-init';
 import { APP_NAME } from '@/lib/brand';
 import { appIconPath } from '@/lib/pwa';
 import { getPublicRuntimeConfig, serializeRuntimeConfig } from '@/lib/supabase/config';
@@ -51,13 +53,16 @@ export default function RootLayout({
                     id="app-runtime-config"
                     dangerouslySetInnerHTML={{ __html: runtimeConfigScript }}
                 />
+                <SentryInit />
                 <ThemeProvider
                     attribute="class"
                     defaultTheme="system"
                     enableSystem
                     disableTransitionOnChange
                 >
-                    {children}
+                    <PostHogProvider>
+                        {children}
+                    </PostHogProvider>
                 </ThemeProvider>
             </body>
         </html>

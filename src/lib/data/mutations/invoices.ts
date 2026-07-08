@@ -19,6 +19,8 @@ import { buildInvoicePaidEmail, buildDepositInvoiceEmail } from '@/lib/email/tem
 import { getClientGreetingName } from '@/lib/client'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { sendPushToOrg } from '@/lib/push'
+import { logAuditEvent } from '@/lib/audit-log'
+import { trackServerEvent } from '@/lib/analytics-server'
 import InvoicePDF from '@/components/pdf/InvoicePDF'
 import { coerceLegalVatRate } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
@@ -127,7 +129,7 @@ export async function saveInvoiceItems(
   const [{ data: inv }, { data: orgVat }] = await Promise.all([
     supabase
       .from('invoices')
-      .select('id')
+      .select('id, status')
       .eq('id', invoiceId)
       .eq('organization_id', orgId)
       .single(),
@@ -138,6 +140,11 @@ export async function saveInvoiceItems(
       .single(),
   ])
   if (!inv) return { error: 'Facture introuvable.' }
+  // Intangibilité : une facture émise ne peut plus voir ses lignes modifiées.
+  // Corriger par un avoir. (Garde applicatif ; le trigger DB fait foi en dernier ressort.)
+  if (inv.status !== 'draft') {
+    return { error: 'Cette facture est émise et ne peut plus être modifiée. Créez un avoir pour la corriger.' }
+  }
   const isVatSubject = orgVat?.is_vat_subject !== false
   const normalizeVatRate = (rate: number) => isVatSubject ? coerceLegalVatRate(rate, 20) : 0
 
@@ -272,6 +279,15 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
 
   if (error) return { error: error.message }
   await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
+  logAuditEvent({
+    organizationId: orgId,
+    actorId: user.id,
+    action: 'audit.invoice.paid',
+    entityType: 'invoice',
+    entityId: invoiceId,
+    metadata: { number: invoiceBeforePayment.number, amount: amountToRecord, total_paid: totalPaid },
+  }).catch(() => {})
+  trackServerEvent(user.id, 'invoice_paid', { organization_id: orgId, amount: amountToRecord })
 
   // Charger les infos de la facture + client + org pour l'email
   const { data: invoice } = await supabase
@@ -657,6 +673,8 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
     .eq('status', 'pending_confirmation')
 
   await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
+  const { data: { user: sendingUser } } = await supabase.auth.getUser()
+  if (sendingUser) trackServerEvent(sendingUser.id, 'invoice_sent', { organization_id: orgId })
   revalidatePath('/finances')
   revalidatePath('/finances/recurring')
   return { error: null }
@@ -868,7 +886,35 @@ export async function recordScheduledPayment(
   const result = data as { status?: 'partial' | 'paid'; total_paid?: number } | null
 
   const orgId = await getCurrentOrganizationId()
-  if (orgId) await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
+  if (orgId) {
+    await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
+
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data: invoiceForPush } = await supabase
+      .from('invoices')
+      .select('number, title, client_id')
+      .eq('id', invoiceId)
+      .maybeSingle()
+    const clientForPush = invoiceForPush?.client_id
+      ? await supabase.from('clients').select('company_name, contact_name').eq('id', invoiceForPush.client_id).maybeSingle().then(r => r.data)
+      : null
+    const clientLabel = clientForPush?.company_name ?? clientForPush?.contact_name ?? null
+    const invoiceNum = invoiceForPush?.number ?? invoiceId.slice(0, 8)
+    const amountLabel = Number(payment.amount).toLocaleString('fr-FR', { minimumFractionDigits: 2 })
+    sendPushToOrg(orgId, {
+      title: result?.status === 'paid' ? `Facture ${invoiceNum} soldée` : `Paiement enregistré sur ${invoiceNum}`,
+      body: [clientLabel, `${amountLabel} €`].filter(Boolean).join(' · '),
+      url: '/finances',
+    }, user?.id).catch(() => {})
+    logAuditEvent({
+      organizationId: orgId,
+      actorId: user?.id ?? null,
+      action: 'audit.invoice.scheduled_payment',
+      entityType: 'invoice',
+      entityId: invoiceId,
+      metadata: { number: invoiceForPush?.number, amount: payment.amount, status: result?.status },
+    }).catch(() => {})
+  }
   revalidatePath('/finances')
   revalidatePath('/dashboard')
   return { error: null, status: result?.status, total_paid: result?.total_paid }
@@ -883,6 +929,14 @@ export async function archiveInvoice(invoiceId: string): Promise<Result> {
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
 
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: invoiceBefore } = await supabase
+    .from('invoices')
+    .select('number, status')
+    .eq('id', invoiceId)
+    .eq('organization_id', orgId)
+    .maybeSingle()
+
   const { error } = await supabase
     .from('invoices')
     .update({ status: 'cancelled', is_archived: true })
@@ -890,6 +944,14 @@ export async function archiveInvoice(invoiceId: string): Promise<Result> {
     .eq('organization_id', orgId)
 
   if (error) return { error: error.message }
+  logAuditEvent({
+    organizationId: orgId,
+    actorId: user?.id ?? null,
+    action: 'audit.invoice.archived',
+    entityType: 'invoice',
+    entityId: invoiceId,
+    metadata: { number: invoiceBefore?.number, previous_status: invoiceBefore?.status },
+  }).catch(() => {})
   revalidatePath('/finances')
   return { error: null }
 }

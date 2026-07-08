@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Calendar, Clock, FileDown, LogOut, Plus, Loader2, Check, X, Mail, MapPin, Navigation, Timer, LogIn, AlertTriangle, PlayCircle, ChevronDown, ChevronUp, CalendarDays, Target, Wrench } from 'lucide-react'
+import { Calendar, Clock, FileDown, LogOut, Plus, Loader2, Check, X, Mail, MapPin, Navigation, Timer, LogIn, AlertTriangle, PlayCircle, ChevronDown, ChevronUp, CalendarDays, Target, Wrench, Camera, ImagePlus, UserX, Bell, BellOff } from 'lucide-react'
 import type { IndividualMember, MemberPointage, MemberPlanning, MemberTask } from '@/lib/data/queries/members'
 import type { MemberGoalWithProgress } from '@/lib/data/queries/member-goals'
 import {
@@ -10,7 +10,13 @@ import {
   sendMyHoursReportFromSpace,
   logoutFromMonEspace,
   updateMyTaskFromSpace,
+  uploadPhotoFromSpace,
+  setPlanningArrivedAtFromSpace,
 } from '@/lib/data/mutations/members'
+import { declareMyAbsenceFromSpace, type ConflictingSlot } from '@/lib/data/mutations/absences'
+import { useMemberPushNotifications } from '@/lib/hooks/use-member-push-notifications'
+
+const MAX_MEMBER_PHOTO_SIZE = 10 * 1024 * 1024 // 10 Mo
 
 type ChantierStub = { id: string; title: string }
 
@@ -152,6 +158,18 @@ export default function MonEspaceDashboardClient({
   const router = useRouter()
   const fullName = [member.prenom, member.name].filter(Boolean).join(' ') || member.name
 
+  const { requestSubscription } = useMemberPushNotifications()
+  const [pushState, setPushState] = useState<'idle' | 'requesting' | 'granted' | 'denied' | 'unsupported'>(() => {
+    if (typeof window === 'undefined') return 'idle'
+    if (!('Notification' in window)) return 'unsupported'
+    return Notification.permission === 'granted' ? 'granted' : Notification.permission === 'denied' ? 'denied' : 'idle'
+  })
+  async function handleEnablePush() {
+    setPushState('requesting')
+    await requestSubscription()
+    setPushState(typeof window !== 'undefined' && 'Notification' in window ? (Notification.permission === 'granted' ? 'granted' : 'denied') : 'unsupported')
+  }
+
   const totalHours = pointages.reduce((s, p) => s + p.hours, 0)
   const [tasks, setTasks] = useState(initialTasks)
   const [taskLoadingId, setTaskLoadingId] = useState<string | null>(null)
@@ -173,6 +191,40 @@ export default function MonEspaceDashboardClient({
   const [slotSavingId, setSlotSavingId] = useState<string | null>(null)
   const [logoutLoading, setLogoutLoading] = useState(false)
 
+  // Déclaration d'absence
+  const [showAbsence, setShowAbsence] = useState(false)
+  const [absenceStart, setAbsenceStart] = useState(today)
+  const [absenceEnd, setAbsenceEnd] = useState(today)
+  const [absenceReason, setAbsenceReason] = useState('')
+  const [absenceSaving, setAbsenceSaving] = useState(false)
+  const [absenceError, setAbsenceError] = useState<string | null>(null)
+  const [absenceConflicts, setAbsenceConflicts] = useState<ConflictingSlot[] | null>(null)
+
+  const handleDeclareAbsence = async () => {
+    setAbsenceError(null)
+    if (!absenceStart || !absenceEnd) { setAbsenceError('Indiquez une date de début et de fin.'); return }
+    if (absenceEnd < absenceStart) { setAbsenceError('La date de fin doit être après la date de début.'); return }
+
+    setAbsenceSaving(true)
+    const { error, conflictingSlots } = await declareMyAbsenceFromSpace({
+      startDate: absenceStart,
+      endDate: absenceEnd,
+      reason: absenceReason.trim() || null,
+    })
+    setAbsenceSaving(false)
+    if (error) { setAbsenceError(error); return }
+
+    setAbsenceConflicts(conflictingSlots ?? [])
+    router.refresh()
+  }
+
+  const closeAbsenceForm = () => {
+    setShowAbsence(false)
+    setAbsenceReason('')
+    setAbsenceConflicts(null)
+    setAbsenceError(null)
+  }
+
   const handlePoint = async () => {
     setPError(null)
     const h = parseFloat(pHours.replace(',', '.'))
@@ -193,9 +245,45 @@ export default function MonEspaceDashboardClient({
     router.refresh()
   }
 
+  // Formulaire photo
+  const [showPhotoForm, setShowPhotoForm] = useState(false)
+  const [phChantier, setPhChantier] = useState(chantiers[0]?.id ?? '')
+  const [phFile, setPhFile] = useState<File | null>(null)
+  const [phCaption, setPhCaption] = useState('')
+  const [phSaving, setPhSaving] = useState(false)
+  const [phError, setPhError] = useState<string | null>(null)
+  const [phSuccess, setPhSuccess] = useState<string | null>(null)
+
+  const handleUploadPhoto = async () => {
+    setPhError(null)
+    setPhSuccess(null)
+    if (!phChantier) { setPhError('Choisissez un chantier.'); return }
+    if (!phFile) { setPhError('Choisissez ou prenez une photo.'); return }
+    if (phFile.size > MAX_MEMBER_PHOTO_SIZE) { setPhError('Photo trop volumineuse (10 Mo maximum).'); return }
+
+    setPhSaving(true)
+    const fd = new FormData()
+    fd.append('file', phFile)
+    fd.append('chantierId', phChantier)
+    if (phCaption.trim()) fd.append('caption', phCaption.trim())
+
+    const { error } = await uploadPhotoFromSpace(fd)
+    setPhSaving(false)
+    if (error) { setPhError(error); return }
+
+    setPhSuccess('Photo envoyée !')
+    setPhFile(null)
+    setPhCaption('')
+    router.refresh()
+  }
+
   const handleRouteArrival = (planningId: string) => {
     setQuickError(null)
     setArrivals(prev => ({ ...prev, [planningId]: new Date().toISOString() }))
+    // Persistance + notification managers en arrière-plan : ne bloque pas l'UI locale.
+    setPlanningArrivedAtFromSpace(planningId).then(({ error }) => {
+      if (error) setQuickError(`Arrivée non synchronisée : ${error}`)
+    })
   }
 
   const handleRouteDeparture = async (planning: MemberPlanning) => {
@@ -321,14 +409,30 @@ export default function MonEspaceDashboardClient({
           <p className="text-xs uppercase tracking-wider font-semibold text-secondary">{organizationName}</p>
           <h1 className="text-xl font-bold text-primary">Bonjour {member.prenom ?? fullName}</h1>
         </div>
-        <button
-          onClick={handleLogout}
-          disabled={logoutLoading}
-          className="text-secondary hover:text-primary p-2 rounded-lg hover:bg-[var(--elevation-1)] transition-colors disabled:opacity-60"
-          title="Se déconnecter"
-        >
-          {logoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
-        </button>
+        <div className="flex items-center gap-1">
+          {pushState !== 'unsupported' && pushState !== 'granted' && (
+            <button
+              onClick={handleEnablePush}
+              disabled={pushState === 'requesting' || pushState === 'denied'}
+              className="text-secondary hover:text-primary p-2 rounded-lg hover:bg-[var(--elevation-1)] transition-colors disabled:opacity-60"
+              title={pushState === 'denied' ? 'Notifications bloquées dans le navigateur' : 'Activer les notifications de planning'}
+            >
+              {pushState === 'requesting'
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : pushState === 'denied'
+                  ? <BellOff className="w-4 h-4" />
+                  : <Bell className="w-4 h-4" />}
+            </button>
+          )}
+          <button
+            onClick={handleLogout}
+            disabled={logoutLoading}
+            className="text-secondary hover:text-primary p-2 rounded-lg hover:bg-[var(--elevation-1)] transition-colors disabled:opacity-60"
+            title="Se déconnecter"
+          >
+            {logoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+          </button>
+        </div>
       </header>
 
       {/* Bandeau résumé du mois */}
@@ -391,6 +495,60 @@ export default function MonEspaceDashboardClient({
             <button onClick={handlePoint} disabled={pSaving} className="btn-primary text-sm flex items-center gap-1.5">
               {pSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
               {pSaving ? 'Enregistrement…' : 'Pointer'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* CTA photo */}
+      {!showPhotoForm && (
+        <button
+          onClick={() => setShowPhotoForm(true)}
+          className="btn-secondary w-full flex items-center justify-center gap-2"
+          disabled={chantiers.length === 0}
+        >
+          <Camera className="w-4 h-4" /> Ajouter une photo
+        </button>
+      )}
+
+      {showPhotoForm && (
+        <div className="card p-4 border-accent/30 bg-accent/5 space-y-3">
+          <p className="text-sm font-bold text-primary">Nouvelle photo</p>
+          <select className="input w-full" value={phChantier} onChange={e => setPhChantier(e.target.value)}>
+            <option value="">— Choisir un chantier —</option>
+            {chantiers.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+          </select>
+          <label className="flex items-center justify-center gap-2 border border-dashed border-[var(--elevation-border)] rounded-lg py-6 cursor-pointer hover:bg-[var(--elevation-1)] transition-colors">
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={e => setPhFile(e.target.files?.[0] ?? null)}
+            />
+            <ImagePlus className="w-5 h-5 text-secondary" />
+            <span className="text-sm text-secondary">
+              {phFile ? phFile.name : 'Prendre ou choisir une photo'}
+            </span>
+          </label>
+          <textarea
+            className="input w-full min-h-[60px]"
+            placeholder="Légende (facultatif)"
+            value={phCaption}
+            onChange={e => setPhCaption(e.target.value)}
+          />
+          {phError && <p className="text-xs text-red-500">{phError}</p>}
+          {phSuccess && <p className="text-xs text-green-600">{phSuccess}</p>}
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={() => { setShowPhotoForm(false); setPhFile(null); setPhCaption(''); setPhError(null) }}
+              className="btn-secondary text-sm flex items-center gap-1.5"
+            >
+              <X className="w-3.5 h-3.5" /> Annuler
+            </button>
+            <button onClick={handleUploadPhoto} disabled={phSaving} className="btn-primary text-sm flex items-center gap-1.5">
+              {phSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              {phSaving ? 'Envoi…' : 'Envoyer'}
             </button>
           </div>
         </div>
@@ -558,16 +716,96 @@ export default function MonEspaceDashboardClient({
           <h2 className="text-sm font-bold text-primary flex items-center gap-2">
             <Calendar className="w-4 h-4 text-accent" /> Mes créneaux planifiés
           </h2>
-          <a
-            href={icalUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--elevation-border)] text-xs font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-colors"
-            title="Synchroniser avec Apple Calendar, Google Calendar ou votre agenda"
-          >
-            <CalendarDays className="w-3.5 h-3.5" /> Sync agenda
-          </a>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowAbsence(v => !v)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--elevation-border)] text-xs font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-colors"
+            >
+              <UserX className="w-3.5 h-3.5" /> Je suis absent(e)
+            </button>
+            <a
+              href={icalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--elevation-border)] text-xs font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-colors"
+              title="Synchroniser avec Apple Calendar, Google Calendar ou votre agenda"
+            >
+              <CalendarDays className="w-3.5 h-3.5" /> Sync agenda
+            </a>
+          </div>
         </div>
+        {showAbsence && (
+          <div className="card p-4 space-y-3">
+            {absenceConflicts === null ? (
+              <>
+                <p className="text-sm font-semibold text-primary">Déclarer une absence</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="text-xs text-secondary space-y-1">
+                    <span>Du</span>
+                    <input
+                      type="date"
+                      value={absenceStart}
+                      onChange={e => setAbsenceStart(e.target.value)}
+                      className="w-full rounded-lg border border-[var(--elevation-border)] px-2.5 py-1.5 text-sm bg-transparent"
+                    />
+                  </label>
+                  <label className="text-xs text-secondary space-y-1">
+                    <span>Au</span>
+                    <input
+                      type="date"
+                      value={absenceEnd}
+                      onChange={e => setAbsenceEnd(e.target.value)}
+                      className="w-full rounded-lg border border-[var(--elevation-border)] px-2.5 py-1.5 text-sm bg-transparent"
+                    />
+                  </label>
+                </div>
+                <label className="text-xs text-secondary space-y-1 block">
+                  <span>Motif (optionnel)</span>
+                  <textarea
+                    value={absenceReason}
+                    onChange={e => setAbsenceReason(e.target.value)}
+                    rows={2}
+                    className="w-full rounded-lg border border-[var(--elevation-border)] px-2.5 py-1.5 text-sm bg-transparent"
+                    placeholder="Maladie, congé, imprévu..."
+                  />
+                </label>
+                {absenceError && <p className="text-xs text-red-500">{absenceError}</p>}
+                <div className="flex items-center gap-2">
+                  <button onClick={closeAbsenceForm} className="btn-secondary px-3 py-1.5 text-xs">Annuler</button>
+                  <button
+                    onClick={handleDeclareAbsence}
+                    disabled={absenceSaving}
+                    className="btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                  >
+                    {absenceSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    Déclarer l'absence
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">Absence enregistrée.</p>
+                {absenceConflicts.length > 0 ? (
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-secondary">
+                      {absenceConflicts.length} créneau{absenceConflicts.length > 1 ? 'x' : ''} déjà planifié{absenceConflicts.length > 1 ? 's' : ''} sur cette période. Prévenez votre responsable, il reste{absenceConflicts.length > 1 ? 'nt' : ''} à traiter :
+                    </p>
+                    <ul className="text-xs text-secondary space-y-0.5">
+                      {absenceConflicts.map(slot => (
+                        <li key={slot.id}>
+                          {fmtDate(slot.planned_date)} - {slot.chantier_title}{slot.start_time ? ` (${slot.start_time.slice(0, 5)})` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-xs text-secondary">Aucun créneau existant sur cette période.</p>
+                )}
+                <button onClick={closeAbsenceForm} className="btn-secondary px-3 py-1.5 text-xs">Fermer</button>
+              </>
+            )}
+          </div>
+        )}
         {quickError && <p className="text-xs text-red-500">{quickError}</p>}
         {sortedPlanningDates.length === 0 ? (
           <div className="card p-4 text-sm text-secondary text-center">
@@ -647,14 +885,23 @@ export default function MonEspaceDashboardClient({
                                 Pointé
                               </span>
                             ) : canPointSlot ? (
-                              <button
-                                onClick={() => handlePointPlannedSlot(p)}
-                                disabled={slotSavingId === p.id}
-                                className="btn-primary inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs"
-                              >
-                                {slotSavingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clock className="h-3.5 w-3.5" />}
-                                Pointer
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => handlePointPlannedSlot(p)}
+                                  disabled={slotSavingId === p.id}
+                                  className="btn-primary inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs"
+                                >
+                                  {slotSavingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clock className="h-3.5 w-3.5" />}
+                                  Pointer
+                                </button>
+                                <button
+                                  onClick={() => { setAbsenceStart(p.planned_date); setAbsenceEnd(p.planned_date); setShowAbsence(true) }}
+                                  className="p-1.5 rounded-lg text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                                  title="Je suis absent(e) sur ce créneau"
+                                >
+                                  <UserX className="h-3.5 w-3.5" />
+                                </button>
+                              </>
                             ) : null}
                           </div>
                         </div>

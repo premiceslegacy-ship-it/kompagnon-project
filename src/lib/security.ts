@@ -20,6 +20,17 @@ export function constantTimeEqual(a: string | null | undefined, b: string | null
   return diff === 0
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Checks a route param looks like a UUID before it reaches a Postgres `.eq()`.
+ * Without this, a malformed id causes Postgres error 22P02 (invalid input syntax
+ * for type uuid), which surfaces as an unhandled 500 instead of a clean 404.
+ */
+export function isValidUuid(value: string | null | undefined): value is string {
+  return typeof value === 'string' && UUID_RE.test(value)
+}
+
 const SENSITIVE_LOG_KEY = /token|secret|password|authorization|signature|cookie|api[_-]?key|access[_-]?token|refresh[_-]?token|email|phone|address|ip|user[_-]?agent/i
 
 /**

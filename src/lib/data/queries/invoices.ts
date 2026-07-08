@@ -205,6 +205,13 @@ export async function getSituationsSummary(quoteId: string): Promise<SituationsS
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
+// Plafond de sécurité : la page finances charge tout en un bloc pour permettre
+// le filtrage/recherche instantané côté client. Sans limite, l'historique complet
+// d'une organisation ancienne (plusieurs milliers de factures) ralentirait cette
+// page à chaque visite. 500 couvre largement l'usage courant ; au-delà, les plus
+// anciennes restent consultables via les exports comptables (FEC, rapport PDF).
+const FINANCES_LIST_LIMIT = 500
+
 export async function getInvoices(): Promise<Invoice[]> {
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
@@ -221,6 +228,7 @@ export async function getInvoices(): Promise<Invoice[]> {
     .eq('organization_id', orgId)
     .eq('is_archived', false)
     .order('created_at', { ascending: false })
+    .limit(FINANCES_LIST_LIMIT)
 
   if (error) {
     console.error('[getInvoices]', error)

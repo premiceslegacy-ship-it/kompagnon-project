@@ -6,7 +6,7 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getOrganization } from '@/lib/data/queries/organization'
 import MaintenanceInterventionPDF from '@/components/pdf/MaintenanceInterventionPDF'
 import type { MaintenanceReportPhoto } from '@/components/pdf/MaintenanceInterventionPDF'
-import { assertSafeExternalFetchUrl } from '@/lib/security'
+import { assertSafeExternalFetchUrl, isValidUuid } from '@/lib/security'
 
 async function fetchAsDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null
@@ -27,6 +27,8 @@ export async function GET(
   req: Request,
   { params }: { params: { id: string } },
 ) {
+  if (!isValidUuid(params.id)) return new NextResponse('Intervention introuvable', { status: 404 })
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return new NextResponse('Non authentifié', { status: 401 })

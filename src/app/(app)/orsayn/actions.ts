@@ -6,6 +6,8 @@ import { getOperatorUser } from '@/lib/operator-auth'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ORGANIZATION_MODULE_KEYS, normalizeOrganizationModules } from '@/lib/organization-modules'
+import { VERTICAL_PACKS, normalizeVerticalPackId } from '@/lib/vertical-packs'
+import { activateVerticalPackForOrganization, deactivateVerticalPackForOrganization } from '@/lib/data/mutations/vertical-packs'
 import {
   getModulesForTier,
   getQuotaConfigForTier,
@@ -185,7 +187,7 @@ function getEffectiveTier(subscription: TrialState): SubscriptionTier {
 
 async function recordOperatorClientEvent(input: {
   sourceInstance: string
-  eventCategory: 'subscription' | 'trial' | 'config_sync' | 'einvoicing' | 'module' | 'crm' | 'note'
+  eventCategory: 'subscription' | 'trial' | 'config_sync' | 'einvoicing' | 'module' | 'crm' | 'note' | 'vertical_pack'
   eventType: string
   actorEmail: string | null
   metadata?: Record<string, unknown>
@@ -1085,6 +1087,50 @@ export async function upsertOperatorClientModules(formData: FormData) {
         .filter(([, enabled]) => enabled)
         .map(([key]) => key),
     },
+  })
+
+  revalidatePath('/orsayn')
+}
+
+export async function upsertOperatorClientVerticalPack(formData: FormData) {
+  const user = await getOperatorUser()
+  if (!user) throw new Error('Accès opérateur requis')
+
+  const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
+  if (!sourceInstance) throw new Error('source_instance requis')
+
+  const operator = createOperatorAdminClient()
+  const { data: client, error: clientError } = await operator
+    .from('operator_clients')
+    .select('organization_id')
+    .eq('source_instance', sourceInstance)
+    .maybeSingle()
+
+  if (clientError || !client?.organization_id) {
+    throw new Error('Client introuvable ou organization_id manquant')
+  }
+
+  const orgId = client.organization_id
+  const rawPackId = String(formData.get('vertical_pack_id') ?? '').trim()
+  const packId = normalizeVerticalPackId(rawPackId)
+
+  if (rawPackId && !packId) throw new Error('Pack verticale inconnu')
+
+  const result = packId
+    ? await activateVerticalPackForOrganization({ organizationId: orgId, packId, actorUserId: user.id })
+    : await deactivateVerticalPackForOrganization({ organizationId: orgId })
+
+  if (result.error) {
+    console.error('[upsertOperatorClientVerticalPack]', result.error)
+    throw new Error(result.error)
+  }
+
+  await recordOperatorClientEvent({
+    sourceInstance,
+    eventCategory: 'vertical_pack',
+    eventType: packId ? 'vertical_pack_activated' : 'vertical_pack_deactivated',
+    actorEmail: user.email ?? null,
+    metadata: { pack_id: packId ?? null },
   })
 
   revalidatePath('/orsayn')

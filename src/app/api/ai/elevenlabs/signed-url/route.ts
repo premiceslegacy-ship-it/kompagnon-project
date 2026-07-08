@@ -40,9 +40,10 @@ function shortText(value: string | null | undefined, max = 180): string | null {
 }
 
 function clientName(client: any, fallback?: string | null): string {
-  return client?.company_name
-    || client?.contact_name
-    || [client?.first_name, client?.last_name].filter(Boolean).join(' ')
+  const c = Array.isArray(client) ? client[0] : client
+  return c?.company_name
+    || [c?.first_name, c?.last_name].filter(Boolean).join(' ')
+    || c?.contact_name
     || fallback
     || '?'
 }
@@ -133,7 +134,7 @@ async function buildVoiceContext(orgId: string, params: {
         .single(),
       supabase
         .from('chantier_plannings')
-        .select('id, chantier_id, planned_date, start_time, end_time, label, team_size, notes, member_id, equipe_id, chantier:chantiers!inner(id, title, client_name, organization_id, is_archived, status), member:chantier_equipe_membres(id, prenom, name, role_label), equipe:chantier_equipes(id, name)')
+        .select('id, chantier_id, planned_date, start_time, end_time, label, team_size, notes, member_id, equipe_id, chantier:chantiers!inner(id, title, organization_id, is_archived, status, client:clients(company_name, first_name, last_name, contact_name)), member:chantier_equipe_membres(id, prenom, name, role_label), equipe:chantier_equipes(id, name)')
         .eq('chantier.organization_id', orgId)
         .eq('chantier.is_archived', false)
         .not('chantier.status', 'in', '("termine","annule")')
@@ -142,7 +143,7 @@ async function buildVoiceContext(orgId: string, params: {
         .limit(VOICE_LIMITS.todayPlanning),
       supabase
         .from('chantier_plannings')
-        .select('id, chantier_id, planned_date, start_time, end_time, label, team_size, notes, member_id, equipe_id, chantier:chantiers!inner(id, title, client_name, organization_id, is_archived, status), member:chantier_equipe_membres(id, prenom, name, role_label), equipe:chantier_equipes(id, name)')
+        .select('id, chantier_id, planned_date, start_time, end_time, label, team_size, notes, member_id, equipe_id, chantier:chantiers!inner(id, title, organization_id, is_archived, status, client:clients(company_name, first_name, last_name, contact_name)), member:chantier_equipe_membres(id, prenom, name, role_label), equipe:chantier_equipes(id, name)')
         .eq('chantier.organization_id', orgId)
         .eq('chantier.is_archived', false)
         .not('chantier.status', 'in', '("termine","annule")')
@@ -153,7 +154,7 @@ async function buildVoiceContext(orgId: string, params: {
         .limit(VOICE_LIMITS.weekPlanning),
       supabase
         .from('chantiers')
-        .select('id, title, description, status, client_name, start_date, end_date, estimated_end_date, budget_ht, recurrence, recurrence_times, recurrence_team_size, recurrence_duration_h, recurrence_notes, client:clients(company_name, contact_name, first_name, last_name, email, phone, mobile)')
+        .select('id, title, description, status, start_date, end_date, estimated_end_date, budget_ht, recurrence, recurrence_times, recurrence_team_size, recurrence_duration_h, recurrence_notes, client:clients(company_name, contact_name, first_name, last_name, email, phone, mobile)')
         .eq('organization_id', orgId)
         .eq('is_archived', false)
         .in('status', ['en_cours', 'planifie', 'suspendu'])
@@ -262,7 +263,7 @@ async function buildVoiceContext(orgId: string, params: {
         .limit(80),
       supabase
         .from('chantier_pointages')
-        .select('id, chantier_planning_id, chantier_id, tache_id, user_id, member_id, date, hours, start_time, description, created_at, profile:profiles(full_name), membre:chantier_equipe_membres(prenom, name), tache:chantier_taches(title), chantier:chantiers!inner(id, title, client_name, organization_id, is_archived, status)')
+        .select('id, chantier_planning_id, chantier_id, tache_id, user_id, member_id, date, hours, start_time, description, created_at, profile:profiles(full_name), membre:chantier_equipe_membres(prenom, name), tache:chantier_taches(title), chantier:chantiers!inner(id, title, organization_id, is_archived, status, client:clients(company_name, first_name, last_name, contact_name))')
         .eq('chantier.organization_id', orgId)
         .eq('chantier.is_archived', false)
         .eq('date', today)
@@ -279,7 +280,7 @@ async function buildVoiceContext(orgId: string, params: {
         .limit(VOICE_LIMITS.dailyActivity),
       supabase
         .from('chantier_notes')
-        .select('id, content, created_at, author:profiles(full_name), chantier:chantiers!inner(id, title, client_name, organization_id, is_archived, status)')
+        .select('id, content, created_at, author:profiles(full_name), chantier:chantiers!inner(id, title, organization_id, is_archived, status, client:clients(company_name, first_name, last_name, contact_name))')
         .eq('chantier.organization_id', orgId)
         .eq('chantier.is_archived', false)
         .gte('created_at', `${today}T00:00:00+02:00`)
@@ -288,7 +289,7 @@ async function buildVoiceContext(orgId: string, params: {
         .limit(VOICE_LIMITS.dailyActivity),
       supabase
         .from('chantier_photos')
-        .select('id, title, caption, taken_at, created_at, uploader:profiles(full_name), tache:chantier_taches(title), chantier:chantiers!inner(id, title, client_name, organization_id, is_archived, status)')
+        .select('id, title, caption, taken_at, created_at, uploader:profiles(full_name), tache:chantier_taches(title), chantier:chantiers!inner(id, title, organization_id, is_archived, status, client:clients(company_name, first_name, last_name, contact_name))')
         .eq('chantier.organization_id', orgId)
         .eq('chantier.is_archived', false)
         .gte('created_at', `${today}T00:00:00+02:00`)
@@ -407,7 +408,7 @@ async function buildVoiceContext(orgId: string, params: {
         slot.team_size ? `${slot.team_size} pers.` : null,
         slot.notes ? `note : ${shortText(slot.notes, 110)}` : null,
       ].filter(Boolean).join(', ')
-      lines.push(`  ${details ? `${details} - ` : ''}chantier "${c?.title ?? '?'}" (${c?.client_name ?? '?'})${slot.label ? ` - ${slot.label}` : ''}`)
+      lines.push(`  ${details ? `${details} - ` : ''}chantier "${c?.title ?? '?'}" (${clientName(c?.client)})${slot.label ? ` - ${slot.label}` : ''}`)
     }
   } else {
     lines.push('', `Planning du jour (${today}) : aucune intervention planifiée.`)
@@ -428,7 +429,7 @@ async function buildVoiceContext(orgId: string, params: {
           (p as any).tache?.title ? `tâche "${(p as any).tache.title}"` : null,
           p.description ? shortText(p.description, 120) : null,
         ].filter(Boolean).join(', ')
-        lines.push(`    ${person} - chantier "${chantier?.title ?? '?'}" (${chantier?.client_name ?? '?'}) - ${detail}${(p as any).chantier_planning_id ? ` - lié au créneau ${((p as any).chantier_planning_id as string).slice(0, 8)}` : ''}`)
+        lines.push(`    ${person} - chantier "${chantier?.title ?? '?'}" (${clientName(chantier?.client)}) - ${detail}${(p as any).chantier_planning_id ? ` - lié au créneau ${((p as any).chantier_planning_id as string).slice(0, 8)}` : ''}`)
       }
     }
 
@@ -471,14 +472,14 @@ async function buildVoiceContext(orgId: string, params: {
         slotHours(slot.start_time, slot.end_time),
         formatPlanningIntervenant(slot),
       ].filter(Boolean).join(', ')
-      lines.push(`  ${details} - chantier "${c?.title ?? '?'}" (${c?.client_name ?? '?'})${slot.label ? ` - ${slot.label}` : ''}`)
+      lines.push(`  ${details} - chantier "${c?.title ?? '?'}" (${clientName(c?.client)})${slot.label ? ` - ${slot.label}` : ''}`)
     }
   }
 
   if (activeChantiers?.length) {
     lines.push('', 'Chantiers actifs à connaître :')
     for (const c of activeChantiers) {
-      const client = clientName((c as any).client, (c as any).client_name)
+      const client = clientName((c as any).client)
       const deadline = c.end_date ?? c.estimated_end_date ?? 'non définie'
       const recurrence = c.recurrence && c.recurrence !== 'none'
         ? `, récurrence ${c.recurrence}${c.recurrence_times ? ` ${c.recurrence_times}x` : ''}${c.recurrence_team_size ? `, équipe ${c.recurrence_team_size}` : ''}`

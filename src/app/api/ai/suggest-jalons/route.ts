@@ -102,7 +102,7 @@ Réponds UNIQUEMENT avec un tableau JSON, rien d'autre.`
   const messages = [
     {
       role: 'system',
-      content: `Tu es un expert en gestion de chantier pour une entreprise du métier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}.${secondaryActivityContext} Tu aides à structurer la facturation par jalons d'avancement en tenant compte des phases et pratiques propres à ce métier. Réponds toujours en JSON valide avec le format demandé.`,
+      content: `Tu es un expert en gestion de chantier pour une entreprise du métier : ${businessCtx.activityLabel}${businessCtx.activityDescription ? ` (${businessCtx.activityDescription})` : ''}.${secondaryActivityContext} Tu aides à structurer la facturation par jalons d'avancement en tenant compte des phases et pratiques propres à ce métier. Aucun emoji ni tiret cadratin dans les libellés. Réponds toujours en JSON valide avec le format demandé.`,
     },
     {
       role: 'user',

@@ -14,6 +14,18 @@ const publicRoutePrefixes = [
   '/sign',
   '/contrats/signer',
   '/mon-espace',
+  '/api/auth/member-verify',
+  // PDF à accès public par token de signature (page /sign/[token] et /contrats/signer) :
+  // le handler valide lui-même signature_token en base avant de servir le document.
+  '/api/pdf/quote',
+  '/api/pdf/contract',
+  // Routes serveur-à-serveur : elles portent leur propre authentification
+  // (x-cron-secret ou signature Stripe) et n'ont jamais de session utilisateur.
+  // Sans ces exclusions, le middleware les redirige vers /login et les crons
+  // ne s'exécutent jamais en production.
+  '/api/cron',
+  '/api/webhooks',
+  '/api/operator/cron',
 ]
 
 const publicExactRoutes = [
