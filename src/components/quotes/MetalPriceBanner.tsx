@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useState, type MouseEvent } from 'react'
-import { RefreshCw, AlertTriangle, ChevronRight, Settings, Loader2 } from 'lucide-react'
+import { RefreshCw, AlertTriangle, ChevronRight, Settings, Loader2, TrendingUp, TrendingDown } from 'lucide-react'
 import Link from 'next/link'
-import { METAL_LABELS, LME_METAL_CODES, type CachedMetalPrice, type MetalCode } from '@/lib/metal-prices'
+import { METAL_LABELS, LME_METAL_CODES, type CachedMetalPrice, type MetalCode, type MetalPriceTrend } from '@/lib/metal-prices'
 import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids'
 
 type Props = {
@@ -11,7 +11,10 @@ type Props = {
   onGridSelect?: (grid: MetalPriceGrid, priceEurKg: number) => void
 }
 
-type ApiResponse = { prices?: CachedMetalPrice[]; error?: string }
+type ApiResponse = { prices?: CachedMetalPrice[]; trends?: MetalPriceTrend[]; error?: string }
+
+// Seuil au-delà duquel la variation est mise en avant visuellement (hausse comme baisse).
+const TREND_ALERT_THRESHOLD_PERCENT = 2
 
 function fmtEurKg(n: number): string {
   return new Intl.NumberFormat('fr-FR', {
@@ -34,6 +37,7 @@ export default function MetalPriceBanner({ grids, onGridSelect }: Props) {
   const settingsHref = '/settings?tab=devis#metal-prices'
 
   const [prices, setPrices] = useState<CachedMetalPrice[] | null>(null)
+  const [trends, setTrends] = useState<MetalPriceTrend[]>([])
   const [error, setError] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -48,6 +52,7 @@ export default function MetalPriceBanner({ grids, onGridSelect }: Props) {
       const data: ApiResponse = await res.json()
       if (!res.ok) throw new Error(data.error || 'Cours temporairement indisponibles.')
       setPrices(data.prices ?? [])
+      setTrends(data.trends ?? [])
     } catch (err) {
       setError(true)
       setErrorMessage(err instanceof Error ? err.message : 'Cours temporairement indisponibles.')
@@ -74,6 +79,7 @@ export default function MetalPriceBanner({ grids, onGridSelect }: Props) {
 
   const safePrices = prices ?? []
   const priceMap = Object.fromEntries(safePrices.map(p => [p.metal_code, p]))
+  const trendMap = Object.fromEntries(trends.map(t => [t.metal_code, t]))
   const isDemoPrices = safePrices.some(p => p.source === 'atelier_demo_market_data')
 
   const fetchedAt = safePrices[0]?.fetched_at
@@ -119,12 +125,27 @@ export default function MetalPriceBanner({ grids, onGridSelect }: Props) {
           <div className="flex flex-wrap gap-x-6 gap-y-2">
             {LME_METAL_CODES.map((code) => {
               const p = priceMap[code]
+              const trend = trendMap[code]
+              const isAlert = trend && Math.abs(trend.changePercent) >= TREND_ALERT_THRESHOLD_PERCENT
               return (
                 <div key={code} className="flex items-baseline gap-1.5">
                   <span className="text-sm text-secondary">{METAL_LABELS[code]}</span>
                   <span className="text-sm font-bold tabular-nums text-primary">
                     {p ? fmtEurKg(p.price_eur_kg) : '—'}
                   </span>
+                  {trend && (
+                    <span
+                      className={`inline-flex items-center gap-0.5 text-xs font-semibold tabular-nums ${
+                        trend.changePercent >= 0
+                          ? isAlert ? 'text-red-600 dark:text-red-400' : 'text-secondary'
+                          : isAlert ? 'text-emerald-600 dark:text-emerald-400' : 'text-secondary'
+                      }`}
+                      title={`Cours du ${new Date(trend.previousDate).toLocaleDateString('fr-FR')} : ${fmtEurKg(trend.previousPriceEurKg)}`}
+                    >
+                      {trend.changePercent >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+                      {trend.changePercent >= 0 ? '+' : ''}{trend.changePercent}%
+                    </span>
+                  )}
                 </div>
               )
             })}
@@ -191,7 +212,7 @@ export default function MetalPriceBanner({ grids, onGridSelect }: Props) {
               })}
             </div>
             <p className="mt-2.5 text-[11px] text-secondary leading-relaxed">
-              Prix indicatif = cours LME × coefficient fournisseur (ou prix fixe pour l'acier). À valider selon format, épaisseur, coupe et délai de livraison.
+              Prix indicatif = cours LME × coefficient fournisseur (ou prix fixe pour l'acier). Renseignez longueur et largeur sur la ligne pour un calcul au poids réel si la grille a une épaisseur définie. À valider selon coupe et délai de livraison.
             </p>
           </>
         ) : (

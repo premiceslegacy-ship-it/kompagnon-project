@@ -478,7 +478,7 @@ function numberOr(value: unknown, fallback: number): number {
   return Number.isFinite(n) ? n : fallback
 }
 
-async function findClientIdForSarahDraft(orgId: string, payload: Record<string, unknown>): Promise<string | null> {
+export async function findClientIdForSarahDraft(orgId: string, payload: Record<string, unknown>): Promise<string | null> {
   const explicit = typeof payload.client_id === 'string'
     ? payload.client_id
     : typeof payload.clientId === 'string'
@@ -626,6 +626,17 @@ async function resolveSarahDraftLines(payload: Record<string, unknown>): Promise
       continue
     }
 
+    // Un catalog_id explicite peut pointer vers n'importe quel volet du
+    // catalogue : on le résout par id avant tout raisonnement sur le "type",
+    // sinon une ligne main d'œuvre sans type est perdue en silence.
+    if (explicitCatalogId) {
+      const laborById = laborRates.find(l => l.id === explicitCatalogId)
+      if (laborById) {
+        lines.push(lineFromLabor(laborById, raw))
+        continue
+      }
+    }
+
     const labor = (kind.includes('mo') || kind.includes('labor') || kind.includes('main') || kind.includes('oeuvre'))
       ? findCatalogMatch(laborRates, raw, ['designation', 'reference', 'category'])
       : null
@@ -637,6 +648,13 @@ async function resolveSarahDraftLines(payload: Record<string, unknown>): Promise
     const material = findCatalogMatch(materials, raw, ['name', 'reference', 'category'])
     if (material) {
       lines.push(lineFromMaterial(material, raw))
+      continue
+    }
+
+    // Dernier recours avant la ligne libre : un nom qui matche la main d'œuvre
+    const laborByName = findCatalogMatch(laborRates, raw, ['designation', 'reference'])
+    if (laborByName) {
+      lines.push(lineFromLabor(laborByName, raw))
       continue
     }
 

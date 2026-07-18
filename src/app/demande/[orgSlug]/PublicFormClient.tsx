@@ -405,6 +405,9 @@ function MaterialCard({
           </div>
         </div>
       </div>
+      {material.description && (
+        <p className="text-xs text-gray-500 pl-[52px] -mt-2">{material.description}</p>
+      )}
 
       {selected && (
         <div className="mt-1 pt-3 border-t border-blue-100 flex flex-col gap-3" onClick={e => e.stopPropagation()}>
@@ -530,6 +533,9 @@ function LaborCard({
           </div>
         </div>
       </div>
+      {labor.description && (
+        <p className="text-xs text-gray-500 pl-[52px] -mt-2">{labor.description}</p>
+      )}
 
       {selected && (
         <div className="mt-1 pt-3 border-t border-blue-100 flex flex-col gap-3" onClick={e => e.stopPropagation()}>
@@ -1746,15 +1752,15 @@ export default function PublicFormClient({
                 </div>
               )}
 
-              {/* ── Articles par catégorie ── */}
-              {articleMaterialGroups.length > 0 && (
+              {/* ── Prestations types d'abord : c'est l'entrée principale du client ── */}
+              {filteredPrestationGroups.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">
-                    {catalogContext.labelSet.material.plural}
+                    {catalogContext.labelSet.bundleTemplate.plural}
                   </p>
-                  {articleMaterialGroups.map(group => {
-                    const key = `articles-${group.label}`
-                    const selCount = group.items.filter(m => !!selectedMaterials[m.id]).length
+                  {filteredPrestationGroups.map(group => {
+                    const key = `prestations-${group.label}`
+                    const selCount = group.items.filter(pt => !!selectedPrestations[pt.id]).length
                     const isOpen = !!step2Q || selCount > 0 || expandedCategories.has(key)
                     return (
                       <div key={group.label} className="rounded-xl border border-gray-200 overflow-hidden bg-white">
@@ -1772,32 +1778,28 @@ export default function PublicFormClient({
                             )}
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0 text-gray-400">
-                            <span className="text-xs hidden sm:block">{group.items.length}&nbsp;{group.items.length > 1 ? 'articles' : 'article'}</span>
+                            <span className="text-xs hidden sm:block">{group.items.length}&nbsp;{group.items.length > 1 ? 'prestations' : 'prestation'}</span>
                             {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                           </div>
                         </button>
                         {isOpen && (
-                          <div className="px-3 pb-3 pt-1 space-y-2 border-t border-gray-100">
-                            {group.items.map(m => (
-                              <MaterialCard
-                                key={m.id}
-                                material={m}
-                                itemKindLabel={catalogContext.labelSet.material.singular}
-                                selected={!!selectedMaterials[m.id]}
-                                quantity={selectedMaterials[m.id]?.quantity ?? 1}
-                                dimensionCount={selectedMaterials[m.id]?.dimension_count ?? 1}
-                                details={selectedMaterials[m.id]?.details ?? ''}
-                                lengthM={selectedMaterials[m.id]?.length_m ?? null}
-                                widthM={selectedMaterials[m.id]?.width_m ?? null}
-                                heightM={selectedMaterials[m.id]?.height_m ?? null}
-                                onToggle={() => toggleMaterial(m)}
-                                onQty={d => setMaterialQty(m.id, d)}
-                                onSetQty={q => setMaterialExactQty(m.id, q)}
-                                onSetDimensionCount={q => setMaterialDimensionCount(m.id, q)}
-                                onSetDetails={d => setMaterialDetails(m.id, d)}
-                                onSetLength={v => setMaterialLength(m.id, v)}
-                                onSetWidth={v => setMaterialWidth(m.id, v)}
-                                onSetHeight={v => setMaterialHeight(m.id, v)}
+                          <div className="px-3 pb-3 pt-1 space-y-3 border-t border-gray-100">
+                            {group.items.map(pt => (
+                              <PrestationCard
+                                key={pt.id}
+                                pt={pt}
+                                selected={!!selectedPrestations[pt.id]}
+                                data={selectedPrestations[pt.id]}
+                                onToggle={() => togglePrestation(pt)}
+                                onLineQty={(lineId, d) => setPrestationLineQty(pt.id, lineId, d)}
+                                onLineSetQty={(lineId, q) => setPrestationLineExactQty(pt.id, lineId, q)}
+                                onLineSetDimensionCount={(lineId, q) => setPrestationLineDimensionCount(pt.id, lineId, q)}
+                                onLineSetDetails={(lineId, d) => setPrestationLineDetails(pt.id, lineId, d)}
+                                onLineSetLength={(lineId, v) => setPrestationLineLength(pt.id, lineId, v)}
+                                onLineSetWidth={(lineId, v) => setPrestationLineWidth(pt.id, lineId, v)}
+                                onLineSetHeight={(lineId, v) => setPrestationLineHeight(pt.id, lineId, v)}
+                                onLineRemove={lineId => removePrestationLine(pt.id, lineId)}
+                                onLineAdd={line => addPrestationLine(pt.id, line)}
                               />
                             ))}
                           </div>
@@ -1806,6 +1808,11 @@ export default function PublicFormClient({
                     )
                   })}
                 </div>
+              )}
+
+              {/* Séparateur prestations / reste du catalogue */}
+              {filteredPrestationGroups.length > 0 && (articleMaterialGroups.length > 0 || serviceMaterialGroups.length > 0) && (
+                <div className="h-px bg-gray-100" />
               )}
 
               {/* ── Services par catégorie ── */}
@@ -1845,6 +1852,68 @@ export default function PublicFormClient({
                                 key={m.id}
                                 material={m}
                                 itemKindLabel={catalogContext.labelSet.service.singular}
+                                selected={!!selectedMaterials[m.id]}
+                                quantity={selectedMaterials[m.id]?.quantity ?? 1}
+                                dimensionCount={selectedMaterials[m.id]?.dimension_count ?? 1}
+                                details={selectedMaterials[m.id]?.details ?? ''}
+                                lengthM={selectedMaterials[m.id]?.length_m ?? null}
+                                widthM={selectedMaterials[m.id]?.width_m ?? null}
+                                heightM={selectedMaterials[m.id]?.height_m ?? null}
+                                onToggle={() => toggleMaterial(m)}
+                                onQty={d => setMaterialQty(m.id, d)}
+                                onSetQty={q => setMaterialExactQty(m.id, q)}
+                                onSetDimensionCount={q => setMaterialDimensionCount(m.id, q)}
+                                onSetDetails={d => setMaterialDetails(m.id, d)}
+                                onSetLength={v => setMaterialLength(m.id, v)}
+                                onSetWidth={v => setMaterialWidth(m.id, v)}
+                                onSetHeight={v => setMaterialHeight(m.id, v)}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* ── Articles par catégorie ── */}
+              {articleMaterialGroups.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">
+                    {catalogContext.labelSet.material.plural}
+                  </p>
+                  {articleMaterialGroups.map(group => {
+                    const key = `articles-${group.label}`
+                    const selCount = group.items.filter(m => !!selectedMaterials[m.id]).length
+                    const isOpen = !!step2Q || selCount > 0 || expandedCategories.has(key)
+                    return (
+                      <div key={group.label} className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+                        <button
+                          type="button"
+                          onClick={() => toggleCategory(key)}
+                          className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-50 transition-colors text-left"
+                        >
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="text-sm font-semibold text-gray-700 truncate">{group.label}</span>
+                            {selCount > 0 && (
+                              <span className="flex-shrink-0 text-[11px] font-bold text-blue-700 bg-blue-100 rounded-full px-2 py-0.5">
+                                {selCount}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0 text-gray-400">
+                            <span className="text-xs hidden sm:block">{group.items.length}&nbsp;{group.items.length > 1 ? 'articles' : 'article'}</span>
+                            {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </div>
+                        </button>
+                        {isOpen && (
+                          <div className="px-3 pb-3 pt-1 space-y-2 border-t border-gray-100">
+                            {group.items.map(m => (
+                              <MaterialCard
+                                key={m.id}
+                                material={m}
+                                itemKindLabel={catalogContext.labelSet.material.singular}
                                 selected={!!selectedMaterials[m.id]}
                                 quantity={selectedMaterials[m.id]?.quantity ?? 1}
                                 dimensionCount={selectedMaterials[m.id]?.dimension_count ?? 1}
@@ -1913,69 +1982,6 @@ export default function PublicFormClient({
                                 onQty={d => setLaborQty(l.id, d)}
                                 onSetQty={q => setLaborExactQty(l.id, q)}
                                 onSetDetails={d => setLaborDetails(l.id, d)}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-
-              {/* Séparateur matériaux / prestations */}
-              {(articleMaterialGroups.length > 0 || serviceMaterialGroups.length > 0 || laborRateGroups.length > 0) && filteredPrestationGroups.length > 0 && (
-                <div className="h-px bg-gray-100" />
-              )}
-
-              {/* ── Prestations par catégorie ── */}
-              {filteredPrestationGroups.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">
-                    {catalogContext.labelSet.bundleTemplate.plural}
-                  </p>
-                  {filteredPrestationGroups.map(group => {
-                    const key = `prestations-${group.label}`
-                    const selCount = group.items.filter(pt => !!selectedPrestations[pt.id]).length
-                    const isOpen = !!step2Q || selCount > 0 || expandedCategories.has(key)
-                    return (
-                      <div key={group.label} className="rounded-xl border border-gray-200 overflow-hidden bg-white">
-                        <button
-                          type="button"
-                          onClick={() => toggleCategory(key)}
-                          className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-50 transition-colors text-left"
-                        >
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                            <span className="text-sm font-semibold text-gray-700 truncate">{group.label}</span>
-                            {selCount > 0 && (
-                              <span className="flex-shrink-0 text-[11px] font-bold text-blue-700 bg-blue-100 rounded-full px-2 py-0.5">
-                                {selCount}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 flex-shrink-0 text-gray-400">
-                            <span className="text-xs hidden sm:block">{group.items.length}&nbsp;{group.items.length > 1 ? 'prestations' : 'prestation'}</span>
-                            {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                          </div>
-                        </button>
-                        {isOpen && (
-                          <div className="px-3 pb-3 pt-1 space-y-3 border-t border-gray-100">
-                            {group.items.map(pt => (
-                              <PrestationCard
-                                key={pt.id}
-                                pt={pt}
-                                selected={!!selectedPrestations[pt.id]}
-                                data={selectedPrestations[pt.id]}
-                                onToggle={() => togglePrestation(pt)}
-                                onLineQty={(lineId, d) => setPrestationLineQty(pt.id, lineId, d)}
-                                onLineSetQty={(lineId, q) => setPrestationLineExactQty(pt.id, lineId, q)}
-                                onLineSetDimensionCount={(lineId, q) => setPrestationLineDimensionCount(pt.id, lineId, q)}
-                                onLineSetDetails={(lineId, d) => setPrestationLineDetails(pt.id, lineId, d)}
-                                onLineSetLength={(lineId, v) => setPrestationLineLength(pt.id, lineId, v)}
-                                onLineSetWidth={(lineId, v) => setPrestationLineWidth(pt.id, lineId, v)}
-                                onLineSetHeight={(lineId, v) => setPrestationLineHeight(pt.id, lineId, v)}
-                                onLineRemove={lineId => removePrestationLine(pt.id, lineId)}
-                                onLineAdd={line => addPrestationLine(pt.id, line)}
                               />
                             ))}
                           </div>

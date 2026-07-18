@@ -7,6 +7,7 @@ import PublicFormClient from './PublicFormClient'
 export type PublicMaterial = {
   id: string
   name: string
+  description: string | null
   unit: string | null
   category: string | null
   item_kind: 'article' | 'service'
@@ -22,6 +23,7 @@ export type PublicMaterial = {
 export type PublicLaborRate = {
   id: string
   designation: string
+  description: string | null
   unit: string | null
   category: string | null
 }
@@ -88,17 +90,21 @@ async function getOrgPublicData(slug: string): Promise<{
 
   if (error || !org) return null
 
-  const publicIds: Array<{ id: string; item_type: string }> = org.public_form_catalog_item_ids ?? []
+  // La main d'œuvre n'est jamais proposée sur le formulaire public : c'est un
+  // coût interne que l'artisan ajuste lui-même dans l'éditeur de devis. On
+  // filtre aussi les anciens réglages qui en contiendraient encore.
+  const publicIds: Array<{ id: string; item_type: string }> = (org.public_form_catalog_item_ids ?? [])
+    .filter((x: { item_type: string }) => x.item_type !== 'labor')
 
   const materialIds = publicIds.filter(x => x.item_type === 'material').map(x => x.id)
-  const laborIds = publicIds.filter(x => x.item_type === 'labor').map(x => x.id)
+  const laborIds: string[] = []
   const prestationIds = publicIds.filter(x => x.item_type === 'prestation').map(x => x.id)
 
   // Matériaux avec catégorie
   const materialsRes = materialIds.length > 0
     ? await admin
         .from('materials')
-        .select('id, name, unit, category, item_kind, dimension_pricing_mode, dimension_pricing_enabled, base_length_m, base_width_m, base_height_m, dimension_schema, price_variants:material_price_variants(*)')
+        .select('id, name, description, unit, category, item_kind, dimension_pricing_mode, dimension_pricing_enabled, base_length_m, base_width_m, base_height_m, dimension_schema, price_variants:material_price_variants(*)')
         .in('id', materialIds)
         .eq('is_active', true)
     : { data: [] as Array<PublicMaterial> }

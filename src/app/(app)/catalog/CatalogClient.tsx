@@ -14,6 +14,7 @@ import {
 } from '@/lib/data/mutations/catalog'
 import { importSuppliers, createSupplier, updateSupplier, deleteSupplier, type ImportSuppliersState } from '@/lib/data/mutations/suppliers'
 import type { Supplier } from '@/lib/data/queries/suppliers'
+import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids'
 import { Search, Plus, Trash2, X, Package, AlertCircle, AlertTriangle, Loader2, FileUp, Download, CheckCircle2, Layers, Pencil, ToggleLeft, ToggleRight, Eye, EyeOff, Wrench, Truck, Tag, Copy, Bot, Building2, Mail, Phone, MapPin, Cog, ChevronLeft, ChevronRight } from 'lucide-react'
 import { ActionButton } from '@/components/ui/ActionButton'
 import { EditMaterialModal } from './EditMaterialModal'
@@ -34,6 +35,8 @@ type Props = {
   initialSuppliers?: Supplier[]
   catalogContext: ResolvedCatalogContext
   catalogAIEnabled?: boolean
+  hasMetalPricing?: boolean
+  metalPriceGrids?: MetalPriceGrid[]
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1501,7 +1504,7 @@ function ImportModal({ isOpen, onClose, title, fields, templateFilename, serverA
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function CatalogClient({ initialMaterials, initialLaborRates, initialPrestationTypes, initialSuppliers = [], catalogContext, catalogAIEnabled = false }: Props) {
+export default function CatalogClient({ initialMaterials, initialLaborRates, initialPrestationTypes, initialSuppliers = [], catalogContext, catalogAIEnabled = false, hasMetalPricing = false, metalPriceGrids = [] }: Props) {
   const router = useRouter()
   const profileLabels = getCatalogLabelsForProfile(catalogContext)
   const businessActivity = getBusinessActivityById(catalogContext.activityId)
@@ -1664,11 +1667,15 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
   function saveLaborField(item: CatalogLaborRate, field: string, rawValue: string) {
     cancelEdit()
     const trimmed = rawValue.trim()
-    if (!trimmed) return
+    // La description est un champ libre : un textarea vidé doit pouvoir
+    // effacer la valeur existante, contrairement aux autres champs texte.
+    if (!trimmed && field !== 'description') return
 
     const updates: Record<string, string | number | null> = {}
     if (field === 'designation' || field === 'reference' || field === 'category' || field === 'unit' || field === 'type') {
       updates[field] = trimmed
+    } else if (field === 'description') {
+      updates[field] = trimmed || null
     } else {
       const num = parseFloat(trimmed)
       if (isNaN(num)) return
@@ -1758,6 +1765,36 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
         className="cursor-pointer hover:text-accent transition-colors px-2 py-1 -ml-2 rounded-md hover:bg-accent/10 inline-block w-full truncate"
       >
         {value || <span className="text-secondary/40 italic">...</span>}
+      </p>
+    )
+  }
+
+  // Description courte affichée sous la désignation, éditable en place. Visible
+  // par le client sur le formulaire public : sert à préciser ce que couvre la
+  // prestation/l'opération, pas des notes internes.
+  function InlineDescription({ id, value, onSave }: {
+    id: string; value: string | null; onSave: (v: string) => void
+  }) {
+    if (editingId === id && editingField === 'description') {
+      return (
+        <textarea
+          value={editingValue}
+          autoFocus
+          rows={2}
+          onChange={e => setEditingValue(e.target.value)}
+          onBlur={() => onSave(editingValue)}
+          onKeyDown={e => { if (e.key === 'Escape') cancelEdit() }}
+          placeholder="Description visible par le client sur le formulaire en ligne..."
+          className="w-full min-w-[220px] p-1.5 bg-base border border-accent rounded-md text-xs text-primary resize-none focus:outline-none focus:ring-2 focus:ring-accent/50"
+        />
+      )
+    }
+    return (
+      <p
+        onClick={() => startEdit(id, 'description', value ?? '')}
+        className="cursor-pointer hover:text-accent transition-colors px-2 py-0.5 -ml-2 rounded-md hover:bg-accent/10 inline-block w-full truncate text-xs text-secondary/70"
+      >
+        {value || <span className="text-secondary/40 italic">Ajouter une description visible par le client...</span>}
       </p>
     )
   }
@@ -1890,6 +1927,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
           suppliers={suppliers}
           onClose={() => setEditingMaterial(null)}
           onSaved={handleMaterialSaved}
+          metalGrid={hasMetalPricing ? metalPriceGrids.find(g => g.catalog_item_id === editingMaterial.id) ?? null : null}
         />
       )}
       <NewPrestationModal
@@ -2232,6 +2270,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                                 Achat {formatCurrency(item.purchase_price)} / {item.lifetime_uses} usages
                               </span>
                             )}
+                            <InlineDescription id={item.id} value={item.description} onSave={v => saveLaborField(item, 'description', v)} />
                           </div>
                         </td>
                         <td className="px-3 md:px-6 py-3 md:py-4">

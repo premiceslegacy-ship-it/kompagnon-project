@@ -20,12 +20,13 @@ import {
   Wrench,
   Copy,
   UserX,
+  Plus,
 } from 'lucide-react'
 import type { GlobalPlanning, Chantier, Equipe } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
 import { AI_ASSISTANTS } from '@/lib/brand'
 import TourneeView from './TourneeView'
-import { planWeekWithAI, createPlanningSlots, createMaintenancePlanningSlots, createAITournee, deletePlanningEntry, duplicatePlanningEntry, duplicatePlanningRange } from '@/lib/data/mutations/planning'
+import { planWeekWithAI, createPlanningSlot, createPlanningSlots, createMaintenancePlanningSlots, createAITournee, deletePlanningEntry, duplicatePlanningEntry, duplicatePlanningRange } from '@/lib/data/mutations/planning'
 import type { AIPlanningDeletion, AIPlanningSlot, AIUnknownPerson, AITour } from '@/lib/data/mutations/planning'
 import { createIndividualMember } from '@/lib/data/mutations/members'
 import { declareMemberAbsence, type ConflictingSlot } from '@/lib/data/mutations/absences'
@@ -250,6 +251,66 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   const [absenceLoading, setAbsenceLoading] = useState(false)
   const [absenceError, setAbsenceError] = useState<string | null>(null)
   const [absenceConflicts, setAbsenceConflicts] = useState<ConflictingSlot[] | null>(null)
+  const [absencePickMember, setAbsencePickMember] = useState(false)
+
+  // ─── Création manuelle d'un créneau (sans IA) ──────────────────────────────
+  const [newSlotModalOpen, setNewSlotModalOpen] = useState(false)
+  const [newSlotChantierId, setNewSlotChantierId] = useState('')
+  const [newSlotDate, setNewSlotDate] = useState('')
+  const [newSlotStartTime, setNewSlotStartTime] = useState('08:00')
+  const [newSlotEndTime, setNewSlotEndTime] = useState('12:00')
+  const [newSlotAssigneeType, setNewSlotAssigneeType] = useState<'membre' | 'equipe'>('membre')
+  const [newSlotMemberId, setNewSlotMemberId] = useState('')
+  const [newSlotEquipeId, setNewSlotEquipeId] = useState('')
+  const [newSlotLabel, setNewSlotLabel] = useState('')
+  const [newSlotLoading, setNewSlotLoading] = useState(false)
+  const [newSlotError, setNewSlotError] = useState<string | null>(null)
+
+  function openNewSlotModal(prefillDate?: Date) {
+    setNewSlotChantierId(chantiers[0]?.id ?? '')
+    setNewSlotDate(getLocalDateStr(prefillDate ?? selectedDate))
+    setNewSlotStartTime('08:00')
+    setNewSlotEndTime('12:00')
+    setNewSlotAssigneeType('membre')
+    setNewSlotMemberId(individualMembers[0]?.id ?? '')
+    setNewSlotEquipeId(equipes[0]?.id ?? '')
+    setNewSlotLabel('')
+    setNewSlotError(null)
+    setNewSlotModalOpen(true)
+  }
+
+  function closeNewSlotModal() {
+    setNewSlotModalOpen(false)
+  }
+
+  async function handleCreateSlotConfirm() {
+    if (!newSlotChantierId || !newSlotDate) return
+    const assigneeName = newSlotAssigneeType === 'membre'
+      ? (() => {
+          const m = individualMembers.find(mm => mm.id === newSlotMemberId)
+          return m ? [m.prenom, m.name].filter(Boolean).join(' ') : ''
+        })()
+      : (equipes.find(e => e.id === newSlotEquipeId)?.name ?? '')
+    const chantierTitle = chantiers.find(c => c.id === newSlotChantierId)?.title ?? ''
+    const label = newSlotLabel.trim() || assigneeName || chantierTitle
+    if (!label) { setNewSlotError('Choisissez un membre, une équipe, ou saisissez un libellé.'); return }
+
+    setNewSlotLoading(true)
+    setNewSlotError(null)
+    const result = await createPlanningSlot({
+      chantierId: newSlotChantierId,
+      plannedDate: newSlotDate,
+      startTime: newSlotStartTime || null,
+      endTime: newSlotEndTime || null,
+      label,
+      memberId: newSlotAssigneeType === 'membre' ? (newSlotMemberId || null) : null,
+      equipeId: newSlotAssigneeType === 'equipe' ? (newSlotEquipeId || null) : null,
+    })
+    setNewSlotLoading(false)
+    if (result.error) { setNewSlotError(result.error); return }
+    setNewSlotModalOpen(false)
+    router.refresh()
+  }
 
   // Modale nouveau membre
   const [newMemberQueue, setNewMemberQueue] = useState<AIUnknownPerson[]>([])
@@ -409,9 +470,12 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
     router.refresh()
   }
 
+  // memberId vide = ouverture depuis la barre d'outils : le membre se choisit
+  // dans le modal (parcours sans IA).
   function openAbsenceModal(memberId: string, memberName: string) {
     const today = getLocalDateStr(new Date())
-    setAbsenceMemberId(memberId)
+    setAbsencePickMember(!memberId)
+    setAbsenceMemberId(memberId || null)
     setAbsenceMemberName(memberName)
     setAbsenceStartDate(today)
     setAbsenceEndDate(today)
@@ -789,14 +853,23 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
         {/* Spacer */}
         <div className="flex-1" />
 
-        {canManage && (
+        {/* Nouveau créneau manuel — parcours complet sans passer par l'IA */}
+        {canManage && chantiers.length > 0 && (
           <button
-            onClick={openDuplicateWeek}
+            onClick={() => openNewSlotModal()}
             className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--elevation-border)] text-sm font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-all whitespace-nowrap"
           >
-            <Copy className="w-4 h-4" />
-            <span className="hidden sm:inline">Dupliquer semaine</span>
+            <Plus className="w-4 h-4" />
+            <span className="hidden sm:inline">Nouveau créneau</span>
           </button>
+        )}
+
+        {/* Actions secondaires regroupées pour ne pas encombrer la barre, surtout sur mobile */}
+        {canManage && (
+          <PlanningMoreActionsMenu
+            onDuplicateWeek={openDuplicateWeek}
+            onDeclareAbsence={individualMembers.length > 0 ? () => openAbsenceModal('', '') : undefined}
+          />
         )}
 
         {/* Bouton IA */}
@@ -1058,7 +1131,24 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
               <>
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-secondary">Membre</label>
-                  <p className="text-sm font-medium text-primary">{absenceMemberName}</p>
+                  {absencePickMember ? (
+                    <select
+                      className="input w-full text-sm"
+                      value={absenceMemberId ?? ''}
+                      onChange={e => {
+                        const m = individualMembers.find(mm => mm.id === e.target.value)
+                        setAbsenceMemberId(e.target.value || null)
+                        setAbsenceMemberName(m ? [m.prenom, m.name].filter(Boolean).join(' ') : '')
+                      }}
+                    >
+                      <option value="">Choisir un membre…</option>
+                      {individualMembers.map(m => (
+                        <option key={m.id} value={m.id}>{[m.prenom, m.name].filter(Boolean).join(' ')}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-sm font-medium text-primary">{absenceMemberName}</p>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
@@ -1098,7 +1188,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
                   <button onClick={closeAbsenceModal} className="btn-secondary text-sm px-4 py-2">Annuler</button>
                   <button
                     onClick={handleDeclareAbsenceConfirm}
-                    disabled={absenceLoading || !absenceStartDate || !absenceEndDate}
+                    disabled={absenceLoading || !absenceMemberId || !absenceStartDate || !absenceEndDate}
                     className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2"
                   >
                     {absenceLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserX className="w-4 h-4" />}
@@ -1136,6 +1226,143 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal nouveau créneau (manuel, sans IA) ── */}
+      {newSlotModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-panel sm:max-w-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-primary flex items-center gap-2">
+                <Plus className="w-4 h-4 text-accent" />
+                Nouveau créneau
+              </h2>
+              <button onClick={closeNewSlotModal} className="p-1.5 rounded-lg text-secondary hover:text-primary hover:bg-[var(--elevation-1)]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-secondary">Chantier</label>
+              <select
+                className="input w-full text-sm"
+                value={newSlotChantierId}
+                onChange={e => setNewSlotChantierId(e.target.value)}
+              >
+                {chantiers.map(c => (
+                  <option key={c.id} value={c.id}>{c.title}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-secondary">Date</label>
+              <input
+                type="date"
+                className="input w-full text-sm"
+                value={newSlotDate}
+                onChange={e => setNewSlotDate(e.target.value)}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-secondary">Début</label>
+                <input
+                  type="time"
+                  className="input w-full text-sm"
+                  value={newSlotStartTime}
+                  onChange={e => setNewSlotStartTime(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-secondary">Fin</label>
+                <input
+                  type="time"
+                  className="input w-full text-sm"
+                  value={newSlotEndTime}
+                  onChange={e => setNewSlotEndTime(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-secondary">Intervenant</label>
+              <div className="flex items-center rounded-lg border border-[var(--elevation-border)] overflow-hidden text-sm">
+                <button
+                  type="button"
+                  onClick={() => setNewSlotAssigneeType('membre')}
+                  className={`flex-1 px-3 py-1.5 font-medium transition-colors ${newSlotAssigneeType === 'membre' ? 'bg-accent text-black' : 'text-secondary hover:text-primary'}`}
+                >
+                  Membre
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewSlotAssigneeType('equipe')}
+                  className={`flex-1 px-3 py-1.5 font-medium transition-colors ${newSlotAssigneeType === 'equipe' ? 'bg-accent text-black' : 'text-secondary hover:text-primary'}`}
+                >
+                  Équipe
+                </button>
+              </div>
+              {newSlotAssigneeType === 'membre' ? (
+                individualMembers.length > 0 ? (
+                  <select
+                    className="input w-full text-sm"
+                    value={newSlotMemberId}
+                    onChange={e => setNewSlotMemberId(e.target.value)}
+                  >
+                    <option value="">Non assigné</option>
+                    {individualMembers.map(m => (
+                      <option key={m.id} value={m.id}>{[m.prenom, m.name].filter(Boolean).join(' ')}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-xs text-secondary">Aucun membre individuel enregistré.</p>
+                )
+              ) : (
+                equipes.length > 0 ? (
+                  <select
+                    className="input w-full text-sm"
+                    value={newSlotEquipeId}
+                    onChange={e => setNewSlotEquipeId(e.target.value)}
+                  >
+                    <option value="">Non assignée</option>
+                    {equipes.map(eq => (
+                      <option key={eq.id} value={eq.id}>{eq.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-xs text-secondary">Aucune équipe enregistrée.</p>
+                )
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-secondary">Libellé (optionnel)</label>
+              <input
+                type="text"
+                className="input w-full text-sm"
+                placeholder="Ex : pose garde-corps"
+                value={newSlotLabel}
+                onChange={e => setNewSlotLabel(e.target.value)}
+              />
+            </div>
+
+            {newSlotError && <p className="text-sm text-red-500">{newSlotError}</p>}
+
+            <div className="flex gap-2 justify-end">
+              <button onClick={closeNewSlotModal} className="btn-secondary text-sm px-4 py-2">Annuler</button>
+              <button
+                onClick={handleCreateSlotConfirm}
+                disabled={newSlotLoading || !newSlotChantierId || !newSlotDate}
+                className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2"
+              >
+                {newSlotLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                Créer le créneau
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1399,6 +1626,61 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
               )}
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Sous-composant : menu d'actions secondaires (icône seule, compact) ──────
+
+function PlanningMoreActionsMenu({
+  onDuplicateWeek,
+  onDeclareAbsence,
+}: {
+  onDuplicateWeek: () => void
+  onDeclareAbsence?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center justify-center w-9 h-9 rounded-xl border border-[var(--elevation-border)] text-secondary hover:text-primary hover:border-accent/40 transition-all"
+        title="Autres actions"
+        aria-label="Autres actions"
+      >
+        <span className="text-lg leading-none">⋯</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1.5 z-20 w-56 rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)] shadow-lg py-1.5">
+          <button
+            onClick={() => { setOpen(false); onDuplicateWeek() }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-primary hover:bg-[var(--elevation-2)] transition-colors"
+          >
+            <Copy className="w-4 h-4 text-secondary" />
+            Dupliquer la semaine
+          </button>
+          {onDeclareAbsence && (
+            <button
+              onClick={() => { setOpen(false); onDeclareAbsence() }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-primary hover:bg-[var(--elevation-2)] transition-colors"
+            >
+              <UserX className="w-4 h-4 text-secondary" />
+              Déclarer une absence
+            </button>
+          )}
         </div>
       )}
     </div>

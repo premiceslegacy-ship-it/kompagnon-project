@@ -481,6 +481,103 @@ export async function getAllPointagesGlobal(opts?: { from?: string; to?: string 
   })
 }
 
+// ─── Créneaux passés sans pointage ────────────────────────────────────────────
+
+export type MissingPointageSlot = {
+  id: string
+  chantier_id: string
+  chantier_title: string
+  planned_date: string
+  start_time: string | null
+  end_time: string | null
+  duration_min: number | null
+  label: string | null
+  member_id: string | null
+  member_name: string | null
+  equipe_id: string | null
+  equipe_name: string | null
+  team_size: number | null
+}
+
+/**
+ * Créneaux planifiés passés (7 derniers jours) sans aucun pointage sur le
+ * chantier ce jour-là et sans absence déclarée couvrant la date. Alimentés
+ * par la même logique que le compteur de notifications.
+ */
+export async function getMissingPointageSlots(): Promise<MissingPointageSlot[]> {
+  if (!await hasPermission('chantiers.manage_pointages')) return []
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) return []
+
+  const today = todayParis()
+  const windowStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+
+  const [{ data: slots }, { data: pointages }, { data: absences }, { data: members }, { data: equipes }] = await Promise.all([
+    supabase
+      .from('chantier_plannings')
+      .select('id, chantier_id, planned_date, start_time, end_time, duration_min, label, team_size, member_id, equipe_id, chantier:chantiers!inner(title, organization_id, is_archived, status)')
+      .eq('chantier.organization_id', orgId)
+      .eq('chantier.is_archived', false)
+      .not('chantier.status', 'in', '("termine","annule")')
+      .gte('planned_date', windowStart)
+      .lt('planned_date', today)
+      .order('planned_date', { ascending: false }),
+    supabase
+      .from('chantier_pointages')
+      .select('chantier_id, date, member_id')
+      .gte('date', windowStart)
+      .lt('date', today),
+    supabase
+      .from('member_absences')
+      .select('member_id, start_date, end_date')
+      .eq('organization_id', orgId)
+      .gte('end_date', windowStart),
+    supabase
+      .from('chantier_equipe_membres')
+      .select('id, prenom, name')
+      .eq('organization_id', orgId)
+      .limit(300),
+    supabase
+      .from('chantier_equipes')
+      .select('id, name')
+      .eq('organization_id', orgId)
+      .limit(50),
+  ])
+
+  const pointageKeys = new Set((pointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}:${p.member_id ?? '*'}`))
+  const pointageDayKeys = new Set((pointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}`))
+  const isAbsentOn = (memberId: string | null, date: string) =>
+    memberId != null && (absences ?? []).some(a => a.member_id === memberId && a.start_date <= date && a.end_date >= date)
+
+  const memberNameById = new Map((members ?? []).map((m: any) => [m.id, `${m.prenom ?? ''} ${m.name ?? ''}`.trim()]))
+  const equipeNameById = new Map((equipes ?? []).map((e: any) => [e.id, e.name]))
+
+  return (slots ?? [])
+    .filter((slot: any) => {
+      const directKey = `${slot.chantier_id}:${slot.planned_date}:${slot.member_id ?? '*'}`
+      const dayKey = `${slot.chantier_id}:${slot.planned_date}`
+      if (isAbsentOn(slot.member_id ?? null, slot.planned_date)) return false
+      return !pointageKeys.has(directKey) && !pointageDayKeys.has(dayKey)
+    })
+    .map((slot: any) => ({
+      id: slot.id,
+      chantier_id: slot.chantier_id,
+      chantier_title: slot.chantier?.title ?? 'Chantier',
+      planned_date: slot.planned_date,
+      start_time: slot.start_time,
+      end_time: slot.end_time,
+      duration_min: slot.duration_min ?? null,
+      label: slot.label ?? null,
+      member_id: slot.member_id ?? null,
+      member_name: slot.member_id ? memberNameById.get(slot.member_id) ?? null : null,
+      equipe_id: slot.equipe_id ?? null,
+      equipe_name: slot.equipe_id ? equipeNameById.get(slot.equipe_id) ?? null : null,
+      team_size: slot.team_size ?? null,
+    }))
+}
+
 export async function getChantierNotes(chantierId: string): Promise<ChantierNote[]> {
   const supabase = await createClient()
 

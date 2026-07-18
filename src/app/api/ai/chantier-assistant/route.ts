@@ -780,6 +780,7 @@ ${canViewExpenses ? '' : '- Tu n\'as pas acces aux donnees financieres (couts, m
 - Si la demande sort du chantier (facturation, relance client, email, devis, administratif), utilise send_to_sarah pour transmettre a Sarah avec le contexte, et dis a l'utilisateur que Sarah prend le relais dans son chat
 - Ne montre jamais un statut technique brut (en_cours, termine, sent...) : dis "en cours", "terminee", "envoye"
 - Chiffre tout ce qui peut l'etre, sois factuel
+- REGLE ABSOLUE : ne dis JAMAIS "c'est note", "j'ai ajoute", "je planifie", "c'est fait" sans avoir reellement appele l'outil correspondant dans ce meme tour. Une action demandee (note, pointage, tache, depense, creneau) = un appel d'outil, pas une simple reponse texte. Si tu ne peux pas agir, dis-le clairement.
 - Aucun emoji, aucun symbole decoratif
 - Aucun tiret cadratin : utilise des virgules ou des points a la place`
 
@@ -801,14 +802,43 @@ ${canViewExpenses ? '' : '- Tu n\'as pas acces aux donnees financieres (couts, m
           messages: apiMessages,
           tools: TOOLS,
           tool_choice: 'auto',
-          max_tokens: 600,
+          // Gemini consomme des tokens de raisonnement sur ce budget : trop bas,
+          // la réponse arrive vide ou tronquée.
+          max_tokens: 1400,
         },
       },
       metadata: { route: 'api/ai/chantier-assistant', chantier_id: chantierId },
     })
 
     const choice = data.choices?.[0]
-    const assistantMsg = choice?.message
+    let assistantMsg = choice?.message
+
+    // Filet anti "action fantôme" : si le modèle affirme avoir agi ("c'est
+    // noté", "j'ai pointé"...) sans avoir appelé d'outil, rien n'a été fait en
+    // base. On relance une fois en forçant un appel d'outil.
+    const ACTION_CLAIM = /c'est not[ée]|c'est fait|j'ai (ajout|cr[ée][ée]|point|planifi|enregistr|mis|supprim)|je (mets|note|pointe|planifie|cr[ée]e|l'ajoute|enregistre|supprime) /i
+    if (!assistantMsg?.tool_calls?.length && assistantMsg?.content && ACTION_CLAIM.test(assistantMsg.content)) {
+      const { data: dataRetry } = await callAI<any>({
+        organizationId: orgId,
+        provider: 'openrouter',
+        feature: 'chantier_assistant',
+        model: MODEL,
+        inputKind: 'text',
+        request: {
+          body: {
+            messages: [
+              ...apiMessages,
+              { role: 'system', content: 'Rappel : tu n\'as encore rien fait, aucune donnée n\'a été modifiée. Appelle maintenant l\'outil correspondant à la demande de l\'utilisateur.' },
+            ],
+            tools: TOOLS,
+            tool_choice: 'required',
+            max_tokens: 1400,
+          },
+        },
+        metadata: { route: 'api/ai/chantier-assistant', chantier_id: chantierId, step: 'force_tool' },
+      })
+      assistantMsg = dataRetry.choices?.[0]?.message ?? assistantMsg
+    }
 
     // Si l'IA appelle des tools, les exécuter
     if (assistantMsg?.tool_calls && assistantMsg.tool_calls.length > 0) {
@@ -835,7 +865,7 @@ ${canViewExpenses ? '' : '- Tu n\'as pas acces aux donnees financieres (couts, m
               assistantMsg,
               ...toolResults,
             ],
-            max_tokens: 400,
+            max_tokens: 1200,
           },
         },
         metadata: { route: 'api/ai/chantier-assistant', chantier_id: chantierId, step: 'tool_result' },

@@ -2359,64 +2359,14 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             </div>
                         )}
 
-                        {/* Opérations / services */}
-                        {catalogLaborRates.length > 0 && (
-                            <div className="space-y-3">
-                                {catalogMaterials.length > 0 && <div className="h-px bg-[var(--elevation-border)]" />}
-                                <div className="flex items-center justify-between">
-                                    <h4 className="text-sm font-bold text-primary flex items-center gap-2"><Wrench className="w-4 h-4 text-secondary" />{catalogContext.labelSet.service.plural}</h4>
-                                    <div className="flex gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => setPublicFormSettings(prev => ({
-                                                ...prev,
-                                                catalogItemIds: [
-                                                    ...prev.catalogItemIds.filter(x => x.item_type !== 'labor'),
-                                                    ...catalogLaborRates.map(l => ({ id: l.id, item_type: 'labor' as const })),
-                                                ],
-                                            }))}
-                                            className="text-xs text-accent font-semibold hover:underline"
-                                        >
-                                            Tout cocher
-                                        </button>
-                                        <span className="text-xs text-secondary">·</span>
-                                        <button
-                                            type="button"
-                                            onClick={() => setPublicFormSettings(prev => ({
-                                                ...prev,
-                                                catalogItemIds: prev.catalogItemIds.filter(x => x.item_type !== 'labor'),
-                                            }))}
-                                            className="text-xs text-secondary hover:text-primary font-semibold hover:underline"
-                                        >
-                                            Tout décocher
-                                        </button>
-                                    </div>
-                                </div>
-                                <div className="space-y-2">
-                                    {catalogLaborRates.map(l => {
-                                        const selected = publicFormSettings.catalogItemIds.some(x => x.id === l.id && x.item_type === 'labor')
-                                        return (
-                                            <label key={l.id} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer border transition-all ${selected ? 'border-accent/40 bg-accent/5' : 'border-[var(--elevation-border)] hover:bg-base'}`}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selected}
-                                                    onChange={() => togglePublicCatalogItem(l.id, 'labor')}
-                                                    className="w-4 h-4 accent-[var(--accent)]"
-                                                />
-                                                <span className="flex-1 text-sm font-medium text-primary">{l.designation}</span>
-                                                {l.category && <span className="text-xs text-secondary bg-base px-2 py-0.5 rounded-full">{l.category}</span>}
-                                                {l.unit && <span className="text-xs text-secondary">{l.unit}</span>}
-                                            </label>
-                                        )
-                                    })}
-                                </div>
-                            </div>
-                        )}
+                        {/* La main d'œuvre n'est volontairement pas proposée sur le
+                            formulaire public : c'est un coût interne que l'artisan
+                            ajuste lui-même dans l'éditeur de devis. */}
 
                         {/* Templates catalogue */}
                         {catalogPrestationTypes.length > 0 && (
                             <div className="space-y-3">
-                                {(catalogMaterials.length > 0 || catalogLaborRates.length > 0) && <div className="h-px bg-[var(--elevation-border)]" />}
+                                {catalogMaterials.length > 0 && <div className="h-px bg-[var(--elevation-border)]" />}
                                 <div className="flex items-center justify-between">
                                     <h4 className="text-sm font-bold text-primary flex items-center gap-2"><Layers className="w-4 h-4 text-secondary" />{catalogContext.labelSet.bundleTemplate.plural}</h4>
                                     <div className="flex gap-2">

@@ -94,6 +94,7 @@ const PEEK = 14
 const SNAP_KEY   = 'sarah_snap'
 const HIDDEN_KEY = 'sarah_hidden'
 const ALERTS_SEEN_KEY = 'sarah_alerts_seen_signature'
+const VOICE_HINT_KEY = 'sarah_voice_hint_dismissed'
 
 function isClient() { return typeof window !== 'undefined' }
 
@@ -155,7 +156,7 @@ function buildAlertLines(alerts: SarahAlerts | null | undefined): string[] {
   if ((alerts.planningToday ?? 0) > 0) lines.push(`${plural(alerts.planningToday ?? 0, 'créneau planning', 'créneaux planning')} prévu aujourd'hui.`)
   if ((alerts.missingPointages ?? 0) > 0) lines.push(`${plural(alerts.missingPointages ?? 0, 'pointage')} à vérifier.`)
   if ((alerts.completedTasks ?? 0) > 0) lines.push(`${plural(alerts.completedTasks ?? 0, 'tâche chantier')} terminée récemment.`)
-  if ((alerts.newRequests ?? 0) > 0) lines.push(`${plural(alerts.newRequests ?? 0, 'nouvelle demande', 'nouvelles demandes')} de devis à traiter.`)
+  if ((alerts.newRequests ?? 0) > 0) lines.push(`${plural(alerts.newRequests ?? 0, 'demande', 'demandes')} de devis à traiter.`)
   if ((alerts.chantiersAtRisk ?? 0) > 0) lines.push(`${plural(alerts.chantiersAtRisk ?? 0, 'chantier')} en alerte budget.`)
   if ((alerts.maintenanceDue ?? 0) > 0) lines.push(`${plural(alerts.maintenanceDue ?? 0, 'intervention maintenance')} à réaliser.`)
   if ((alerts.maintenanceBillingPending ?? 0) > 0) lines.push(`${plural(alerts.maintenanceBillingPending ?? 0, 'intervention maintenance')} à facturer.`)
@@ -229,15 +230,21 @@ function buildGreeting(ctx: PageContext, userName: string | null, alertCount: nu
   }
   if (type === 'quote') {
     const amount = fmtCurrency(typeof totalTtc === 'string' || typeof totalTtc === 'number' ? totalTtc : null)
+    if (!reference && !clientName && !status && !amount) {
+      return `${salut} Vous êtes dans l'éditeur de devis.\n\nJe peux vous aider à construire le devis, analyser les lignes ou vérifier la marge.`
+    }
     const state = status ? `, statut ${status}` : ''
     const total = amount ? `, ${amount}` : ''
-    return `${salut} Devis ${reference ?? ''}${clientName ? ` pour ${clientName}` : ''}${state}${total}.\n\nJe peux analyser le contenu, les lignes, la marge ou préparer l'envoi.`
+    return `${salut} Vous êtes sur le devis ${reference ?? 'en cours'}${clientName ? ` pour ${clientName}` : ''}${state}${total}.\n\nJe peux analyser le contenu, les lignes, la marge ou préparer l'envoi.`
   }
   if (type === 'invoice') {
     const amount = fmtCurrency(typeof totalTtc === 'string' || typeof totalTtc === 'number' ? totalTtc : null)
+    if (!reference && !clientName && !status && !amount) {
+      return `${salut} Vous êtes dans l'éditeur de facture.\n\nJe peux vous aider à construire la facture, vérifier les montants ou l'échéance.`
+    }
     const state = status ? `, statut ${status}` : ''
     const total = amount ? `, ${amount}` : ''
-    return `${salut} Facture ${reference ?? ''}${clientName ? ` pour ${clientName}` : ''}${state}${total}.\n\nJe peux vérifier l'échéance, les paiements reçus et préparer une relance.`
+    return `${salut} Vous êtes sur la facture ${reference ?? 'en cours'}${clientName ? ` pour ${clientName}` : ''}${state}${total}.\n\nJe peux vérifier l'échéance, les paiements reçus et préparer une relance.`
   }
   return `${salut} Je suis Sarah, votre assistante.\n\nVous êtes sur ${withArticle(ctx.label)}. Posez-moi une question ou demandez-moi d'effectuer une action.`
 }
@@ -1003,6 +1010,21 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
 
+  // Incitation au mode vocal : visible tant que l'utilisateur ne l'a ni essayé
+  // ni masquée explicitement.
+  const [showVoiceHint, setShowVoiceHint] = useState(() => isClient() && localStorage.getItem(VOICE_HINT_KEY) !== 'true')
+  const dismissVoiceHint = useCallback((openVoice: boolean) => {
+    localStorage.setItem(VOICE_HINT_KEY, 'true')
+    setShowVoiceHint(false)
+    if (openVoice) setVoiceMode(true)
+  }, [setVoiceMode])
+  useEffect(() => {
+    if (voiceMode && showVoiceHint) {
+      localStorage.setItem(VOICE_HINT_KEY, 'true')
+      setShowVoiceHint(false)
+    }
+  }, [voiceMode, showVoiceHint])
+
   const onPickFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ''
@@ -1076,6 +1098,22 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
             {errorCode && <ErrorBanner code={errorCode} />}
             <div ref={bottomRef} />
           </div>
+
+          {/* Incitation au mode vocal */}
+          {showVoiceHint && (
+            <div className="mx-3 mb-1.5 flex items-center gap-2 rounded-xl px-3 py-2 flex-shrink-0"
+              style={{ background: 'rgba(255,159,28,0.07)', border: '1px solid rgba(255,159,28,0.22)' }}>
+              <Mic size={13} className="text-accent flex-shrink-0" />
+              <button onClick={() => dismissVoiceHint(true)}
+                className="flex-1 text-left text-[11px] leading-snug opacity-75 hover:opacity-100 transition-opacity">
+                Vous pouvez aussi me parler : appuyez ici pour essayer le mode vocal.
+              </button>
+              <button onClick={() => dismissVoiceHint(false)}
+                className="p-1 rounded-lg opacity-40 hover:opacity-70 transition-opacity" title="Masquer">
+                <X size={11} style={{ filter: 'var(--sarah-icon-filter)' }} />
+              </button>
+            </div>
+          )}
 
           {/* Suggestions rapides */}
           <div className="flex gap-1.5 px-3 pb-1 overflow-x-auto flex-shrink-0 scrollbar-none">

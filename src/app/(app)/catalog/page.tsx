@@ -5,19 +5,21 @@ import { getOrganization } from '@/lib/data/queries/organization'
 import { isModuleEnabled } from '@/lib/data/queries/organization-modules'
 import { resolveCatalogContext } from '@/lib/catalog-context'
 import { hasPermission } from '@/lib/data/queries/membership'
+import { getMetalPriceGrids } from '@/lib/data/mutations/metal-price-grids'
 import CatalogClient from './CatalogClient'
 
 export default async function CatalogPage() {
   const canView = await hasPermission('catalog.view')
   if (!canView) redirect('/dashboard')
 
-  const [materials, laborRates, prestationTypes, suppliers, organization, catalogAIEnabled] = await Promise.all([
+  const [materials, laborRates, prestationTypes, suppliers, organization, catalogAIEnabled, metalPriceGrids] = await Promise.all([
     getMaterials(),
     getLaborRates(),
     getPrestationTypes(true),
     getSuppliers(),
     getOrganization(),
     isModuleEnabled('catalog_ai'),
+    getMetalPriceGrids(),
   ])
 
   const catalogContext = resolveCatalogContext(organization)
@@ -30,6 +32,8 @@ export default async function CatalogPage() {
       initialSuppliers={suppliers}
       catalogContext={catalogContext}
       catalogAIEnabled={catalogAIEnabled}
+      hasMetalPricing={organization?.has_metal_pricing ?? false}
+      metalPriceGrids={metalPriceGrids}
     />
   )
 }

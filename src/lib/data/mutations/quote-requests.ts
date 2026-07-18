@@ -13,6 +13,7 @@ import { buildQuoteRequestNotificationEmail } from '@/lib/email/templates'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { sendPushToOrgPermission } from '@/lib/push'
 import { callAI } from '@/lib/ai/callAI'
+import { normalizeUnit } from '@/lib/units'
 
 function splitContactName(fullName: string | null | undefined): { firstName: string | null; lastName: string | null } {
   const trimmed = fullName?.trim() ?? ''
@@ -506,7 +507,7 @@ async function draftLinesFromFreeformNotes(orgId: string, notes: string): Promis
       .map((l: any) => ({
         description: String(l.description).slice(0, 300),
         quantity: Math.max(0.01, Number(l.quantity) || 1),
-        unit: String(l.unit || 'u').slice(0, 20),
+        unit: normalizeUnit(String(l.unit || 'u').slice(0, 20)),
         unit_price: Math.max(0, Number(l.unit_price) || 0),
         // Défense contre un modèle qui renverrait une fraction (0.2) au lieu d'un pourcentage (20)
         vat_rate: (() => { const v = Number(l.vat_rate); return v > 0 && v <= 1 ? v * 100 : (v || 20) })(),
@@ -624,9 +625,15 @@ export async function createQuoteFromCatalogRequest(
 
     const laborMap = new Map((laborData ?? []).map(l => [l.id, l]))
 
+    // Le titre de section doit rester un vrai titre court, pas une phrase à
+    // rallonge : on privilégie la liste des prestations choisies (déjà
+    // courte et structurée) plutôt que le champ "objet" saisi librement par
+    // le client, qui peut être une phrase entière.
+    const shortSubject = req.subject?.trim() && req.subject.trim().length <= 60 ? req.subject.trim() : null
+    const sectionTitle = (itemsLabel ? itemsLabel.slice(0, 60) : null) ?? shortSubject ?? 'Prestations demandées'
     const { data: section, error: sectionErr } = await adminClient
       .from('quote_sections')
-      .insert({ quote_id: newQuote.id, title: 'Prestations demandées', position: 1 })
+      .insert({ quote_id: newQuote.id, title: sectionTitle, position: 1 })
       .select('id')
       .single()
 
@@ -635,8 +642,12 @@ export async function createQuoteFromCatalogRequest(
       return { error: 'Erreur lors de la création de la section.', clientId: newClient.id, quoteId: newQuote.id }
     }
 
+    // Un élément du catalogue sélectionné par le client apparaît UNE seule
+    // fois, en ligne visible. Son coût d'achat éventuel part dans
+    // unit_cost_ht (suivi de marge) : plus jamais de seconde ligne interne
+    // dupliquée dans les coûts, c'est l'artisan qui ajuste main d'œuvre et
+    // coûts dans l'éditeur.
     const visibleItems: Array<Record<string, unknown>> = []
-    const internalItems: Array<Record<string, unknown>> = []
     let position = 1
 
     for (const ci of catalogItems) {
@@ -652,7 +663,7 @@ export async function createQuoteFromCatalogRequest(
           item: {
             sale_price: mat?.sale_price ?? null,
             purchase_price: mat?.purchase_price ?? null,
-            unit: mat?.unit ?? ci.unit ?? 'u',
+            unit: normalizeUnit(mat?.unit ?? ci.unit ?? 'u'),
             dimension_pricing_mode: itemMode,
             base_length_m: ci.base_length_m ?? mat?.base_length_m ?? null,
             base_width_m: ci.base_width_m ?? mat?.base_width_m ?? null,
@@ -673,9 +684,12 @@ export async function createQuoteFromCatalogRequest(
           type: 'material',
           material_id: ci.id,
           description: ci.description,
-          unit: usesDimensionPricing ? (ci.unit ?? pricing.unit) : pricing.unit,
+          unit: normalizeUnit(usesDimensionPricing ? (ci.unit ?? pricing.unit) : pricing.unit),
           quantity: dimensionQuantity,
           unit_price: usesDimensionPricing ? pricing.unitPrice : (mat?.sale_price ?? 0),
+          unit_cost_ht: usesDimensionPricing
+            ? (pricing.purchaseUnitPrice > 0 ? pricing.purchaseUnitPrice : null)
+            : (mat?.purchase_price ?? null),
           vat_rate: defaultVatRate,
           position: position++,
           length_m: usesDimensionPricing ? (ci.length_m ?? pricing.lengthM) : null,
@@ -683,25 +697,6 @@ export async function createQuoteFromCatalogRequest(
           height_m: usesDimensionPricing ? (ci.height_m ?? pricing.heightM) : null,
           is_internal: false,
         })
-
-        if (pricing.purchaseUnitPrice > 0 || mat?.purchase_price) {
-          internalItems.push({
-            quote_id: newQuote.id,
-            section_id: section.id,
-            type: 'material',
-            material_id: ci.id,
-            description: ci.description,
-            unit: usesDimensionPricing ? (ci.unit ?? pricing.unit) : pricing.unit,
-            quantity: dimensionQuantity,
-            unit_price: usesDimensionPricing ? pricing.purchaseUnitPrice : (mat?.purchase_price ?? 0),
-            vat_rate: defaultVatRate,
-            position: position++,
-            length_m: usesDimensionPricing ? (ci.length_m ?? pricing.lengthM) : null,
-            width_m: usesDimensionPricing ? (ci.width_m ?? pricing.widthM) : null,
-            height_m: usesDimensionPricing ? (ci.height_m ?? pricing.heightM) : null,
-            is_internal: true,
-          })
-        }
         continue
       }
 
@@ -713,29 +708,14 @@ export async function createQuoteFromCatalogRequest(
           type: 'labor',
           labor_rate_id: ci.id,
           description: ci.description,
-          unit: labor?.unit ?? ci.unit ?? 'h',
+          unit: normalizeUnit(labor?.unit ?? ci.unit ?? 'h'),
           quantity: ci.quantity,
           unit_price: labor?.rate ?? 0,
+          unit_cost_ht: labor?.cost_rate ?? null,
           vat_rate: defaultVatRate,
           position: position++,
           is_internal: false,
         })
-
-        if (labor?.cost_rate) {
-          internalItems.push({
-            quote_id: newQuote.id,
-            section_id: section.id,
-            type: 'labor',
-            labor_rate_id: ci.id,
-            description: ci.description,
-            unit: labor.unit ?? ci.unit ?? 'h',
-            quantity: ci.quantity,
-            unit_price: labor.cost_rate,
-            vat_rate: defaultVatRate,
-            position: position++,
-            is_internal: true,
-          })
-        }
         continue
       }
 
@@ -775,9 +755,12 @@ export async function createQuoteFromCatalogRequest(
           material_id: line.material_id,
           labor_rate_id: line.labor_rate_id,
           description: line.designation,
-          unit: usesDimensionPricing ? line.unit : (pricing?.unit ?? line.unit),
+          unit: normalizeUnit(usesDimensionPricing ? line.unit : (pricing?.unit ?? line.unit)),
           quantity: dimensionQuantity ?? line.quantity,
           unit_price: pricing?.unitPrice ?? line.unit_price_ht,
+          unit_cost_ht: (line.item_type === 'material' || line.item_type === 'service')
+            ? ((pricing?.purchaseUnitPrice ?? 0) > 0 ? pricing?.purchaseUnitPrice : mat?.purchase_price ?? null)
+            : null,
           vat_rate: defaultVatRate,
           position: position++,
           length_m: usesDimensionPricing ? (line.length_m ?? pricing?.lengthM ?? null) : null,
@@ -785,30 +768,10 @@ export async function createQuoteFromCatalogRequest(
           height_m: usesDimensionPricing ? (line.height_m ?? pricing?.heightM ?? null) : null,
           is_internal: false,
         })
-
-        if ((line.item_type === 'material' || line.item_type === 'service') && ((pricing?.purchaseUnitPrice ?? 0) > 0 || mat?.purchase_price)) {
-          internalItems.push({
-            quote_id: newQuote.id,
-            section_id: section.id,
-            type: 'material',
-            material_id: line.material_id,
-            description: `${line.designation}`,
-            unit: usesDimensionPricing ? line.unit : (pricing?.unit ?? line.unit),
-            quantity: dimensionQuantity ?? line.quantity,
-            unit_price: pricing?.purchaseUnitPrice ?? mat?.purchase_price ?? 0,
-            vat_rate: defaultVatRate,
-            position: position++,
-            length_m: usesDimensionPricing ? (line.length_m ?? pricing?.lengthM ?? null) : null,
-            width_m: usesDimensionPricing ? (line.width_m ?? pricing?.widthM ?? null) : null,
-            height_m: usesDimensionPricing ? (line.height_m ?? pricing?.heightM ?? null) : null,
-            is_internal: true,
-          })
-        }
       }
     }
 
     if (visibleItems.length > 0) await adminClient.from('quote_items').insert(visibleItems)
-    if (internalItems.length > 0) await adminClient.from('quote_items').insert(internalItems)
   }
 
   // Précisions texte libre en plus du catalogue : ajoutées comme section
@@ -879,7 +842,8 @@ export async function updatePublicFormSettings(
     .update({
       public_form_enabled: settings.public_form_enabled,
       public_form_welcome_message: settings.public_form_welcome_message || null,
-      public_form_catalog_item_ids: settings.public_form_catalog_item_ids,
+      // La main d'œuvre ne se propose jamais sur le formulaire public
+      public_form_catalog_item_ids: settings.public_form_catalog_item_ids.filter(x => x.item_type !== 'labor'),
       public_form_custom_mode_enabled: settings.public_form_custom_mode_enabled,
       public_form_notification_email: settings.public_form_notification_email || null,
     })

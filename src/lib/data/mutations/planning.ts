@@ -1292,7 +1292,8 @@ Règles d'assignation :
 - Si une mention nomme une **équipe** existante, remplir equipeId avec son EQUIPE_ID, memberId = null
 - Si une mention nomme une **personne individuelle** (prénom/nom) qui figure dans les membres ou membres d'équipe listés, remplir memberId avec son MEMBER_ID, equipeId = null
 - equipeId et memberId sont **mutuellement exclusifs** (jamais les deux dans le même slot)
-- Si la personne ou l'équipe mentionnée n'existe pas dans les listes, laisser equipeId et memberId à null, mettre le nom dans label, et ajouter le nom dans unknownPeople
+- Un prénom seul qui correspond sans ambiguïté à un seul membre listé DOIT être matché sur ce membre (ex: "Samuel" -> "Samuel Durand" si c'est le seul Samuel). Idem pour un nom de famille seul. La correspondance est insensible aux accents et à la casse.
+- Si la personne ou l'équipe mentionnée n'existe dans aucune liste, même par prénom ou nom seul, laisser equipeId et memberId à null, mettre le nom dans label, et ajouter le nom dans unknownPeople. Si plusieurs membres portent le même prénom, ajouter aussi le nom dans unknownPeople (ambiguïté à lever par l'utilisateur).
 - start_time et end_time au format "HH:MM", null si non précisé
 - team_size = nombre de personnes (1 si non précisé ou si memberId rempli)
 - label = nom de l'équipe ou des personnes mentionnées. Si aucun membre/équipe n'est résolu, ne mets jamais "Équipe" seul : utilise un libellé précis comme "Intervenant à préciser - [mission]" ou le nom libre mentionné.

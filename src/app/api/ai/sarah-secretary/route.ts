@@ -9,7 +9,7 @@ import { dateParis, todayParis } from '@/lib/utils'
 import { fetchRAGContext } from '@/lib/ai/rag'
 import { generateEmbedding } from '@/lib/ai/embeddings'
 import { hasPermission } from '@/lib/data/queries/membership'
-import { deepLinkForSarahAction, proposeSarahAction } from '@/lib/sarah/actions'
+import { deepLinkForSarahAction, proposeSarahAction, findClientIdForSarahDraft } from '@/lib/sarah/actions'
 import { findReplacementCandidates, findPlanningConflicts, findMissingPointages } from '@/lib/data/mutations/planning-agent'
 import { getMemberAbsences } from '@/lib/data/mutations/absences'
 import { getDashboardStats } from '@/lib/data/queries/dashboard'
@@ -21,7 +21,12 @@ const CLIENT_JOIN = 'client:clients(company_name, first_name, last_name, contact
 
 export const dynamic = 'force-dynamic'
 
-const MODEL = 'google/gemini-2.5-flash'
+// Sarah exécute des actions métier réelles (devis, factures, planning) où une
+// fuite de contexte ou une hallucination coûte cher en confiance : on utilise
+// donc un modèle plus capable que le Flash utilisé par les autres agents IA
+// de l'app, cohérent avec le fallback déjà en place sur analyze-quote /
+// scan-receipt / measure-plan pour les cas sensibles.
+const MODEL = 'anthropic/claude-sonnet-4-6'
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
@@ -103,6 +108,20 @@ const SARAH_TOOLS = [
           date: { type: 'string', description: 'Date au format YYYY-MM-DD.' },
         },
         required: ['date'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_overdue_tasks',
+      description: 'Lister toutes les tâches chantier en retard (échéance dépassée, non terminées), tous chantiers confondus. Le contexte général n\'en affiche que les 8 premières : utilise toujours cet outil pour répondre précisément à une question sur les tâches en retard ou pour confirmer qu\'il n\'y en a aucune, plutôt que de te fier au seul contexte.',
+      parameters: {
+        type: 'object',
+        properties: {
+          chantierId: { type: 'string', description: 'Limiter à un chantier précis (optionnel).' },
+        },
+        required: [],
       },
     },
   },
@@ -357,6 +376,32 @@ async function executeSarahTool(
 
     const lines = missing.map(m => `[SLOT:${m.slotId}] "${m.chantierTitle}" - ${m.memberName ?? m.label}${m.startTime ? ` - ${m.startTime}${m.endTime ? `-${m.endTime}` : ''}` : ''}${m.memberId ? ` [MEMBER:${m.memberId}]` : ''}`)
     return `Pointages manquants pour le ${date} (absence de pointage, pas nécessairement absence réelle) :\n${lines.join('\n')}`
+  }
+
+  if (name === 'get_overdue_tasks') {
+    const supabase = await createClient()
+    const today = todayParis()
+    const chantierId = (args.chantierId as string | undefined)?.trim()
+
+    let query = supabase
+      .from('chantier_taches')
+      .select('id, title, status, due_date, chantier:chantiers!inner(id, title, organization_id, is_archived, status)')
+      .eq('chantier.organization_id', orgId)
+      .eq('chantier.is_archived', false)
+      .not('chantier.status', 'in', '("termine","annule")')
+      .not('status', 'eq', 'termine')
+      .not('due_date', 'is', null)
+      .lte('due_date', today)
+      .order('due_date', { ascending: true })
+      .limit(50)
+    if (chantierId) query = query.eq('chantier_id', chantierId)
+
+    const { data: tasks, error } = await query
+    if (error) return `Erreur : ${error.message}`
+    if (!tasks || tasks.length === 0) return 'Aucune tâche en retard actuellement.'
+
+    const lines = tasks.map((t: any) => `[TASK:${t.id}] "${t.title}" - chantier "${t.chantier?.title ?? '?'}" [CHANTIER:${t.chantier?.id}] - échéance ${t.due_date}`)
+    return `Tâches en retard (${tasks.length}) :\n${lines.join('\n')}`
   }
 
   if (name === 'check_member_absences') {
@@ -626,7 +671,58 @@ async function executeSarahTool(
     ].join('\n')
   }
 
+  // Le modèle confond parfois les TYPES D'ACTION (client_create, draft_quote...)
+  // avec les outils : il les appelle en tool call et reçoit "non reconnu", puis
+  // répond "erreur technique" à l'utilisateur. On le remet sur les rails :
+  // ces types se proposent dans le champ "action" de la réponse JSON finale.
+  if (SARAH_ACTION_TYPES.has(name)) {
+    return `"${name}" n'est pas un outil : c'est un type d'action à proposer à l'utilisateur. Réponds maintenant avec le JSON final en plaçant ce type dans le champ "action" avec son payload (exemple : {"reply": "...", "action": {"type": "${name}", "label": "...", "description": "...", "risk": "low", "payload": {...}}}). La carte d'action sera affichée à l'utilisateur pour validation.`
+  }
+
   return `Outil "${name}" non reconnu.`
+}
+
+// Types d'action valides (cartes de confirmation) — pour rattraper le modèle
+// quand il tente de les appeler comme des outils.
+const SARAH_ACTION_TYPES = new Set([
+  'task_complete', 'invoice_reminder', 'open_quote_editor', 'brief_chloe', 'brief_nora', 'brief_marco',
+  'draft_quote', 'draft_invoice', 'open_url', 'draft_email',
+  'planning_create', 'planning_update', 'planning_delete',
+  'absence_declare', 'planning_replacement_suggest', 'pointage_reminder_prepare',
+  'client_create', 'chantier_create', 'task_create', 'chantier_note_add', 'expense_record',
+  'invoice_mark_paid', 'invoice_send', 'quote_send', 'quote_mark_accepted', 'quote_mark_refused', 'quote_followup',
+])
+
+// Libellés et niveaux de risque par défaut quand la carte est reconstruite
+// depuis un tool call erroné du modèle.
+const SARAH_ACTION_DEFAULTS: Record<string, { label: string; risk: 'low' | 'medium' | 'high' }> = {
+  task_complete: { label: 'Marquer la tâche comme terminée', risk: 'low' },
+  invoice_reminder: { label: 'Préparer une relance de facture', risk: 'medium' },
+  open_quote_editor: { label: 'Ouvrir l\'éditeur de devis', risk: 'low' },
+  brief_chloe: { label: 'Transmettre le brief à Chloé', risk: 'low' },
+  brief_nora: { label: 'Transmettre le brief à Nora', risk: 'low' },
+  brief_marco: { label: 'Transmettre le contexte à Marco', risk: 'low' },
+  draft_quote: { label: 'Créer le brouillon de devis', risk: 'medium' },
+  draft_invoice: { label: 'Créer le brouillon de facture', risk: 'medium' },
+  open_url: { label: 'Ouvrir la page', risk: 'low' },
+  draft_email: { label: 'Préparer l\'email', risk: 'high' },
+  planning_create: { label: 'Créer le créneau planning', risk: 'medium' },
+  planning_update: { label: 'Modifier le créneau planning', risk: 'medium' },
+  planning_delete: { label: 'Supprimer le créneau planning', risk: 'medium' },
+  absence_declare: { label: 'Déclarer l\'absence', risk: 'medium' },
+  planning_replacement_suggest: { label: 'Mettre en place le remplacement', risk: 'medium' },
+  pointage_reminder_prepare: { label: 'Préparer le rappel de pointage', risk: 'low' },
+  client_create: { label: 'Créer la fiche client', risk: 'low' },
+  chantier_create: { label: 'Créer le chantier', risk: 'medium' },
+  task_create: { label: 'Ajouter la tâche', risk: 'low' },
+  chantier_note_add: { label: 'Ajouter la note', risk: 'low' },
+  expense_record: { label: 'Enregistrer la dépense', risk: 'medium' },
+  invoice_mark_paid: { label: 'Marquer la facture payée', risk: 'high' },
+  invoice_send: { label: 'Envoyer la facture', risk: 'high' },
+  quote_send: { label: 'Envoyer le devis', risk: 'high' },
+  quote_mark_accepted: { label: 'Marquer le devis accepté', risk: 'medium' },
+  quote_mark_refused: { label: 'Marquer le devis refusé', risk: 'medium' },
+  quote_followup: { label: 'Relancer le devis', risk: 'high' },
 }
 
 // ─── Écriture d'un brief inter-assistant en base ──────────────────────────────
@@ -691,6 +787,33 @@ async function persistActionBriefs(orgId: string, action: unknown): Promise<void
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Types d'action dont le payload porte un client_name/client_id : la carte ne
+// doit jamais être émise pour un client qui n'existe pas, sous peine de créer
+// des documents orphelins (client_id null) sans que l'utilisateur le sache
+// avant le tour suivant.
+const ACTION_TYPES_REQUIRING_CLIENT = new Set([
+  'draft_quote', 'draft_invoice', 'brief_chloe', 'open_quote_editor', 'chantier_create',
+])
+
+// Applique le résultat de attachPersistentProposal à une réponse parsée :
+// si le client n'a pas pu être résolu, retire l'action et redemande le nom
+// exact dans le texte plutôt que de laisser passer une carte creuse.
+async function resolveActionOrAskForClient(
+  orgId: string,
+  userId: string | null,
+  conversationId: string | null,
+  parsed: { reply: string; action?: unknown },
+): Promise<void> {
+  const attached = await attachPersistentProposal(orgId, userId, conversationId, parsed.action)
+  if (attached && typeof attached === 'object' && '__clientNotFound' in attached) {
+    const clientName = (attached as { __clientNotFound: string }).__clientNotFound
+    parsed.action = undefined
+    parsed.reply = `Je n'ai pas trouvé de client nommé "${clientName}". Pouvez-vous me donner le nom exact tel qu'enregistré, ou voulez-vous que je crée d'abord sa fiche ?`
+    return
+  }
+  parsed.action = attached
+}
+
 async function attachPersistentProposal(
   orgId: string,
   userId: string | null,
@@ -706,6 +829,26 @@ async function attachPersistentProposal(
   const label = typeof act.label === 'string' && act.label.trim() ? act.label.trim() : 'Action Sarah'
   const description = typeof act.description === 'string' && act.description.trim() ? act.description.trim() : label
   const risk = act.risk === 'high' || act.risk === 'medium' || act.risk === 'low' ? act.risk : 'low'
+
+  // Garde-fou serveur : un nom de client mentionné mais introuvable ne doit
+  // jamais donner lieu à une carte d'action. On résout ici plutôt que de
+  // faire confiance au modèle, qui a l'outil search_client à disposition
+  // mais n'est pas obligé de l'appeler avant de proposer la carte.
+  const clientName = typeof payload.client_name === 'string' ? payload.client_name
+    : typeof payload.clientName === 'string' ? payload.clientName : null
+  const explicitClientId = typeof payload.client_id === 'string' ? payload.client_id
+    : typeof payload.clientId === 'string' ? payload.clientId : null
+  if (ACTION_TYPES_REQUIRING_CLIENT.has(type) && clientName && !explicitClientId) {
+    const resolvedId = await findClientIdForSarahDraft(orgId, payload)
+    if (!resolvedId) {
+      // Pas de carte : un client introuvable ne doit jamais devenir une
+      // action cliquable. L'appelant détecte ce marqueur et ajuste le
+      // "reply" pour redemander le bon nom au lieu de proposer la carte.
+      return { __clientNotFound: clientName }
+    }
+    payload.client_id = resolvedId
+  }
+
   const deepLink = deepLinkForSarahAction(type, payload)
   const dedupeKey = conversationId
     ? `chat:${conversationId}:${type}:${label}:${description.slice(0, 48)}`
@@ -741,14 +884,18 @@ const SYSTEM_PROMPT = `Tu es Sarah, la secrétaire de l'application Atelier. Tu 
 Ton rôle : l'aider à piloter son activité, répondre à ses questions, préparer son travail administratif et opérationnel, et lui proposer des actions concrètes quand c'est utile.
 
 Ton ton :
-- Chaleureux, humain, professionnel. Comme une vraie secrétaire de confiance.
-- Phrases naturelles, bien construites. Pas de style télégraphique.
+- Chaleureux, humain, professionnel. Comme une vraie secrétaire de confiance qui connaît bien la boîte.
+- Phrases naturelles, bien construites. Pas de style télégraphique, pas de style "rapport automatique".
 - Jamais de tiret cadratin (—). Jamais de majuscules en milieu de phrase pour "mettre en valeur". Pas d'emojis.
 - Tu vouvois l'utilisateur.
 - Tu vas droit au but, sans introduire inutilement ce que tu vas faire.
+- Bannis les formules d'assistant automatique : jamais "Bien sûr, voici", "Je suis là pour vous aider", "N'hésitez pas à", "Je reste à votre disposition", "En tant qu'assistante". Parle comme une collègue : "J'ai regardé, voilà où on en est", "Je vous ai préparé la fiche", "Attention, la facture Martin traîne depuis trois semaines".
+- Ne récite pas la date du jour en toutes lettres dans tes réponses, sauf si on te la demande. L'utilisateur sait quel jour on est.
+- Commence par l'information la plus utile, pas par ce qui est vide ou ce qui n'a pas eu lieu. Si la journée est calme, dis-le en une demi-phrase et enchaîne sur ce qui mérite l'attention.
+- Si une action échoue techniquement, ne dis jamais "il semble y avoir une erreur technique". Dis simplement que tu n'as pas réussi, ce que tu proposes à la place, et sur quelle page l'utilisateur peut le faire à la main.
 
 Ce que tu peux faire :
-- Répondre sur l'état de l'activité : chantiers en cours, tâches en retard, planning du jour, factures impayées, devis en attente.
+- Répondre sur l'état de l'activité : chantiers en cours, tâches en retard, planning du jour, factures impayées, devis en attente. Pour toute question précise sur les tâches en retard, utilise get_overdue_tasks plutôt que le bloc "Tâches en retard" du contexte général, qui est plafonné à 8 lignes et peut ne pas représenter le total réel.
 - Rédiger des relances clients, résumés de chantier, notes internes, emails professionnels.
 - Préparer un brief devis pour Chloé : si l'utilisateur veut créer un devis, collecte le client, la prestation, les quantités et conditions souhaitées, puis génère un bloc "brief_chloe" structuré pour que Chloé puisse démarrer directement.
 - Créer un brouillon simple de devis ou facture depuis le catalogue quand les lignes sont claires : prestations types, produits/services, main d'œuvre, quantités et prix connus.
@@ -849,6 +996,7 @@ Pages de l'app accessibles via "open_url" (utilise l'URL exacte) :
 - Paramètres : /settings
 
 Règles absolues :
+- Traite chaque nouveau message comme un sujet neuf, sauf référence explicite au tour précédent ("et pour ce même client", "toujours pour ce devis", "et lui ?"). Ta réponse ne doit répondre QU'à la dernière question posée. N'ouvre jamais ta réponse en revenant sur un client introuvable, un document ou un problème d'un tour précédent si le nouveau message n'en parle pas, même s'il reste "en attente" de clarification. Exemple concret : si tu as demandé "s'agit-il d'un nouveau client ?" à propos de X et que l'utilisateur enchaîne avec "quelles sont mes tâches en retard ?", réponds UNIQUEMENT sur les tâches, sans reparler de X.
 - La carte d'action EST la confirmation. Quand l'utilisateur demande clairement une action (par exemple "crée un devis pour Dupont avec telle prestation"), renvoie DIRECTEMENT la carte d'action dans le même message, sans poser de question de validation préalable du type "voulez-vous que je le fasse ?". L'utilisateur valide en cliquant sur la carte. Ne demande JAMAIS deux confirmations.
 - Ne pose une question avant la carte QUE s'il manque une information indispensable (client introuvable, prestation ambiguë, quantité absente). Si tout est clair, propose la carte tout de suite.
 - Ton "reply" qui accompagne une carte d'action annonce ce qui va être fait ("Voici la fiche prospect prête à créer, validez la carte ci-dessous."), il ne redemande pas l'autorisation. N'écris jamais "Validez-vous", "Confirmez-vous", "Souhaitez-vous que je" ni aucune autre question de permission dans un message qui contient déjà une carte.
@@ -863,7 +1011,10 @@ Règles absolues :
 - Si tu détectes des urgences dans le contexte (factures très en retard, tâches échues depuis plusieurs jours, devis expirant demain), signale-les spontanément sans attendre qu'on te pose la question.
 - Pour "ce qui a été fait aujourd'hui", utilise d'abord le bloc "Réalisé aujourd'hui", puis complète avec "Planning du jour" si utile. Ne conclus jamais qu'il ne s'est rien passé si des pointages, tâches terminées, notes ou photos existent.
 - Pour le planning, distingue bien les créneaux planifiés et les créneaux déjà pointés. Un créneau pointé reste un créneau qui a existé aujourd'hui, il n'est simplement plus une urgence à traiter.
-- Pour les entretiens, ne les invente pas : utilise uniquement les contrats/interventions d'entretien présents dans le contexte. Si la demande contient plusieurs entretiens ou une semaine complète, passe par "brief_nora".`
+- Pour les entretiens, ne les invente pas : utilise uniquement les contrats/interventions d'entretien présents dans le contexte. Si la demande contient plusieurs entretiens ou une semaine complète, passe par "brief_nora".
+- Une facture en brouillon n'a jamais été envoyée au client : on ne la "relance" pas. Propose plutôt de la finaliser et de l'envoyer (open_url vers l'éditeur de facture, ou invoice_send si l'utilisateur le demande explicitement). "invoice_reminder" est réservé aux factures déjà envoyées et en attente de paiement.
+- Continuité : le contexte contient tes dernières actions exécutées et celles en attente de validation. Si l'utilisateur demande ce que tu as fait récemment ou où en est une action, appuie-toi dessus au lieu de répondre que tu n'as rien fait. Si une action équivalente est déjà en attente de validation, rappelle qu'elle attend son clic au lieu de la reproposer. Si elle a déjà été exécutée et que l'utilisateur redemande la même chose, demande-toi s'il veut un nouvel exemplaire (alors propose une nouvelle carte) ou retrouver le résultat (alors propose une carte open_url vers la page concernée). Dans tous les cas, ne réponds JAMAIS qu'une chose est prête ou créée sans joindre la carte d'action correspondante : sans carte validée, rien n'a été créé.
+- Les types d'action (client_create, draft_quote, planning_create...) ne sont PAS des outils : ne les appelle jamais en tool call. Ils se placent uniquement dans le champ "action" de ta réponse JSON finale.`
 
 // Filet de sécurité : si le JSON du modèle est tronqué ou illisible, on ne
 // montre jamais le fragment brut à l'utilisateur. Si une action valide est
@@ -955,7 +1106,7 @@ export async function POST(req: NextRequest) {
 
     const isFirstMessage = !conversationHistory.some(h => h.role === 'user')
 
-    const [businessCtx, ragContext, dailyBriefResult, incomingBriefsResult] = await Promise.all([
+    const [businessCtx, ragContext, dailyBriefResult, incomingBriefsResult, executedActionsResult, pendingActionsResult] = await Promise.all([
       getBusinessContext(orgId),
       fetchRAGContext(orgId, message, { limit: 4 }),
       // Lire le brief du jour uniquement au premier message de la conversation
@@ -980,6 +1131,25 @@ export async function POST(req: NextRequest) {
             .order('created_at', { ascending: false })
             .limit(5)
         : Promise.resolve({ data: null, error: null }),
+      // Mémoire courte : dernières actions exécutées par Sarah (validées par
+      // l'utilisateur), pour ne pas donner l'impression de repartir de zéro.
+      supabase
+        .from('sarah_action_proposals')
+        .select('type, title, description, executed_at, deep_link')
+        .eq('organization_id', orgId)
+        .eq('status', 'executed')
+        .gte('executed_at', new Date(Date.now() - 7 * 86400000).toISOString())
+        .order('executed_at', { ascending: false })
+        .limit(5),
+      // Actions proposées mais pas encore validées ni refusées
+      supabase
+        .from('sarah_action_proposals')
+        .select('type, title, description, created_at')
+        .eq('organization_id', orgId)
+        .eq('status', 'pending')
+        .gte('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false })
+        .limit(5),
     ])
     const businessPrompt = formatBusinessContextForPrompt(businessCtx)
 
@@ -1122,12 +1292,12 @@ export async function POST(req: NextRequest) {
         .order('start_time', { ascending: true, nullsFirst: false })
         .limit(20),
 
-      // Nouvelles demandes de devis entrantes
+      // Demandes de devis à traiter (lues ou non, tant que ni converties ni archivées)
       supabase
         .from('quote_requests')
         .select('id, name, company_name, subject, description, status, created_at')
         .eq('organization_id', orgId)
-        .eq('status', 'new')
+        .in('status', ['new', 'read'])
         .order('created_at', { ascending: false })
         .limit(5),
 
@@ -1499,7 +1669,7 @@ export async function POST(req: NextRequest) {
 
     // Nouvelles demandes de devis
     if (newRequests?.length) {
-      contextLines.push('', 'Nouvelles demandes de devis à traiter :')
+      contextLines.push('', 'Demandes de devis à traiter (non converties en devis, non archivées) :')
       for (const r of newRequests) {
         const who = r.company_name ?? r.name ?? '?'
         contextLines.push(`  ${who} - "${r.subject ?? r.description?.slice(0, 60) ?? '?'}"`)
@@ -1552,6 +1722,24 @@ export async function POST(req: NextRequest) {
       })()
     }
 
+    // Mémoire courte des actions : ce que Sarah a déjà fait récemment et ce qui
+    // attend encore une validation, pour assurer la continuité entre conversations.
+    const executedActions = ((executedActionsResult as any)?.data ?? []) as Array<{ type: string; title: string; description: string | null; executed_at: string | null; deep_link: string | null }>
+    if (executedActions.length > 0) {
+      contextLines.push('', 'Vos dernières actions exécutées (validées par l\'utilisateur, à mentionner si on vous demande ce qui a été fait) :')
+      for (const a of executedActions) {
+        const when = a.executed_at ? String(a.executed_at).slice(0, 10) : '?'
+        contextLines.push(`  ${when} : ${a.title}${a.description && a.description !== a.title ? ` — ${shortText(a.description, 100)}` : ''}`)
+      }
+    }
+    const pendingActions = ((pendingActionsResult as any)?.data ?? []) as Array<{ type: string; title: string; created_at: string }>
+    if (pendingActions.length > 0) {
+      contextLines.push('', 'Actions déjà proposées, en attente de validation par l\'utilisateur. Ceci est un simple rappel pour toi, PAS un sujet à mentionner spontanément : ne les évoque QUE si l\'utilisateur pose une question sur ce sujet précis ou redemande la même action. Ne commence jamais un message par "j\'ai une action en attente" avant d\'avoir répondu à la question posée. Ne les reproposez jamais à l\'identique :')
+      for (const a of pendingActions) {
+        contextLines.push(`  ${String(a.created_at).slice(0, 10)} : ${a.title}`)
+      }
+    }
+
     // Brief du jour (premier message uniquement) — injecté dans le contexte et marqué lu
     const dailyBriefRow = (dailyBriefResult as any)?.data?.[0] ?? null
     if (dailyBriefRow?.content && dailyBriefRow.metadata?.read !== true) {
@@ -1595,6 +1783,7 @@ export async function POST(req: NextRequest) {
     // chaque tour, jusqu'à 3 tours d'appels d'outils avant de forcer le JSON final.
     const loopMessages: Array<{ role: string; content?: string | Array<Record<string, unknown>>; tool_calls?: unknown; tool_call_id?: string }> = [...apiMessages]
     let assistantMsg: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } | undefined
+    let pendingActionFromTool: { type: string; payload: Record<string, unknown> } | null = null
     const MAX_TOOL_ROUNDS = 3
 
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -1612,8 +1801,8 @@ export async function POST(req: NextRequest) {
             // réponse JSON finale plutôt qu'un nouvel appel d'outil.
             ...(isLastAllowedRound ? {} : { tools: SARAH_TOOLS, tool_choice: 'auto' }),
             temperature: 0.3,
-            // Gemini 2.5 Flash consomme des tokens de raisonnement sur ce budget :
-            // trop bas, la réponse JSON arrive tronquée en plein milieu.
+            // Budget calibré pour laisser de la marge à une réponse JSON avec
+            // action jointe sans la tronquer en plein milieu.
             max_tokens: round === 0 ? 1600 : 1400,
             ...(isLastAllowedRound ? { response_format: { type: 'json_object' } } : {}),
           },
@@ -1629,6 +1818,12 @@ export async function POST(req: NextRequest) {
       for (const tc of assistantMsg.tool_calls) {
         let args: Record<string, unknown> = {}
         try { args = JSON.parse(tc.function.arguments) } catch { /* ignore */ }
+        // Le modèle appelle parfois un TYPE D'ACTION comme un outil : on capture
+        // le payload pour reconstruire la carte nous-mêmes si sa réponse finale
+        // ne la contient pas (il "oublie" souvent après le message correctif).
+        if (SARAH_ACTION_TYPES.has(tc.function.name)) {
+          pendingActionFromTool = { type: tc.function.name, payload: args }
+        }
         const toolResult = await executeSarahTool(tc.function.name, args, orgId, memorySavedThisConversation, conversationId)
         if (process.env.NODE_ENV !== 'production') {
           console.log(`[sarah tool] round ${round} ${tc.function.name}(${tc.function.arguments}) -> ${toolResult.slice(0, 200)}`)
@@ -1653,7 +1848,20 @@ export async function POST(req: NextRequest) {
         parsed2.reply = safeReplyFromRaw(raw2, parsed2.action)
       }
 
-      parsed2.action = await attachPersistentProposal(orgId, user?.id ?? null, conversationId, parsed2.action)
+      // Carte oubliée par le modèle après un tool call sur un type d'action :
+      // on la reconstruit depuis les arguments capturés.
+      if (!parsed2.action && pendingActionFromTool) {
+        const defaults = SARAH_ACTION_DEFAULTS[pendingActionFromTool.type] ?? { label: 'Action Sarah', risk: 'medium' as const }
+        parsed2.action = {
+          type: pendingActionFromTool.type,
+          label: defaults.label,
+          description: parsed2.reply.slice(0, 180),
+          risk: defaults.risk,
+          payload: pendingActionFromTool.payload,
+        }
+      }
+
+      await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed2)
       return NextResponse.json(parsed2)
     }
 
@@ -1666,7 +1874,7 @@ export async function POST(req: NextRequest) {
       parsed.reply = safeReplyFromRaw(raw, parsed.action)
     }
 
-    parsed.action = await attachPersistentProposal(orgId, user?.id ?? null, conversationId, parsed.action)
+    await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed)
     return NextResponse.json(parsed)
   } catch (err) {
     if (err instanceof AIModuleDisabledError) {

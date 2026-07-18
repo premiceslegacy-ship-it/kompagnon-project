@@ -337,7 +337,7 @@ export default function QuotePDF({ quote, organization, client }: QuotePDFProps)
         </View>
 
         {/* ── Conditions + Signature ── */}
-        <View style={S.bottomSection}>
+        <View style={S.bottomSection} wrap={false}>
           <View style={S.conditionsBox}>
             {quote.payment_conditions && (
               <>

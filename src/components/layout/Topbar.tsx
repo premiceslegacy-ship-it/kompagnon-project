@@ -602,8 +602,8 @@ const NotificationBell = ({ notifications, onNavigate }: { notifications: Notifi
                                 >
                                     <Inbox className="w-4 h-4 text-accent mt-0.5 flex-shrink-0" />
                                     <div>
-                                        <p className="text-sm font-semibold text-primary">{notifications.newRequests} nouvelle{(notifications.newRequests ?? 0) > 1 ? 's' : ''} demande{(notifications.newRequests ?? 0) > 1 ? 's' : ''}</p>
-                                        <p className="text-xs text-secondary mt-0.5">Formulaire public à traiter</p>
+                                        <p className="text-sm font-semibold text-primary">{notifications.newRequests} demande{(notifications.newRequests ?? 0) > 1 ? 's' : ''} de devis à traiter</p>
+                                        <p className="text-xs text-secondary mt-0.5">Reçues via le formulaire public</p>
                                     </div>
                                 </button>
                             )}
