@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { getMetalPriceLogMessage, getMetalPricePublicMessage, getMetalPrices } from '@/lib/metal-prices'
+import { getMetalPriceLogMessage, getMetalPricePublicMessage, getMetalPrices, getMetalPriceTrends } from '@/lib/metal-prices'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,7 +33,8 @@ export async function GET() {
 
   try {
     const prices = await getMetalPrices()
-    return NextResponse.json({ prices })
+    const trends = await getMetalPriceTrends(prices)
+    return NextResponse.json({ prices, trends })
   } catch (err) {
     console.error('[api/metal-prices] Erreur:', getMetalPriceLogMessage(err))
     return NextResponse.json(

@@ -1,7 +1,9 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 
 // Codes LME : cotés en temps réel via le fournisseur de cours métaux.
-export const LME_METAL_CODES = ['ALU', 'XCU', 'ZNC', 'PB'] as const
+// NI (nickel) sert de proxy de cours pour l'inox : le fournisseur ne propose
+// pas de code "stainless steel" dédié, le nickel étant son composant d'alliage dominant.
+export const LME_METAL_CODES = ['ALU', 'XCU', 'ZNC', 'PB', 'NI'] as const
 export type LmeMetalCode = typeof LME_METAL_CODES[number]
 
 // Codes manuels : prix saisi par l'artisan, pas de cotation disponible
@@ -18,6 +20,19 @@ export const METAL_LABELS: Record<MetalCode, string> = {
   ZNC:   'Zinc',
   PB:    'Plomb',
   STEEL: 'Acier',
+  NI:    'Nickel (proxy inox)',
+}
+
+// Densités standard (kg/m³) utilisées pour convertir des dimensions (L × l × épaisseur)
+// en poids matière. Valeurs de référence métallurgique ; le nickel sert de proxy inox
+// (l'inox 304/316 réel est proche de 8000 kg/m³, valeur retenue ici).
+export const METAL_DENSITY_KG_M3: Record<MetalCode, number> = {
+  ALU:   2700,
+  XCU:   8960,
+  ZNC:   7140,
+  PB:    11340,
+  STEEL: 7850,
+  NI:    8000,
 }
 
 export type CachedMetalPrice = {
@@ -53,6 +68,7 @@ const DEMO_BASE_PRICES_EUR_KG: Record<LmeMetalCode, number> = {
   XCU: 9.15,
   ZNC: 2.65,
   PB: 1.95,
+  NI: 15.80,
 }
 
 export class MetalPriceProviderError extends Error {
@@ -200,6 +216,60 @@ async function persistPrices(prices: CachedMetalPrice[]): Promise<void> {
     .upsert(prices, { onConflict: 'metal_code' })
 
   if (error) throw new Error(`Erreur persistance cache : ${error.message}`)
+
+  // Un point d'historique par métal et par jour (les rafraîchissements suivants du même
+  // jour écrasent la valeur, ce qui donne "le dernier cours connu ce jour-là").
+  const today = new Date().toISOString().slice(0, 10)
+  const historyRows = prices.map((p) => ({
+    metal_code: p.metal_code,
+    price_date: today,
+    price_eur_kg: p.price_eur_kg,
+    source: p.source,
+  }))
+  await supabase.from('metal_price_history').upsert(historyRows, { onConflict: 'metal_code,price_date' })
+}
+
+export type MetalPriceTrend = {
+  metal_code: MetalCode
+  changePercent: number
+  previousPriceEurKg: number
+  previousDate: string
+}
+
+/**
+ * Variation en % entre le cours actuel et le dernier point d'historique disponible
+ * avant aujourd'hui (veille ou dernier jour ouvré connu). Retourne un tableau vide
+ * si l'historique n'a pas encore au moins 2 jours de recul.
+ */
+export async function getMetalPriceTrends(currentPrices: CachedMetalPrice[]): Promise<MetalPriceTrend[]> {
+  const supabase = createAdminClient()
+  const today = new Date().toISOString().slice(0, 10)
+
+  const trends: MetalPriceTrend[] = []
+  for (const current of currentPrices) {
+    if (!LME_METAL_CODES.includes(current.metal_code as LmeMetalCode)) continue
+
+    const { data } = await supabase
+      .from('metal_price_history')
+      .select('price_eur_kg, price_date')
+      .eq('metal_code', current.metal_code)
+      .lt('price_date', today)
+      .order('price_date', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (!data || data.price_eur_kg <= 0) continue
+
+    const changePercent = ((current.price_eur_kg - data.price_eur_kg) / data.price_eur_kg) * 100
+    trends.push({
+      metal_code: current.metal_code,
+      changePercent: Math.round(changePercent * 10) / 10,
+      previousPriceEurKg: data.price_eur_kg,
+      previousDate: data.price_date,
+    })
+  }
+
+  return trends
 }
 
 /**
@@ -242,4 +312,31 @@ export async function refreshMetalPrices(): Promise<CachedMetalPrice[]> {
   const fresh = await fetchFromApi()
   await persistPrices(fresh)
   return fresh
+}
+
+/**
+ * Calcule le poids (kg) d'une pièce métal à partir de ses dimensions et de
+ * l'épaisseur de la grille (thickness_mm). Remplace le multiplicateur "1 pièce"
+ * par un vrai calcul physique quand la grille et les dimensions le permettent :
+ *   - surface (tôle) : longueur (m) × largeur (m) × épaisseur (m) × densité (kg/m³)
+ *   - linéaire (profilé/tube) : longueur (m) × un poids au mètre linéaire n'est pas
+ *     dérivable sans section — non supporté, retourne null (reste au multiplicateur simple).
+ * Retourne null si les données nécessaires manquent (pas d'épaisseur sur la grille,
+ * pas de dimensions saisies) : l'appelant garde alors le comportement existant.
+ */
+export function computeMetalWeightKg(
+  metalCode: MetalCode,
+  thicknessMm: number | null,
+  lengthM: number | null,
+  widthM: number | null,
+): number | null {
+  if (!thicknessMm || thicknessMm <= 0) return null
+  if (!lengthM || lengthM <= 0 || !widthM || widthM <= 0) return null
+
+  const density = METAL_DENSITY_KG_M3[metalCode]
+  const thicknessM = thicknessMm / 1000
+  const volumeM3 = lengthM * widthM * thicknessM
+  const weightKg = volumeM3 * density
+
+  return Math.round(weightKg * 1000) / 1000
 }

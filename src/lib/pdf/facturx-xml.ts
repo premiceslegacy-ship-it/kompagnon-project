@@ -34,6 +34,33 @@ function fmtAmount(n: number | null | undefined): string {
   return (n ?? 0).toFixed(2)
 }
 
+function digitsOnly(value: string | null | undefined): string {
+  return String(value ?? '').replace(/\D/g, '')
+}
+
+function sirenFrom(value: string | null | undefined): string | null {
+  const digits = digitsOnly(value)
+  if (digits.length >= 9) return digits.slice(0, 9)
+  return null
+}
+
+function siretFrom(value: string | null | undefined): string | null {
+  const digits = digitsOnly(value)
+  return digits.length === 14 ? digits : null
+}
+
+function sellerSiren(org: Organization): string | null {
+  return sirenFrom(org.siren) ?? sirenFrom(org.siret)
+}
+
+function buyerSiren(client: NonNullable<InvoiceWithItems['client']>): string | null {
+  return sirenFrom(client.siren) ?? sirenFrom(client.siret)
+}
+
+function partyFiscalId(siret: string | null | undefined, siren: string | null | undefined): string | null {
+  return siretFrom(siret) ?? sirenFrom(siren)
+}
+
 // Détermine le code TypeCode selon invoice_type
 // 380 = Commercial Invoice, 384 = Credit Note
 function invoiceTypeCode(type: string | null | undefined): string {
@@ -91,9 +118,12 @@ function xmlAddress(fields: {
 }
 
 function xmlSeller(org: Organization): string {
-  const legalOrgBlock = (org.siret || org.siren)
+  const siren = sellerSiren(org)
+  const fiscalId = partyFiscalId(org.siret, org.siren)
+
+  const legalOrgBlock = siren
     ? `<ram:SpecifiedLegalOrganization>
-        <ram:ID schemeID="0002">${esc(org.siret ?? org.siren)}</ram:ID>
+        <ram:ID schemeID="0002">${esc(siren)}</ram:ID>
       </ram:SpecifiedLegalOrganization>`
     : ''
 
@@ -103,9 +133,9 @@ function xmlSeller(org: Organization): string {
     ? `<ram:SpecifiedTaxRegistration>
         <ram:ID schemeID="VA">${esc(org.vat_number)}</ram:ID>
       </ram:SpecifiedTaxRegistration>`
-    : (org.siret || org.siren)
+    : fiscalId
     ? `<ram:SpecifiedTaxRegistration>
-        <ram:ID schemeID="FC">${esc(org.siret ?? org.siren)}</ram:ID>
+        <ram:ID schemeID="FC">${esc(fiscalId)}</ram:ID>
       </ram:SpecifiedTaxRegistration>`
     : ''
 
@@ -126,9 +156,10 @@ function xmlBuyer(client: NonNullable<InvoiceWithItems['client']>): string {
     || client.email
     || 'Client'
 
-  const legalOrgBlock = (client.siret || client.siren)
+  const siren = buyerSiren(client)
+  const legalOrgBlock = siren
     ? `<ram:SpecifiedLegalOrganization>
-        <ram:ID schemeID="0002">${esc(client.siret ?? client.siren)}</ram:ID>
+        <ram:ID schemeID="0002">${esc(siren)}</ram:ID>
       </ram:SpecifiedLegalOrganization>`
     : ''
 
@@ -222,6 +253,38 @@ function xmlVatBreakdown(items: InvoiceWithItems['items'], isVatSubject: boolean
   }).join('\n  ')
 }
 
+function legalNote(subjectCode: 'PMT' | 'PMD' | 'AAB', content: string): string {
+  return `<ram:IncludedNote>
+      <ram:Content>${esc(content)}</ram:Content>
+      <ram:SubjectCode>${subjectCode}</ram:SubjectCode>
+    </ram:IncludedNote>`
+}
+
+function invoiceNotes(invoice: InvoiceWithItems, organization: Organization, isClientPro: boolean): string {
+  const notes: string[] = []
+  if (invoice.notes_client) notes.push(`<ram:IncludedNote><ram:Content>${esc(invoice.notes_client)}</ram:Content></ram:IncludedNote>`)
+
+  const lateRate = organization.late_penalty_rate != null
+    ? `${organization.late_penalty_rate}% par an`
+    : "au taux legal applicable"
+  notes.push(legalNote(
+    'PMD',
+    `Penalites de retard exigibles des le lendemain de la date d'echeance, sans mise en demeure prealable : ${lateRate}.`,
+  ))
+
+  notes.push(legalNote(
+    'PMT',
+    isClientPro
+      ? organization.recovery_indemnity_text
+        ?? "Indemnite forfaitaire de 40 EUR pour frais de recouvrement due de plein droit en cas de retard de paiement, conformement a l'article L441-10 du Code de commerce."
+      : "Indemnite forfaitaire pour frais de recouvrement non applicable aux particuliers.",
+  ))
+
+  notes.push(legalNote('AAB', "Aucun escompte n'est accorde pour paiement anticipe."))
+
+  return notes.join('\n    ')
+}
+
 // ─── Export principal ──────────────────────────────────────────────────────────
 
 export function generateFacturXml(
@@ -240,6 +303,7 @@ export function generateFacturXml(
   const guidelineId = facturxGuidelineId('EN 16931')
 
   const client = invoice.client
+  const isClientPro = client?.type === 'company'
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rsm:CrossIndustryInvoice
@@ -250,6 +314,9 @@ export function generateFacturXml(
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <rsm:ExchangedDocumentContext>
+    <ram:BusinessProcessSpecifiedDocumentContextParameter>
+      <ram:ID>S1</ram:ID>
+    </ram:BusinessProcessSpecifiedDocumentContextParameter>
     <ram:GuidelineSpecifiedDocumentContextParameter>
       <ram:ID>${guidelineId}</ram:ID>
     </ram:GuidelineSpecifiedDocumentContextParameter>
@@ -261,7 +328,7 @@ export function generateFacturXml(
     <ram:IssueDateTime>
       <udt:DateTimeString format="102">${issueDate}</udt:DateTimeString>
     </ram:IssueDateTime>
-    ${invoice.notes_client ? `<ram:IncludedNote><ram:Content>${esc(invoice.notes_client)}</ram:Content></ram:IncludedNote>` : ''}
+    ${invoiceNotes(invoice, organization, isClientPro)}
   </rsm:ExchangedDocument>
 
   <rsm:SupplyChainTradeTransaction>

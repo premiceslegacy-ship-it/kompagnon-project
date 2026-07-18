@@ -305,6 +305,7 @@ const METAL_CODE_MAP: Record<string, string> = {
   zinc: 'ZNC', zn: 'ZNC',
   plomb: 'PB', lead: 'PB', pb: 'PB',
   acier: 'STEEL', steel: 'STEEL', fer: 'STEEL',
+  nickel: 'NI', ni: 'NI', inox: 'NI', stainless: 'NI',
 }
 
 function parseExcelRows(rows: string[][]): { valid: ImportGridRow[]; errors: string[] } {
@@ -396,7 +397,7 @@ function ExcelImporter({ onImported }: { onImported: (count: number) => void }) 
               <span className="font-mono">{EXCEL_HEADERS.join(' | ')}</span>
             </p>
             <p className="text-xs text-secondary mt-1">
-              Source : <strong>lme</strong> ou <strong>manuel</strong>. Métal : ALU, XCU, ZNC, PB, STEEL (ou nom en français).
+              Source : <strong>lme</strong> ou <strong>manuel</strong>. Métal : ALU, XCU, ZNC, PB, STEEL, NI (ou nom en français).
             </p>
           </div>
         </div>

@@ -6,6 +6,9 @@ import { clientNameFromJoin } from '@/lib/client'
 
 const FOLLOW_UP_DELAY_DAYS = 2
 const RECENT_ACTIVITY_DAYS = 7
+// Un créneau passé sans pointage reste signalé pendant 7 jours (pas seulement
+// la veille) : une tâche non traitée ne doit pas disparaître silencieusement.
+export const MISSING_POINTAGE_WINDOW_DAYS = 7
 
 export type NotificationsSummary = {
   total: number
@@ -101,6 +104,7 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
   const now = Date.now()
   const today = todayParis()
   const yesterday = dateParis(now - 24 * 60 * 60 * 1000)
+  const missingPointageWindowStart = dateParis(now - MISSING_POINTAGE_WINDOW_DAYS * 24 * 60 * 60 * 1000)
   const in3days = dateParis(now + 3 * 24 * 60 * 60 * 1000)
   const followUpCutoff = new Date(now - FOLLOW_UP_DELAY_DAYS * 24 * 60 * 60 * 1000).toISOString()
   const recentActivityCutoff = new Date(now - RECENT_ACTIVITY_DAYS * 24 * 60 * 60 * 1000).toISOString()
@@ -205,11 +209,13 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       .eq('organization_id', orgId)
       .eq('action', 'chantier_task.completed')
       .gte('created_at', recentActivityCutoff),
+    // Demandes de devis à traiter : une demande simplement lue n'est pas
+    // traitée, elle reste comptée tant qu'elle n'est ni convertie ni archivée.
     supabase
       .from('quote_requests')
       .select('id', { count: 'exact', head: true })
       .eq('organization_id', orgId)
-      .eq('status', 'new'),
+      .in('status', ['new', 'read']),
     supabase
       .from('organizations')
       .select('decennale_enabled, decennale_date_fin, default_labor_cost_per_hour, default_hourly_rate')
@@ -244,12 +250,12 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       .eq('chantier.organization_id', orgId)
       .eq('chantier.is_archived', false)
       .not('chantier.status', 'in', '("termine","annule")')
-      .gte('planned_date', yesterday)
+      .gte('planned_date', missingPointageWindowStart)
       .lt('planned_date', today),
     supabase
       .from('chantier_pointages')
       .select('id, chantier_id, date, member_id')
-      .gte('date', yesterday)
+      .gte('date', missingPointageWindowStart)
       .lt('date', today),
     supabase
       .from('chantiers')
@@ -287,11 +293,21 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       : Promise.resolve({ data: null, error: null }),
   ])
 
+  // Une absence déclarée couvre le créneau : plus rien à vérifier pour ce membre.
+  const { data: absenceRows } = await supabase
+    .from('member_absences')
+    .select('member_id, start_date, end_date')
+    .eq('organization_id', orgId)
+    .gte('end_date', missingPointageWindowStart)
+  const isAbsentOn = (memberId: string | null, date: string) =>
+    memberId != null && (absenceRows ?? []).some(a => a.member_id === memberId && a.start_date <= date && a.end_date >= date)
+
   const pointageKeys = new Set((pointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}:${p.member_id ?? '*'}`))
   const pointageDayKeys = new Set((pointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}`))
   const missingPointageSlots = (plannedSlots ?? []).filter((slot: any) => {
     const directKey = `${slot.chantier_id}:${slot.planned_date}:${slot.member_id ?? '*'}`
     const dayKey = `${slot.chantier_id}:${slot.planned_date}`
+    if (isAbsentOn(slot.member_id ?? null, slot.planned_date)) return false
     return !pointageKeys.has(directKey) && !pointageDayKeys.has(dayKey)
   })
   const missingPointages = missingPointageSlots.length
@@ -483,7 +499,7 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
   if (canSeeReminders && (recentAutoReminders ?? 0) > 0) sarahAlertLines.push(`${recentAutoReminders} relance${(recentAutoReminders ?? 0) > 1 ? 's automatiques envoyées' : ' automatique envoyée'} récemment.`)
   if (canSeeChantiers && (dueTasks ?? 0) > 0) sarahAlertLines.push(`${dueTasks} tâche${(dueTasks ?? 0) > 1 ? 's chantier' : ' chantier'} à échéance.`)
   if (canSeeChantiers && (completedTasks ?? 0) > 0) sarahAlertLines.push(`${completedTasks} tâche${(completedTasks ?? 0) > 1 ? 's chantier terminées' : ' chantier terminée'} récemment.`)
-  if (canSeeLeads && (newRequests ?? 0) > 0) sarahAlertLines.push(`${newRequests} nouvelle${(newRequests ?? 0) > 1 ? 's demandes' : ' demande'} de devis à traiter.`)
+  if (canSeeLeads && (newRequests ?? 0) > 0) sarahAlertLines.push(`${newRequests} demande${(newRequests ?? 0) > 1 ? 's' : ''} de devis à traiter.`)
   if (canSeeChantiers && chantiersAtRisk > 0) sarahAlertLines.push(`${chantiersAtRisk} chantier${chantiersAtRisk > 1 ? 's' : ''} en alerte budget.`)
   if (maintenanceBillingPending > 0) sarahAlertLines.push(`${maintenanceBillingPending} intervention${maintenanceBillingPending > 1 ? 's maintenance' : ' maintenance'} à facturer.`)
   if (dailyBriefPending) sarahAlertLines.push('Le brief du jour est disponible.')

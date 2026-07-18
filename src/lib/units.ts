@@ -74,9 +74,34 @@ export function getUnitGroups(allowedUnits?: string[] | null): UnitGroup[] {
     .filter(group => group.options.length > 0)
 }
 
+// Variantes ASCII / casse courantes saisies à la main ou venues du formulaire
+// public, ramenées vers l'unité canonique du référentiel.
+const UNIT_ALIASES: Record<string, string> = {
+  'm2': 'm²', 'M2': 'm²', 'm^2': 'm²', 'M²': 'm²',
+  'dm2': 'dm²', 'DM2': 'dm²',
+  'm3': 'm³', 'M3': 'm³', 'm^3': 'm³', 'M³': 'm³',
+  'l': 'L', 'litre': 'L', 'litres': 'L',
+  'U': 'u', 'unité': 'u', 'unite': 'u',
+  'ML': 'ml', 'Ml': 'ml',
+  'H': 'h', 'heure': 'h', 'heures': 'h',
+  'J': 'j', 'jour': 'j', 'jours': 'j',
+  'KG': 'kg', 'Kg': 'kg',
+  'T': 't',
+  'pc': 'pce', 'pcs': 'pce', 'pièce': 'pce', 'piece': 'pce',
+  'Forfait': 'forfait', 'FORFAIT': 'forfait',
+}
+
+/** Ramène une unité saisie librement vers l'unité canonique si une variante connue existe. */
+export function normalizeUnit(value: string | null | undefined): string {
+  const trimmed = value?.trim()
+  if (!trimmed) return 'u'
+  if (ALL_BTP_UNITS.includes(trimmed)) return trimmed
+  return UNIT_ALIASES[trimmed] ?? trimmed
+}
+
 export function isBuiltInUnit(value: string | null | undefined): boolean {
   if (!value) return false
-  return ALL_BTP_UNITS.includes(value)
+  return ALL_BTP_UNITS.includes(normalizeUnit(value))
 }
 
 export function getUnitLabel(value: string | null | undefined): string {

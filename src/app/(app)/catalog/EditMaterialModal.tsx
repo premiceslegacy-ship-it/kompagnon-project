@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useState, useTransition } from 'react'
-import { X, AlertCircle, Loader2 } from 'lucide-react'
+import React, { useState, useTransition, useEffect } from 'react'
+import { X, AlertCircle, Loader2, TrendingUp } from 'lucide-react'
 import { ActionButton } from '@/components/ui/ActionButton'
 import { type CatalogMaterial } from '@/lib/data/queries/catalog'
 import { updateMaterial } from '@/lib/data/mutations/catalog'
@@ -19,6 +19,8 @@ import {
 import type { ResolvedCatalogContext } from '@/lib/catalog-context'
 import { getCatalogLabelsForProfile } from '@/lib/catalog-ui'
 import type { Supplier } from '@/lib/data/queries/suppliers'
+import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids'
+import type { CachedMetalPrice } from '@/lib/metal-prices'
 
 const inputCls = 'w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all'
 
@@ -29,6 +31,46 @@ type Props = {
   suppliers?: Supplier[]
   onClose: () => void
   onSaved: (updated: CatalogMaterial) => void
+  metalGrid?: MetalPriceGrid | null
+}
+
+// Affiche le prix suggéré par le cours du jour à côté du prix de vente figé,
+// sans jamais l'écraser automatiquement : l'artisan décide seul du prix catalogue.
+function MetalGridPriceHint({ grid }: { grid: MetalPriceGrid }) {
+  const [price, setPrice] = useState<CachedMetalPrice | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/metal-prices')
+      .then(res => res.json())
+      .then((data: { prices?: CachedMetalPrice[] }) => {
+        if (cancelled) return
+        setPrice(data.prices?.find(p => p.metal_code === grid.metal_code) ?? null)
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [grid.metal_code])
+
+  const referencePrice = grid.source_type === 'manual' ? grid.manual_price_eur_kg : price?.price_eur_kg
+  const suggested = referencePrice != null ? Math.round(referencePrice * grid.coefficient * 100) / 100 : null
+
+  return (
+    <div className="md:col-span-2 flex items-center gap-2.5 px-4 py-3 rounded-xl border border-[var(--elevation-border)] bg-accent/5 text-sm">
+      <TrendingUp size={15} className="text-accent flex-shrink-0" />
+      {loading ? (
+        <span className="text-secondary">Chargement du cours matière...</span>
+      ) : suggested != null ? (
+        <span className="text-secondary">
+          Grille matière liée (<strong className="text-primary">{grid.label}</strong>) — prix suggéré au cours du jour :{' '}
+          <strong className="text-primary tabular-nums">{suggested.toFixed(2)} € / {grid.unit}</strong>. Le prix de vente ci-dessus reste inchangé tant que vous ne le modifiez pas vous-même.
+        </span>
+      ) : (
+        <span className="text-secondary">Cours matière indisponible pour le moment.</span>
+      )}
+    </div>
+  )
 }
 
 function buildSchemaState(material: CatalogMaterial, mode: DimensionPricingMode): EditableDimensionSchemaState {
@@ -53,7 +95,7 @@ function buildVariantState(material: CatalogMaterial, schema: EditableDimensionS
   }))
 }
 
-export function EditMaterialModal({ material, categories, catalogContext, suppliers = [], onClose, onSaved }: Props) {
+export function EditMaterialModal({ material, categories, catalogContext, suppliers = [], onClose, onSaved, metalGrid = null }: Props) {
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [newCatMode, setNewCatMode] = useState(false)
@@ -314,6 +356,7 @@ export function EditMaterialModal({ material, categories, catalogContext, suppli
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-secondary">€</span>
               </div>
             </div>
+            {metalGrid && <MetalGridPriceHint grid={metalGrid} />}
             {/* Tarification dimensionnelle */}
             <div className="md:col-span-2 card p-4 space-y-4 dark:bg-white/4">
               <p className="text-sm font-semibold text-primary">Tarification selon dimensions</p>

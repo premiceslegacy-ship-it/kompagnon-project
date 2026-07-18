@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import { getUnitGroups, isBuiltInUnit } from '@/lib/units'
+import { getUnitGroups, isBuiltInUnit, normalizeUnit } from '@/lib/units'
 
 type UnitSelectProps = {
   value: string | null | undefined
@@ -44,7 +44,7 @@ export function UnitSelect({
     }
   }, [value])
 
-  const selectValue = showFreeInput ? OTHER_VALUE : (value ?? 'u')
+  const selectValue = showFreeInput ? OTHER_VALUE : normalizeUnit(value)
 
   function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
     if (e.target.value === OTHER_VALUE) {

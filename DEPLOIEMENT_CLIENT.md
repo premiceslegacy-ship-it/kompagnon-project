@@ -414,6 +414,23 @@ Le cockpit Orsayn reste la source de vérité pour modifier tier, modules, quota
 149_fix_reserves_rls_policy.sql                 ← Correctif RLS chantier_reserves
 150_sarah_action_proposals.sql                  ← Propositions d'actions persistantes Sarah (confirmation explicite avant toute action métier)
 151_sarah_action_proposals_harden_update_policy.sql ← Durcissement RLS : authenticated ne peut que masquer (dismiss) une proposition pending — exécution réservée au service role
+152_planning_arrived_at.sql                     ← Arrivée sur site persistée en base (chantier_plannings.arrived_at) — remplace le localStorage côté TourneeCard
+153_departure_coordinates.sql                   ← Coordonnées GPS point de départ (organizations + tournee_routes) — carte interactive Settings
+154_member_photo_upload.sql                     ← Upload photo chantier par intervenant sans compte app (chantier_photos.member_id)
+155_member_absences.sql                         ← Absences/indisponibilités déclarées par membre — exclusion des suggestions de remplacement (Sarah, Nora)
+156_harden_identity_rls.sql                     ← Correctif sécurité : bloque l'élévation de privilège via memberships (voir §Correctifs sécurité ci-dessous)
+157_security_definer_search_path.sql            ← Correctif sécurité : fixe search_path sur les fonctions SECURITY DEFINER
+158_invoice_immutability.sql                    ← Correctif sécurité : factures émises immuables (trigger), DELETE restreint aux brouillons
+159_perf_indexes.sql                            ← Index de performance (audit perf juillet 2026) : tri catalogue/finances, fenêtres planning
+160_push_subscriptions_member_space.sql         ← Push navigateur pour intervenants /mon-espace sans compte auth (push_subscriptions.member_id)
+161_member_space_token_reminders.sql            ← Rappel J-3 avant expiration du lien magique /mon-espace (member_space_tokens.reminder_sent_at)
+162_chantiers_coordinates.sql                   ← Coordonnées GPS chantiers (géocodage à la volée) — carte multi-points de tournée
+163_account_deletion_execution.sql              ← Exécution réelle de la suppression de compte RGPD (anonymisation PII, factures conservées 10 ans)
+164_vertical_packs.sql                          ← Pack verticale métier (organizations.business_vertical_pack) — un seul pack livré à ce jour : `metal` (métallerie/tôlerie/chaudronnerie/soudure)
+165_quote_requests_freeform_notes.sql           ← Précisions libres du formulaire public (quote_requests.freeform_notes), séparées de la description fusionnée
+166_quote_attachments_bucket.sql                ← Crée le bucket Storage quote-attachments manquant (la migration 054 posait les policies mais pas le bucket lui-même)
+167_nickel_lme_pricing.sql                      ← Ajoute NI (nickel, proxy de cours pour l'inox) comme 5ème métal LME dans le module prix matières
+168_metal_price_history.sql                     ← Historique quotidien des cours (metal_price_history) — alimente le calcul de tendance/variation affiché dans la bannière prix matières
 ```
 
 Note historique :
@@ -536,12 +553,42 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `149_fix_reserves_rls_policy.sql`
 - `150_sarah_action_proposals.sql`
 - `151_sarah_action_proposals_harden_update_policy.sql`
+- `152_planning_arrived_at.sql`
+- `153_departure_coordinates.sql`
+- `154_member_photo_upload.sql`
+- `155_member_absences.sql`
+- `159_perf_indexes.sql`
+- `160_push_subscriptions_member_space.sql`
+- `161_member_space_token_reminders.sql`
+- `162_chantiers_coordinates.sql`
+- `163_account_deletion_execution.sql`
+- `164_vertical_packs.sql`
+- `165_quote_requests_freeform_notes.sql`
+- `166_quote_attachments_bucket.sql`
+- `167_nickel_lme_pricing.sql` — universelle (étend une contrainte CHECK), mais n'a d'effet que pour les clients avec `has_metal_pricing = true`
+- `168_metal_price_history.sql` — idem, universelle mais utile seulement si `has_metal_pricing = true`
 
 **Correctifs sécurité — audit backend juillet 2026 (voir `docs/backend-audit-2026-07.md`) :**
 - `156_harden_identity_rls.sql` — bloque l'élévation de privilège via `memberships` (un membre ne peut plus se promouvoir owner/admin via le client anon). **À pousser sur chaque client.**
 - `157_security_definer_search_path.sql` — fixe `search_path` sur les 7 fonctions `SECURITY DEFINER` (dont `get_user_org_id`/`user_has_permission`, appelées dans toutes les policies). **À pousser sur chaque client.**
 - `158_invoice_immutability.sql` — rend les factures émises immuables (trigger) et restreint le DELETE physique aux brouillons. **À pousser sur chaque client.**
 - **Cockpit uniquement** : `supabase/operator-migrations/008_webhook_events.sql` — table d'idempotence des webhooks Stripe. À appliquer sur le **projet Supabase operator** (pas via `supabase db push` du projet client) : lier le projet operator puis pousser, ou l'exécuter dans le SQL editor du projet operator. Sans elle, le webhook Stripe fonctionne mais sans dédup (dégradation sûre, pas de crash).
+
+Effets des migrations 152–166 :
+- `152` : `chantier_plannings.arrived_at` — pointage "Arrivée" persisté en base (remplace le localStorage), visible depuis n'importe quel appareil
+- `153` : `organizations.departure_latitude/longitude` + `tournee_routes.departure_latitude/longitude` — coordonnées GPS pour la carte interactive du point de départ (Settings)
+- `154` : `chantier_photos.member_id` (FK optionnelle) + `uploaded_by` rendu nullable — un intervenant sans compte app peut uploader une photo chantier depuis `/mon-espace`
+- `155` : nouvelle table `member_absences` (déclaratif uniquement, ne modifie jamais `chantier_plannings`) — sert de source de vérité pour exclure un membre absent des suggestions de remplacement (Sarah, Nora)
+- `159` : index composites sur `materials`, `labor_rates` (tri catalogue) et tables planning (fenêtres de dates) — correctif performance, aucun effet fonctionnel
+- `160` : `push_subscriptions.user_id` rendu nullable + ajout `member_id` — un intervenant `/mon-espace` sans compte Supabase Auth peut désormais s'abonner aux notifications push
+- `161` : `member_space_tokens.reminder_sent_at` — rappel automatique J-3 avant expiration du lien magique `/mon-espace`, verrou anti-doublon
+- `162` : `chantiers.latitude/longitude` — géocodage à la volée (api-adresse.data.gouv.fr) pour la carte multi-points de tournée
+- `163` : `organizations.anonymized_at` + fonction `anonymize_organization_for_deletion` — exécute enfin la suppression de compte RGPD promise par `requestAccountDeletion()` : factures conservées 10 ans (obligation CGI) mais anonymisées, accès coupé. **Nouveau cron à brancher** pour appeler la fonction chaque jour sur les organisations dont `deletion_scheduled_at <= now()`
+- `164` : `organizations.business_vertical_pack` (liste fermée, alignée sur `VERTICAL_PACKS` dans `src/lib/vertical-packs.ts`) — axe transversal aux profils/activités qui pilote presets catalogue, trade de contrat dédié et enrichissement du contexte IA. **Un seul pack livré à ce jour : `metal`** (métallerie, tôlerie, chaudronnerie, soudure). Activé automatiquement à l'onboarding si l'activité choisie est éligible, ou manuellement depuis le cockpit Orsayn. Indépendant de `has_metal_pricing` (module 120, pricing matières premières)
+- `165` : `quote_requests.freeform_notes` — précisions libres du formulaire public, séparées de la description fusionnée, pour générer des lignes de devis IA complémentaires au catalogue sélectionné
+- `166` : crée le bucket Storage `quote-attachments` (les policies RLS existaient depuis la migration `054` mais le bucket lui-même n'avait jamais été créé — tout upload depuis `/demande/[orgSlug]` échouait en 404)
+- `167` : étend les contraintes CHECK `metal_code` (`cached_metal_prices`, `metal_price_grids`, `metal_price_snapshots`) pour accepter `NI` — nickel utilisé comme proxy de cours pour l'inox (MetalPriceAPI n'a pas de code "stainless steel" dédié). Le calcul par poids réel (longueur × largeur × épaisseur de la grille × densité du métal) est aussi disponible depuis cette version pour tous les métaux, y compris l'acier en saisie manuelle — voir `src/lib/metal-prices.ts` (`computeMetalWeightKg`, `METAL_DENSITY_KG_M3`)
+- `168` : nouvelle table `metal_price_history` (une ligne par métal et par jour) — alimente `getMetalPriceTrends()`, affiché comme variation % avec alerte visuelle dans la bannière prix matières (seuil ±2%). Nécessite au moins 2 jours d'historique pour afficher une tendance ; vide à l'activation d'un nouveau client
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`
@@ -707,7 +754,7 @@ Effets de ces migrations :
 
 - `120` :
   - `organizations.has_metal_pricing BOOLEAN NOT NULL DEFAULT false` — flag d'activation du module prix matières (tôliers, métalliers) ; piloté depuis le cockpit Orsayn
-  - nouvelle table `cached_metal_prices` — cache serveur des cours LME (une ligne par métal : ALU, XCU, ZNC, PB), rafraîchi toutes les 10 min par le cron dédié
+  - nouvelle table `cached_metal_prices` — cache serveur des cours LME (une ligne par métal : ALU, XCU, ZNC, PB — **étendu à NI/nickel par la migration 167**, voir plus bas), rafraîchi toutes les 10 min par le cron dédié
   - nouvelle table `metal_price_grids` — grilles matière configurées par l'artisan (métal source + coefficient fournisseur) ; RLS org-scoped
   - nouvelle table `metal_price_snapshots` — audit immuable des cours LME au moment de la validation du devis (traçabilité art. L. 112-1 CMF) ; RLS org-scoped
   - **Gating strict :** le bandeau cours, les grilles et le snapshot ne s'affichent que si `has_metal_pricing = true` — activé uniquement depuis le cockpit Orsayn, pour les clients Pro ou Expert tôliers/métalliers. Aucun accès sans activation explicite.
@@ -1132,25 +1179,26 @@ curl -X POST https://<domaine-du-client.fr>/api/cron/monthly-member-reports \
 
 **Concerne uniquement les instances avec `has_metal_pricing = true`.**
 
-`POST /api/cron/metal-prices` force un fetch depuis MetalPriceAPI et met à jour le cache `cached_metal_prices`. L'app a elle-même un cache serveur de 10 min — ce cron n'est nécessaire que pour garantir un rafraîchissement proactif et indépendant du trafic.
+`POST /api/cron/metal-prices` force un fetch depuis MetalPriceAPI et met à jour le cache `cached_metal_prices` **de l'instance ciblée par l'URL**, plus un point d'historique quotidien dans `metal_price_history` (migration 168, sert au calcul de tendance affiché dans la bannière). L'app a elle-même un cache serveur de 10 min — ce cron n'est nécessaire que pour garantir un rafraîchissement proactif et indépendant du trafic.
 
-**Plan API retenu :** Basic (12 $/mois, 10 000 req/mois, MAJ toutes les 10 min) — mutualisé entre tous les clients du module. Une seule clé `METALPRICEAPI_KEY` côté Atelier, identique sur toutes les instances.
+**Plan API retenu :** Basic (12 $/mois, 10 000 req/mois, MAJ toutes les 10 min) — mutualisé entre tous les clients du module. Une seule clé `METALPRICEAPI_KEY` côté Atelier, identique sur toutes les instances. **Ce plan n'est pas encore souscrit** : à activer sur metalpriceapi.com au moment où un premier client signe sur ce module (pas de raison de payer avant).
 
-**Planification recommandée — cron-job.org :**
+**Planification — cron-job.org, un job PAR CLIENT actif :**
 
-1. Aller sur [cron-job.org](https://cron-job.org) → créer **un seul job** (la clé est Atelier-partagée, le cache est en DB)
+Chaque job cible le domaine d'un seul client — la mutualisation ne porte que sur la clé `METALPRICEAPI_KEY`, pas sur le déclenchement. Un job qui appelle `client-a.fr` ne rafraîchit jamais le cache de `client-b.fr`. Pour chaque client avec `has_metal_pricing = true` :
+
+1. Aller sur [cron-job.org](https://cron-job.org) → créer un job
 2. URL : `https://<domaine-du-client.fr>/api/cron/metal-prices`
 3. Méthode : `POST`
-4. Header : `x-cron-secret: <CRON_SECRET du client>`
+4. Header : `x-cron-secret: <CRON_SECRET du client>` (le `CRON_SECRET` est unique par client, voir §3 — ne pas réutiliser celui d'un autre client)
 5. Fréquence : toutes les 10 minutes
-
-> **Alternative :** si tous les clients actifs ont le même `CRON_SECRET` (non recommandé), un seul job suffit. Sinon, créer un job par client. Le coût API est mutualisé côté MetalPriceAPI (une seule clé, un seul quota).
 
 ```bash
 # Déclencher manuellement (test ou init)
 curl -X POST https://<domaine-du-client.fr>/api/cron/metal-prices \
   -H "x-cron-secret: <CRON_SECRET>"
-# Réponse attendue : { "ok": true, "refreshed": 4, "prices": [...] }
+# Réponse attendue : { "ok": true, "refreshed": 5, "prices": [...] }
+# refreshed=5 depuis la migration 167 (ALU, XCU, ZNC, PB, NI) — était 4 avant (sans NI/nickel)
 ```
 
 **Variables d'env requises (injecter via `--apply-all`) :**
@@ -1159,6 +1207,10 @@ METALPRICEAPI_KEY=...   ← clé Atelier partagée (obtenir sur metalpriceapi.co
 ```
 
 > **Fallback :** si l'API MetalPriceAPI est indisponible, l'app retourne le dernier cours en cache avec l'horodatage de la dernière mise à jour valide. Le bandeau affiche la mention "Cours du JJ/MM/AAAA" pour indiquer que ce n'est pas le cours du jour.
+
+> **Mode démo (dev/qualif) :** `ATELIER_DEMO_METAL_PRICES=true` génère des cours simulés sans appeler MetalPriceAPI (source affichée : "Cours indicatifs Atelier"), utile pour tester le module sans plan payant actif — voir compte démo `demo@weber-tolerie-demo.fr`.
+
+**Lien catalogue (depuis cette version) :** si un article du catalogue (`materials`) est lié à une grille métal (`metal_price_grids.catalog_item_id`), sa fiche d'édition affiche un encart informatif avec le prix suggéré au cours du jour — sans jamais écraser `sale_price` automatiquement. Aucune action de déploiement requise, c'est un appel côté client à la même route `/api/metal-prices`.
 
 ### 6. Edge Function WhatsApp
 

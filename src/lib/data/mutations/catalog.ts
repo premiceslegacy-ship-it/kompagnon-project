@@ -475,6 +475,7 @@ export async function updateLaborRate(
     category?: string | null
     unit?: string | null
     type?: string | null
+    description?: string | null
     cost_rate?: number | null
     margin_rate?: number | null
     rate?: number | null

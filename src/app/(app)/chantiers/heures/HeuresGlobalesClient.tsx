@@ -2,17 +2,19 @@
 
 import React, { useState, useMemo, useTransition } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import {
   ArrowLeft, Clock, Users, Calendar, Filter, FileDown,
   PlusCircle, CheckCircle2, AlertCircle,
-  X, Check, ChevronDown, ChevronUp,
+  X, Check, ChevronDown, ChevronUp, Loader2, UserX,
 } from 'lucide-react'
-import type { GlobalPointage } from '@/lib/data/queries/chantiers'
+import type { GlobalPointage, MissingPointageSlot } from '@/lib/data/queries/chantiers'
 import type { IndividualMember } from '@/lib/data/queries/members'
 import {
   createMemberPointageAdmin,
   updatePointage,
 } from '@/lib/data/mutations/chantiers'
+import { declareMemberAbsence } from '@/lib/data/mutations/absences'
 
 function getWeekStart(date: Date): Date {
   const d = new Date(date)
@@ -528,6 +530,192 @@ function PersonAccordion({
   )
 }
 
+// ─── Pointages à vérifier (créneaux passés sans pointage) ────────────────────
+
+function slotDefaultHours(slot: MissingPointageSlot): number {
+  if (slot.start_time && slot.end_time) {
+    const [sh, sm] = slot.start_time.split(':').map(Number)
+    const [eh, em] = slot.end_time.split(':').map(Number)
+    const h = (eh * 60 + em - sh * 60 - sm) / 60
+    if (h > 0 && h <= 24) return Math.round(h * 100) / 100
+  }
+  if (slot.duration_min && slot.duration_min > 0) return Math.round((slot.duration_min / 60) * 100) / 100
+  return 7
+}
+
+function slotWho(slot: MissingPointageSlot): string {
+  return slot.member_name
+    ?? (slot.equipe_name ? `Équipe ${slot.equipe_name}` : null)
+    ?? (slot.label?.trim() || null)
+    ?? (slot.team_size ? `${slot.team_size} personne${slot.team_size > 1 ? 's' : ''}` : 'Intervenant non renseigné')
+}
+
+function fmtDateFr(date: string): string {
+  return new Date(`${date}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'long' })
+}
+
+function MissingPointagesSection({
+  slots,
+  individualMembers,
+}: {
+  slots: MissingPointageSlot[]
+  individualMembers: IndividualMember[]
+}) {
+  const router = useRouter()
+  const [resolved, setResolved] = useState<Set<string>>(new Set())
+  const [openForm, setOpenForm] = useState<string | null>(null)
+  const [formHours, setFormHours] = useState('')
+  const [formMemberId, setFormMemberId] = useState('')
+  const [busy, setBusy] = useState<{ id: string; kind: 'pointer' | 'absent' } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const visible = slots.filter(s => !resolved.has(s.id))
+  if (visible.length === 0) return null
+
+  function openPointerForm(slot: MissingPointageSlot) {
+    setError(null)
+    setOpenForm(slot.id)
+    setFormHours(String(slotDefaultHours(slot)))
+    setFormMemberId(slot.member_id ?? '')
+  }
+
+  async function confirmPointer(slot: MissingPointageSlot) {
+    const hours = Number(formHours.replace(',', '.'))
+    if (!formMemberId) { setError('Sélectionnez le membre à pointer.'); return }
+    if (!Number.isFinite(hours) || hours <= 0 || hours > 24) { setError('Nombre d\'heures invalide.'); return }
+    setBusy({ id: slot.id, kind: 'pointer' })
+    setError(null)
+    const res = await createMemberPointageAdmin(slot.chantier_id, formMemberId, {
+      date: slot.planned_date,
+      hours,
+      description: slot.label?.trim() || 'Pointage régularisé',
+      start_time: slot.start_time,
+    })
+    setBusy(null)
+    if (res.error) { setError(res.error); return }
+    setResolved(prev => new Set(prev).add(slot.id))
+    setOpenForm(null)
+    router.refresh()
+  }
+
+  async function markAbsent(slot: MissingPointageSlot) {
+    if (!slot.member_id) return
+    setBusy({ id: slot.id, kind: 'absent' })
+    setError(null)
+    const res = await declareMemberAbsence({
+      memberId: slot.member_id,
+      startDate: slot.planned_date,
+      endDate: slot.planned_date,
+      reason: 'Absence constatée (créneau non pointé)',
+    })
+    setBusy(null)
+    if (res.error) { setError(res.error); return }
+    setResolved(prev => new Set(prev).add(slot.id))
+    router.refresh()
+  }
+
+  return (
+    <div className="card p-4 border border-red-500/30 space-y-3">
+      <div className="flex items-center gap-2">
+        <AlertCircle className="w-5 h-5 text-red-500" />
+        <h2 className="font-bold text-primary text-sm">
+          {visible.length} pointage{visible.length > 1 ? 's' : ''} à vérifier
+        </h2>
+      </div>
+      <p className="text-xs text-secondary">
+        Ces créneaux planifiés sont passés sans aucune heure pointée. Contactez la personne concernée,
+        puis pointez les heures si c'est un oubli, ou déclarez une absence.
+      </p>
+      {error && (
+        <div className="text-xs text-red-500 flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> {error}</div>
+      )}
+      <div className="divide-y divide-[var(--elevation-border)]">
+        {visible.map(slot => {
+          const isBusy = busy?.id === slot.id
+          return (
+            <div key={slot.id} className="py-3 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-primary">{slotWho(slot)}</p>
+                  <p className="text-xs text-secondary">
+                    {fmtDateFr(slot.planned_date)}
+                    {slot.start_time ? ` · ${slot.start_time.slice(0, 5)}${slot.end_time ? ` – ${slot.end_time.slice(0, 5)}` : ''}` : ''}
+                    {' · '}{slot.chantier_title}
+                    {slot.label?.trim() ? ` · ${slot.label.trim()}` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => openForm === slot.id ? setOpenForm(null) : openPointerForm(slot)}
+                    disabled={isBusy}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent text-white hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {isBusy && busy?.kind === 'pointer' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    Pointer les heures
+                  </button>
+                  {slot.member_id && (
+                    <button
+                      onClick={() => markAbsent(slot)}
+                      disabled={isBusy}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-500/40 text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {isBusy && busy?.kind === 'absent' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserX className="w-3.5 h-3.5" />}
+                      Marquer absent
+                    </button>
+                  )}
+                </div>
+              </div>
+              {openForm === slot.id && (
+                <div className="flex flex-wrap items-end gap-2 bg-base rounded-lg p-3">
+                  {!slot.member_id && (
+                    <label className="text-xs text-secondary space-y-1">
+                      <span>Membre</span>
+                      <select
+                        value={formMemberId}
+                        onChange={e => setFormMemberId(e.target.value)}
+                        className="block bg-transparent border border-[var(--elevation-border)] rounded-lg px-2 py-1.5 text-sm text-primary outline-none focus:border-accent"
+                      >
+                        <option value="">Choisir…</option>
+                        {individualMembers.map(m => (
+                          <option key={m.id} value={m.id}>{[m.prenom, m.name].filter(Boolean).join(' ')}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <label className="text-xs text-secondary space-y-1">
+                    <span>Heures</span>
+                    <input
+                      type="number" min={0.5} max={24} step={0.5}
+                      value={formHours}
+                      onChange={e => setFormHours(e.target.value)}
+                      className="block w-24 bg-transparent border border-[var(--elevation-border)] rounded-lg px-2 py-1.5 text-sm text-primary outline-none focus:border-accent"
+                    />
+                  </label>
+                  <button
+                    onClick={() => confirmPointer(slot)}
+                    disabled={isBusy}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent text-white hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {isBusy && busy?.kind === 'pointer' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    Confirmer
+                  </button>
+                  <button
+                    onClick={() => setOpenForm(null)}
+                    disabled={isBusy}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-secondary hover:text-primary transition-colors"
+                  >
+                    Annuler
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 export default function HeuresGlobalesClient({
@@ -535,11 +723,13 @@ export default function HeuresGlobalesClient({
   individualMembers = [],
   chantiers = [],
   canManage = false,
+  missingSlots = [],
 }: {
   initialPointages: GlobalPointage[]
   individualMembers?: IndividualMember[]
   chantiers?: { id: string; title: string }[]
   canManage?: boolean
+  missingSlots?: MissingPointageSlot[]
 }) {
   const today = new Date()
   const [period, setPeriod] = useState<Period>('week')
@@ -656,6 +846,10 @@ export default function HeuresGlobalesClient({
         </h1>
         <p className="text-secondary text-sm mt-1">Vue globale par personne et par chantier</p>
       </div>
+
+      {canManage && (
+        <MissingPointagesSection slots={missingSlots} individualMembers={individualMembers} />
+      )}
 
       {/* Filtres */}
       <div className="card p-4 space-y-4">
