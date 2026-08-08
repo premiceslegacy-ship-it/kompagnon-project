@@ -21,6 +21,7 @@ const MAX_RANK = 3 // Au-delà : plus de relance automatique, passage manuel
 type Org = {
   id: string
   name: string
+  slug: string | null
   email: string | null
   email_from_name: string | null
   email_from_address: string | null
@@ -71,18 +72,22 @@ export async function POST(req: NextRequest) {
   // 1. Toutes les orgs avec relances auto activées
   const { data: orgs } = await supabase
     .from('organizations')
-    .select('id, name, email, email_from_name, email_from_address, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_first_delay_days')
+    .select('id, name, slug, email, email_from_name, email_from_address, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_first_delay_days')
     .eq('auto_reminder_enabled', true)
 
   if (!orgs?.length) {
     return NextResponse.json({ processed: 0, sent: 0 })
   }
 
+  const sharedEmailDomain = process.env.SHARED_EMAIL_DOMAIN
+
   let totalSent = 0
   const errors: string[] = []
 
   for (const org of orgs as Org[]) {
-    if (!org.email_from_address) continue
+    const fromAddress =
+      org.email_from_address || (org.slug && sharedEmailDomain ? `${org.slug}@${sharedEmailDomain}` : null)
+    if (!fromAddress) continue
     const baseInvoiceDays = org.invoice_reminder_days ?? [3, 7]
     const invoiceDays = org.reminder_first_delay_days != null
       ? [Math.max(3, org.reminder_first_delay_days), ...baseInvoiceDays.slice(1)]
@@ -128,7 +133,7 @@ export async function POST(req: NextRequest) {
 
           const fromName = org.email_from_name || org.name
           const { error: emailError } = await resend.emails.send({
-            from: `${fromName} <${org.email_from_address}>`,
+            from: `${fromName} <${fromAddress}>`,
             to: item.clientEmail,
             subject,
             html: wrapHtml(org.name, body.replace(/\n/g, '<br>'), signUrl),

@@ -39,15 +39,18 @@ export async function forgotPassword(
   // Chercher la config email de l'organisation de l'utilisateur
   const { data: membership } = await admin
     .from('memberships')
-    .select('organization_id, organizations(name, email_from_address)')
+    .select('organization_id, organizations(name, slug, email_from_address)')
     .eq('user_id', existingUser.id)
     .eq('is_active', true)
     .single()
 
-  const org = membership?.organizations as { name?: string; email_from_address?: string } | null
+  const org = membership?.organizations as { name?: string; slug?: string; email_from_address?: string } | null
+  const sharedEmailDomain = process.env.SHARED_EMAIL_DOMAIN
+  const orgFromAddress =
+    org?.email_from_address || (org?.slug && sharedEmailDomain ? `${org.slug}@${sharedEmailDomain}` : null)
 
   // Si Resend configuré → générer OTP et envoyer via Resend
-  if (org?.email_from_address) {
+  if (orgFromAddress) {
     const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
       type: 'recovery',
       email,
@@ -55,7 +58,7 @@ export async function forgotPassword(
 
     if (!linkError && linkData?.properties?.email_otp) {
       const otp = linkData.properties.email_otp
-      const orgName = org.name || APP_SIGNATURE
+      const orgName = org?.name || APP_SIGNATURE
       const { subject, html } = buildPasswordResetOtpEmail({ otp, orgName })
 
       await sendEmail({
