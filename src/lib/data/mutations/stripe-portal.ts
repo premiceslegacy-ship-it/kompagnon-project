@@ -1,6 +1,7 @@
 'use server'
 
 import { signOperatorPayload } from '@/lib/operator'
+import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 
 export async function createStripePortalSession(returnUrl: string): Promise<{ url: string } | { error: string }> {
   const ingestUrl = process.env.OPERATOR_INGEST_URL?.trim()
@@ -12,10 +13,15 @@ export async function createStripePortalSession(returnUrl: string): Promise<{ ur
     return { error: 'Configuration opérateur manquante' }
   }
 
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) {
+    return { error: 'Organisation introuvable' }
+  }
+
   // Dérive l'URL du portail depuis l'URL d'ingest (même worker cockpit)
   const cockpitBase = new URL(ingestUrl).origin
 
-  const body = JSON.stringify({ source_instance: sourceInstance, return_url: returnUrl })
+  const body = JSON.stringify({ source_instance: sourceInstance, organization_id: organizationId, return_url: returnUrl })
   const signature = signOperatorPayload(body, secret)
 
   try {

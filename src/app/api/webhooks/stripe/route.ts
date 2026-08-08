@@ -5,6 +5,7 @@ import { constantTimeEqual } from '@/lib/security'
 import { isSubscriptionTier, isOverflowMode, getModulesForTier, getQuotaConfigForTier, getQuotaUnit, QUOTA_FEATURES, type SubscriptionTier } from '@/lib/quota-catalog'
 import { normalizeOrganizationModules } from '@/lib/organization-modules'
 import { normalizeEinvoicingConfigFromDb, DEFAULT_EINVOICING_CONFIG } from '@/lib/einvoicing-config'
+import { UNRESOLVED_ORGANIZATION_ID } from '@/lib/operator/trial-lifecycle'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,7 +53,12 @@ async function verifyStripeSignature(
 }
 
 // ── Mise à jour abonnement + resync config client ─────────────────────────────
-async function handleSubscriptionChange(sourceInstance: string, tier: SubscriptionTier, stripeCustomerId: string, stripeSubscriptionId: string) {
+// organizationId résolu par l'appelant (checkout.session.completed via
+// resolveSourceInstance+operator_clients, ou déjà connu depuis
+// operator_client_subscriptions pour subscription.updated) — cette fonction ne
+// le redécouvre jamais elle-même pour éviter l'ambiguïté sur une instance
+// mutualisée à plusieurs organisations.
+async function handleSubscriptionChange(sourceInstance: string, organizationId: string, tier: SubscriptionTier, stripeCustomerId: string, stripeSubscriptionId: string) {
   const operator = createOperatorAdminClient()
 
   // Mise à jour operator_client_subscriptions
@@ -60,23 +66,22 @@ async function handleSubscriptionChange(sourceInstance: string, tier: Subscripti
     .from('operator_client_subscriptions')
     .upsert({
       source_instance: sourceInstance,
+      organization_id: organizationId,
       tier,
       is_active: true,
       stripe_customer_id: stripeCustomerId,
       stripe_subscription_id: stripeSubscriptionId,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'source_instance' })
+    }, { onConflict: 'source_instance,organization_id' })
 
   if (subError) throw new Error(`operator_client_subscriptions: ${subError.message}`)
 
   // Lecture du contexte complet pour le config-sync
-  const [clientResult, settingResult, subscriptionResult] = await Promise.all([
-    operator.from('operator_clients').select('organization_id').eq('source_instance', sourceInstance).order('updated_at', { ascending: false }).limit(1).maybeSingle(),
-    operator.from('operator_client_settings').select('app_url').eq('source_instance', sourceInstance).maybeSingle(),
-    operator.from('operator_client_subscriptions').select('ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status').eq('source_instance', sourceInstance).maybeSingle(),
+  const [settingResult, subscriptionResult] = await Promise.all([
+    operator.from('operator_client_settings').select('app_url').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
+    operator.from('operator_client_subscriptions').select('ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
   ])
 
-  const organizationId = clientResult.data?.organization_id ?? null
   const appUrl = settingResult.data?.app_url ?? null
   const sub = subscriptionResult.data
 
@@ -96,6 +101,7 @@ async function handleSubscriptionChange(sourceInstance: string, tier: Subscripti
   const quotas = getQuotaConfigForTier(tier)
   const rows = QUOTA_FEATURES.map(quotaFeature => ({
     source_instance: sourceInstance,
+    organization_id: organizationId,
     quota_feature: quotaFeature,
     quota_unit: getQuotaUnit(quotaFeature),
     quota_monthly: quotas[quotaFeature],
@@ -104,11 +110,12 @@ async function handleSubscriptionChange(sourceInstance: string, tier: Subscripti
     period_start: periodStart,
     updated_at: new Date().toISOString(),
   }))
-  await operator.from('operator_client_quotas').upsert(rows, { onConflict: 'source_instance,quota_feature,period_start' })
+  await operator.from('operator_client_quotas').upsert(rows, { onConflict: 'source_instance,organization_id,quota_feature,period_start' })
 
   // Log événement
   await operator.from('operator_client_events').insert({
     source_instance: sourceInstance,
+    organization_id: organizationId,
     event_category: 'subscription',
     event_type: 'stripe_webhook_tier_updated',
     actor_email: 'stripe@webhook',
@@ -116,12 +123,12 @@ async function handleSubscriptionChange(sourceInstance: string, tier: Subscripti
   })
 
   // Config-sync vers l'instance cliente
-  if (!organizationId || !appUrl) {
+  if (!appUrl) {
     await operator.from('operator_client_settings').update({
       config_sync_status: 'pending_manual',
-      config_sync_error: !organizationId ? 'organization_id manquant' : 'app_url manquant',
+      config_sync_error: 'app_url manquant',
       updated_at: new Date().toISOString(),
-    }).eq('source_instance', sourceInstance)
+    }).eq('source_instance', sourceInstance).eq('organization_id', organizationId)
     return
   }
 
@@ -152,26 +159,86 @@ async function handleSubscriptionChange(sourceInstance: string, tier: Subscripti
       config_synced_at: response.ok ? new Date().toISOString() : undefined,
       config_sync_error: syncError,
       updated_at: new Date().toISOString(),
-    }).eq('source_instance', sourceInstance)
+    }).eq('source_instance', sourceInstance).eq('organization_id', organizationId)
   } catch (err) {
     await operator.from('operator_client_settings').update({
       config_sync_status: 'failed',
       config_sync_error: err instanceof Error ? err.message : 'Config sync failed',
       updated_at: new Date().toISOString(),
-    }).eq('source_instance', sourceInstance)
+    }).eq('source_instance', sourceInstance).eq('organization_id', organizationId)
   }
 }
 
-async function handleSubscriptionCancelled(sourceInstance: string) {
+// ── Résolution du tenant à partir de la session Stripe ─────────────────────────
+// client_reference_id (payment link préfixé par instance) est prioritaire — fiable
+// et automatique. Le champ custom_fields texte reste en repli pour les liens
+// existants qui ne le portent pas encore.
+function resolveSourceInstance(session: Record<string, unknown>): string | null {
+  const clientReferenceId = typeof session.client_reference_id === 'string' ? session.client_reference_id.trim().toLowerCase() : ''
+  if (clientReferenceId) return clientReferenceId
+
+  const customFields = (session.custom_fields as Array<{ key: string; text?: { value?: string } }> | undefined) ?? []
+  const instanceField = customFields.find(f => f.key === 'identifiant_de_votre_application')
+  const fromField = instanceField?.text?.value?.trim().toLowerCase()
+  return fromField || null
+}
+
+// Résout l'organization_id d'une instance connue depuis operator_clients — même
+// limite que partout ailleurs (ligne la plus récemment mise à jour) : correct
+// pour le modèle per-client historique (1 org/instance), à préciser via un
+// identifiant explicite côté Payment Link si l'instance devient mutualisée.
+async function resolveKnownInstanceOrganizationId(sourceInstance: string): Promise<string | null> {
+  const operator = createOperatorAdminClient()
+  const { data } = await operator
+    .from('operator_clients')
+    .select('organization_id')
+    .eq('source_instance', sourceInstance)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return data?.organization_id ?? null
+}
+
+// operator_client_events a une FK vers operator_client_settings : un paiement
+// orphelin (slug introuvable ou mal saisi) n'a nulle part où s'écrire tant que
+// l'instance n'existe pas côté cockpit. On crée une ligne minimale, désactivée
+// et clairement étiquetée, pour que l'événement reste visible et actionnable.
+async function recordOrphanPayment(input: { reason: string; stripeSessionId?: string; sourceInstance?: string | null }) {
+  const operator = createOperatorAdminClient()
+  const sourceInstance = input.sourceInstance || `orphan-${input.stripeSessionId ?? Date.now()}`
+
+  await operator.from('operator_client_settings').upsert({
+    source_instance: sourceInstance,
+    organization_id: UNRESOLVED_ORGANIZATION_ID,
+    label: `[PAIEMENT ORPHELIN] ${input.sourceInstance ? input.sourceInstance : 'instance non résolue'}`,
+    is_active: false,
+    config_sync_status: 'pending_manual',
+    config_sync_error: input.reason,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'source_instance,organization_id', ignoreDuplicates: false })
+
+  await operator.from('operator_client_events').insert({
+    source_instance: sourceInstance,
+    organization_id: null,
+    event_category: 'subscription',
+    event_type: 'orphan_payment',
+    actor_email: 'stripe@webhook',
+    metadata: { reason: input.reason, stripe_session_id: input.stripeSessionId ?? null },
+  })
+  console.error('[stripe/webhook] orphan_payment', input)
+}
+
+async function handleSubscriptionCancelled(sourceInstance: string, organizationId: string) {
   const operator = createOperatorAdminClient()
   await operator.from('operator_client_subscriptions').update({
     tier: 'setup_only',
     is_active: false,
     updated_at: new Date().toISOString(),
-  }).eq('source_instance', sourceInstance)
+  }).eq('source_instance', sourceInstance).eq('organization_id', organizationId)
 
   await operator.from('operator_client_events').insert({
     source_instance: sourceInstance,
+    organization_id: organizationId,
     event_category: 'subscription',
     event_type: 'stripe_webhook_subscription_cancelled',
     actor_email: 'stripe@webhook',
@@ -232,14 +299,17 @@ export async function POST(req: NextRequest) {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object
 
-      // Récupérer source_instance depuis le champ personnalisé
-      const customFields = (session.custom_fields as Array<{ key: string; text?: { value?: string } }> | undefined) ?? []
-      const instanceField = customFields.find(f => f.key === 'identifiant_de_votre_application')
-      const sourceInstance = instanceField?.text?.value?.trim().toLowerCase()
+      const sourceInstance = resolveSourceInstance(session)
 
       if (!sourceInstance) {
-        console.error('[stripe/webhook] checkout.session.completed : champ source_instance manquant', session.id)
+        await recordOrphanPayment({ reason: 'source_instance manquant (ni client_reference_id ni champ custom)', stripeSessionId: String(session.id ?? '') })
         return NextResponse.json({ received: true, warning: 'source_instance manquant' })
+      }
+
+      const organizationId = await resolveKnownInstanceOrganizationId(sourceInstance)
+      if (!organizationId) {
+        await recordOrphanPayment({ reason: 'source_instance inconnu du cockpit (aucun organization_id résolu)', stripeSessionId: String(session.id ?? ''), sourceInstance })
+        return NextResponse.json({ received: true, warning: 'source_instance inconnu' })
       }
 
       // Récupérer le price ID depuis la session Stripe
@@ -267,7 +337,7 @@ export async function POST(req: NextRequest) {
 
       const stripeCustomerId = String(session.customer ?? '')
       const stripeSubscriptionId = String(session.subscription ?? '')
-      await handleSubscriptionChange(sourceInstance, tier, stripeCustomerId, stripeSubscriptionId)
+      await handleSubscriptionChange(sourceInstance, organizationId, tier, stripeCustomerId, stripeSubscriptionId)
     }
 
     else if (event.type === 'customer.subscription.updated') {
@@ -280,21 +350,23 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ received: true, warning: 'price_id non reconnu' })
       }
 
-      // Récupérer source_instance depuis stripe_subscription_id stocké en DB
+      // Récupérer source_instance + organization_id depuis stripe_subscription_id stocké en DB
+      // (stripe_subscription_id identifie une organisation précise même sur une instance mutualisée)
       const operator = createOperatorAdminClient()
       const { data } = await operator
         .from('operator_client_subscriptions')
-        .select('source_instance')
+        .select('source_instance, organization_id')
         .eq('stripe_subscription_id', String(subscription.id))
         .maybeSingle()
 
-      if (!data?.source_instance) {
-        console.error('[stripe/webhook] subscription.updated : source_instance introuvable pour', subscription.id)
+      if (!data?.source_instance || !data.organization_id) {
+        console.error('[stripe/webhook] subscription.updated : source_instance/organization_id introuvable pour', subscription.id)
         return NextResponse.json({ received: true, warning: 'source_instance introuvable' })
       }
 
       await handleSubscriptionChange(
         data.source_instance,
+        data.organization_id,
         tier,
         String(subscription.customer ?? ''),
         String(subscription.id),
@@ -306,12 +378,12 @@ export async function POST(req: NextRequest) {
       const operator = createOperatorAdminClient()
       const { data } = await operator
         .from('operator_client_subscriptions')
-        .select('source_instance')
+        .select('source_instance, organization_id')
         .eq('stripe_subscription_id', String(subscription.id))
         .maybeSingle()
 
-      if (data?.source_instance) {
-        await handleSubscriptionCancelled(data.source_instance)
+      if (data?.source_instance && data.organization_id) {
+        await handleSubscriptionCancelled(data.source_instance, data.organization_id)
       }
     }
 

@@ -9,22 +9,42 @@ import { ORGANIZATION_MODULE_KEYS, normalizeOrganizationModules } from '@/lib/or
 import { VERTICAL_PACKS, normalizeVerticalPackId } from '@/lib/vertical-packs'
 import { activateVerticalPackForOrganization, deactivateVerticalPackForOrganization } from '@/lib/data/mutations/vertical-packs'
 import {
-  getModulesForTier,
-  getQuotaConfigForTier,
-  getQuotaUnit,
   isOverflowMode,
   isSubscriptionTier,
-  QUOTA_FEATURES,
   type OverflowMode,
   type SubscriptionTier,
 } from '@/lib/quota-catalog'
-import { signOperatorPayload } from '@/lib/operator'
 import {
-  DEFAULT_EINVOICING_CONFIG,
   normalizeEinvoicingConfig,
-  normalizeEinvoicingConfigFromDb,
   type EinvoicingConfig,
 } from '@/lib/einvoicing-config'
+import {
+  expireTrialForInstance,
+  getEffectiveTier,
+  getOperatorClientContext,
+  initializeQuotasForTier,
+  recordOperatorClientEvent,
+  syncClientQuotaConfig,
+  UNRESOLVED_ORGANIZATION_ID,
+} from '@/lib/operator/trial-lifecycle'
+
+/** Résout l'organization_id depuis operator_clients pour une instance, en prenant
+ *  la ligne la plus récemment mise à jour — même limite que getOperatorClientContext :
+ *  pour une instance mutualisée à N organisations, appeler avec un organizationId
+ *  explicite (champ de formulaire) plutôt que compter sur cette résolution arbitraire. */
+async function resolveOrganizationId(
+  operator: ReturnType<typeof createOperatorAdminClient>,
+  sourceInstance: string,
+): Promise<string | null> {
+  const { data } = await operator
+    .from('operator_clients')
+    .select('organization_id')
+    .eq('source_instance', sourceInstance)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return data?.organization_id ?? null
+}
 
 const SUPPORTED_BILLING_CURRENCIES = new Set(['EUR', 'USD'])
 const AI_BILLING_MODES = new Set(['orsayn_shared', 'client_owned'])
@@ -165,53 +185,9 @@ async function sendOperatorCommercialEmail(input: {
   return { status: 'sent' as const, error: null }
 }
 
-type TrialState = {
-  tier: SubscriptionTier
-  trial_tier: SubscriptionTier | null
-  trial_ends_at: string | null
-  trial_converted?: boolean | null
-}
-
-function getEffectiveTier(subscription: TrialState): SubscriptionTier {
-  if (
-    subscription.trial_tier
-    && subscription.trial_ends_at
-    && !subscription.trial_converted
-    && new Date(subscription.trial_ends_at).getTime() > Date.now()
-  ) {
-    return subscription.trial_tier
-  }
-
-  return subscription.tier
-}
-
-async function recordOperatorClientEvent(input: {
-  sourceInstance: string
-  eventCategory: 'subscription' | 'trial' | 'config_sync' | 'einvoicing' | 'module' | 'crm' | 'note' | 'vertical_pack'
-  eventType: string
-  actorEmail: string | null
-  metadata?: Record<string, unknown>
-  notes?: string | null
-}) {
-  const operator = createOperatorAdminClient()
-  const { error } = await operator
-    .from('operator_client_events')
-    .insert({
-      source_instance: input.sourceInstance,
-      event_category: input.eventCategory,
-      event_type: input.eventType,
-      actor_email: input.actorEmail,
-      metadata: input.metadata ?? {},
-      notes: input.notes ?? null,
-    })
-
-  if (error) {
-    console.error('[recordOperatorClientEvent]', error)
-  }
-}
-
 async function recordOperatorCommercialEvent(input: {
   sourceInstance: string
+  organizationId?: string | null
   eventType: string
   tierContext: string | null
   actorEmail: string | null
@@ -225,6 +201,7 @@ async function recordOperatorCommercialEvent(input: {
     .from('operator_commercial_events')
     .insert({
       source_instance: input.sourceInstance,
+      organization_id: input.organizationId ?? null,
       event_type: input.eventType,
       tier_context: input.tierContext,
       sent_by: 'operator_manual',
@@ -261,10 +238,17 @@ export async function upsertOperatorClientSettings(formData: FormData) {
   }
 
   const operator = createOperatorAdminClient()
+  // organizationId explicite pour un client SaaS mutualisé déjà rattaché à une
+  // organisation ; sentinelle pour le workflow historique per-client (préconfig
+  // avant que l'organisation n'existe côté app cliente — voir migration 010).
+  const organizationIdRaw = String(formData.get('organizationId') ?? '').trim()
+  const organizationId = organizationIdRaw || UNRESOLVED_ORGANIZATION_ID
+
   const { error } = await operator
     .from('operator_client_settings')
     .upsert({
       source_instance: sourceInstance,
+      organization_id: organizationId,
       label: labelRaw || null,
       monthly_fee_ht: parseMonthlyFee(formData.get('monthlyFeeHt')),
       billing_currency: billingCurrency,
@@ -272,7 +256,7 @@ export async function upsertOperatorClientSettings(formData: FormData) {
       app_url: appUrl,
       updated_at: new Date().toISOString(),
     }, {
-      onConflict: 'source_instance',
+      onConflict: 'source_instance,organization_id',
     })
 
   if (error) {
@@ -281,136 +265,6 @@ export async function upsertOperatorClientSettings(formData: FormData) {
   }
 
   revalidatePath('/orsayn')
-}
-
-async function initializeQuotasForTier(sourceInstance: string, tier: SubscriptionTier) {
-  const operator = createOperatorAdminClient()
-  const periodStart = monthStartDate()
-  const quotas = getQuotaConfigForTier(tier)
-
-  const { data: existing, error: existingError } = await operator
-    .from('operator_client_quotas')
-    .select('quota_feature, current_quantity, current_cost_eur')
-    .eq('source_instance', sourceInstance)
-    .eq('period_start', periodStart)
-
-  if (existingError) {
-    console.error('[initializeQuotasForTier.existing]', existingError)
-    throw new Error(existingError.message)
-  }
-
-  const existingByFeature = new Map((existing ?? []).map((row) => [row.quota_feature, row]))
-  const rows = QUOTA_FEATURES.map((quotaFeature) => {
-    const current = existingByFeature.get(quotaFeature)
-    return {
-      source_instance: sourceInstance,
-      quota_feature: quotaFeature,
-      quota_unit: getQuotaUnit(quotaFeature),
-      quota_monthly: quotas[quotaFeature],
-      current_quantity: current?.current_quantity ?? 0,
-      current_cost_eur: current?.current_cost_eur ?? 0,
-      period_start: periodStart,
-      updated_at: new Date().toISOString(),
-    }
-  })
-
-  const { error } = await operator
-    .from('operator_client_quotas')
-    .upsert(rows, { onConflict: 'source_instance,quota_feature,period_start' })
-
-  if (error) {
-    console.error('[initializeQuotasForTier.upsert]', error)
-    throw new Error(error.message)
-  }
-}
-
-async function syncClientQuotaConfig(
-  sourceInstance: string,
-  organizationId: string | null,
-  appUrl: string | null,
-  tier: SubscriptionTier,
-  overflowMode: OverflowMode,
-  aiBillingMode: AIBillingMode,
-  einvoicingConfig: EinvoicingConfig,
-): Promise<{ status: 'synced' | 'pending_manual' | 'skipped' | 'failed'; error: string | null }> {
-  const operator = createOperatorAdminClient()
-
-  if (!organizationId || !appUrl) {
-    const errorMessage = !organizationId ? 'organization_id manquant' : 'app_url manquant'
-    await operator
-      .from('operator_client_settings')
-      .update({
-        config_sync_status: 'pending_manual',
-        config_sync_error: errorMessage,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('source_instance', sourceInstance)
-    return { status: 'pending_manual', error: errorMessage }
-  }
-
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
-  if (!secret) {
-    const errorMessage = 'OPERATOR_CONFIG_SYNC_SECRET/OPERATOR_INGEST_SECRET manquant'
-    await operator
-      .from('operator_client_settings')
-      .update({
-        config_sync_status: 'skipped',
-        config_sync_error: errorMessage,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('source_instance', sourceInstance)
-    return { status: 'skipped', error: errorMessage }
-  }
-
-  const syncedTier = aiBillingMode === 'client_owned' ? 'expert' : tier
-  const body = JSON.stringify({
-    source_instance: sourceInstance,
-    organization_id: organizationId,
-    modules: getModulesForTier(syncedTier),
-    quota_config: getQuotaConfigForTier(syncedTier),
-    overflow_mode: overflowMode,
-    ai_billing_mode: aiBillingMode,
-    einvoicing_config: einvoicingConfig,
-  })
-  const signature = signOperatorPayload(body, secret)
-
-  try {
-    const response = await fetch(`${appUrl.replace(/\/$/, '')}/api/operator/config-sync`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-operator-signature': signature,
-      },
-      body,
-    })
-
-    if (!response.ok) {
-      throw new Error(`config-sync ${response.status}: ${await response.text()}`)
-    }
-
-    await operator
-      .from('operator_client_settings')
-      .update({
-        config_sync_status: 'synced',
-        config_synced_at: new Date().toISOString(),
-        config_sync_error: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('source_instance', sourceInstance)
-    return { status: 'synced', error: null }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Config sync failed'
-    await operator
-      .from('operator_client_settings')
-      .update({
-        config_sync_status: 'failed',
-        config_sync_error: errorMessage,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('source_instance', sourceInstance)
-    return { status: 'failed', error: errorMessage }
-  }
 }
 
 export async function upsertOperatorSubscription(formData: FormData) {
@@ -434,18 +288,18 @@ export async function upsertOperatorSubscription(formData: FormData) {
   const notes = String(formData.get('notes') ?? '').trim() || null
 
   const operator = createOperatorAdminClient()
-  const { data: client } = await operator
-    .from('operator_clients')
-    .select('organization_id')
-    .eq('source_instance', sourceInstance)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  const organizationIdField = String(formData.get('organizationId') ?? '').trim()
+  const organizationId = organizationIdField || await resolveOrganizationId(operator, sourceInstance)
+
+  if (!organizationId) {
+    throw new Error('organization_id introuvable pour cette instance — préconfigurez le client avec un organizationId, ou attendez son premier appel IA (ingest).')
+  }
 
   const { data: existingSubscription } = await operator
     .from('operator_client_subscriptions')
     .select('trial_tier, trial_ends_at, trial_converted')
     .eq('source_instance', sourceInstance)
+    .eq('organization_id', organizationId)
     .maybeSingle()
 
   const trialTier = existingSubscription?.trial_tier && isSubscriptionTier(existingSubscription.trial_tier)
@@ -458,6 +312,7 @@ export async function upsertOperatorSubscription(formData: FormData) {
     .from('operator_client_settings')
     .upsert({
       source_instance: sourceInstance,
+      organization_id: organizationId,
       label: labelRaw || null,
       monthly_fee_ht: mrrHt,
       billing_currency: billingCurrency,
@@ -465,7 +320,7 @@ export async function upsertOperatorSubscription(formData: FormData) {
       app_url: appUrl,
       config_sync_status: appUrl ? 'pending' : 'pending_manual',
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'source_instance' })
+    }, { onConflict: 'source_instance,organization_id' })
 
   if (settingsError) {
     console.error('[upsertOperatorSubscription.settings]', settingsError)
@@ -476,6 +331,7 @@ export async function upsertOperatorSubscription(formData: FormData) {
     .from('operator_client_subscriptions')
     .upsert({
       source_instance: sourceInstance,
+      organization_id: organizationId,
       tier,
       mrr_ht: mrrHt,
       billing_currency: billingCurrency,
@@ -495,7 +351,7 @@ export async function upsertOperatorSubscription(formData: FormData) {
       overflow_mode: overflowMode,
       notes,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'source_instance' })
+    }, { onConflict: 'source_instance,organization_id' })
 
   if (subscriptionError) {
     console.error('[upsertOperatorSubscription.subscription]', subscriptionError)
@@ -508,10 +364,11 @@ export async function upsertOperatorSubscription(formData: FormData) {
     trial_ends_at: trialEndsAt,
     trial_converted: trialConverted,
   })
-  await initializeQuotasForTier(sourceInstance, effectiveTier)
-  const syncResult = await syncClientQuotaConfig(sourceInstance, client?.organization_id ?? null, appUrl, effectiveTier, overflowMode, aiBillingMode, einvoicingConfig)
+  await initializeQuotasForTier(sourceInstance, organizationId, effectiveTier)
+  const syncResult = await syncClientQuotaConfig(sourceInstance, organizationId, appUrl, effectiveTier, overflowMode, aiBillingMode, einvoicingConfig)
   await recordOperatorClientEvent({
     sourceInstance,
+    organizationId,
     eventCategory: 'subscription',
     eventType: 'subscription_updated',
     actorEmail: user.email ?? null,
@@ -530,65 +387,6 @@ export async function upsertOperatorSubscription(formData: FormData) {
   revalidatePath('/orsayn')
 }
 
-async function getOperatorClientContext(sourceInstance: string) {
-  const operator = createOperatorAdminClient()
-  const [clientResult, settingResult, subscriptionResult] = await Promise.all([
-    operator
-      .from('operator_clients')
-      .select('organization_id')
-      .eq('source_instance', sourceInstance)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    operator
-      .from('operator_client_settings')
-      .select('app_url')
-      .eq('source_instance', sourceInstance)
-      .maybeSingle(),
-    operator
-      .from('operator_client_subscriptions')
-      .select('tier, ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status, trial_tier, trial_ends_at, trial_converted')
-      .eq('source_instance', sourceInstance)
-      .maybeSingle(),
-  ])
-
-  if (clientResult.error) throw new Error(clientResult.error.message)
-  if (settingResult.error) throw new Error(settingResult.error.message)
-  if (subscriptionResult.error) throw new Error(subscriptionResult.error.message)
-
-  const subscription = subscriptionResult.data
-  const tier = subscription && isSubscriptionTier(subscription.tier) ? subscription.tier : 'setup_only'
-  const aiBillingMode = subscription && AI_BILLING_MODES.has(String(subscription.ai_billing_mode))
-    ? String(subscription.ai_billing_mode) as AIBillingMode
-    : 'orsayn_shared'
-  const overflowMode = subscription && isOverflowMode(subscription.overflow_mode) ? subscription.overflow_mode : 'block'
-  const einvoicingConfig = normalizeEinvoicingConfigFromDb({
-    mode: subscription?.einvoicing_mode ?? DEFAULT_EINVOICING_CONFIG.mode,
-    provider: subscription?.einvoicing_provider ?? null,
-    environment: subscription?.einvoicing_environment ?? DEFAULT_EINVOICING_CONFIG.environment,
-    onboarding_model: subscription?.einvoicing_onboarding_model ?? null,
-    b2brouter_account_id: subscription?.b2brouter_account_id ?? null,
-    annuaire_status: subscription?.einvoicing_annuaire_status ?? DEFAULT_EINVOICING_CONFIG.annuaire_status,
-  })
-
-  return {
-    operator,
-    organizationId: clientResult.data?.organization_id ?? null,
-    appUrl: settingResult.data?.app_url ?? null,
-    subscription: {
-      tier,
-      aiBillingMode,
-      overflowMode,
-      einvoicingConfig,
-      trialTier: subscription?.trial_tier && isSubscriptionTier(subscription.trial_tier)
-        ? subscription.trial_tier
-        : null,
-      trialEndsAt: subscription?.trial_ends_at ?? null,
-      trialConverted: Boolean(subscription?.trial_converted),
-    },
-  }
-}
-
 export async function activateOperatorTrial(formData: FormData) {
   const user = await getOperatorUser()
   if (!user) throw new Error('Accès opérateur requis')
@@ -601,10 +399,15 @@ export async function activateOperatorTrial(formData: FormData) {
   const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString()
   const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance)
 
+  if (!organizationId) {
+    throw new Error('organization_id introuvable pour cette instance — le client doit d\'abord avoir un appel IA synchronisé (ingest) ou être préconfiguré.')
+  }
+
   const { error } = await operator
     .from('operator_client_subscriptions')
     .upsert({
       source_instance: sourceInstance,
+      organization_id: organizationId,
       tier: subscription.tier,
       ai_billing_mode: subscription.aiBillingMode,
       overflow_mode: subscription.overflowMode,
@@ -620,11 +423,11 @@ export async function activateOperatorTrial(formData: FormData) {
       trial_converted: false,
       is_active: true,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'source_instance' })
+    }, { onConflict: 'source_instance,organization_id' })
 
   if (error) throw new Error(error.message)
 
-  await initializeQuotasForTier(sourceInstance, 'expert')
+  await initializeQuotasForTier(sourceInstance, organizationId, 'expert')
   const syncResult = await syncClientQuotaConfig(
     sourceInstance,
     organizationId,
@@ -636,6 +439,7 @@ export async function activateOperatorTrial(formData: FormData) {
   )
   await recordOperatorClientEvent({
     sourceInstance,
+    organizationId,
     eventCategory: 'trial',
     eventType: 'trial_started',
     actorEmail: user.email ?? null,
@@ -660,10 +464,15 @@ export async function convertOperatorTrial(formData: FormData) {
   const targetTier = parseTier(formData.get('targetTier'))
   const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance)
 
+  if (!organizationId) {
+    throw new Error('organization_id introuvable pour cette instance')
+  }
+
   const { error } = await operator
     .from('operator_client_subscriptions')
     .upsert({
       source_instance: sourceInstance,
+      organization_id: organizationId,
       tier: targetTier,
       ai_billing_mode: subscription.aiBillingMode,
       overflow_mode: subscription.overflowMode,
@@ -679,11 +488,11 @@ export async function convertOperatorTrial(formData: FormData) {
       trial_converted: true,
       is_active: true,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'source_instance' })
+    }, { onConflict: 'source_instance,organization_id' })
 
   if (error) throw new Error(error.message)
 
-  await initializeQuotasForTier(sourceInstance, targetTier)
+  await initializeQuotasForTier(sourceInstance, organizationId, targetTier)
   const syncResult = await syncClientQuotaConfig(
     sourceInstance,
     organizationId,
@@ -695,6 +504,7 @@ export async function convertOperatorTrial(formData: FormData) {
   )
   await recordOperatorClientEvent({
     sourceInstance,
+    organizationId,
     eventCategory: 'trial',
     eventType: 'trial_converted',
     actorEmail: user.email ?? null,
@@ -715,49 +525,12 @@ export async function expireOperatorTrial(formData: FormData) {
   if (!sourceInstance) throw new Error('source_instance requis')
 
   const targetTier = parseTier(formData.get('targetTier'))
-  const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance)
 
-  const { error } = await operator
-    .from('operator_client_subscriptions')
-    .upsert({
-      source_instance: sourceInstance,
-      tier: targetTier,
-      ai_billing_mode: subscription.aiBillingMode,
-      overflow_mode: subscription.overflowMode,
-      einvoicing_mode: subscription.einvoicingConfig.mode,
-      einvoicing_provider: subscription.einvoicingConfig.provider,
-      einvoicing_environment: subscription.einvoicingConfig.environment,
-      einvoicing_onboarding_model: subscription.einvoicingConfig.onboarding_model,
-      b2brouter_account_id: subscription.einvoicingConfig.b2brouter_account_id,
-      einvoicing_annuaire_status: subscription.einvoicingConfig.annuaire_status,
-      b2brouter_active: subscription.einvoicingConfig.mode === 'b2brouter',
-      trial_tier: null,
-      trial_ends_at: null,
-      trial_converted: false,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'source_instance' })
-
-  if (error) throw new Error(error.message)
-
-  await initializeQuotasForTier(sourceInstance, targetTier)
-  const syncResult = await syncClientQuotaConfig(
+  await expireTrialForInstance({
     sourceInstance,
-    organizationId,
-    appUrl,
     targetTier,
-    subscription.overflowMode,
-    subscription.aiBillingMode,
-    subscription.einvoicingConfig,
-  )
-  await recordOperatorClientEvent({
-    sourceInstance,
-    eventCategory: 'trial',
-    eventType: 'trial_ended',
     actorEmail: user.email ?? null,
-    metadata: {
-      target_tier: targetTier,
-      config_sync_status: syncResult.status,
-    },
+    eventType: 'trial_ended',
   })
 
   revalidatePath('/orsayn')
@@ -778,7 +551,11 @@ export async function resyncOperatorClientConfig(formData: FormData) {
     trial_converted: subscription.trialConverted,
   })
 
-  await initializeQuotasForTier(sourceInstance, effectiveTier)
+  if (!organizationId) {
+    throw new Error('organization_id introuvable pour cette instance')
+  }
+
+  await initializeQuotasForTier(sourceInstance, organizationId, effectiveTier)
   const syncResult = await syncClientQuotaConfig(
     sourceInstance,
     organizationId,
@@ -790,6 +567,7 @@ export async function resyncOperatorClientConfig(formData: FormData) {
   )
   await recordOperatorClientEvent({
     sourceInstance,
+    organizationId,
     eventCategory: 'config_sync',
     eventType: 'config_resync_requested',
     actorEmail: user.email ?? null,
@@ -809,6 +587,9 @@ export async function recordOperatorCommercialAction(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
+
+  const operator = createOperatorAdminClient()
+  const organizationId = await resolveOrganizationId(operator, sourceInstance)
 
   const clientLabel = String(formData.get('clientLabel') ?? sourceInstance).trim() || sourceInstance
   const currentTier = parseTier(formData.get('currentTier'))
@@ -846,6 +627,7 @@ export async function recordOperatorCommercialAction(formData: FormData) {
 
   await recordOperatorCommercialEvent({
     sourceInstance,
+    organizationId,
     eventType,
     tierContext: currentTier,
     actorEmail: user.email ?? null,
@@ -865,6 +647,7 @@ export async function recordOperatorCommercialAction(formData: FormData) {
 
   await recordOperatorClientEvent({
     sourceInstance,
+    organizationId,
     eventCategory: 'crm',
     eventType: deliveryMode === 'send' ? 'commercial_email_requested' : 'commercial_action_logged',
     actorEmail: user.email ?? null,
@@ -1042,17 +825,12 @@ export async function upsertOperatorClientModules(formData: FormData) {
   if (!sourceInstance) throw new Error('source_instance requis')
 
   const operator = createOperatorAdminClient()
-  const { data: client, error: clientError } = await operator
-    .from('operator_clients')
-    .select('organization_id')
-    .eq('source_instance', sourceInstance)
-    .maybeSingle()
+  const orgId = await resolveOrganizationId(operator, sourceInstance)
 
-  if (clientError || !client?.organization_id) {
+  if (!orgId) {
     throw new Error('Client introuvable ou organization_id manquant')
   }
 
-  const orgId = client.organization_id
   const admin = createAdminClient()
 
   const { data: current } = await admin
@@ -1079,6 +857,7 @@ export async function upsertOperatorClientModules(formData: FormData) {
 
   await recordOperatorClientEvent({
     sourceInstance,
+    organizationId: orgId,
     eventCategory: 'module',
     eventType: 'modules_updated',
     actorEmail: user.email ?? null,
@@ -1100,17 +879,12 @@ export async function upsertOperatorClientVerticalPack(formData: FormData) {
   if (!sourceInstance) throw new Error('source_instance requis')
 
   const operator = createOperatorAdminClient()
-  const { data: client, error: clientError } = await operator
-    .from('operator_clients')
-    .select('organization_id')
-    .eq('source_instance', sourceInstance)
-    .maybeSingle()
+  const orgId = await resolveOrganizationId(operator, sourceInstance)
 
-  if (clientError || !client?.organization_id) {
+  if (!orgId) {
     throw new Error('Client introuvable ou organization_id manquant')
   }
 
-  const orgId = client.organization_id
   const rawPackId = String(formData.get('vertical_pack_id') ?? '').trim()
   const packId = normalizeVerticalPackId(rawPackId)
 
@@ -1127,10 +901,56 @@ export async function upsertOperatorClientVerticalPack(formData: FormData) {
 
   await recordOperatorClientEvent({
     sourceInstance,
+    organizationId: orgId,
     eventCategory: 'vertical_pack',
     eventType: packId ? 'vertical_pack_activated' : 'vertical_pack_deactivated',
     actorEmail: user.email ?? null,
     metadata: { pack_id: packId ?? null },
+  })
+
+  revalidatePath('/orsayn')
+}
+
+/**
+ * Active/désactive has_metal_pricing pour un client — geste manuel volontaire.
+ * Pas d'activation automatique : la clé METALPRICEAPI_KEY reste posée à la
+ * main par Samuel, client par client, donc l'activation du flag doit rester
+ * sous son contrôle explicite plutôt que suivre le tier ou l'activité déclarée.
+ */
+export async function upsertOperatorClientMetalPricing(formData: FormData) {
+  const user = await getOperatorUser()
+  if (!user) throw new Error('Accès opérateur requis')
+
+  const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
+  if (!sourceInstance) throw new Error('source_instance requis')
+
+  const operator = createOperatorAdminClient()
+  const orgId = await resolveOrganizationId(operator, sourceInstance)
+
+  if (!orgId) {
+    throw new Error('Client introuvable ou organization_id manquant')
+  }
+
+  const hasMetalPricing = formData.get('hasMetalPricing') === 'on'
+
+  const admin = createAdminClient()
+  const { error } = await admin
+    .from('organizations')
+    .update({ has_metal_pricing: hasMetalPricing })
+    .eq('id', orgId)
+
+  if (error) {
+    console.error('[upsertOperatorClientMetalPricing]', error)
+    throw new Error(error.message)
+  }
+
+  await recordOperatorClientEvent({
+    sourceInstance,
+    organizationId: orgId,
+    eventCategory: 'module',
+    eventType: hasMetalPricing ? 'metal_pricing_activated' : 'metal_pricing_deactivated',
+    actorEmail: user.email ?? null,
+    metadata: { has_metal_pricing: hasMetalPricing, manual: true },
   })
 
   revalidatePath('/orsayn')

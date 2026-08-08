@@ -43,14 +43,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { source_instance: string; return_url: string }
+  let body: { source_instance: string; organization_id?: string; return_url: string }
   try {
     body = JSON.parse(rawBody)
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { source_instance, return_url } = body
+  const { source_instance, organization_id, return_url } = body
   if (!source_instance || !return_url) {
     return NextResponse.json({ error: 'source_instance et return_url requis' }, { status: 400 })
   }
@@ -66,11 +66,15 @@ export async function POST(req: NextRequest) {
   }
 
   const operator = createOperatorAdminClient()
-  const { data, error } = await operator
+  // organization_id absent : compat instances anciennes non encore mises à jour,
+  // retombe sur la ligne la plus récente (risqué sur une instance mutualisée).
+  const subscriptionQuery = operator
     .from('operator_client_subscriptions')
     .select('stripe_customer_id')
     .eq('source_instance', source_instance)
-    .maybeSingle()
+  const { data, error } = organization_id
+    ? await subscriptionQuery.eq('organization_id', organization_id).maybeSingle()
+    : await subscriptionQuery.order('updated_at', { ascending: false }).limit(1).maybeSingle()
 
   if (error) {
     console.error('[stripe/portal-session] DB error:', error)
