@@ -94,7 +94,13 @@ deploy_cron_worker() {
   original_name=$(grep '^name' "$toml" | head -1 | sed 's/name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/')
 
   # sed -i portable : macOS exige '' après -i, Linux non
-  SED_INPLACE() { sed -i${OSTYPE:+''} "$@" 2>/dev/null || sed -i "$@"; }
+  SED_INPLACE() {
+    if sed --version >/dev/null 2>&1; then
+      sed -i "$@"
+    else
+      sed -i '' "$@"
+    fi
+  }
 
   restore_toml_name() {
     SED_INPLACE "s/^name[[:space:]]*=.*/name = \"$original_name\"/" "$toml"
@@ -104,12 +110,16 @@ deploy_cron_worker() {
   # Patcher le name
   SED_INPLACE "s/^name[[:space:]]*=.*/name = \"$target_name\"/" "$toml"
 
-  # Injecter les secrets
-  echo "$APP_URL"    | node "$ROOT_DIR/node_modules/wrangler/bin/wrangler.js" secret put APP_URL    --name "$target_name" --config "$toml"
-  echo "$CRON_SECRET" | node "$ROOT_DIR/node_modules/wrangler/bin/wrangler.js" secret put CRON_SECRET --name "$target_name" --config "$toml"
-
-  # Déployer
-  node "$ROOT_DIR/node_modules/wrangler/bin/wrangler.js" deploy --config "$toml"
+  # Injecter les secrets et déployer depuis le répertoire du Worker cron :
+  # exécuté depuis ROOT_DIR, wrangler détecte le projet OpenNext ambiant et
+  # bascule sur `opennextjs-cloudflare deploy` (qui exige des bindings KV
+  # absents ici) au lieu d'un déploiement wrangler standard.
+  (
+    cd "$worker_dir"
+    echo "$APP_URL"     | node "$ROOT_DIR/node_modules/wrangler/bin/wrangler.js" secret put APP_URL     --name "$target_name" --config "wrangler.toml"
+    echo "$CRON_SECRET" | node "$ROOT_DIR/node_modules/wrangler/bin/wrangler.js" secret put CRON_SECRET --name "$target_name" --config "wrangler.toml"
+    node "$ROOT_DIR/node_modules/wrangler/bin/wrangler.js" deploy --config "wrangler.toml"
+  )
 
   # Restaurer
   trap - EXIT

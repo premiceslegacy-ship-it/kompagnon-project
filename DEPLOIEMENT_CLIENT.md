@@ -41,6 +41,18 @@ Deux points à trancher explicitement avant d'ouvrir une instance à plusieurs o
 
 ---
 
+## Instance mutualisée `atelier-app` — cas particulier, pas un per-client
+
+Ce document décrit le modèle **1 Supabase + 1 Worker + 1 domaine par client**. `atelier-app` (Worker Cloudflare, domaine `app.atelier-btp.fr`) déroge à ce modèle : c'est une instance **unique et partagée** portant potentiellement N organisations self-service, avec le même Supabase `pyxnmohknxmbpbcuvudg` que les autres environnements de test.
+
+Différences clés par rapport au protocole per-client ci-dessous :
+- `.env.client-atelier-app` (non versionné) suit le template `pro`, avec `SHARED_EMAIL_DOMAIN="orsayn.fr"` en plus — domaine de repli pour les emails métier (relances, factures) des organisations qui n'ont pas configuré leur propre `email_from_address`. Voir `src/lib/email/index.ts` (`sendEmail`) pour le mécanisme de fallback : le "From Name" reste toujours celui de l'organisation cliente, seule l'adresse technique est partagée.
+- KV namespaces dédiés (ne jamais réutiliser ceux du cockpit) : `NEXT_INC_CACHE_KV` et `NEXT_TAG_CACHE_KV_ATELIER_APP` — ids à reporter manuellement dans `wrangler.jsonc` avant `deploy-client.sh atelier-app`, puis restaurer les ids du cockpit juste après (le script ne swap que le `name`, pas les `kv_namespaces`).
+- Déploiement : `./scripts/deploy-client.sh atelier-app`, crons via `./scripts/deploy-cron-workers.sh atelier-app --env-file=.env.client-atelier-app`, Custom Domain `app.atelier-btp.fr` ajouté manuellement (Workers → atelier-app → Settings → Domains & Routes).
+- Suivi détaillé de la construction de cette instance : `docs/roadmap-saas-mutualise-2026-08.md` (étapes B0 à B5).
+
+---
+
 ## ─── 1 REPO GITHUB → N CLIENTS ────────────────────────────────────────────────
 
 **Principe fondamental : le code ne change jamais selon le client. Seules les variables d'environnement changent.**
