@@ -5,6 +5,7 @@ import { resolveCatalogContext, getBusinessActivityById, normalizeSecondaryActiv
 import { getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { buildDocumentContentBlock, buildPdfParserPlugins, validatePdfForVision, type PdfParserPlugin } from '@/lib/ai/document-content'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { fetchRAGContext } from '@/lib/ai/rag'
 import { buildIndustryQualityPrompt } from '@/lib/ai/industry-context'
@@ -31,6 +32,7 @@ export type AIQuoteItem = {
   width_m?: number | null
   height_m?: number | null
   dimension_pricing_mode?: 'none' | 'linear' | 'area' | 'volume' | null
+  measurement_metadata?: Record<string, unknown> | null
 }
 
 export type AIQuoteSection = {
@@ -877,6 +879,7 @@ export async function POST(req: NextRequest) {
   const contentType = req.headers.get('content-type') ?? ''
   let model: string
   let messages: { role: string; content: any }[]
+  let pdfParserPlugins: PdfParserPlugin[] | undefined
 
   // Extraire la description tôt pour l'embedding RAG, avant le chargement catalogue
   let formDataCache: FormData | null = null
@@ -909,8 +912,17 @@ export async function POST(req: NextRequest) {
     const userDescription = (formData.get('description') as string | null)?.trim() || null
 
     const arrayBuffer = await file.arrayBuffer()
-    const base64 = Buffer.from(arrayBuffer).toString('base64')
+    const fileBuffer = Buffer.from(arrayBuffer)
+    const base64 = fileBuffer.toString('base64')
     const mimeType = file.type || 'application/pdf'
+
+    if (mimeType === 'application/pdf') {
+      const validation = await validatePdfForVision(fileBuffer)
+      if (!validation.ok) {
+        return NextResponse.json({ error: validation.message, code: validation.code }, { status: validation.code === 'pdf_images_too_heavy' ? 422 : 400 })
+      }
+      pdfParserPlugins = buildPdfParserPlugins(validation.inspection)
+    }
 
     const userPrompt = userDescription
       ? `Analyse ce document et structure les travaux en sections et lignes de devis.\n\nPrécisions de l'utilisateur : ${userDescription}\n\nRetourne uniquement le JSON.`
@@ -922,7 +934,7 @@ export async function POST(req: NextRequest) {
       {
         role: 'user',
         content: [
-          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+          buildDocumentContentBlock(mimeType, base64, file.name),
           { type: 'text', text: userPrompt },
         ],
       },
@@ -952,6 +964,7 @@ export async function POST(req: NextRequest) {
             messages,
             temperature: modelName === FALLBACK_MODEL ? 0.1 : 0.2,
             max_tokens: 4096,
+            plugins: pdfParserPlugins,
           },
           timeoutMs,
         },

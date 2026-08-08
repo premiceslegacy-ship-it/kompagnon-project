@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { buildDocumentContentBlock, buildPdfParserPlugins, validatePdfForVision, type PdfParserPlugin } from '@/lib/ai/document-content'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { hasPermission } from '@/lib/data/queries/membership'
@@ -82,7 +83,9 @@ async function callModel(
   model: string,
   base64: string,
   mimeType: string,
+  fileName: string,
   organizationId: string,
+  pdfParserPlugins?: PdfParserPlugin[],
 ): Promise<{ result: ScanReceiptResult } | { error: string }> {
   try {
     const { data } = await callAI<any>({
@@ -97,13 +100,14 @@ async function callModel(
             {
               role: 'user',
               content: [
-                { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+                buildDocumentContentBlock(mimeType, base64, fileName),
                 { type: 'text', text: PROMPT },
               ],
             },
           ],
           temperature: 0.1,
           max_tokens: 512,
+          plugins: pdfParserPlugins,
         },
         timeoutMs: MODEL_TIMEOUT_MS,
       },
@@ -178,13 +182,23 @@ export async function POST(req: NextRequest) {
   const organizationId = orgId ?? user.id
 
   const arrayBuffer = await file.arrayBuffer()
-  const base64 = Buffer.from(arrayBuffer).toString('base64')
+  const fileBuffer = Buffer.from(arrayBuffer)
+  const base64 = fileBuffer.toString('base64')
   const mimeType = file.type || 'image/jpeg'
+  let pdfParserPlugins: PdfParserPlugin[] | undefined
+
+  if (mimeType === 'application/pdf') {
+    const validation = await validatePdfForVision(fileBuffer)
+    if (!validation.ok) {
+      return NextResponse.json({ error: validation.message, code: validation.code }, { status: validation.code === 'pdf_images_too_heavy' ? 422 : 400 })
+    }
+    pdfParserPlugins = buildPdfParserPlugins(validation.inspection)
+  }
 
   try {
-    let res = await callModel(VISION_MODEL, base64, mimeType, organizationId)
+    let res = await callModel(VISION_MODEL, base64, mimeType, file.name, organizationId, pdfParserPlugins)
     if ('error' in res && !['module_disabled', 'rate_limited', 'quota_exceeded', 'openrouter_credits'].includes(res.error)) {
-      res = await callModel(VISION_FALLBACK, base64, mimeType, organizationId)
+      res = await callModel(VISION_FALLBACK, base64, mimeType, file.name, organizationId, pdfParserPlugins)
     }
     if ('error' in res) {
       if (res.error === 'module_disabled') {

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { ImportDocumentRow } from '@/lib/data/mutations/import-documents'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { buildDocumentContentBlock, buildPdfParserPlugins, validatePdfForVision, type PdfParserPlugin } from '@/lib/ai/document-content'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
 
@@ -77,16 +78,26 @@ export async function POST(req: NextRequest) {
   if (file.size > 15 * 1024 * 1024) return NextResponse.json({ error: 'Fichier trop volumineux (max 15 Mo)' }, { status: 400 })
 
   const arrayBuffer = await file.arrayBuffer()
-  const base64 = Buffer.from(arrayBuffer).toString('base64')
+  const fileBuffer = Buffer.from(arrayBuffer)
+  const base64 = fileBuffer.toString('base64')
   const mimeType = file.type || 'application/pdf'
   const orgId = await getCurrentOrganizationId()
   const organizationId = orgId ?? user.id
+  let pdfParserPlugins: PdfParserPlugin[] | undefined
+
+  if (mimeType === 'application/pdf') {
+    const validation = await validatePdfForVision(fileBuffer)
+    if (!validation.ok) {
+      return NextResponse.json({ error: validation.message, code: validation.code }, { status: validation.code === 'pdf_images_too_heavy' ? 422 : 400 })
+    }
+    pdfParserPlugins = buildPdfParserPlugins(validation.inspection)
+  }
 
   const messages = [
     {
       role: 'user',
       content: [
-        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+        buildDocumentContentBlock(mimeType, base64, file.name),
         { type: 'text', text: buildPrompt(docType as 'invoices' | 'quotes') },
       ],
     },
@@ -103,7 +114,7 @@ export async function POST(req: NextRequest) {
         model,
         inputKind: 'mixed',
         request: {
-          body: { messages, temperature: 0.1, max_tokens: 4096 },
+          body: { messages, temperature: 0.1, max_tokens: 4096, plugins: pdfParserPlugins },
           timeoutMs: MODEL_TIMEOUT_MS,
         },
         metadata: {
