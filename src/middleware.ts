@@ -20,12 +20,14 @@ const publicRoutePrefixes = [
   '/api/pdf/quote',
   '/api/pdf/contract',
   // Routes serveur-à-serveur : elles portent leur propre authentification
-  // (x-cron-secret ou signature Stripe) et n'ont jamais de session utilisateur.
-  // Sans ces exclusions, le middleware les redirige vers /login et les crons
-  // ne s'exécutent jamais en production.
+  // (x-cron-secret ou signature HMAC x-operator-signature) et n'ont jamais
+  // de session utilisateur. Sans ces exclusions, le middleware les redirige
+  // vers /login (307) et elles ne s'exécutent jamais en production — ça a
+  // cassé silencieusement ingest/config-sync jusqu'au 2026-08-08 (seul
+  // /api/operator/cron était exclu, pas ingest ni config-sync).
   '/api/cron',
   '/api/webhooks',
-  '/api/operator/cron',
+  '/api/operator',
 ]
 
 const publicExactRoutes = [
