@@ -352,11 +352,15 @@ async function sendSarahDraftEmail(orgId: string, payload: Record<string, unknow
   const admin = createAdminClient()
   const { data: org } = await admin
     .from('organizations')
-    .select('name, email, email_from_name, email_from_address, email_signature')
+    .select('name, slug, email, email_from_name, email_from_address, email_signature')
     .eq('id', orgId)
     .single()
 
-  if (!org?.email_from_address) {
+  const sharedEmailDomain = process.env.SHARED_EMAIL_DOMAIN
+  const orgFromAddress =
+    org?.email_from_address || (org?.slug && sharedEmailDomain ? `${org.slug}@${sharedEmailDomain}` : null)
+
+  if (!org || !orgFromAddress) {
     throw new Error("L'adresse email expéditeur n'est pas configurée. Allez dans Paramètres > Email.")
   }
 
@@ -419,8 +423,8 @@ async function sendSarahDraftEmail(orgId: string, payload: Record<string, unknow
 
   const resend = new Resend(apiKey)
   const fromName = defaultBrandedSenderName(org.email_from_name || org.name || APP_SIGNATURE)
-  const from = `${fromName} <${org.email_from_address}>`
-  const contactEmail = org.email || org.email_from_address
+  const from = `${fromName} <${orgFromAddress}>`
+  const contactEmail = org.email || orgFromAddress
   let sent = 0
   let errors = 0
   const logs: Array<{ broadcast_id: string; client_id: string; email: string; status: string; error_message?: string }> = []

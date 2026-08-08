@@ -101,15 +101,12 @@ export async function sendTeamInvite(email: string, roleId: string): Promise<{ e
 
   const { data: org } = await admin
     .from('organizations')
-    .select('name, email_from_address')
+    .select('name')
     .eq('id', organizationId)
     .single()
 
-  if (!org?.email_from_address) {
-    return {
-      error:
-        "L'adresse email expéditeur n'est pas configurée. Rendez-vous dans Paramètres > Email.",
-    }
+  if (!org) {
+    return { error: 'Organisation introuvable.' }
   }
 
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()

@@ -232,13 +232,6 @@ export async function completeOnboarding(formData: FormData) {
       continue
     }
 
-    // Si email expéditeur pas encore configuré, on skip l'envoi silencieusement
-    // (l'owner peut renvoyer les invitations depuis Settings une fois l'email configuré)
-    if (!org?.email_from_address) {
-      i++
-      continue
-    }
-
     // Générer le lien magique sans envoyer l'email Supabase
     const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
       type: 'invite',
@@ -257,7 +250,7 @@ export async function completeOnboarding(formData: FormData) {
 
     // Envoyer l'email brandé via Resend
     const { subject, html } = buildInviteEmail({
-      orgName: org.name,
+      orgName: org?.name,
       inviterName: profile?.full_name || user.email || 'Votre responsable',
       inviteUrl: linkData.properties.action_link,
     })

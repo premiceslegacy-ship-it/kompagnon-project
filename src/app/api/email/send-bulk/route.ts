@@ -107,11 +107,17 @@ export async function POST(req: NextRequest) {
     // Récupérer l'organisation (nom + email expéditeur Resend + vrai email de contact + signature)
     const { data: org } = await admin
       .from('organizations')
-      .select('name, email, email_from_name, email_from_address, email_signature')
+      .select('name, slug, email, email_from_name, email_from_address, email_signature')
       .eq('id', orgId)
       .single()
 
-    if (!org?.email_from_address) {
+    // Instance mutualisée (SHARED_EMAIL_DOMAIN défini) : adresse technique générée
+    // depuis le domaine partagé si l'organisation n'a pas configuré la sienne.
+    const sharedDomain = process.env.SHARED_EMAIL_DOMAIN
+    const orgFromAddress =
+      org?.email_from_address || (org?.slug && sharedDomain ? `${org.slug}@${sharedDomain}` : null)
+
+    if (!org || !orgFromAddress) {
       return NextResponse.json({
         error: "L'adresse email expéditeur n'est pas configurée. Allez dans Paramètres > Email.",
       }, { status: 422 })
@@ -172,7 +178,7 @@ export async function POST(req: NextRequest) {
 
     const resend = new Resend(apiKey)
     const fromName = defaultBrandedSenderName(org.email_from_name || org.name)
-    const from = `${fromName} <${org.email_from_address}>`
+    const from = `${fromName} <${orgFromAddress}>`
 
     let sent = 0
     let errors = 0
@@ -185,7 +191,7 @@ export async function POST(req: NextRequest) {
     }> = []
 
     // Vrai email de contact de l'organisation (pour replyTo et signature)
-    const contactEmail = org.email || org.email_from_address
+    const contactEmail = org.email || orgFromAddress
 
     // Envoi un par un (RGPD — chaque destinataire reçoit son propre email)
     for (const client of clients) {

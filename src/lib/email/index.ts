@@ -75,11 +75,18 @@ export async function sendEmail({
   const admin = createAdminClient()
   const { data: org } = await admin
     .from('organizations')
-    .select('name, email_from_name, email_from_address')
+    .select('name, slug, email_from_name, email_from_address')
     .eq('id', organizationId)
     .single()
 
-  if (!org?.email_from_address) {
+  // Instance mutualisée (SHARED_EMAIL_DOMAIN défini) : adresse technique générée
+  // depuis le domaine partagé si l'organisation n'a pas configuré la sienne.
+  // Absente sur les instances per-client, où l'adresse reste obligatoire.
+  const sharedDomain = process.env.SHARED_EMAIL_DOMAIN
+  const fromAddress =
+    org?.email_from_address || (org?.slug && sharedDomain ? `${org.slug}@${sharedDomain}` : null)
+
+  if (!org || !fromAddress) {
     return {
       error:
         "L'adresse email expéditeur n'est pas configurée. Rendez-vous dans Paramètres > Email.",
@@ -87,7 +94,7 @@ export async function sendEmail({
   }
 
   const fromName = defaultBrandedSenderName(org.email_from_name || org.name || APP_SIGNATURE)
-  const from = `${fromName} <${org.email_from_address}>`
+  const from = `${fromName} <${fromAddress}>`
 
   const resend = new Resend(apiKey)
   const { error } = await resend.emails.send({
