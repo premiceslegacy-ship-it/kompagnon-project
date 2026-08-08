@@ -26,6 +26,10 @@ export const dynamic = 'force-dynamic'
 // donc un modèle plus capable que le Flash utilisé par les autres agents IA
 // de l'app, cohérent avec le fallback déjà en place sur analyze-quote /
 // scan-receipt / measure-plan pour les cas sensibles.
+// Testé le 19 juillet 2026 : claude-haiku-4.5 (3x moins cher) régresse sur la
+// fuite de contexte entre tours (mélange la demande précédente dans sa réponse),
+// le défaut précisément corrigé par le passage à Sonnet. On reste sur Sonnet ;
+// le levier de coût est la réduction du contexte injecté, pas le modèle.
 const MODEL = 'anthropic/claude-sonnet-4-6'
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
@@ -59,6 +63,20 @@ const SARAH_TOOLS = [
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Nom, société ou email du client à rechercher.' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_catalog',
+      description: 'Rechercher des prestations, matériaux ou taux de main-d\'œuvre par nom, référence ou catégorie. Utiliser dès qu\'une question porte sur un prix, une référence catalogue, ou avant de proposer une ligne dans draft_quote/draft_invoice — le catalogue n\'est plus injecté en permanence dans le contexte.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Nom, référence ou catégorie à rechercher.' },
         },
         required: ['query'],
       },
@@ -161,7 +179,7 @@ const SARAH_TOOLS = [
     type: 'function',
     function: {
       name: 'get_chantier_details',
-      description: 'Obtenir le détail complet d\'un chantier : tâches et leur état, planning à venir, dernières notes, dépenses. Utiliser pour toute question précise sur un chantier donné (avancement, ce qui reste à faire, coûts), y compris si le chantier n\'est pas dans le contexte : la recherche par nom fonctionne.',
+      description: 'Obtenir le détail complet d\'un chantier : tâches et leur état, planning à venir, dernières notes, dépenses, heures pointées. Utiliser pour toute question précise sur un chantier donné (avancement, ce qui reste à faire, coûts, heures), y compris si le chantier n\'est pas dans le contexte : la recherche par nom fonctionne.',
       parameters: {
         type: 'object',
         properties: {
@@ -300,7 +318,8 @@ async function executeSarahTool(
     if (query.length > 80) return 'Requête trop longue.'
 
     const supabase = await createClient()
-    const pattern = `%${query.replace(/[%_]/g, '\\$&')}%`
+    const escaped = query.replace(/[%_]/g, '\\$&')
+    const pattern = `%${escaped}%`
     const columns = ['company_name', 'contact_name', 'email', 'first_name', 'last_name'] as const
     const results = await Promise.all(columns.map(column =>
       supabase
@@ -310,13 +329,33 @@ async function executeSarahTool(
         .ilike(column, pattern)
         .limit(5),
     ))
-    const clients = Array.from(
+    let clients = Array.from(
       new Map(
         results
           .flatMap(result => result.data ?? [])
           .map(client => [client.id, client]),
       ).values(),
-    ).slice(0, 5)
+    )
+
+    // "Jean Testeur Mixte" ne matche aucune colonne individuelle si
+    // first_name="Jean" et last_name="Testeur Mixte" : ilike par colonne
+    // séparée échoue sur un nom complet prénom+nom. On complète avec un
+    // filtrage en mémoire sur la concaténation "prénom nom" / "nom prénom".
+    if (clients.length === 0 && query.includes(' ')) {
+      const { data: allClients } = await supabase
+        .from('clients')
+        .select('id, company_name, contact_name, first_name, last_name, email')
+        .eq('organization_id', orgId)
+        .limit(500)
+      const needle = query.toLowerCase()
+      clients = (allClients ?? []).filter(c => {
+        const full1 = [c.first_name, c.last_name].filter(Boolean).join(' ').toLowerCase()
+        const full2 = [c.last_name, c.first_name].filter(Boolean).join(' ').toLowerCase()
+        return full1.includes(needle) || full2.includes(needle)
+      })
+    }
+
+    clients = clients.slice(0, 5)
 
     if (!clients || clients.length === 0) {
       return `Aucun client trouvé pour "${query}".`
@@ -327,6 +366,56 @@ async function executeSarahTool(
       return `[${c.id}] ${name}${c.email ? ` — ${c.email}` : ''}`
     })
     return `Clients trouvés :\n${lines.join('\n')}`
+  }
+
+  if (name === 'search_catalog') {
+    const query = (args.query as string | undefined)?.trim()
+    if (!query) return 'Requête vide.'
+    if (query.length < 2) return 'Requête trop courte.'
+    if (query.length > 80) return 'Requête trop longue.'
+
+    const supabase = await createClient()
+    // Une virgule dans la valeur (ex: "0,65mm") casse la syntaxe .or() de
+    // PostgREST, qui l'utilise comme séparateur entre clauses : elle échoue
+    // silencieusement (data: null, pas d'exception) sans le guillemetage.
+    const pattern = `"%${query.replace(/[%_]/g, '\\$&')}%"`
+    const [{ data: prestations }, { data: materials }, { data: laborRates }] = await Promise.all([
+      supabase
+        .from('prestation_types')
+        .select('id, name, category, unit, base_price_ht, vat_rate')
+        .eq('organization_id', orgId)
+        .eq('is_active', true)
+        .or(`name.ilike.${pattern},category.ilike.${pattern}`)
+        .limit(8),
+      supabase
+        .from('materials')
+        .select('id, name, reference, item_kind, category, unit, sale_price, vat_rate')
+        .eq('organization_id', orgId)
+        .eq('is_active', true)
+        .or(`name.ilike.${pattern},reference.ilike.${pattern},category.ilike.${pattern}`)
+        .limit(8),
+      supabase
+        .from('labor_rates')
+        .select('id, designation, reference, category, unit, rate, cost_rate, vat_rate')
+        .eq('organization_id', orgId)
+        .eq('is_active', true)
+        .or(`designation.ilike.${pattern},reference.ilike.${pattern},category.ilike.${pattern}`)
+        .limit(8),
+    ])
+
+    const lines: string[] = []
+    for (const p of prestations ?? []) {
+      lines.push(`[PRESTATION:${p.id}] ${p.name}${p.category ? ` - ${p.category}` : ''} - ${fmt(p.base_price_ht)} / ${p.unit ?? 'u'}${p.vat_rate != null ? ` - TVA ${p.vat_rate}%` : ''}`)
+    }
+    for (const m of materials ?? []) {
+      lines.push(`[CATALOG:${m.id}] ${m.name}${m.reference ? ` (${m.reference})` : ''}${m.category ? ` - ${m.category}` : ''} - ${m.item_kind ?? 'article'} - ${fmt(m.sale_price)} / ${m.unit ?? 'u'}${m.vat_rate != null ? ` - TVA ${m.vat_rate}%` : ''}`)
+    }
+    for (const l of laborRates ?? []) {
+      lines.push(`[LABOR:${l.id}] ${l.designation}${l.reference ? ` (${l.reference})` : ''}${l.category ? ` - ${l.category}` : ''} - ${fmt(l.rate ?? l.cost_rate)} / ${l.unit ?? 'h'}${l.vat_rate != null ? ` - TVA ${l.vat_rate}%` : ''}`)
+    }
+
+    if (lines.length === 0) return `Aucun article de catalogue trouvé pour "${query}".`
+    return `Articles trouvés :\n${lines.join('\n')}\nPour draft_quote/draft_invoice, utilisez ces IDs comme catalog_id quand l'élément correspond clairement.`
   }
 
   if (name === 'find_replacement_candidates') {
@@ -436,21 +525,24 @@ async function executeSarahTool(
       )
       matchingClientIds = [...new Set(clientResults.flatMap(r => (r.data ?? []).map(c => c.id)))]
     }
-    // "reference" n'existe que sur quotes, pas sur invoices (colonne number
-    // uniquement) : deux filtres distincts pour éviter une erreur PostgREST
-    // silencieuse sur .or() côté invoices.
+    // quotes et invoices identifient leurs documents par la colonne number
+    // (ex: DEV-2026-0001) — il n'existe pas de colonne reference sur ces tables,
+    // et une colonne inconnue dans .or()/.select() = erreur PostgREST silencieuse.
+    // La valeur ilike est guillemetée : une virgule dedans casserait sinon la
+    // syntaxe .or() (séparateur de clauses), avec le même échec silencieux.
+    const quotedPattern = pattern ? `"${pattern}"` : null
     const clientIdFilter = matchingClientIds.length ? [`client_id.in.(${matchingClientIds.join(',')})`] : []
-    const quoteOrFilter = pattern
-      ? [`reference.ilike.${pattern}`, `number.ilike.${pattern}`, ...clientIdFilter].join(',')
+    const quoteOrFilter = quotedPattern
+      ? [`number.ilike.${quotedPattern}`, ...clientIdFilter].join(',')
       : null
-    const invoiceOrFilter = pattern
-      ? [`number.ilike.${pattern}`, ...clientIdFilter].join(',')
+    const invoiceOrFilter = quotedPattern
+      ? [`number.ilike.${quotedPattern}`, ...clientIdFilter].join(',')
       : null
 
     if (kind === 'quote' || kind === 'both') {
       let q = supabase
         .from('quotes')
-        .select(`id, reference, number, status, total_ttc, created_at, valid_until, ${CLIENT_JOIN}`)
+        .select(`id, number, status, total_ttc, created_at, valid_until, ${CLIENT_JOIN}`)
         .eq('organization_id', orgId)
         .order('created_at', { ascending: false })
         .limit(8)
@@ -458,7 +550,7 @@ async function executeSarahTool(
       if (status) q = q.eq('status', status)
       const { data } = await q
       for (const d of data ?? []) {
-        lines.push(`Devis [${d.id}] ${d.reference ?? d.number ?? '?'} - ${clientNameFromJoin((d as any).client) ?? '?'} - statut ${d.status} - ${d.total_ttc != null ? `${Number(d.total_ttc).toFixed(2)} €` : '?'}${d.valid_until ? ` - valide jusqu'au ${d.valid_until}` : ''}`)
+        lines.push(`Devis [${d.id}] ${d.number ?? '?'} - ${clientNameFromJoin((d as any).client) ?? '?'} - statut ${d.status} - ${d.total_ttc != null ? `${Number(d.total_ttc).toFixed(2)} €` : '?'}${d.valid_until ? ` - valide jusqu'au ${d.valid_until}` : ''}`)
       }
     }
 
@@ -519,8 +611,10 @@ async function executeSarahTool(
         .eq('is_archived', false)
         .order('created_at', { ascending: false })
         .limit(5)
+      // Valeur guillemetée : une virgule dans le titre du chantier casserait
+      // sinon la syntaxe .or() de PostgREST (séparateur de clauses).
       q = matchingClientIds.length
-        ? q.or(`title.ilike.${pattern},client_id.in.(${matchingClientIds.join(',')})`)
+        ? q.or(`title.ilike."${pattern}",client_id.in.(${matchingClientIds.join(',')})`)
         : q.ilike('title', pattern)
       const { data: matches, error: matchError } = await q
       if (process.env.NODE_ENV !== 'production' && matchError) {
@@ -535,11 +629,12 @@ async function executeSarahTool(
     if (!chantier) return 'Chantier introuvable.'
     const chantierId = chantier.id
 
-    const [{ data: taches }, { data: plannings }, { data: notes }, { data: expenses }] = await Promise.all([
+    const [{ data: taches }, { data: plannings }, { data: notes }, { data: expenses }, { data: pointages }] = await Promise.all([
       supabase.from('chantier_taches').select('id, title, status, due_date').eq('chantier_id', chantierId).order('due_date', { ascending: true, nullsFirst: false }).limit(20),
       supabase.from('chantier_plannings').select('id, planned_date, start_time, end_time, label').eq('chantier_id', chantierId).gte('planned_date', todayParis()).order('planned_date', { ascending: true }).limit(10),
       supabase.from('chantier_notes').select('content, created_at').eq('chantier_id', chantierId).order('created_at', { ascending: false }).limit(5),
       supabase.from('chantier_expenses').select('label, amount_ht, category, expense_date').eq('chantier_id', chantierId).order('expense_date', { ascending: false, nullsFirst: false }).limit(10),
+      supabase.from('chantier_pointages').select('hours, profile:profiles(full_name), membre:chantier_equipe_membres(prenom, name)').eq('chantier_id', chantierId).limit(500),
     ])
 
     const lines: string[] = [
@@ -563,6 +658,22 @@ async function executeSarahTool(
       lines.push(`Dernières dépenses (total affiché ${total.toFixed(2)} € HT) :`)
       for (const e of expenses) lines.push(`  ${e.expense_date ?? '?'} - ${e.label} - ${Number(e.amount_ht ?? 0).toFixed(2)} € HT${e.category ? ` (${e.category})` : ''}`)
     }
+    // Heures pointées : une seule ligne agrégée par personne, pour rester
+    // économe en tokens tout en couvrant les questions "combien d'heures".
+    if (pointages?.length) {
+      const byPerson = new Map<string, number>()
+      let total = 0
+      for (const p of pointages) {
+        const h = Number(p.hours ?? 0)
+        total += h
+        const profile = p.profile as { full_name?: string | null } | null
+        const membre = p.membre as { prenom?: string | null; name?: string | null } | null
+        const who = profile?.full_name ?? [membre?.prenom, membre?.name].filter(Boolean).join(' ') ?? '?'
+        byPerson.set(who || '?', (byPerson.get(who || '?') ?? 0) + h)
+      }
+      const detail = [...byPerson.entries()].map(([who, h]) => `${who} ${h}h`).join(', ')
+      lines.push(`Heures pointées : ${total}h au total (${detail}).`)
+    } else lines.push('Aucune heure pointée sur ce chantier.')
     return lines.join('\n')
   }
 
@@ -607,7 +718,7 @@ async function executeSarahTool(
         .order('end_date', { ascending: true, nullsFirst: false }),
       supabase
         .from('quotes')
-        .select('id, reference, number, status, total_ttc, valid_until')
+        .select('id, number, status, total_ttc, valid_until')
         .eq('organization_id', orgId)
         .eq('client_id', client.id)
         .in('status', ['sent', 'viewed'])
@@ -643,7 +754,7 @@ async function executeSarahTool(
 
     if (quotes?.length) {
       lines.push('Devis en attente de réponse :')
-      for (const q of quotes) lines.push(`  [${q.id}] ${q.reference ?? q.number ?? '?'} - ${fmt(q.total_ttc)}${q.valid_until ? ` - valide jusqu'au ${q.valid_until}` : ''}`)
+      for (const q of quotes) lines.push(`  [${q.id}] ${q.number ?? '?'} - ${fmt(q.total_ttc)}${q.valid_until ? ` - valide jusqu'au ${q.valid_until}` : ''}`)
     } else {
       lines.push('Aucun devis en attente de réponse.')
     }
@@ -898,7 +1009,7 @@ Ce que tu peux faire :
 - Répondre sur l'état de l'activité : chantiers en cours, tâches en retard, planning du jour, factures impayées, devis en attente. Pour toute question précise sur les tâches en retard, utilise get_overdue_tasks plutôt que le bloc "Tâches en retard" du contexte général, qui est plafonné à 8 lignes et peut ne pas représenter le total réel.
 - Rédiger des relances clients, résumés de chantier, notes internes, emails professionnels.
 - Préparer un brief devis pour Chloé : si l'utilisateur veut créer un devis, collecte le client, la prestation, les quantités et conditions souhaitées, puis génère un bloc "brief_chloe" structuré pour que Chloé puisse démarrer directement.
-- Créer un brouillon simple de devis ou facture depuis le catalogue quand les lignes sont claires : prestations types, produits/services, main d'œuvre, quantités et prix connus.
+- Créer un brouillon simple de devis ou facture depuis le catalogue quand les lignes sont claires : prestations types, produits/services, main d'œuvre, quantités et prix connus. Le catalogue n'est plus dans le contexte : utilise search_catalog pour retrouver un prix ou un catalog_id précis, sinon écris simplement le nom de l'article dans la ligne, il sera rapproché du catalogue automatiquement à la création.
 - Transmettre à Chloé quand le devis est technique, mixte, incomplet ou demande des lignes non triviales : l'utilisateur doit sentir la collaboration entre agents, avec transmission visible puis redirection rapide.
 - Préparer un planning complet avec Nora : pour une semaine multi-chantiers, plusieurs personnes, tournées ou entretiens, génère un bloc "brief_nora" structuré et redirige vers le planning global.
 - Proposer des actions concrètes : tu joins une carte d'action au message, et l'utilisateur valide en un seul clic sur cette carte. La carte est la validation, ne demande pas de "oui" en plus.
@@ -1001,7 +1112,7 @@ Règles absolues :
 - Ne pose une question avant la carte QUE s'il manque une information indispensable (client introuvable, prestation ambiguë, quantité absente). Si tout est clair, propose la carte tout de suite.
 - Ton "reply" qui accompagne une carte d'action annonce ce qui va être fait ("Voici la fiche prospect prête à créer, validez la carte ci-dessous."), il ne redemande pas l'autorisation. N'écris jamais "Validez-vous", "Confirmez-vous", "Souhaitez-vous que je" ni aucune autre question de permission dans un message qui contient déjà une carte.
 - Ne jamais exécuter une action sensible sans avoir proposé une carte d'action et attendu la confirmation (le clic sur la carte).
-- Pour un email, utilise uniquement les clients/prospects connus dans le contexte. Ne mets jamais une adresse inventée. Prépare une action "draft_email" avec client_ids ou recipient_filter, subject et body. La confirmation humaine déclenchera l'envoi.
+- Pour un email à un destinataire précis, résous-le via search_client (qui renvoie son email) avant de proposer l'action. Ne mets jamais une adresse inventée. Prépare une action "draft_email" avec client_ids ou recipient_filter, subject et body. La confirmation humaine déclenchera l'envoi.
 - Ne jamais inventer de données. Si tu ne sais pas, dis-le simplement.
 - Dès qu'une question porte sur un client précis et croise plusieurs sujets (factures ET chantiers, ou "la situation de ce client", ou "a-t-il des trucs en cours"), utilise get_client_overview en un seul appel plutôt que d'enchaîner get_chantier_details puis search_documents séparément : c'est plus fiable et ça évite d'oublier un des deux volets. N'affirme rien depuis un simple survol des listes globales du contexte ("Factures en attente de paiement", "Chantiers actifs") : ces listes couvrent toute l'entreprise, pas un client en particulier, et une lecture rapide fait rater une ligne. Une réponse "aucun(e)" doit toujours venir d'un appel d'outil qui confirme l'absence, jamais d'une simple absence de mention dans le contexte général.
 - Pour tout comptage ("combien de chantiers en cours", "combien de devis en attente"), utilise get_financial_summary plutôt que de compter les lignes d'une liste du contexte : ces listes sont plafonnées et peuvent ne pas représenter le total réel.
@@ -1172,20 +1283,16 @@ export async function POST(req: NextRequest) {
       { data: recentInvoices },
       { data: keyClients },
       { data: recentClients },
-      { data: emailContacts },
       { data: equipes },
       { data: membresIndividuels },
       { data: maintenanceContracts },
       { data: todayMaintenance },
       { data: weekMaintenance },
-      { data: catalogMaterials },
-      { data: catalogLaborRates },
-      { data: catalogPrestations },
     ] = await Promise.all([
       // Derniers devis
       supabase
         .from('quotes')
-        .select(`id, reference, status, total_ttc, created_at, valid_until, ${CLIENT_JOIN}`)
+        .select(`id, number, status, total_ttc, created_at, valid_until, ${CLIENT_JOIN}`)
         .eq('organization_id', orgId)
         .order('created_at', { ascending: false })
         .limit(5),
@@ -1202,7 +1309,7 @@ export async function POST(req: NextRequest) {
       // Devis qui expirent dans les 3 prochains jours
       supabase
         .from('quotes')
-        .select(`id, reference, valid_until, total_ttc, ${CLIENT_JOIN}`)
+        .select(`id, number, valid_until, total_ttc, ${CLIENT_JOIN}`)
         .eq('organization_id', orgId)
         .in('status', ['sent', 'viewed'])
         .gte('valid_until', today)
@@ -1325,17 +1432,6 @@ export async function POST(req: NextRequest) {
         .order('created_at', { ascending: false })
         .limit(10),
 
-      // Répertoire email compact : clients/prospects/leads joignables
-      supabase
-        .from('clients')
-        .select('id, company_name, contact_name, first_name, last_name, email, status, city, internal_notes, notes')
-        .eq('organization_id', orgId)
-        .eq('is_archived', false)
-        .not('email', 'is', null)
-        .neq('email', '')
-        .order('created_at', { ascending: false })
-        .limit(24),
-
       // Équipes (pour les actions planning)
       supabase
         .from('chantier_equipes')
@@ -1380,31 +1476,6 @@ export async function POST(req: NextRequest) {
         .order('date_intervention', { ascending: true })
         .order('start_time', { ascending: true, nullsFirst: false })
         .limit(20),
-
-      supabase
-        .from('materials')
-        .select('id, name, reference, item_kind, category, unit, sale_price, vat_rate')
-        .eq('organization_id', orgId)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(30),
-
-      supabase
-        .from('labor_rates')
-        .select('id, designation, reference, category, unit, rate, cost_rate, vat_rate')
-        .eq('organization_id', orgId)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(20),
-
-      supabase
-        .from('prestation_types')
-        .select('id, name, category, unit, base_price_ht, vat_rate')
-        .eq('organization_id', orgId)
-        .eq('is_active', true)
-        .order('category', { ascending: true })
-        .order('name', { ascending: true })
-        .limit(30),
     ])
 
     // Normalisation : résoudre client_name depuis la relation clients, en
@@ -1496,7 +1567,7 @@ export async function POST(req: NextRequest) {
             (p as any).tache?.title ? `tâche "${(p as any).tache.title}"` : null,
             p.description ? shortText(p.description, 120) : null,
           ].filter(Boolean).join(', ')
-          contextLines.push(`    ${person} - chantier "${chantier?.title ?? '?'}" (${chantier?.client_name ?? '?'}) - ${detail}${(p as any).chantier_planning_id ? ` - lié au créneau ${((p as any).chantier_planning_id as string).slice(0, 8)}` : ''}`)
+          contextLines.push(`    ${person} - chantier "${chantier?.title ?? '?'}" (${clientNameFromJoin(chantier?.client) ?? '?'}) - ${detail}${(p as any).chantier_planning_id ? ` - lié au créneau ${((p as any).chantier_planning_id as string).slice(0, 8)}` : ''}`)
         }
       }
 
@@ -1540,7 +1611,7 @@ export async function POST(req: NextRequest) {
           : null
         const intervenant = formatPlanningIntervenant(slot)
         const details = [todaySlotPointageStatus(slot), horaire, intervenant ? `intervenant : ${intervenant}` : null, slot.label, slot.notes].filter(Boolean).join(', ')
-        contextLines.push(`  [SLOT:${slot.id}] Chantier "${c?.title ?? '?'}" (client : ${c?.client_name ?? '?'})${details ? ` - ${details}` : ''}`)
+        contextLines.push(`  [SLOT:${slot.id}] Chantier "${c?.title ?? '?'}" (client : ${clientNameFromJoin(c?.client) ?? '?'})${details ? ` - ${details}` : ''}`)
       }
     } else {
       contextLines.push('', `Planning du jour (${today}) : aucune intervention planifiée.`)
@@ -1556,7 +1627,7 @@ export async function POST(req: NextRequest) {
           : null
         const intervenant = formatPlanningIntervenant(slot)
         const details = [horaire, intervenant ? `intervenant : ${intervenant}` : null, slot.notes].filter(Boolean).join(', ')
-        contextLines.push(`  [SLOT:${slot.id}] ${slot.planned_date} - Chantier "${c?.title ?? '?'}" (client : ${c?.client_name ?? '?'})${details ? ` - ${details}` : ''}`)
+        contextLines.push(`  [SLOT:${slot.id}] ${slot.planned_date} - Chantier "${c?.title ?? '?'}" (client : ${clientNameFromJoin(c?.client) ?? '?'})${details ? ` - ${details}` : ''}`)
       }
     }
 
@@ -1596,7 +1667,7 @@ export async function POST(req: NextRequest) {
     if (expiringQuotes?.length) {
       contextLines.push('', 'Devis expirant dans les 3 prochains jours :')
       for (const q of expiringQuotes) {
-        contextLines.push(`  ${q.reference} - ${(q as any).client_name ?? '?'} - expire le ${q.valid_until} - ${fmt(q.total_ttc)}`)
+        contextLines.push(`  ${(q as any).number ?? '?'} - ${clientNameFromJoin((q as any).client) ?? '?'} - expire le ${q.valid_until} - ${fmt(q.total_ttc)}`)
       }
     }
 
@@ -1605,7 +1676,7 @@ export async function POST(req: NextRequest) {
       contextLines.push('', 'Factures en attente de paiement :')
       for (const inv of overdueInvoices) {
         const retard = inv.due_date && inv.due_date < today ? ` (EN RETARD depuis le ${inv.due_date})` : ` (échéance ${inv.due_date ?? 'non définie'})`
-        contextLines.push(`  [${inv.id}] ${inv.number} - ${(inv as any).client_name ?? '?'} - ${fmt(inv.total_ttc)}${retard}`)
+        contextLines.push(`  [${inv.id}] ${inv.number} - ${clientNameFromJoin((inv as any).client) ?? '?'} - ${fmt(inv.total_ttc)}${retard}`)
       }
     }
 
@@ -1613,7 +1684,7 @@ export async function POST(req: NextRequest) {
       contextLines.push('', 'Dernières factures :')
       for (const inv of recentInvoices) {
         const paid = inv.total_paid != null && inv.total_paid > 0 ? `, encaissé ${fmt(inv.total_paid)}` : ''
-        contextLines.push(`  [${inv.id}] ${inv.number ?? inv.title ?? 'Facture'} - ${(inv as any).client_name ?? '?'} - ${inv.status} - ${fmt(inv.total_ttc)}${paid} - échéance ${inv.due_date ?? 'n/a'}`)
+        contextLines.push(`  [${inv.id}] ${inv.number ?? inv.title ?? 'Facture'} - ${clientNameFromJoin((inv as any).client) ?? '?'} - ${inv.status} - ${fmt(inv.total_ttc)}${paid} - échéance ${inv.due_date ?? 'n/a'}`)
       }
     }
 
@@ -1621,7 +1692,7 @@ export async function POST(req: NextRequest) {
     if (recentQuotes?.length) {
       contextLines.push('', 'Devis récents :')
       for (const q of recentQuotes) {
-        contextLines.push(`  [${q.id}] ${q.reference} - ${(q as any).client_name ?? '?'} - ${q.status} - ${fmt(q.total_ttc)}`)
+        contextLines.push(`  [${q.id}] ${(q as any).number ?? '?'} - ${clientNameFromJoin((q as any).client) ?? '?'} - ${q.status} - ${fmt(q.total_ttc)}`)
       }
     }
 
@@ -1653,20 +1724,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (catalogPrestations?.length || catalogMaterials?.length || catalogLaborRates?.length) {
-      contextLines.push('', 'Catalogue utilisable pour brouillons devis/factures :')
-      for (const p of catalogPrestations ?? []) {
-        contextLines.push(`  [PRESTATION:${p.id}] ${p.name}${p.category ? ` - ${p.category}` : ''} - ${fmt(p.base_price_ht)} / ${p.unit ?? 'u'}${p.vat_rate != null ? ` - TVA ${p.vat_rate}%` : ''}`)
-      }
-      for (const m of catalogMaterials ?? []) {
-        contextLines.push(`  [CATALOG:${m.id}] ${m.name}${m.reference ? ` (${m.reference})` : ''}${m.category ? ` - ${m.category}` : ''} - ${m.item_kind ?? 'article'} - ${fmt(m.sale_price)} / ${m.unit ?? 'u'}${m.vat_rate != null ? ` - TVA ${m.vat_rate}%` : ''}`)
-      }
-      for (const l of catalogLaborRates ?? []) {
-        contextLines.push(`  [LABOR:${l.id}] ${l.designation}${l.reference ? ` (${l.reference})` : ''}${l.category ? ` - ${l.category}` : ''} - ${fmt(l.rate ?? l.cost_rate)} / ${l.unit ?? 'h'}${l.vat_rate != null ? ` - TVA ${l.vat_rate}%` : ''}`)
-      }
-      contextLines.push('  Pour draft_quote/draft_invoice, utilisez catalog_id avec ces IDs quand l’élément correspond clairement.')
-    }
-
     // Nouvelles demandes de devis
     if (newRequests?.length) {
       contextLines.push('', 'Demandes de devis à traiter (non converties en devis, non archivées) :')
@@ -1691,15 +1748,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (emailContacts?.length) {
-      contextLines.push('', 'Répertoire email clients/prospects (utilisez ces IDs pour draft_email, sans inventer de destinataire) :')
-      for (const cl of emailContacts) {
-        const name = cl.company_name ?? [cl.first_name, cl.last_name].filter(Boolean).join(' ') ?? cl.contact_name ?? cl.email ?? '?'
-        const notes = shortText(cl.internal_notes ?? cl.notes, 80)
-        contextLines.push(`  [CLIENT:${cl.id}] ${name}${cl.status ? ` - statut ${cl.status}` : ''}${cl.city ? ` - ${cl.city}` : ''} - email ${cl.email}${notes ? ` - note : ${notes}` : ''}`)
-      }
-      contextLines.push('  Filtres email autorisés si l’utilisateur vise un groupe : { mode: "all_active" } ou { mode: "by_status", statuses: ["prospect" | "lead_hot" | "lead_cold" | "active" | "subcontractor" | "inactive"] }. Maximum 50 destinataires.')
-    }
+    // Le répertoire email complet n'est plus injecté en permanence (coûteux,
+    // peu utilisé) : pour un destinataire précis, search_client renvoie déjà
+    // son email ; pour un envoi groupé, recipient_filter est résolu côté
+    // serveur sans avoir besoin de connaître chaque contact à l'avance.
+    contextLines.push('', 'Pour draft_email : cherchez un destinataire précis via search_client (qui renvoie son email), ou utilisez recipient_filter pour un groupe : { mode: "all_active" } ou { mode: "by_status", statuses: ["prospect" | "lead_hot" | "lead_cold" | "active" | "subcontractor" | "inactive"] }. Maximum 50 destinataires. Ne jamais inventer une adresse email.')
 
     // Messages des autres assistants adressés à Sarah — injectés puis marqués consommés
     const incomingBriefs = ((incomingBriefsResult as any)?.data ?? []) as Array<{ id: string; source_assistant: string; payload: Record<string, unknown>; created_at: string }>

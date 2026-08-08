@@ -1113,7 +1113,7 @@ export default function RentabiliteTab({
                           {canEditRates && entry.membership_id && (
                             <button
                               onClick={() => handleEditRate(entry)}
-                              className="p-1 text-secondary hover:text-primary transition-colors rounded opacity-0 group-hover:opacity-100"
+                              className="p-1 text-secondary hover:text-primary transition-colors rounded opacity-60 sm:opacity-0 sm:group-hover:opacity-100"
                               title="Modifier le taux - s'applique à tous les chantiers de ce membre"
                             >
                               <Pencil className="w-3 h-3" />

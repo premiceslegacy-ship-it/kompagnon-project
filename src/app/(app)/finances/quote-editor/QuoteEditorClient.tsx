@@ -739,6 +739,51 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const pendingSupplierPrices = visibleItems.filter(i => i.price_pending).length
   const canDistributeInternalCosts = internalSaleToDistributeHt > 0 && visibleItems.some(i => !i.price_pending && i.quantity > 0)
 
+  // ─── Répartition manuelle de la marge interne ─────────────────────────────
+  // Par défaut la répartition reste automatique (au prorata du HT visible).
+  // En mode manuel, l'artisan choisit le poids (%) de chaque ligne visible ;
+  // la somme doit faire 100 % avant de pouvoir répartir.
+  const [manualDistributionMode, setManualDistributionMode] = useState(false)
+  const [distributionWeights, setDistributionWeights] = useState<Map<string, number>>(new Map())
+
+  function distributionKey(sectionTempId: string, itemTempId: string) {
+    return `${sectionTempId}_${itemTempId}`
+  }
+
+  function openManualDistribution() {
+    const currentSections = sectionsRef.current
+    const eligible = currentSections.flatMap(section =>
+      section.items
+        .filter(item => !item.is_internal && !item.price_pending && item.quantity > 0)
+        .map(item => ({ sectionTempId: section._tempId, itemTempId: item._tempId, item })),
+    )
+    const visibleTotal = eligible.reduce((sum, entry) => sum + entry.item.quantity * entry.item.unit_price, 0)
+    const initial = new Map<string, number>()
+    eligible.forEach(entry => {
+      const lineTotal = entry.item.quantity * entry.item.unit_price
+      const pct = visibleTotal > 0 ? (lineTotal / visibleTotal) * 100 : 100 / eligible.length
+      initial.set(distributionKey(entry.sectionTempId, entry.itemTempId), Math.round(pct * 10) / 10)
+    })
+    setDistributionWeights(initial)
+    setManualDistributionMode(true)
+  }
+
+  function closeManualDistribution() {
+    setManualDistributionMode(false)
+    setDistributionWeights(new Map())
+  }
+
+  function setDistributionWeight(sectionTempId: string, itemTempId: string, pct: number | null) {
+    setDistributionWeights(prev => {
+      const next = new Map(prev)
+      next.set(distributionKey(sectionTempId, itemTempId), pct ?? 0)
+      return next
+    })
+  }
+
+  const distributionWeightSum = [...distributionWeights.values()].reduce((sum, w) => sum + w, 0)
+  const distributionWeightValid = Math.abs(distributionWeightSum - 100) < 0.1
+
   function scrollToQuoteArea(id: string) {
     const el = document.getElementById(id)
     if (!el) return
@@ -771,8 +816,16 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
       return
     }
 
+    const useManualWeights = manualDistributionMode && distributionWeightValid
+    if (manualDistributionMode && !distributionWeightValid) {
+      setErrorMsg(`La somme des poids doit faire 100 % (actuellement ${distributionWeightSum.toFixed(1)} %).`)
+      return
+    }
+
     const confirmed = window.confirm(
-      `Répartir ${fmt(internalTotal)} HT de montant interne vendu dans les prix des lignes visibles ? Les lignes internes resteront masquées et leur coût de revient restera utilisé pour la marge.`,
+      useManualWeights
+        ? `Répartir ${fmt(internalTotal)} HT de montant interne selon les poids choisis ? Les lignes internes resteront masquées et leur coût de revient restera utilisé pour la marge.`
+        : `Répartir ${fmt(internalTotal)} HT de montant interne vendu dans les prix des lignes visibles ? Les lignes internes resteront masquées et leur coût de revient restera utilisé pour la marge.`,
     )
     if (!confirmed) return
 
@@ -783,7 +836,9 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     visibleEntries.forEach((entry, index) => {
       const isLast = index === visibleEntries.length - 1
       const currentLineTotal = entry.item.quantity * entry.item.unit_price
-      const weight = visibleTotal > 0 ? currentLineTotal / visibleTotal : 1 / visibleEntries.length
+      const weight = useManualWeights
+        ? (distributionWeights.get(distributionKey(entry.sectionTempId, entry.itemTempId)) ?? 0) / 100
+        : visibleTotal > 0 ? currentLineTotal / visibleTotal : 1 / visibleEntries.length
       const allocated = isLast ? remaining : roundCurrency(internalTotal * weight)
       remaining = roundCurrency(remaining - allocated)
       updates.set(`${entry.sectionTempId}_${entry.itemTempId}`, {
@@ -812,6 +867,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     for (const entry of [...visibleEntries, ...internalEntries]) {
       scheduleItemSave(entry.sectionTempId, entry.itemTempId)
     }
+    closeManualDistribution()
   }
 
   function handleMarkInternalSalesAlreadyDistributed() {
@@ -2780,18 +2836,30 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
                     {margePct.toFixed(1)} %
                   </span>
                 </div>
-                {internalSaleToDistributeHt > 0 && (
+                {internalSaleToDistributeHt > 0 && !manualDistributionMode && (
                   <>
-                  <button
-                    type="button"
-                    onClick={handleDistributeInternalCostsIntoVisiblePrices}
-                    disabled={!canDistributeInternalCosts}
-                    title="Ajoute le montant vendu des lignes internes aux prix unitaires des lignes visibles, proportionnellement à leur montant."
-                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-accent/30 bg-accent/8 px-3 py-2 text-xs font-bold text-accent transition-colors hover:bg-accent/12 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    Répartir dans les prix visibles
-                  </button>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleDistributeInternalCostsIntoVisiblePrices}
+                      disabled={!canDistributeInternalCosts}
+                      title="Ajoute le montant vendu des lignes internes aux prix unitaires des lignes visibles, proportionnellement à leur montant."
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-accent/30 bg-accent/8 px-2 py-2 text-xs font-bold text-accent transition-colors hover:bg-accent/12 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      Auto
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openManualDistribution}
+                      disabled={!canDistributeInternalCosts}
+                      title="Choisir vous-même le pourcentage de marge que reçoit chaque ligne visible."
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--elevation-border)] bg-base/50 px-2 py-2 text-xs font-bold text-secondary transition-colors hover:text-primary hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      Manuel
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={handleMarkInternalSalesAlreadyDistributed}
@@ -2802,9 +2870,65 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
                     Marquer comme intégré
                   </button>
                   <p className="text-[11px] leading-snug text-secondary">
-                    Répartition au prorata du montant HT visible actuel. Une fois intégré, le montant interne à vendre est neutralisé pour éviter une double intégration.
+                    Auto : répartition au prorata du montant HT visible actuel. Manuel : vous choisissez le poids de chaque ligne. Une fois intégré, le montant interne à vendre est neutralisé pour éviter une double intégration.
                   </p>
                   </>
+                )}
+                {manualDistributionMode && (
+                  <div className="space-y-2 rounded-xl border border-accent/30 bg-accent/5 p-2.5">
+                    <p className="text-[11px] font-semibold text-primary">
+                      Répartir {fmt(internalSaleToDistributeHt)} HT — poids par ligne (total : {distributionWeightSum.toFixed(1)} %)
+                    </p>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                      {sections.flatMap(section =>
+                        section.items
+                          .filter(item => !item.is_internal && !item.price_pending && item.quantity > 0)
+                          .map(item => {
+                            const key = distributionKey(section._tempId, item._tempId)
+                            return (
+                              <div key={key} className="flex items-center gap-2">
+                                <span className="flex-1 truncate text-[11px] text-secondary" title={item.description}>
+                                  {item.description || 'Ligne sans description'}
+                                </span>
+                                <NumericInput
+                                  value={distributionWeights.get(key) ?? 0}
+                                  onChange={v => setDistributionWeight(section._tempId, item._tempId, v)}
+                                  min={0}
+                                  max={100}
+                                  decimals={1}
+                                  className="input w-16 text-xs text-right py-1 px-1.5"
+                                />
+                                <span className="text-[11px] text-secondary w-3">%</span>
+                              </div>
+                            )
+                          }),
+                      )}
+                    </div>
+                    {!distributionWeightValid && (
+                      <p className="text-[11px] font-semibold text-red-500">
+                        La somme doit faire 100 % (actuellement {distributionWeightSum.toFixed(1)} %).
+                      </p>
+                    )}
+                    <div className="flex gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleDistributeInternalCostsIntoVisiblePrices}
+                        disabled={!distributionWeightValid}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-accent/30 bg-accent/8 px-2 py-2 text-xs font-bold text-accent transition-colors hover:bg-accent/12 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Appliquer
+                      </button>
+                      <button
+                        type="button"
+                        onClick={closeManualDistribution}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--elevation-border)] bg-base/50 px-2 py-2 text-xs font-semibold text-secondary transition-colors hover:text-primary"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Annuler
+                      </button>
+                    </div>
+                  </div>
                 )}
                 <p className="text-xs text-amber-500 flex items-center gap-1.5 pt-1">
                   <EyeOff className="w-3 h-3 shrink-0" />

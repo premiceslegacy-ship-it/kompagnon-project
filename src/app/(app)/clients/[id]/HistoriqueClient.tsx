@@ -217,6 +217,8 @@ export function HistoriqueClient({ initialDocuments }: { initialDocuments: Doc[]
             <button
               onClick={() => setPage(p => Math.max(1, p - 1))}
               disabled={currentPage === 1}
+              title="Page précédente"
+              aria-label="Page précédente"
               className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronLeft className="w-4 h-4 text-secondary" />
@@ -249,6 +251,8 @@ export function HistoriqueClient({ initialDocuments }: { initialDocuments: Doc[]
             <button
               onClick={() => setPage(p => Math.min(totalPages, p + 1))}
               disabled={currentPage === totalPages}
+              title="Page suivante"
+              aria-label="Page suivante"
               className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronRight className="w-4 h-4 text-secondary" />

@@ -836,7 +836,7 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
         equipeId: typeof p.equipeId === 'string' ? p.equipeId : null,
       })
       if (error) throw new Error(error)
-      await saveAIBriefFromSarah(orgId, 'nora', { description: `Créneau créé par Sarah : ${proposal.title}`, original_payload: p })
+      await saveAIBriefFromSarah(orgId, 'nora', { kind: 'info', description: `Créneau créé par Sarah : ${proposal.title}`, original_payload: p })
       return { message: 'Le créneau planning a bien été créé.', deepLink: proposal.deep_link }
     }
 
@@ -849,7 +849,7 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
       }
       const { error } = await updatePlanningSlot(slotId, patch as any)
       if (error) throw new Error(error)
-      await saveAIBriefFromSarah(orgId, 'nora', { description: `Créneau modifié par Sarah : ${proposal.title}`, original_payload: p })
+      await saveAIBriefFromSarah(orgId, 'nora', { kind: 'info', description: `Créneau modifié par Sarah : ${proposal.title}`, original_payload: p })
       return { message: 'Le créneau planning a bien été mis à jour.', deepLink: proposal.deep_link }
     }
 
@@ -858,7 +858,7 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
       if (!slotId) throw new Error('Identifiant de créneau manquant.')
       const { error } = await deletePlanningSlot(slotId)
       if (error) throw new Error(error)
-      await saveAIBriefFromSarah(orgId, 'nora', { description: `Créneau supprimé par Sarah : ${proposal.title}`, original_payload: p })
+      await saveAIBriefFromSarah(orgId, 'nora', { kind: 'info', description: `Créneau supprimé par Sarah : ${proposal.title}`, original_payload: p })
       return { message: 'Le créneau planning a bien été supprimé.', deepLink: proposal.deep_link }
     }
 
@@ -876,9 +876,14 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
       })
       if (result.error) throw new Error(result.error)
 
-      await saveAIBriefFromSarah(orgId, 'nora', { description: `Absence déclarée par Sarah : ${proposal.title}`, original_payload: p })
-
       const conflictCount = result.conflictingSlots?.length ?? 0
+      await saveAIBriefFromSarah(orgId, 'nora', {
+        kind: 'info',
+        description: conflictCount > 0
+          ? `Absence déclarée par Sarah : ${proposal.title}. ${conflictCount} créneau${conflictCount > 1 ? 'x' : ''} déjà planifié${conflictCount > 1 ? 's' : ''} sur cette période reste${conflictCount > 1 ? 'nt' : ''} à réaffecter.`
+          : `Absence déclarée par Sarah : ${proposal.title}.`,
+        original_payload: p,
+      })
       const message = conflictCount > 0
         ? `Absence enregistrée. Attention, ${conflictCount} créneau${conflictCount > 1 ? 'x' : ''} déjà planifié${conflictCount > 1 ? 's' : ''} sur cette période reste${conflictCount > 1 ? 'nt' : ''} à traiter.`
         : 'Absence enregistrée. Aucun créneau existant sur cette période.'
@@ -909,14 +914,14 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
         if (error) throw new Error(error)
       }
 
-      await saveAIBriefFromSarah(orgId, 'nora', { description: `Remplacement mis en place par Sarah : ${proposal.title}`, original_payload: p })
+      await saveAIBriefFromSarah(orgId, 'nora', { kind: 'info', description: `Remplacement mis en place par Sarah : ${proposal.title}`, original_payload: p })
       return { message: 'Le remplacement a bien été mis en place.', deepLink: proposal.deep_link }
     }
 
     case 'pointage_reminder_prepare': {
       const memberId = typeof p.memberId === 'string' ? p.memberId : null
       const memberName = typeof p.memberName === 'string' ? p.memberName : 'ce membre'
-      await saveAIBriefFromSarah(orgId, 'nora', { description: `Rappel de pointage préparé par Sarah pour ${memberName}.`, original_payload: p })
+      await saveAIBriefFromSarah(orgId, 'nora', { kind: 'info', description: `Rappel de pointage préparé par Sarah pour ${memberName}.`, original_payload: p })
       if (memberId) {
         const recipients = await getPlanningRecipientUserIds(orgId, { memberId })
         if (recipients.userIds.length > 0 || recipients.memberIds.length > 0) {

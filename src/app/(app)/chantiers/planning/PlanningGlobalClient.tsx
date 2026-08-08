@@ -229,6 +229,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiStatus, setAiStatus] = useState<'idle' | 'loading' | 'new_member' | 'preview' | 'saving' | 'done' | 'error'>('idle')
   const [noraBriefBanner, setNoraBriefBanner] = useState<string | null>(null)
+  const [sarahInfoBanner, setSarahInfoBanner] = useState<string | null>(null)
   const [aiSlots, setAiSlots] = useState<AIPlanningSlot[]>([])
   const [aiDeletions, setAiDeletions] = useState<AIPlanningDeletion[]>([])
   const [aiTours, setAiTours] = useState<AITour[]>([])
@@ -328,18 +329,26 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
     setPlannings(initialPlannings)
   }, [initialPlannings])
 
-  // Brief Sarah→Nora : si Sarah a préparé un brief planning, ouvrir le modal pré-rempli
+  // Brief Sarah→Nora : deux natures de brief très différentes.
+  // - kind 'info' : Sarah a DÉJÀ agi (absence déclarée, créneau modifié...).
+  //   Simple bandeau d'information sur la page — surtout pas le modal de
+  //   génération, qui laissait croire qu'il restait quelque chose à générer.
+  // - brief de planification réel : ouvrir le modal Nora pré-rempli.
   useEffect(() => {
     if (!planningAiEnabled) return
     fetch('/api/sarah/briefs?target=nora')
       .then(r => r.json())
-      .then(({ brief }: { brief: { id: string; payload: { description?: string; chantier_title?: string } } | null }) => {
+      .then(({ brief }: { brief: { id: string; payload: { kind?: string; description?: string; chantier_title?: string } } | null }) => {
         if (!brief?.payload?.description?.trim()) return
         const desc = brief.payload.description.trim()
-        const chantierHint = brief.payload.chantier_title ? ` pour "${brief.payload.chantier_title}"` : ''
-        setAiPrompt(desc)
-        setNoraBriefBanner(`Brief transmis par Sarah${chantierHint}.`)
-        setAiModalOpen(true)
+        if (brief.payload.kind === 'info') {
+          setSarahInfoBanner(desc)
+        } else {
+          const chantierHint = brief.payload.chantier_title ? ` pour "${brief.payload.chantier_title}"` : ''
+          setAiPrompt(desc)
+          setNoraBriefBanner(`Brief transmis par Sarah${chantierHint}.`)
+          setAiModalOpen(true)
+        }
         fetch('/api/sarah/briefs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -708,6 +717,8 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
       <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={() => router.back()}
+          title="Retour"
+          aria-label="Retour"
           className="p-2 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors border border-[var(--elevation-border)] flex-shrink-0"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -819,6 +830,28 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
           )}
         </div>
       </div>
+
+      {/* ── Bandeau info Sarah : action déjà réalisée, rien à générer ── */}
+      {sarahInfoBanner && (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-[var(--accent-secondary)]/25 bg-[rgb(var(--accent-secondary))]/8 px-4 py-3">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <Check className="w-4 h-4 mt-0.5 flex-shrink-0 text-[rgb(var(--accent-secondary))]" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-primary">{sarahInfoBanner}</p>
+              <p className="text-xs text-secondary mt-0.5">
+                Action déjà effectuée par Sarah — le planning ci-dessous est à jour. Utilisez le menu &quot;⋯&quot; pour déclarer une autre absence si besoin.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setSarahInfoBanner(null)}
+            className="p-1 rounded-lg text-secondary hover:text-primary hover:bg-[var(--elevation-1)] transition-colors flex-shrink-0"
+            aria-label="Fermer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* ── Filtres + toggle de vue ── */}
       <div className="flex flex-wrap items-center gap-3">
@@ -935,6 +968,8 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
       <div className="flex items-center justify-between gap-4">
         <button
           onClick={prevDate}
+          title="Période précédente"
+          aria-label="Période précédente"
           className="p-2 rounded-lg border border-[var(--elevation-border)] hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -954,6 +989,8 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
         </div>
         <button
           onClick={nextDate}
+          title="Période suivante"
+          aria-label="Période suivante"
           className="p-2 rounded-lg border border-[var(--elevation-border)] hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors"
         >
           <ChevronRight className="w-4 h-4" />
@@ -1426,8 +1463,11 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
                     disabled={!aiPrompt.trim()}
                     className="w-full py-3 rounded-xl bg-accent text-black font-bold text-sm hover:scale-[1.02] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                   >
-                    Générer le planning
+                    Proposer les créneaux
                   </button>
+                  <p className="text-[11px] text-secondary text-center">
+                    {PLANNING_ASSISTANT.name} vous montrera d&apos;abord sa proposition : rien n&apos;est enregistré sans votre validation.
+                  </p>
                 </>
               )}
 
@@ -1642,29 +1682,59 @@ function PlanningMoreActionsMenu({
   onDeclareAbsence?: () => void
 }) {
   const [open, setOpen] = useState(false)
+  // Position fixée dans le viewport : la barre d'actions passe en flex-wrap sur
+  // mobile et le bouton peut se retrouver près du bord gauche — un panneau en
+  // absolute right-0 partirait alors hors écran. On borne donc le panneau au
+  // viewport, ce qui le sort aussi de tout conteneur scrollable/overflow.
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+
+  const PANEL_WIDTH = 224 // w-56
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect()
+      const margin = 12
+      const left = Math.min(Math.max(r.right - PANEL_WIDTH, margin), Math.max(margin, window.innerWidth - PANEL_WIDTH - margin))
+      setPos({ top: r.bottom + 6, left })
+    }
+    setOpen(o => !o)
+  }
 
   useEffect(() => {
     if (!open) return
     function onClickOutside(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
+    function onClose() {
+      setOpen(false)
+    }
     document.addEventListener('mousedown', onClickOutside)
-    return () => document.removeEventListener('mousedown', onClickOutside)
+    window.addEventListener('scroll', onClose, true)
+    window.addEventListener('resize', onClose)
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside)
+      window.removeEventListener('scroll', onClose, true)
+      window.removeEventListener('resize', onClose)
+    }
   }, [open])
 
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen(o => !o)}
+        ref={btnRef}
+        onClick={toggle}
         className="flex items-center justify-center w-9 h-9 rounded-xl border border-[var(--elevation-border)] text-secondary hover:text-primary hover:border-accent/40 transition-all"
         title="Autres actions"
         aria-label="Autres actions"
       >
         <span className="text-lg leading-none">⋯</span>
       </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1.5 z-20 w-56 rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)] shadow-lg py-1.5">
+      {open && pos && (
+        <div
+          className="fixed z-[9999] w-56 max-w-[calc(100vw-1.5rem)] menu-panel py-1.5"
+          style={{ top: pos.top, left: pos.left }}
+        >
           <button
             onClick={() => { setOpen(false); onDuplicateWeek() }}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-primary hover:bg-[var(--elevation-2)] transition-colors"
@@ -1783,11 +1853,11 @@ function MiniCalendar({ selectedDate, onSelectDate, plannings }: MiniCalendarPro
     <div className="card p-3 select-none">
       {/* Entête mois */}
       <div className="flex items-center justify-between mb-2">
-        <button onClick={prevMonth} className="p-1.5 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors">
+        <button onClick={prevMonth} title="Mois précédent" aria-label="Mois précédent" className="p-1.5 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors">
           <ChevronLeft className="w-4 h-4" />
         </button>
         <span className="text-sm font-bold text-primary capitalize">{monthLabel}</span>
-        <button onClick={nextMonth} className="p-1.5 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors">
+        <button onClick={nextMonth} title="Mois suivant" aria-label="Mois suivant" className="p-1.5 rounded-lg hover:bg-[var(--elevation-1)] text-secondary hover:text-primary transition-colors">
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>

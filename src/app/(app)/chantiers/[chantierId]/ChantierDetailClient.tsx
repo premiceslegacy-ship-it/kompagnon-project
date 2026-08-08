@@ -338,7 +338,7 @@ function SortableTache({
       <div className="p-3 md:p-4 flex items-center gap-3">
         {/* Drag handle */}
         {canEdit && (
-          <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing text-secondary opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+          <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing text-secondary opacity-40 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-shrink-0">
             <GripVertical className="w-4 h-4" />
           </div>
         )}
@@ -400,7 +400,7 @@ function SortableTache({
         {canEdit && tache.status === 'en_cours' && (
           <button
             onClick={() => { setNoteOpen(v => !v); setNoteVal(tache.progress_note ?? '') }}
-            className={`opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-xs px-2 py-1 rounded-lg border ${noteOpen ? 'bg-accent/10 border-accent/40 text-accent' : 'border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
+            className={`opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-shrink-0 text-xs px-2 py-1 rounded-lg border ${noteOpen ? 'bg-accent/10 border-accent/40 text-accent' : 'border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
             title="Note d'avancement"
           >
             <FileText className="w-3.5 h-3.5" />
@@ -410,7 +410,7 @@ function SortableTache({
         {canEdit && (
           <button
             onClick={() => setAssignOpen(v => !v)}
-            className={`opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-xs px-2 py-1 rounded-lg border ${assignOpen ? 'bg-accent/10 border-accent/40 text-accent' : 'border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
+            className={`opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-shrink-0 text-xs px-2 py-1 rounded-lg border ${assignOpen ? 'bg-accent/10 border-accent/40 text-accent' : 'border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
             title="Assigner"
           >
             <Users className="w-3.5 h-3.5" />
@@ -421,7 +421,7 @@ function SortableTache({
         {canEdit && !editingTitle && (
           <button
             onClick={handleStartEditTitle}
-            className="opacity-0 group-hover:opacity-100 transition-opacity text-secondary hover:text-primary flex-shrink-0"
+            className="opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity text-secondary hover:text-primary flex-shrink-0"
             title="Renommer"
           >
             <Pencil className="w-3.5 h-3.5" />
@@ -432,7 +432,9 @@ function SortableTache({
         {canEdit && (
           <button
             onClick={() => onDelete(tache)}
-            className="opacity-0 group-hover:opacity-100 transition-opacity text-secondary hover:text-red-500 flex-shrink-0"
+            title="Supprimer la tâche"
+            aria-label="Supprimer la tâche"
+            className="opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity text-secondary hover:text-red-500 flex-shrink-0"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>

@@ -22,10 +22,13 @@ export function absoluteAppIconUrl(size: number, origin?: string): string {
 
 export async function getPwaBrand(): Promise<PwaBrand> {
   try {
+    // Hypothèse single-tenant : une seule organisation par instance déployée.
+    // À résoudre par domaine/instance lors du passage à un déploiement mutualisé.
     const supabase = createAdminClient()
     const { data } = await supabase
       .from('organizations')
       .select('name, logo_url')
+      .order('created_at', { ascending: true })
       .limit(1)
       .single()
 

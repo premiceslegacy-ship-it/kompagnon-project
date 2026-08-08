@@ -6,6 +6,27 @@ const nullableUuidSchema = z.preprocess(
   z.string().uuid().nullable().optional(),
 )
 
+const measurementMetadataSchema = z.object({
+  measurementId: z.string().uuid().nullable(),
+  measurementLineId: z.string().min(1).max(200),
+  tradeId: z.enum(['placo_isolation', 'peinture', 'sols', 'carrelage', 'menuiseries']),
+  sourceKind: z.enum(['measured', 'derived', 'allowance']),
+  validationStatus: z.enum(['pending', 'validated', 'excluded']),
+  formula: z.string().min(1).max(300),
+  formulaVariables: z.record(z.string().max(30), z.number().finite()),
+  evidence: z.array(z.object({
+    label: z.string().max(300),
+    source: z.enum(['printed_dimension', 'printed_area', 'scale', 'plan_label', 'visible_symbol', 'user_input', 'assumption']),
+    value: z.string().max(200).nullable().optional(),
+  })).max(20),
+  confidence: z.number().min(0).max(1).nullable(),
+  rulesVersion: z.string().max(80),
+  settings: z.object({
+    defaultHeightM: z.number().positive(), wastePct: z.number().min(0).max(50), studSpacingM: z.number().positive(),
+    paintCoats: z.number().int().min(1).max(5), wallTileHeightM: z.number().positive(),
+  }),
+})
+
 export const CreateQuoteSchema = z.object({
   clientId: nullableUuidSchema,
   title: z.string().max(255).optional(),
@@ -53,6 +74,7 @@ export const UpsertQuoteItemSchema = z.object({
   ai_confidence: z.number().min(0).max(1).nullable().optional(),
   ai_source: z.enum(['catalog', 'recent_quote', 'memory', 'client_input', 'ai_estimate', 'document']).nullable().optional(),
   ai_warnings: z.array(z.string().max(300)).optional(),
+  measurement_metadata: measurementMetadataSchema.nullable().optional(),
   vat_rate: z.number().min(0).max(100).optional(),
   position: z.number().int().min(0),
   length_m: z.number().nullable().optional(),

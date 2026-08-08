@@ -60,6 +60,7 @@ type AIQuoteDraftInput = {
       ai_confidence?: number | null
       ai_source?: 'catalog' | 'recent_quote' | 'memory' | 'client_input' | 'ai_estimate' | 'document' | null
       ai_warnings?: string[]
+      measurement_metadata?: Record<string, unknown> | null
     }>
   }>
 }
@@ -403,6 +404,7 @@ export async function createQuoteFromAIResult(aiQuote: AIQuoteDraftInput): Promi
         ai_confidence: item.ai_confidence ?? null,
         ai_source: item.ai_source ?? (item.is_estimated ? 'ai_estimate' : null),
         ai_warnings: item.ai_warnings ?? [],
+        measurement_metadata: item.measurement_metadata ?? null,
         dim_quantity: item.dim_quantity ?? 1,
         length_m: item.length_m ?? null,
         width_m: item.width_m ?? null,
@@ -536,6 +538,7 @@ export async function upsertQuoteItem(item: {
   ai_confidence?: number | null
   ai_source?: 'catalog' | 'recent_quote' | 'memory' | 'client_input' | 'ai_estimate' | 'document' | null
   ai_warnings?: string[]
+  measurement_metadata?: Record<string, unknown> | null
   vat_rate?: number
   position: number
   length_m?: number | null

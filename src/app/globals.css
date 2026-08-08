@@ -33,6 +33,13 @@
     --icon-on-danger-filter: drop-shadow(0px 1px 0px rgba(127, 29, 29, 0.55)) drop-shadow(0px 2px 4px rgba(127, 29, 29, 0.24));
     --elevation-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px var(--shadow-drop);
     --elevation-border: rgba(0, 0, 0, 0.08);
+    /* Teintes d'élévation pour hovers, chips et fonds de lignes.
+       Translucides : réservées aux surfaces posées sur un fond existant.
+       Pour un panneau flottant (dropdown, popover), utiliser .menu-panel qui
+       garantit un fond opaque dans les deux thèmes. */
+    --elevation-1: rgba(0, 0, 0, 0.04);
+    --elevation-2: rgba(0, 0, 0, 0.07);
+    --elevation-3: rgba(0, 0, 0, 0.10);
     --glass-blur: 0px;
     --accent-glow: none;
 
@@ -85,6 +92,9 @@
     --icon-on-danger-filter: drop-shadow(0px 1px 0px rgba(127, 29, 29, 0.75)) drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.28));
     --elevation-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px var(--shadow-drop);
     --elevation-border: rgba(255, 255, 255, 0.08);
+    --elevation-1: rgba(255, 255, 255, 0.05);
+    --elevation-2: rgba(255, 255, 255, 0.09);
+    --elevation-3: rgba(255, 255, 255, 0.13);
     --glass-blur: 40px;
     --accent-glow: 0 0 30px rgba(255, 159, 28, 0.15);
 

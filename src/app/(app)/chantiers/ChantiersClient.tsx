@@ -105,6 +105,8 @@ function ActionMenu({ status, onReprendre, onTerminer, onSuspendre, onAnnuler, o
     <div className="relative">
       <button
         onClick={e => { e.stopPropagation(); setOpen(v => !v) }}
+        title="Actions"
+        aria-label="Actions"
         className="p-1.5 rounded hover:bg-base transition-colors text-secondary hover:text-primary"
       >
         <MoreVertical className="w-4 h-4" />

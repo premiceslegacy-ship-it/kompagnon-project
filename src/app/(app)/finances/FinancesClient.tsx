@@ -754,6 +754,8 @@ export default function FinancesClient({
               <span className="text-xs font-semibold text-secondary uppercase tracking-wider">Période :</span>
               <button
                 onClick={() => activeTab === 'quotes' ? setQuoteStatsMonth(m => offsetYM(m, -1)) : setStatsMonth(m => offsetYM(m, -1))}
+                title="Mois précédent"
+                aria-label="Mois précédent"
                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-base transition-colors text-secondary hover:text-primary"
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -764,6 +766,8 @@ export default function FinancesClient({
               <button
                 onClick={() => activeTab === 'quotes' ? setQuoteStatsMonth(m => offsetYM(m, 1)) : setStatsMonth(m => offsetYM(m, 1))}
                 disabled={activeTab === 'quotes' ? isCurrentQuoteMonth : isCurrentMonth}
+                title="Mois suivant"
+                aria-label="Mois suivant"
                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-base transition-colors text-secondary hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 <ChevronRight className="w-4 h-4" />
