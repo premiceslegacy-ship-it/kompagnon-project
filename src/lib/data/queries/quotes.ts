@@ -45,6 +45,7 @@ export type QuoteItem = {
   ai_confidence: number | null
   ai_source: 'catalog' | 'recent_quote' | 'memory' | 'client_input' | 'ai_estimate' | 'document' | null
   ai_warnings: string[] | null
+  measurement_metadata?: Record<string, unknown> | null
   vat_rate: number
   total_ht: number | null
   position: number
@@ -374,7 +375,7 @@ export async function getAcceptedQuotesWithItems(): Promise<QuoteWithItems[]> {
       .order('position'),
     supabase
       .from('quote_items')
-      .select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal, metal_grid_id, price_pending, labor_category')
+      .select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, measurement_metadata, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal, metal_grid_id, price_pending, labor_category')
       .in('quote_id', quoteIds)
       .order('position'),
   ])
@@ -440,7 +441,7 @@ export async function getQuoteById(id: string): Promise<QuoteWithItems | null> {
 
   const { data: items } = await supabase
     .from('quote_items')
-    .select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal, metal_grid_id, price_pending, labor_category')
+    .select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, measurement_metadata, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal, metal_grid_id, price_pending, labor_category')
     .eq('quote_id', id)
     .order('position')
 

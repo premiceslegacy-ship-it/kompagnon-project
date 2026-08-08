@@ -55,7 +55,9 @@ const nextConfig = {
                         // *.posthog.com / *.i.posthog.com : analytics produit (PostHog).
                         value: [
                             "default-src 'self'",
-                            "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data:",
+                            // *.i.posthog.com : PostHog charge ses modules complémentaires
+                            // (web-vitals, surveys, dead-clicks) depuis eu-assets.i.posthog.com.
+                            "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https://*.i.posthog.com",
                             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
                             "font-src 'self' https://fonts.gstatic.com",
                             "img-src 'self' data: blob: https:",

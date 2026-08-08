@@ -1,6 +1,17 @@
 import 'server-only'
 import { cookies } from 'next/headers'
-import { createHmac, randomBytes, createHash, timingSafeEqual } from 'crypto'
+import { createHmac, randomBytes, createHash } from 'crypto'
+
+// Comparaison constant-time sans `Buffer`/`crypto.timingSafeEqual` (Node) :
+// ces primitives ne sont pas fiables sur le runtime Cloudflare Workers.
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  }
+  return diff === 0
+}
 
 const COOKIE_NAME = 'member_session'
 const COOKIE_MAX_AGE_S = 8 * 60 * 60 // 8h
@@ -59,13 +70,7 @@ export async function getMemberSession(): Promise<{ memberId: string; organizati
   const [memberId, organizationId, issuedAtStr, sig] = parts
 
   const expected = sign(`${memberId}.${organizationId}.${issuedAtStr}`)
-  try {
-    const a = Buffer.from(sig, 'hex')
-    const b = Buffer.from(expected, 'hex')
-    if (a.length !== b.length || !timingSafeEqual(a, b)) return null
-  } catch {
-    return null
-  }
+  if (!timingSafeEqualHex(sig, expected)) return null
 
   const issuedAt = parseInt(issuedAtStr, 10)
   if (!Number.isFinite(issuedAt)) return null

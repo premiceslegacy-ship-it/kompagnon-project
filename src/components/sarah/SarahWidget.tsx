@@ -1432,7 +1432,7 @@ export function SarahWidget({ userName, alertCount = 0, alerts = null }: {
       <SarahCtx.Provider value={ctxValue}>
         <button
           onClick={() => { setIsHidden(false); localStorage.setItem(HIDDEN_KEY, 'false') }}
-          className="fixed bottom-4 right-4 z-[9997] flex items-center gap-1.5 px-3 py-1.5 rounded-pill text-xs transition-all opacity-30 hover:opacity-80"
+          className="fixed bottom-4 right-4 z-[9970] flex items-center gap-1.5 px-3 py-1.5 rounded-pill text-xs transition-all opacity-30 hover:opacity-80"
           style={{ background: 'var(--sarah-panel-bg)', border: '1px solid var(--sarah-panel-border)' }}>
           <Eye size={11} /> Sarah
         </button>
@@ -1441,11 +1441,13 @@ export function SarahWidget({ userName, alertCount = 0, alerts = null }: {
   }
 
   const btnOffset = peekOut ? 0 : -(BTN - PEEK)
+  // z-index sous les modals de l'app (.modal-overlay = 9980) : la bulle fermée
+  // ne doit jamais recouvrir les boutons d'action d'un modal, surtout sur mobile.
   const btnStyle: React.CSSProperties = isMobile ? {
-    position: 'fixed', bottom: 20, right: 16, zIndex: 9998, width: BTN, height: BTN,
+    position: 'fixed', bottom: 20, right: 16, zIndex: 9970, width: BTN, height: BTN,
   } : {
     position: 'fixed',
-    zIndex: 9998,
+    zIndex: 9970,
     width: BTN,
     height: BTN,
     transition: isDragging

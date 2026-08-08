@@ -1586,12 +1586,16 @@ function ContractCard({
         <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
           <button
             onClick={onEdit}
+            title="Modifier"
+            aria-label="Modifier"
             className="p-1.5 rounded-lg hover:bg-base text-secondary hover:text-primary"
           >
             <Pencil size={13} />
           </button>
           <button
             onClick={onDelete}
+            title="Supprimer"
+            aria-label="Supprimer"
             className="p-1.5 rounded-lg hover:bg-red-500/10 text-secondary hover:text-red-500"
           >
             <Trash2 size={13} />
@@ -1985,10 +1989,10 @@ function ContractDetail({
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button onClick={onEdit} className="p-2 rounded-xl hover:bg-base text-secondary hover:text-primary">
+            <button onClick={onEdit} title="Modifier" aria-label="Modifier" className="p-2 rounded-xl hover:bg-base text-secondary hover:text-primary">
               <Pencil size={15} />
             </button>
-            <button onClick={onDelete} className="p-2 rounded-xl hover:bg-red-500/10 text-secondary hover:text-red-500">
+            <button onClick={onDelete} title="Supprimer" aria-label="Supprimer" className="p-2 rounded-xl hover:bg-red-500/10 text-secondary hover:text-red-500">
               <Trash2 size={15} />
             </button>
           </div>
@@ -2692,10 +2696,10 @@ function InterventionRow({
           >
             {sendingReport ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
           </button>
-          <button onClick={onEdit} className="p-1.5 rounded-lg hover:bg-base text-secondary hover:text-primary">
+          <button onClick={onEdit} title="Modifier" aria-label="Modifier" className="p-1.5 rounded-lg hover:bg-base text-secondary hover:text-primary">
             <Pencil size={12} />
           </button>
-          <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-red-500/10 text-secondary hover:text-red-500">
+          <button onClick={onDelete} title="Supprimer" aria-label="Supprimer" className="p-1.5 rounded-lg hover:bg-red-500/10 text-secondary hover:text-red-500">
             <Trash2 size={12} />
           </button>
           {hasContent && (

@@ -61,6 +61,8 @@ export const ActionMenu = ({
             <button
                 ref={buttonRef}
                 onClick={toggleMenu}
+                title="Actions"
+                aria-label="Actions"
                 className="btn-icon"
             >
                 <MoreVertical className="w-5 h-5 text-secondary" />

@@ -24,6 +24,23 @@ Client BTP
 
 ---
 
+## Cockpit : modèle à deux modes (per-client aujourd'hui, mutualisé possible demain)
+
+Le modèle de déploiement actuel est **single-tenant par instance** (1 org réelle par instance Supabase), mais le cockpit modélise déjà le tenant logique comme la paire `(source_instance, organization_id)` — pas `source_instance` seul :
+
+- `operator_clients` : upsert `onConflict: 'source_instance,organization_id'`
+- `operator_usage_events` : idempotence `onConflict: 'source_instance,local_usage_log_id'`
+- config-sync et quotas sont scopés par `organization_id`, pas par instance
+
+Conséquence : un client **setup 3k sur mesure** (son propre Supabase, ses clés OpenRouter) et un futur **SaaS mutualisé** (plusieurs organisations dans une même instance) apparaissent dans le même cockpit sans changement de schéma — per-client = 1 `source_instance` × 1 org, mutualisé = 1 `source_instance` × N orgs.
+
+Deux points à trancher explicitement avant d'ouvrir une instance à plusieurs organisations (pas avant, cela reste théorique en single-tenant) :
+
+1. `syncClientQuotaConfig` pousse une config vers une `app_url` par client — en mutualisé, N organisations partageraient la même URL. Le payload porte déjà `organization_id`, mais le routage réception côté instance (`config-sync`) est à valider explicitement pour ce cas.
+2. Le cron `quota-alerts` et l'expiration d'essai itèrent `operator_client_subscriptions` sans pagination — cadence et volumétrie à revoir dès qu'une instance porte plusieurs organisations (voir le sous-skill `cron-webhooks-integrations` du dossier backend-orsayn, pattern fan-out cron).
+
+---
+
 ## ─── 1 REPO GITHUB → N CLIENTS ────────────────────────────────────────────────
 
 **Principe fondamental : le code ne change jamais selon le client. Seules les variables d'environnement changent.**
@@ -431,6 +448,7 @@ Le cockpit Orsayn reste la source de vérité pour modifier tier, modules, quota
 166_quote_attachments_bucket.sql                ← Crée le bucket Storage quote-attachments manquant (la migration 054 posait les policies mais pas le bucket lui-même)
 167_nickel_lme_pricing.sql                      ← Ajoute NI (nickel, proxy de cours pour l'inox) comme 5ème métal LME dans le module prix matières
 168_metal_price_history.sql                     ← Historique quotidien des cours (metal_price_history) — alimente le calcul de tendance/variation affiché dans la bannière prix matières
+169_plan_measurements.sql                       ← Brouillons de pré-métré RLS + métadonnées de traçabilité sur les lignes de devis
 ```
 
 Note historique :
@@ -567,6 +585,7 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `166_quote_attachments_bucket.sql`
 - `167_nickel_lme_pricing.sql` — universelle (étend une contrainte CHECK), mais n'a d'effet que pour les clients avec `has_metal_pricing = true`
 - `168_metal_price_history.sql` — idem, universelle mais utile seulement si `has_metal_pricing = true`
+- `169_plan_measurements.sql` — universelle pour les instances utilisant le pré-métré IA
 
 **Correctifs sécurité — audit backend juillet 2026 (voir `docs/backend-audit-2026-07.md`) :**
 - `156_harden_identity_rls.sql` — bloque l'élévation de privilège via `memberships` (un membre ne peut plus se promouvoir owner/admin via le client anon). **À pousser sur chaque client.**
@@ -589,6 +608,7 @@ Effets des migrations 152–166 :
 - `166` : crée le bucket Storage `quote-attachments` (les policies RLS existaient depuis la migration `054` mais le bucket lui-même n'avait jamais été créé — tout upload depuis `/demande/[orgSlug]` échouait en 404)
 - `167` : étend les contraintes CHECK `metal_code` (`cached_metal_prices`, `metal_price_grids`, `metal_price_snapshots`) pour accepter `NI` — nickel utilisé comme proxy de cours pour l'inox (MetalPriceAPI n'a pas de code "stainless steel" dédié). Le calcul par poids réel (longueur × largeur × épaisseur de la grille × densité du métal) est aussi disponible depuis cette version pour tous les métaux, y compris l'acier en saisie manuelle — voir `src/lib/metal-prices.ts` (`computeMetalWeightKg`, `METAL_DENSITY_KG_M3`)
 - `168` : nouvelle table `metal_price_history` (une ligne par métal et par jour) — alimente `getMetalPriceTrends()`, affiché comme variation % avec alerte visuelle dans la bannière prix matières (seuil ±2%). Nécessite au moins 2 jours d'historique pour afficher une tendance ; vide à l'activation d'un nouveau client
+- `169` : nouvelle table RLS `plan_measurements` pour reprendre les brouillons sans conserver le plan source, et colonne `quote_items.measurement_metadata` pour garder formules, variables, preuves et version des règles après conversion en devis
 
 Effets de ces migrations :
 - `048` : modes dimensionnels `linear`, `area`, `volume` et ajout de `height_m`

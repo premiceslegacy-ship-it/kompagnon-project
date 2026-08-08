@@ -70,12 +70,13 @@ export async function POST(req: NextRequest) {
   const overflowMode = isOverflowMode(payload.overflow_mode) ? payload.overflow_mode : 'block'
   const aiBillingMode = payload.ai_billing_mode === 'client_owned' ? 'client_owned' : 'orsayn_shared'
   const einvoicingConfig = normalizeEinvoicingConfig(payload.einvoicing_config)
+  const normalizedModules = normalizeOrganizationModules(payload.modules)
   const admin = createAdminClient()
   const { error: modulesError } = await admin
     .from('organization_modules')
     .upsert({
       organization_id: payload.organization_id,
-      modules: normalizeOrganizationModules(payload.modules),
+      modules: normalizedModules,
       quota_config: normalizeQuotaConfig(payload.quota_config),
       overflow_mode: overflowMode,
       ai_billing_mode: aiBillingMode,

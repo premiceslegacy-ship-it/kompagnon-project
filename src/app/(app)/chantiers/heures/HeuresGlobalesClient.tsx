@@ -416,7 +416,8 @@ function MemberReportsPanel({
             <div className="w-8 h-8 rounded-full bg-accent/15 text-accent flex items-center justify-center font-bold text-sm flex-shrink-0">
               {(m.fullName?.[0] ?? '?').toUpperCase()}
             </div>
-            <div className="flex-1 min-w-0">
+            {/* min-w-[8rem] : garantit un nom lisible ; sinon les contrôles passent à la ligne (flex-wrap) sur mobile */}
+            <div className="flex-1 min-w-[8rem]">
               <p className="font-semibold text-sm text-primary truncate">{m.fullName}</p>
               {m.roleLabel && <p className="text-xs text-secondary">{m.roleLabel}</p>}
             </div>
@@ -424,6 +425,8 @@ function MemberReportsPanel({
               <button
                 onClick={() => stepMonth(m.id, -1)}
                 disabled={getSelection(m.id).length === 4}
+                title="Mois précédent"
+                aria-label="Mois précédent"
                 className="btn-secondary text-xs py-1 px-2 h-7 disabled:opacity-30"
               >
                 &lsaquo;
@@ -441,6 +444,8 @@ function MemberReportsPanel({
               <button
                 onClick={() => stepMonth(m.id, 1)}
                 disabled={getSelection(m.id).length === 4}
+                title="Mois suivant"
+                aria-label="Mois suivant"
                 className="btn-secondary text-xs py-1 px-2 h-7 disabled:opacity-30"
               >
                 &rsaquo;

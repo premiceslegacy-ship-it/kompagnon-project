@@ -98,6 +98,8 @@ const ThemeToggle = () => {
     return (
         <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            title={theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre'}
+            aria-label={theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre'}
             className="btn-icon"
         >
             {theme === 'dark' ? <Moon className="w-5 h-5 text-accent" /> : <Sun className="w-5 h-5 text-accent" />}
@@ -810,6 +812,8 @@ const MobileDrawer = ({
                     </div>
                     <button
                         onClick={onClose}
+                        title="Fermer"
+                        aria-label="Fermer"
                         className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-base transition-colors flex-shrink-0"
                     >
                         <X className="w-5 h-5 text-secondary" />

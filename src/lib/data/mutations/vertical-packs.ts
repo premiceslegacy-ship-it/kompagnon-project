@@ -1,7 +1,7 @@
 'use server'
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getVerticalPackDefinition, type VerticalPackId } from '@/lib/vertical-packs'
+import { getVerticalPackDefinition, getEligibleVerticalPack, type VerticalPackId } from '@/lib/vertical-packs'
 import { seedStarterPresetsIfNeeded, seedStarterClausesIfNeeded } from '@/lib/data/mutations/catalog-seed'
 
 type Result = { error: string | null }
@@ -93,3 +93,4 @@ export async function deactivateVerticalPackForOrganization(params: {
 
   return { error: error?.message ?? null }
 }
+

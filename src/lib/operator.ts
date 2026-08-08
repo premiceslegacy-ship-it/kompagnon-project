@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'crypto'
+import { createHmac } from 'crypto'
 
 export type OperatorUsageEventPayload = {
   source_instance: string
@@ -69,10 +69,15 @@ export function verifyOperatorSignature(payload: string, secret: string, provide
   if (!provided) return false
 
   const expected = signOperatorPayload(payload, secret)
-  const expectedBuffer = Buffer.from(expected)
-  const providedBuffer = Buffer.from(provided)
 
-  if (expectedBuffer.length !== providedBuffer.length) return false
+  // Comparaison constant-time sans `Buffer`/`crypto.timingSafeEqual` (Node) :
+  // ces primitives ne sont pas fiables sur le runtime Cloudflare Workers.
+  if (expected.length !== provided.length) return false
 
-  return timingSafeEqual(expectedBuffer, providedBuffer)
+  let diff = 0
+  for (let i = 0; i < expected.length; i++) {
+    diff |= expected.charCodeAt(i) ^ provided.charCodeAt(i)
+  }
+
+  return diff === 0
 }

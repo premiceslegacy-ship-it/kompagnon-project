@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useTransition } from 'react'
-import { AlertTriangle, Clock, CheckCircle2, Mail, Check, Loader2, Repeat, Landmark, Send, CalendarClock, HardHat, ClipboardCheck } from 'lucide-react'
+import { AlertTriangle, Clock, CheckCircle2, Mail, Check, Loader2, Repeat, Landmark, Send, CalendarClock, HardHat, ClipboardCheck, Inbox } from 'lucide-react'
 import Link from 'next/link'
 import type { UrgentItem } from '@/lib/data/queries/dashboard'
 import { markQuoteAccepted } from '@/lib/data/mutations/reminders'
@@ -59,6 +59,7 @@ function getItemTone(item: UrgentItem): StateTone {
   if (item.type === 'task_due' || item.type === 'planning_slot') return 'info'
   if (item.type === 'missing_pointage' || item.type === 'chantier_profitability') return 'danger'
   if (item.type === 'recently_sent' || item.type === 'task_completed') return 'success'
+  if (item.type === 'new_request') return 'violet'
   return 'amber'
 }
 
@@ -123,6 +124,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
   const installmentCount = items.filter(i => i.type === 'installment_due').length
   const chantierAlertCount = items.filter(i => i.type === 'task_due' || i.type === 'planning_slot' || i.type === 'missing_pointage' || i.type === 'chantier_profitability').length
   const recentlySentCount = items.filter(i => i.type === 'recently_sent' || i.type === 'task_completed').length
+  const newRequestCount = items.filter(i => i.type === 'new_request').length
 
   const actionItems = items.filter(i => i.type !== 'recently_sent' && i.type !== 'task_completed')
   const sentItems = items.filter(i => i.type === 'recently_sent' || i.type === 'task_completed')
@@ -161,6 +163,11 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
           {chantierAlertCount > 0 && (
             <span className="status-pill status-pill-info px-3 py-1 text-xs font-bold">
               {chantierAlertCount} chantier{chantierAlertCount > 1 ? 's' : ''}
+            </span>
+          )}
+          {newRequestCount > 0 && (
+            <span className="status-pill status-pill-violet px-3 py-1 text-xs font-bold">
+              {newRequestCount} demande{newRequestCount > 1 ? 's' : ''}
             </span>
           )}
         </div>
@@ -205,6 +212,8 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                     ? <CalendarClock className="w-4 h-4 text-blue-500 flex-shrink-0" />
                     : item.type === 'missing_pointage' || item.type === 'chantier_profitability'
                     ? <HardHat className="w-4 h-4 text-red-500 flex-shrink-0" />
+                    : item.type === 'new_request'
+                    ? <Inbox className="w-4 h-4 text-violet-500 flex-shrink-0" />
                     : <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
                   }
                   <div className="min-w-0">
@@ -216,6 +225,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                       : item.type === 'installment_due' ? 'text-blue-700 dark:text-blue-400'
                       : item.type === 'task_due' || item.type === 'planning_slot' ? 'text-blue-700 dark:text-blue-400'
                       : item.type === 'missing_pointage' || item.type === 'chantier_profitability' ? 'text-red-700 dark:text-red-400'
+                      : item.type === 'new_request' ? 'text-violet-700 dark:text-violet-400'
                       : 'text-amber-700 dark:text-amber-400'
                     }`}>
                       {item.label}
@@ -230,6 +240,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                           : item.type === 'task_due' ? 'À faire pour le : '
                           : item.type === 'planning_slot' ? 'Créneau : '
                           : item.type === 'missing_pointage' ? 'Créneau passé le : '
+                          : item.type === 'new_request' ? 'Reçue le : '
                           : 'Envoyé le : '}
                         {new Date(item.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </p>
@@ -271,6 +282,18 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                       title="Ouvrir le chantier"
                       className="state-action px-3 py-1.5 text-xs font-bold text-blue-700 dark:text-blue-300"
                       actionKey={`${item.id}:open-chantier`}
+                      pendingKey={navigatingAction}
+                      onNavigate={setNavigatingAction}
+                    >
+                      Ouvrir
+                    </PendingActionLink>
+                  )}
+                  {item.type === 'new_request' && (
+                    <PendingActionLink
+                      href="/requests"
+                      title="Voir la demande"
+                      className="state-action px-3 py-1.5 text-xs font-bold text-violet-700 dark:text-violet-300"
+                      actionKey={`${item.id}:open-request`}
                       pendingKey={navigatingAction}
                       onNavigate={setNavigatingAction}
                     >
@@ -325,7 +348,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
                         : <Check className="w-4 h-4" />}
                     </button>
                   )}
-                  {quoteAiEnabled && item.type !== 'pending_recurring' && item.type !== 'task_due' && item.type !== 'planning_slot' && item.type !== 'missing_pointage' && item.type !== 'chantier_profitability' && (
+                  {quoteAiEnabled && item.type !== 'pending_recurring' && item.type !== 'task_due' && item.type !== 'planning_slot' && item.type !== 'missing_pointage' && item.type !== 'chantier_profitability' && item.type !== 'new_request' && (
                     <button
                       onClick={() => handleRemind(item)}
                       disabled={!!loadingId}

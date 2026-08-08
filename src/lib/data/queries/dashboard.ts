@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { todayParis, dateParis } from '@/lib/utils'
+import { MISSING_POINTAGE_WINDOW_DAYS } from '@/lib/data/queries/notifications'
 import type { BusinessActivityId } from '@/lib/catalog-context'
 
 const FOLLOW_UP_DELAY_DAYS = 2
@@ -21,6 +22,7 @@ export type UrgentItem = {
     | 'missing_pointage'
     | 'chantier_profitability'
     | 'task_completed'
+    | 'new_request'
   label: string
   subtype?: 'recurring_invoice' | 'auto_reminder_invoice' | 'auto_reminder_quote'
   title?: string | null
@@ -31,6 +33,7 @@ export type UrgentItem = {
   invoiceId?: string | null
   recurringId?: string | null
   chantierId?: string | null
+  requestId?: string | null
   rank?: number | null
 }
 
@@ -111,11 +114,12 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
     { data: dueTasks },
     { data: todayPlanningSlots },
     { data: todayPointages },
-    { data: yesterdayPlanningSlots },
-    { data: yesterdayPointages },
+    { data: pastPlanningSlots },
+    { data: pastPointages },
     { data: orgLabor },
     { data: activeChantiersForRisk },
     { data: recentCompletedTasks },
+    { data: pendingRequests },
   ] = await Promise.all([
     // Factures du mois - filtre sur issue_date (date d'émission réelle, pas de création du brouillon)
     supabase
@@ -262,7 +266,9 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       .select('id, chantier_planning_id, chantier_id, date, member_id, user_id')
       .eq('date', today),
 
-    // Créneaux d'hier sans pointage associé
+    // Créneaux passés sans pointage associé — même fenêtre de 7 jours que les
+    // notifications (cloche), sinon le dashboard et la cloche racontent deux
+    // histoires différentes sur les mêmes pointages manquants.
     supabase
       .from('chantier_plannings')
       .select(`
@@ -272,13 +278,16 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       .eq('chantier.organization_id', orgId)
       .eq('chantier.is_archived', false)
       .not('chantier.status', 'in', '("termine","annule")')
-      .eq('planned_date', dateParis(now.getTime() - 24 * 60 * 60 * 1000))
-      .limit(5),
+      .gte('planned_date', dateParis(now.getTime() - MISSING_POINTAGE_WINDOW_DAYS * 24 * 60 * 60 * 1000))
+      .lt('planned_date', today)
+      .order('planned_date', { ascending: false })
+      .limit(10),
 
     supabase
       .from('chantier_pointages')
       .select('id, chantier_id, date, member_id')
-      .eq('date', dateParis(now.getTime() - 24 * 60 * 60 * 1000)),
+      .gte('date', dateParis(now.getTime() - MISSING_POINTAGE_WINDOW_DAYS * 24 * 60 * 60 * 1000))
+      .lt('date', today),
 
     supabase
       .from('organizations')
@@ -303,7 +312,28 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       .gte('created_at', recentActivityCutoff)
       .order('created_at', { ascending: false })
       .limit(5),
+
+    // Demandes de devis reçues via le formulaire public, pas encore traitées.
+    // Une demande simplement lue reste affichée tant qu'elle n'est ni
+    // convertie ni archivée (même règle que la cloche de notifications).
+    supabase
+      .from('quote_requests')
+      .select('id, name, company_name, subject, created_at')
+      .eq('organization_id', orgId)
+      .in('status', ['new', 'read'])
+      .order('created_at', { ascending: false })
+      .limit(5),
   ])
+
+  // Une absence déclarée couvre le créneau : rien à signaler pour ce membre
+  // (même règle que la cloche de notifications).
+  const { data: absenceRows } = await supabase
+    .from('member_absences')
+    .select('member_id, start_date, end_date')
+    .eq('organization_id', orgId)
+    .gte('end_date', dateParis(now.getTime() - MISSING_POINTAGE_WINDOW_DAYS * 24 * 60 * 60 * 1000))
+  const isAbsentOn = (memberId: string | null, date: string) =>
+    memberId != null && (absenceRows ?? []).some(a => a.member_id === memberId && a.start_date <= date && a.end_date >= date)
 
   // IDs des factures/devis déjà relancés dans les 48h — on les exclut des urgences
   const recentlyRemindedInvoiceIds = new Set(
@@ -548,12 +578,13 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       clientName: slot.chantier?.title ?? null,
       chantierId: slot.chantier?.id ?? null,
     })),
-    ...(yesterdayPlanningSlots ?? [])
+    ...(pastPlanningSlots ?? [])
       .filter((slot: any) => {
-        const pointageKeys = new Set((yesterdayPointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}:${p.member_id ?? '*'}`))
-        const pointageDayKeys = new Set((yesterdayPointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}`))
+        const pointageKeys = new Set((pastPointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}:${p.member_id ?? '*'}`))
+        const pointageDayKeys = new Set((pastPointages ?? []).map((p: any) => `${p.chantier_id}:${p.date}`))
         const directKey = `${slot.chantier_id}:${slot.planned_date}:${slot.member_id ?? '*'}`
         const dayKey = `${slot.chantier_id}:${slot.planned_date}`
+        if (isAbsentOn(slot.member_id ?? null, slot.planned_date)) return false
         return !pointageKeys.has(directKey) && !pointageDayKeys.has(dayKey)
       })
       .map((slot: any) => ({
@@ -568,6 +599,17 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
         chantierId: slot.chantier?.id ?? null,
       })),
     ...chantierRiskItems,
+    ...(pendingRequests ?? []).map((r: any) => ({
+      id: `request-${r.id}`,
+      type: 'new_request' as const,
+      label: r.subject?.trim() ? r.subject.trim() : 'Demande de devis',
+      title: null,
+      amount: null,
+      date: r.created_at,
+      clientEmail: null,
+      clientName: r.company_name?.trim() || r.name,
+      requestId: r.id,
+    })),
   ]
 
   return {
