@@ -95,12 +95,17 @@ export async function POST(req: NextRequest) {
   }
 
   // Auto-crée la ligne cockpit au premier event - le label peut être corrigé manuellement ensuite
-  await operator
+  const { error: settingsUpsertError } = await operator
     .from('operator_client_settings')
     .upsert({
       source_instance: payload.source_instance,
+      organization_id: payload.organization_id,
       label: payload.source_instance,
-    }, { onConflict: 'source_instance', ignoreDuplicates: true })
+    }, { onConflict: 'source_instance,organization_id', ignoreDuplicates: true })
+
+  if (settingsUpsertError) {
+    console.error('[operator/ingest.settings]', settingsUpsertError)
+  }
 
   const { error: usageError } = await operator
     .from('operator_usage_events')
@@ -136,6 +141,7 @@ export async function POST(req: NextRequest) {
   if (payload.status === 'success' && quota.quotaFeature && quota.quotaUnit) {
     const { error: quotaError } = await operator.rpc('increment_quota_counter', {
       p_source_instance: payload.source_instance,
+      p_organization_id: payload.organization_id,
       p_local_usage_log_id: payload.local_usage_log_id,
       p_quota_feature: quota.quotaFeature,
       p_quota_unit: quota.quotaUnit,

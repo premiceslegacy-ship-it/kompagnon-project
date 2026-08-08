@@ -8,11 +8,13 @@ import {
   upsertOperatorClientSettings,
   upsertOperatorClientModules,
   upsertOperatorClientVerticalPack,
+  upsertOperatorClientMetalPricing,
   upsertOperatorSubscription,
 } from './actions'
 import EmailsTab from './EmailsTab'
 import { getOperatorUsdToEurRate } from '@/lib/operator'
 import { getOperatorUser } from '@/lib/operator-auth'
+import { UNRESOLVED_ORGANIZATION_ID } from '@/lib/operator/trial-lifecycle'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ORGANIZATION_MODULE_KEYS, normalizeOrganizationModules, type OrganizationModules } from '@/lib/organization-modules'
@@ -46,6 +48,7 @@ type AIBillingMode = typeof AI_BILLING_MODES[number]
 
 type OperatorUsageEvent = {
   source_instance: string
+  organization_id: string | null
   provider: string
   feature: string
   quota_feature: QuotaFeature | null
@@ -66,6 +69,7 @@ type OperatorClient = {
 
 type OperatorClientSetting = {
   source_instance: string
+  organization_id: string
   label: string | null
   monthly_fee_ht: number | string | null
   billing_currency: 'EUR' | 'USD'
@@ -78,6 +82,7 @@ type OperatorClientSetting = {
 
 type OperatorClientSubscription = {
   source_instance: string
+  organization_id: string
   tier: SubscriptionTier
   ai_billing_mode: AIBillingMode | null
   mrr_ht: number | string | null
@@ -101,6 +106,7 @@ type OperatorClientSubscription = {
 type OperatorClientEvent = {
   id: string
   source_instance: string
+  organization_id: string | null
   event_category: string
   event_type: string
   actor_email: string | null
@@ -112,6 +118,7 @@ type OperatorClientEvent = {
 type OperatorCommercialEvent = {
   id: string
   source_instance: string
+  organization_id: string | null
   event_type: string
   tier_context: string | null
   sent_at: string
@@ -129,6 +136,7 @@ type OperatorCommercialEvent = {
 
 type OperatorClientQuota = {
   source_instance: string
+  organization_id: string
   quota_feature: QuotaFeature
   quota_unit: QuotaUnit
   quota_monthly: number | string
@@ -169,6 +177,7 @@ type ClientRow = {
   modules: OrganizationModules
   businessActivityId: string | null
   businessVerticalPackId: string | null
+  hasMetalPricing: boolean
   quotas: OperatorClientQuota[]
   events: OperatorClientEvent[]
   commercialEvents: OperatorCommercialEvent[]
@@ -435,15 +444,15 @@ export default async function OrsaynPage() {
   ] = await Promise.all([
     operator
       .from('operator_client_settings')
-      .select('source_instance, label, monthly_fee_ht, billing_currency, is_active, app_url, config_sync_status, config_synced_at, config_sync_error')
+      .select('source_instance, organization_id, label, monthly_fee_ht, billing_currency, is_active, app_url, config_sync_status, config_synced_at, config_sync_error')
       .order('source_instance', { ascending: true }),
     operator
       .from('operator_client_subscriptions')
-      .select('source_instance, tier, ai_billing_mode, mrr_ht, billing_currency, is_active, renews_at, trial_tier, trial_ends_at, trial_converted, b2brouter_active, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status, overflow_mode, notes')
+      .select('source_instance, organization_id, tier, ai_billing_mode, mrr_ht, billing_currency, is_active, renews_at, trial_tier, trial_ends_at, trial_converted, b2brouter_active, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status, overflow_mode, notes')
       .order('source_instance', { ascending: true }),
     operator
       .from('operator_client_quotas')
-      .select('source_instance, quota_feature, quota_unit, quota_monthly, current_quantity, current_cost_eur, period_start')
+      .select('source_instance, organization_id, quota_feature, quota_unit, quota_monthly, current_quantity, current_cost_eur, period_start')
       .eq('period_start', monthStartIso.slice(0, 10))
       .order('source_instance', { ascending: true }),
     operator
@@ -452,23 +461,23 @@ export default async function OrsaynPage() {
       .order('source_instance', { ascending: true }),
     operator
       .from('operator_usage_events')
-      .select('source_instance, provider, feature, quota_feature, model, provider_cost, currency, total_tokens, status, occurred_at')
+      .select('source_instance, organization_id, provider, feature, quota_feature, model, provider_cost, currency, total_tokens, status, occurred_at')
       .gte('occurred_at', monthStartIso)
       .order('occurred_at', { ascending: false })
       .limit(5000),
     operator
       .from('operator_usage_events')
-      .select('source_instance, provider, feature, quota_feature, model, provider_cost, currency, total_tokens, status, occurred_at')
+      .select('source_instance, organization_id, provider, feature, quota_feature, model, provider_cost, currency, total_tokens, status, occurred_at')
       .order('occurred_at', { ascending: false })
       .limit(200),
     operator
       .from('operator_client_events')
-      .select('id, source_instance, event_category, event_type, actor_email, metadata, notes, created_at')
+      .select('id, source_instance, organization_id, event_category, event_type, actor_email, metadata, notes, created_at')
       .order('created_at', { ascending: false })
       .limit(300),
     operator
       .from('operator_commercial_events')
-      .select('id, source_instance, event_type, tier_context, sent_at, sent_by, actor_email, email_template, subject_preview, body_text, recipient_email, delivery_status, auto_send_after, notes, metadata')
+      .select('id, source_instance, organization_id, event_type, tier_context, sent_at, sent_by, actor_email, email_template, subject_preview, body_text, recipient_email, delivery_status, auto_send_after, notes, metadata')
       .order('sent_at', { ascending: false })
       .limit(300),
   ])
@@ -496,82 +505,91 @@ export default async function OrsaynPage() {
   const operatorEvents = (operatorEventsResult.data ?? []) as OperatorClientEvent[]
   const commercialEvents = (commercialEventsResult.data ?? []) as OperatorCommercialEvent[]
 
-  const settingsBySource = new Map(settings.map((item) => [item.source_instance, item]))
-  const subscriptionsBySource = new Map(subscriptions.map((item) => [item.source_instance, item]))
-  const clientsBySource = new Map(clients.map((item) => [item.source_instance, item]))
+  // Clé composite : une instance mutualisée porte plusieurs organisations, chacune
+  // avec son propre tier/settings/quotas — une clé source_instance seule les fusionnerait.
+  // organization_id peut être null sur operator_clients (usage historique per-client
+  // pas encore synchronisé) ou operator_client_events/commercial_events (broadcast,
+  // paiement orphelin) : ces lignes sont alors rattachées via UNRESOLVED_ORGANIZATION_ID
+  // côté écriture, mais on garde un fallback ici par robustesse de lecture.
+  const orgKey = (sourceInstance: string, organizationId: string | null) =>
+    `${sourceInstance}::${organizationId ?? UNRESOLVED_ORGANIZATION_ID}`
+
+  const settingsBySource = new Map(settings.map((item) => [orgKey(item.source_instance, item.organization_id), item]))
+  const subscriptionsBySource = new Map(subscriptions.map((item) => [orgKey(item.source_instance, item.organization_id), item]))
+  const clientsBySource = new Map(clients.map((item) => [orgKey(item.source_instance, item.organization_id), item]))
   const quotasBySource = quotas.reduce<Record<string, OperatorClientQuota[]>>((acc, quota) => {
-    acc[quota.source_instance] ??= []
-    acc[quota.source_instance].push(quota)
+    const key = orgKey(quota.source_instance, quota.organization_id)
+    acc[key] ??= []
+    acc[key].push(quota)
     return acc
   }, {})
   const operatorEventsBySource = operatorEvents.reduce<Record<string, OperatorClientEvent[]>>((acc, event) => {
-    acc[event.source_instance] ??= []
-    acc[event.source_instance].push(event)
+    const key = orgKey(event.source_instance, event.organization_id)
+    acc[key] ??= []
+    acc[key].push(event)
     return acc
   }, {})
   const commercialEventsBySource = commercialEvents.reduce<Record<string, OperatorCommercialEvent[]>>((acc, event) => {
-    acc[event.source_instance] ??= []
-    acc[event.source_instance].push(event)
+    const key = orgKey(event.source_instance, event.organization_id)
+    acc[key] ??= []
+    acc[key].push(event)
     return acc
   }, {})
 
-  // Charger les modules pour tous les clients ayant un organization_id
-  const orgIds = clients.map((c) => c.organization_id).filter((id): id is string => !!id)
+  // Charger les modules pour tous les clients ayant un organization_id résolu
+  // (exclut la sentinelle : paiements orphelins/broadcast n'ont pas d'org réelle)
+  const orgIds = [...new Set(
+    clients.map((c) => c.organization_id).filter((id): id is string => !!id && id !== UNRESOLVED_ORGANIZATION_ID)
+  )]
   const admin = createAdminClient()
   const { data: modulesRows } = orgIds.length > 0
     ? await admin.from('organization_modules').select('organization_id, modules').in('organization_id', orgIds)
     : { data: [] }
   const modulesByOrgId = new Map((modulesRows ?? []).map((r) => [r.organization_id, r.modules]))
-  const modulesBySource = new Map(
-    clients
-      .filter((c) => c.organization_id)
-      .map((c) => [
-        c.source_instance,
-        normalizeOrganizationModules(modulesByOrgId.get(c.organization_id!) ?? {}),
-      ])
-  )
 
-  // Charger l'activité + pack verticale pour tous les clients ayant un organization_id
+  // Charger l'activité + pack verticale + module métal pour ces mêmes organisations
   const { data: verticalPackRows } = orgIds.length > 0
-    ? await admin.from('organizations').select('id, business_activity_id, business_vertical_pack').in('id', orgIds)
+    ? await admin.from('organizations').select('id, business_activity_id, business_vertical_pack, has_metal_pricing').in('id', orgIds)
     : { data: [] }
   const verticalPackByOrgId = new Map(
-    (verticalPackRows ?? []).map((r) => [r.id, { activityId: r.business_activity_id, packId: r.business_vertical_pack }])
+    (verticalPackRows ?? []).map((r) => [r.id, { activityId: r.business_activity_id, packId: r.business_vertical_pack, hasMetalPricing: Boolean(r.has_metal_pricing) }])
   )
-  const verticalPackBySource = new Map(
-    clients
-      .filter((c) => c.organization_id)
-      .map((c) => [c.source_instance, verticalPackByOrgId.get(c.organization_id!) ?? { activityId: null, packId: null }])
-  )
+
   const latestEventBySource = new Map<string, OperatorUsageEvent>()
 
   for (const event of recentEvents) {
-    if (!latestEventBySource.has(event.source_instance)) {
-      latestEventBySource.set(event.source_instance, event)
+    const key = orgKey(event.source_instance, event.organization_id)
+    if (!latestEventBySource.has(key)) {
+      latestEventBySource.set(key, event)
     }
   }
 
   const monthlyEventsBySource = monthlyEvents.reduce<Record<string, OperatorUsageEvent[]>>((acc, event) => {
-    acc[event.source_instance] ??= []
-    acc[event.source_instance].push(event)
+    const key = orgKey(event.source_instance, event.organization_id)
+    acc[key] ??= []
+    acc[key].push(event)
     return acc
   }, {})
 
-  const sourceInstances = new Set<string>([
-    ...settings.map((item) => item.source_instance),
-    ...subscriptions.map((item) => item.source_instance),
-    ...quotas.map((item) => item.source_instance),
-    ...clients.map((item) => item.source_instance),
-    ...monthlyEvents.map((item) => item.source_instance),
-    ...operatorEvents.map((item) => item.source_instance),
-    ...commercialEvents.map((item) => item.source_instance),
+  // Une ligne cockpit par (source_instance, organization_id) — pas par instance
+  // seule, sinon une instance mutualisée à N organisations n'en affiche qu'une.
+  const clientKeys = new Set<string>([
+    ...settings.map((item) => orgKey(item.source_instance, item.organization_id)),
+    ...subscriptions.map((item) => orgKey(item.source_instance, item.organization_id)),
+    ...quotas.map((item) => orgKey(item.source_instance, item.organization_id)),
+    ...clients.map((item) => orgKey(item.source_instance, item.organization_id)),
+    ...monthlyEvents.map((item) => orgKey(item.source_instance, item.organization_id)),
+    ...operatorEvents.map((item) => orgKey(item.source_instance, item.organization_id)),
+    ...commercialEvents.map((item) => orgKey(item.source_instance, item.organization_id)),
   ])
 
-  const clientRows = Array.from(sourceInstances).map((sourceInstance) => {
-    const setting = settingsBySource.get(sourceInstance)
-    const subscription = subscriptionsBySource.get(sourceInstance)
-    const client = clientsBySource.get(sourceInstance)
-    const monthEvents = monthlyEventsBySource[sourceInstance] ?? []
+  const clientRows = Array.from(clientKeys).map((key) => {
+    const setting = settingsBySource.get(key)
+    const subscription = subscriptionsBySource.get(key)
+    const client = clientsBySource.get(key)
+    const sourceInstance = setting?.source_instance ?? subscription?.source_instance ?? client?.source_instance ?? key.split('::')[0]
+    const organizationId = setting?.organization_id ?? subscription?.organization_id ?? client?.organization_id ?? null
+    const monthEvents = monthlyEventsBySource[key] ?? []
     const successfulMonthEvents = monthEvents.filter((event) => event.status === 'success')
     const monthCostUsd = successfulMonthEvents.reduce((sum, event) => sum + Number(event.provider_cost ?? 0), 0)
     const billingCurrency = (subscription?.billing_currency ?? setting?.billing_currency ?? 'EUR') as 'EUR' | 'USD'
@@ -586,7 +604,7 @@ export default async function OrsaynPage() {
     const marginPct = monthlyFee && monthlyFee > 0 && grossMargin !== null
       ? (grossMargin / monthlyFee) * 100
       : null
-    const latestEvent = latestEventBySource.get(sourceInstance)
+    const latestEvent = latestEventBySource.get(key)
     const label = setting?.label?.trim()
       || client?.label?.trim()
       || sourceInstance
@@ -601,7 +619,7 @@ export default async function OrsaynPage() {
 
     return {
       sourceInstance,
-      organizationId: client?.organization_id ?? null,
+      organizationId,
       label,
       tier: subscription?.tier ?? 'setup_only',
       appUrl: setting?.app_url ?? null,
@@ -628,16 +646,19 @@ export default async function OrsaynPage() {
       lastSeenAt: latestEvent?.occurred_at ?? client?.updated_at ?? null,
       lastStatus: latestEvent?.status ?? null,
       monthEventCount: monthEvents.length,
-      modules: modulesBySource.get(sourceInstance) ?? normalizeOrganizationModules({}),
-      businessActivityId: verticalPackBySource.get(sourceInstance)?.activityId ?? null,
-      businessVerticalPackId: verticalPackBySource.get(sourceInstance)?.packId ?? null,
-      quotas: (quotasBySource[sourceInstance] ?? []).sort((a, b) => {
+      modules: (organizationId ? modulesByOrgId.get(organizationId) : null)
+        ? normalizeOrganizationModules(modulesByOrgId.get(organizationId!) ?? {})
+        : normalizeOrganizationModules({}),
+      businessActivityId: (organizationId ? verticalPackByOrgId.get(organizationId) : null)?.activityId ?? null,
+      businessVerticalPackId: (organizationId ? verticalPackByOrgId.get(organizationId) : null)?.packId ?? null,
+      hasMetalPricing: (organizationId ? verticalPackByOrgId.get(organizationId) : null)?.hasMetalPricing ?? false,
+      quotas: (quotasBySource[key] ?? []).sort((a, b) => {
         const aDef = QUOTA_DEFINITIONS[a.quota_feature]
         const bDef = QUOTA_DEFINITIONS[b.quota_feature]
         return (aDef?.label ?? a.quota_feature).localeCompare(bDef?.label ?? b.quota_feature, 'fr')
       }),
-      events: operatorEventsBySource[sourceInstance] ?? [],
-      commercialEvents: commercialEventsBySource[sourceInstance] ?? [],
+      events: operatorEventsBySource[key] ?? [],
+      commercialEvents: commercialEventsBySource[key] ?? [],
     } satisfies ClientRow
   }).sort((a, b) => {
     if (a.isActive !== b.isActive) return a.isActive ? -1 : 1
@@ -655,6 +676,7 @@ export default async function OrsaynPage() {
   const grossMarginTotalEur = revenueTotalEur - costTotalEur
   const marginRate = revenueTotalEur > 0 ? (grossMarginTotalEur / revenueTotalEur) * 100 : null
   const missingBillingRows = clientRows.filter((row) => row.monthlyFee === null)
+  const pendingManualRows = clientRows.filter((row) => row.configSyncStatus === 'pending_manual')
   const lowMarginRows = rowsWithFee
     .slice()
     .sort((a, b) => (a.grossMarginEur ?? Number.POSITIVE_INFINITY) - (b.grossMarginEur ?? Number.POSITIVE_INFINITY))
@@ -664,7 +686,7 @@ export default async function OrsaynPage() {
     .sort((a, b) => b.monthUsageCostEur - a.monthUsageCostEur)
     .slice(0, 5)
 
-  const rowBySource = new Map(clientRows.map((row) => [row.sourceInstance, row]))
+  const rowBySource = new Map(clientRows.map((row) => [orgKey(row.sourceInstance, row.organizationId), row]))
   const successfulUsageEvents = monthlyEvents.filter((event) => event.status === 'success')
 
   function buildUsageAggregate(
@@ -675,7 +697,7 @@ export default async function OrsaynPage() {
 
     for (const event of successfulUsageEvents) {
       const key = keyGetter(event)
-      const sourceRow = rowBySource.get(event.source_instance)
+      const sourceRow = rowBySource.get(orgKey(event.source_instance, event.organization_id))
       const usageCostEur = convertProviderCostToEur(event.provider_cost, event.currency, usdToEurRate)
       const current = aggregates.get(key) ?? {
         key,
@@ -825,6 +847,26 @@ export default async function OrsaynPage() {
           <p className="mt-2 text-sm font-medium text-primary font-body">{user.email}</p>
         </div>
       </div>
+
+      {pendingManualRows.length > 0 && (
+        <section className="card border-l-4 border-l-red-500 bg-red-500/5 px-6 py-4">
+          <p className="text-sm font-bold text-red-700 font-display">
+            {pendingManualRows.length} instance{pendingManualRows.length > 1 ? 's' : ''} en configuration bloquée (pending_manual)
+          </p>
+          <p className="mt-1 text-xs text-secondary font-body">
+            Le dernier changement de tier/module n&apos;a pas atteint l&apos;instance cliente — le client peut avoir payé sans que ses droits
+            aient été mis à jour. Vérifier <span className="font-mono">app_url</span> et <span className="font-mono">organization_id</span> puis relancer &quot;Resync config&quot;.
+          </p>
+          <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
+            {pendingManualRows.map((row) => (
+              <li key={row.sourceInstance}>
+                <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance})
+                {row.configSyncError ? ` — ${row.configSyncError}` : ''}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* KPI Bento Grid */}
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
@@ -1012,6 +1054,14 @@ export default async function OrsaynPage() {
               />
             </label>
             <label className="space-y-1.5 text-sm font-body">
+              <span className="font-semibold text-primary text-xs uppercase tracking-wide font-display">organization_id (SaaS mutualisé)</span>
+              <input
+                name="organizationId"
+                placeholder="laisser vide pour une instance per-client"
+                className={inputCls}
+              />
+            </label>
+            <label className="space-y-1.5 text-sm font-body">
               <span className="font-semibold text-primary text-xs uppercase tracking-wide font-display">Libellé</span>
               <input
                 name="label"
@@ -1180,6 +1230,7 @@ export default async function OrsaynPage() {
                     <td className="py-4 pr-4 text-secondary tabular-nums">{formatDate(row.lastSeenAt)}</td>
                     <td className="py-4">
                       <form action={upsertOperatorSubscription} className="grid gap-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3 backdrop-blur-frost">
+                        {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
                         {(() => {
                           const einvoicingBadge = getEinvoicingBadge(row.einvoicingConfig)
                           return (
@@ -1444,6 +1495,29 @@ export default async function OrsaynPage() {
                           </form>
                         )
                       })()}
+                      {row.organizationId && (
+                        <form action={upsertOperatorClientMetalPricing} className="mt-2 grid gap-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3 backdrop-blur-frost">
+                          <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
+                          <p className="text-xs font-bold uppercase tracking-wide text-secondary font-display mb-1">
+                            Module prix matières (métal)
+                          </p>
+                          <label className="flex items-center gap-2 text-xs text-secondary font-body">
+                            <input
+                              name="hasMetalPricing"
+                              type="checkbox"
+                              defaultChecked={row.hasMetalPricing}
+                              className="h-4 w-4 rounded border-[var(--elevation-border)] accent-accent"
+                            />
+                            Actif — s'active normalement seul (tier Pro+ et activité métal), ce toggle sert de filet manuel
+                          </label>
+                          <button
+                            type="submit"
+                            className="inline-flex justify-center rounded-pill bg-accent/10 text-accent px-3 py-2 text-xs font-semibold font-display transition hover:bg-accent/20"
+                          >
+                            Appliquer
+                          </button>
+                        </form>
+                      )}
                       <div className="mt-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3">
                         <p className="mb-2 text-xs font-bold uppercase tracking-wide text-secondary font-display">Quotas du mois en cours</p>
                         {row.quotas.length === 0 ? (
@@ -1577,7 +1651,7 @@ export default async function OrsaynPage() {
               ) : recentEvents.slice(0, 20).map((event, index) => (
                 <tr key={`${event.source_instance}-${event.occurred_at}-${index}`} className="border-b border-[var(--elevation-border)] last:border-b-0">
                   <td className="py-3 text-primary tabular-nums">{formatDate(event.occurred_at)}</td>
-                  <td className="py-3 text-primary">{settingsBySource.get(event.source_instance)?.label || event.source_instance}</td>
+                  <td className="py-3 text-primary">{settingsBySource.get(orgKey(event.source_instance, event.organization_id))?.label || event.source_instance}</td>
                   <td className="py-3 text-secondary">{event.provider}</td>
                   <td className="py-3 text-secondary">{event.feature}</td>
                   <td className="py-3 text-secondary tabular-nums">{formatMoney(Number(event.provider_cost ?? 0), 'USD')}</td>

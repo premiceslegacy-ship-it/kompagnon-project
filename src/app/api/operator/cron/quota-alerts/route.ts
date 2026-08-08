@@ -3,6 +3,7 @@ import { Resend } from 'resend'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { QUOTA_DEFINITIONS } from '@/lib/quota-catalog'
 import { verifyCronSecret } from '@/lib/cron-auth'
+import { expireTrialForInstance } from '@/lib/operator/trial-lifecycle'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,27 +44,72 @@ export async function POST(req: NextRequest) {
   const now = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
 
+  // ── 0. Expirer automatiquement les essais dépassés ────────────────────────────
+  // Un essai non converti garde ses droits Expert indéfiniment si personne ne clique
+  // manuellement sur "Terminer essai" dans le cockpit — cette section ferme ce trou.
+
+  const { data: expiredTrials } = await operator
+    .from('operator_client_subscriptions')
+    .select('source_instance, organization_id')
+    .not('trial_tier', 'is', null)
+    .not('trial_ends_at', 'is', null)
+    .eq('trial_converted', false)
+    .lt('trial_ends_at', now.toISOString())
+
+  let trialsExpired = 0
+  let trialsFailed = 0
+
+  for (const row of expiredTrials ?? []) {
+    try {
+      const result = await expireTrialForInstance({
+        sourceInstance: row.source_instance,
+        organizationId: row.organization_id,
+        targetTier: 'setup_only',
+        actorEmail: 'cron@orsayn',
+        eventType: 'trial_ended_auto',
+      })
+      if (result.status === 'expired') trialsExpired++
+    } catch (error) {
+      trialsFailed++
+      console.error('[operator/cron/quota-alerts.expireTrial]', row.source_instance, error)
+    }
+  }
+
+  // ── 0bis. Compter les instances en configuration bloquée ──────────────────────
+  // pending_manual signifie qu'un changement de tier/module n'a jamais atteint
+  // l'instance cliente (app_url ou organization_id manquant) — visible aussi en
+  // bandeau dans le cockpit, journalisé ici pour garder une trace dans les logs cron.
+
+  const { count: pendingManualCount } = await operator
+    .from('operator_client_settings')
+    .select('source_instance', { count: 'exact', head: true })
+    .eq('config_sync_status', 'pending_manual')
+
   // ── 1. Créer des alertes pour les clients qui dépassent le seuil ──────────────
 
   const { data: quotas } = await operator
     .from('operator_client_quotas')
-    .select('source_instance, quota_feature, quota_monthly, current_quantity')
+    .select('source_instance, organization_id, quota_feature, quota_monthly, current_quantity')
     .eq('period_start', monthStart)
 
   const { data: subscriptions } = await operator
     .from('operator_client_subscriptions')
-    .select('source_instance, tier')
+    .select('source_instance, organization_id, tier')
 
   const { data: settings } = await operator
     .from('operator_client_settings')
-    .select('source_instance, label')
+    .select('source_instance, organization_id, label')
 
-  const tierBySource = new Map((subscriptions ?? []).map((s) => [s.source_instance, s.tier]))
-  const labelBySource = new Map((settings ?? []).map((s) => [s.source_instance, s.label ?? s.source_instance]))
+  // Clé composite : une instance mutualisée porte plusieurs organisations, chacune
+  // avec son propre tier/label/quotas — une clé source_instance seule les fusionnerait.
+  const orgKey = (sourceInstance: string, organizationId: string) => `${sourceInstance}::${organizationId}`
 
-  // Quota le plus chargé par client
-  type AlertCandidate = { sourceInstance: string; feature: string; pct: number; featureLabel: string }
-  const candidatesBySource = new Map<string, AlertCandidate>()
+  const tierByOrg = new Map((subscriptions ?? []).map((s) => [orgKey(s.source_instance, s.organization_id), s.tier]))
+  const labelByOrg = new Map((settings ?? []).map((s) => [orgKey(s.source_instance, s.organization_id), s.label ?? s.source_instance]))
+
+  // Quota le plus chargé par organisation
+  type AlertCandidate = { sourceInstance: string; organizationId: string; feature: string; pct: number; featureLabel: string }
+  const candidatesByOrg = new Map<string, AlertCandidate>()
 
   for (const quota of quotas ?? []) {
     const monthly = Number(quota.quota_monthly)
@@ -71,13 +117,15 @@ export async function POST(req: NextRequest) {
     if (monthly <= 0) continue
     const pct = current / monthly
     if (pct < ALERT_THRESHOLD) continue
-    const tier = tierBySource.get(quota.source_instance)
+    const key = orgKey(quota.source_instance, quota.organization_id)
+    const tier = tierByOrg.get(key)
     if (tier === 'expert') continue // illimité en pratique
 
-    const existing = candidatesBySource.get(quota.source_instance)
+    const existing = candidatesByOrg.get(key)
     if (!existing || pct > existing.pct) {
-      candidatesBySource.set(quota.source_instance, {
+      candidatesByOrg.set(key, {
         sourceInstance: quota.source_instance,
+        organizationId: quota.organization_id,
         feature: quota.quota_feature,
         pct,
         featureLabel: QUOTA_DEFINITIONS[quota.quota_feature as keyof typeof QUOTA_DEFINITIONS]?.label ?? quota.quota_feature,
@@ -88,23 +136,25 @@ export async function POST(req: NextRequest) {
   // Ne pas créer de doublon si une alerte pending_review existe déjà ce mois
   const { data: existingAlerts } = await operator
     .from('operator_commercial_events')
-    .select('source_instance')
+    .select('source_instance, organization_id')
     .eq('delivery_status', 'pending_review')
     .eq('event_type', 'quota_alert_auto')
     .gte('sent_at', `${monthStart}T00:00:00Z`)
 
-  const alreadyAlerted = new Set((existingAlerts ?? []).map((e) => e.source_instance))
+  const alreadyAlerted = new Set((existingAlerts ?? []).map((e) => orgKey(e.source_instance, e.organization_id ?? '')))
 
   let created = 0
-  for (const candidate of candidatesBySource.values()) {
-    if (alreadyAlerted.has(candidate.sourceInstance)) continue
-    const tier = tierBySource.get(candidate.sourceInstance) ?? 'setup_only'
-    const label = labelBySource.get(candidate.sourceInstance) ?? candidate.sourceInstance
+  for (const candidate of candidatesByOrg.values()) {
+    const key = orgKey(candidate.sourceInstance, candidate.organizationId)
+    if (alreadyAlerted.has(key)) continue
+    const tier = tierByOrg.get(key) ?? 'setup_only'
+    const label = labelByOrg.get(key) ?? candidate.sourceInstance
     const pctLabel = `${Math.round(candidate.pct * 100)}%`
     const autoSendAfter = new Date(now.getTime() + AUTO_SEND_DELAY_DAYS * 24 * 60 * 60 * 1000).toISOString()
 
     await operator.from('operator_commercial_events').insert({
       source_instance: candidate.sourceInstance,
+      organization_id: candidate.organizationId,
       event_type: 'quota_alert_auto',
       tier_context: tier,
       sent_by: 'cron_auto',
@@ -163,6 +213,13 @@ export async function POST(req: NextRequest) {
     else autoFailed++
   }
 
-  console.log(`[operator/cron/quota-alerts] created=${created} auto_sent=${autoSent} auto_failed=${autoFailed}`)
-  return NextResponse.json({ created, auto_sent: autoSent, auto_failed: autoFailed })
+  console.log(`[operator/cron/quota-alerts] trials_expired=${trialsExpired} trials_failed=${trialsFailed} pending_manual=${pendingManualCount ?? 0} created=${created} auto_sent=${autoSent} auto_failed=${autoFailed}`)
+  return NextResponse.json({
+    trials_expired: trialsExpired,
+    trials_failed: trialsFailed,
+    pending_manual: pendingManualCount ?? 0,
+    created,
+    auto_sent: autoSent,
+    auto_failed: autoFailed,
+  })
 }
