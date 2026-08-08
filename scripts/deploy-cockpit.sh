@@ -25,7 +25,13 @@ echo "  Atelier — Déploiement cockpit"
 echo "  Worker : $WORKER_NAME"
 echo "═══════════════════════════════════════════════════"
 
-sed_inplace() { sed -i'' "$@" 2>/dev/null || sed -i "$@"; }
+sed_inplace() {
+  if sed --version >/dev/null 2>&1; then
+    sed -i "$@"
+  else
+    sed -i '' "$@"
+  fi
+}
 
 ORIGINAL_NAME=$(grep '"name"' "$WRANGLER" | head -1 | sed 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
 

@@ -10,3 +10,5 @@
 # Ne pas inclure le cockpit ici : il a son Supabase opérateur et se déploie à part.
 
 # atelier-weber      ← décommenter quand le client est déployé
+
+atelier-app          # instance mutualisée self-service (app.atelier-btp.fr) — pas un per-client

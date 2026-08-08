@@ -66,7 +66,13 @@ confirm() {
   [[ "$answer" =~ ^[oOyY]$ ]]
 }
 
-sed_inplace() { sed -i'' "$@" 2>/dev/null || sed -i "$@"; }
+sed_inplace() {
+  if sed --version >/dev/null 2>&1; then
+    sed -i "$@"
+  else
+    sed -i '' "$@"
+  fi
+}
 
 # ── Nom du Worker ───────────────────────────────────────────────────────────
 WORKER_NAME="${1:-}"
