@@ -5,13 +5,28 @@ import { useRouter } from 'next/navigation'
 import {
   Mic, MicOff, FileText, Loader2, Upload,
   CheckCircle2, AlertCircle, RotateCcw, ChevronRight, ChevronLeft, X, ImageIcon,
-  Ruler, ClipboardList,
+  Ruler, ClipboardList, Plus, Trash2, Check, Ban, Save,
 } from 'lucide-react'
 import {
   createQuoteFromAIResult,
 } from '@/lib/data/mutations/quotes'
 import type { AIQuoteResult } from '@/app/api/ai/analyze-quote/route'
-import type { PlanMeasurementItem, PlanMeasurementResult } from '@/app/api/ai/measure-plan/route'
+import {
+  DEFAULT_MEASUREMENT_SETTINGS,
+  MEASUREMENT_TRADE_LABELS,
+  PLAN_MEASUREMENT_RULES_VERSION,
+  PLAN_MEASUREMENT_TRADES,
+  buildMeasurementItems,
+  evaluateMeasurementFormula,
+  hasBlockingMeasurementIssues,
+  type PlanMeasurementItem,
+  type PlanMeasurementResult,
+  type PlanMeasurementSettings,
+  type PlanMeasurementTrade,
+  type PlanProjectType,
+  type PlanWorkScope,
+} from '@/lib/plan-measurement'
+import { markPlanMeasurementConverted, savePlanMeasurementDraft } from '@/lib/data/mutations/plan-measurements'
 import { AI_NAME } from '@/lib/brand'
 import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 import AICreditsErrorModal from '@/components/shared/AICreditsErrorModal'
@@ -19,11 +34,6 @@ import AICreditsErrorModal from '@/components/shared/AICreditsErrorModal'
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 type Mode = 'voice' | 'text' | 'pdf' | 'measure'
-type MeasurementSettings = {
-  defaultHeightM: number
-  wastePct: number
-  studSpacingM: number
-}
 
 const ACCEPTED_FILE_TYPES = '.pdf,application/pdf,.png,.jpg,.jpeg,image/png,image/jpeg,image/jpg'
 const ACCEPTED_MIME_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'])
@@ -39,94 +49,16 @@ const splitDetails = (description: string | null | undefined) => {
   }
 }
 
-function roundMeasurement(value: number): number {
-  return Math.round(value * 100) / 100
-}
-
-function tokenizeFormula(expression: string): string[] {
-  const compact = expression.replace(/\s+/g, '')
-  const tokens = compact.match(/[A-Za-z_][A-Za-z0-9_]*|\d+(?:[.,]\d+)?|[()+\-*/]/g) ?? []
-  if (tokens.join('') !== compact) throw new Error('Formule invalide')
-  return tokens
-}
-
-function evaluateFormula(expression: string, variables: Record<string, number>): number {
-  const tokens = tokenizeFormula(expression)
-  let index = 0
-
-  const peek = () => tokens[index]
-  const next = () => tokens[index++]
-
-  function parseFactor(): number {
-    const token = next()
-    if (token == null) throw new Error('Formule incomplète')
-    if (token === '+') return parseFactor()
-    if (token === '-') return -parseFactor()
-    if (token === '(') {
-      const value = parseExpression()
-      if (next() !== ')') throw new Error('Parenthèse manquante')
-      return value
-    }
-    if (/^\d/.test(token)) return Number(token.replace(',', '.'))
-    if (/^[A-Za-z_]/.test(token)) return variables[token] ?? 0
-    throw new Error('Formule invalide')
-  }
-
-  function parseTerm(): number {
-    let value = parseFactor()
-    while (peek() === '*' || peek() === '/') {
-      const op = next()
-      const rhs = parseFactor()
-      if (op === '*') value *= rhs
-      else {
-        if (rhs === 0) throw new Error('Division par zéro')
-        value /= rhs
-      }
-    }
-    return value
-  }
-
-  function parseExpression(): number {
-    let value = parseTerm()
-    while (peek() === '+' || peek() === '-') {
-      const op = next()
-      const rhs = parseTerm()
-      value = op === '+' ? value + rhs : value - rhs
-    }
-    return value
-  }
-
-  const result = parseExpression()
-  if (index !== tokens.length || !Number.isFinite(result)) throw new Error('Formule invalide')
-  return Math.max(0, roundMeasurement(result))
-}
-
-function defaultFormulaForItem(item: PlanMeasurementItem): string {
-  const mode = item.dimension_pricing_mode
-  if (mode === 'linear') return 'L * N * (1 + waste)'
-  if (mode === 'volume') return 'L * W * H * N * (1 + waste)'
-  if (mode === 'area') {
-    if (item.width_m != null) return 'L * W * N * (1 + waste)'
-    if (item.height_m != null) return '(L * H - O) * N * (1 + waste)'
-    return 'A * N * (1 + waste)'
-  }
-  return 'quantity'
-}
-
-function formulaVariablesForItem(item: PlanMeasurementItem, settings: MeasurementSettings): Record<string, number> {
-  const provided = item.formulaVariables ?? {}
-  return {
-    quantity: item.quantity,
-    L: item.length_m ?? provided.L ?? provided.length_m ?? 0,
-    W: item.width_m ?? provided.W ?? provided.width_m ?? 0,
-    H: item.height_m ?? provided.H ?? provided.height_m ?? settings.defaultHeightM,
-    N: item.dim_quantity ?? provided.N ?? provided.dim_quantity ?? 1,
-    A: provided.A ?? provided.area_m2 ?? (item.length_m && item.width_m ? item.length_m * item.width_m : 0),
-    P: provided.P ?? provided.perimeter_m ?? item.length_m ?? 0,
-    O: provided.O ?? provided.openings_m2 ?? 0,
-    waste: settings.wastePct / 100,
-    spacing: settings.studSpacingM,
-  }
+function formulaVariablesForItem(item: PlanMeasurementItem, settings: PlanMeasurementSettings): Record<string, number> {
+  const variables = { ...item.formulaVariables, quantity: item.quantity }
+  if ('L' in variables && item.length_m != null) variables.L = item.length_m
+  if ('W' in variables && item.width_m != null) variables.W = item.width_m
+  if ('H' in variables) variables.H = item.height_m ?? settings.defaultHeightM
+  if ('N' in variables && item.dim_quantity != null) variables.N = item.dim_quantity
+  if ('waste' in variables) variables.waste = settings.wastePct / 100
+  if ('spacing' in variables) variables.spacing = settings.studSpacingM
+  if ('coats' in variables) variables.coats = settings.paintCoats
+  return variables
 }
 
 // ─── 3D Icon Wrapper ──────────────────────────────────────────────────────────
@@ -232,8 +164,8 @@ function joinNotes(label: string, values: string[] | undefined) {
 
 function measurementToQuote(measurement: PlanMeasurementResult): AIQuoteResult {
   const grouped = new Map<string, PlanMeasurementItem[]>()
-  for (const item of measurement.items) {
-    const key = item.roomName?.trim() || 'Général'
+  for (const item of measurement.items.filter(candidate => candidate.validationStatus !== 'excluded')) {
+    const key = `${item.trade} — ${item.roomName?.trim() || 'Général'}`
     grouped.set(key, [...(grouped.get(key) ?? []), item])
   }
 
@@ -251,8 +183,8 @@ function measurementToQuote(measurement: PlanMeasurementResult): AIQuoteResult {
     clientName: null,
     clientDraft: null,
     quoteWarnings,
-    sections: [...grouped.entries()].map(([roomName, items]) => ({
-      title: roomName,
+    sections: [...grouped.entries()].map(([sectionTitle, items]) => ({
+      title: sectionTitle,
       items: items.map(item => {
         const details = [
           item.trade ? `Lot : ${item.trade}` : null,
@@ -280,6 +212,19 @@ function measurementToQuote(measurement: PlanMeasurementResult): AIQuoteResult {
           width_m: item.width_m ?? null,
           height_m: item.height_m ?? null,
           dimension_pricing_mode: item.dimension_pricing_mode ?? null,
+          measurement_metadata: {
+            measurementId: measurement.id ?? null,
+            measurementLineId: item.id,
+            tradeId: item.tradeId,
+            sourceKind: item.sourceKind,
+            validationStatus: item.validationStatus,
+            formula: item.formula,
+            formulaVariables: item.formulaVariables,
+            evidence: item.evidence,
+            confidence: item.confidence ?? null,
+            rulesVersion: item.rulesVersion,
+            settings: measurement.settings,
+          },
         }
       }),
     })),
@@ -288,7 +233,7 @@ function measurementToQuote(measurement: PlanMeasurementResult): AIQuoteResult {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function AtelierIAClient() {
+export default function AtelierIAClient({ initialMeasurementTrades }: { initialMeasurementTrades: PlanMeasurementTrade[] }) {
   const router = useRouter()
   const [mode, setMode] = useState<Mode>('voice')
   const [text, setText] = useState('')
@@ -301,7 +246,13 @@ export default function AtelierIAClient() {
   const [isCreating, setIsCreating] = useState(false)
   const [results, setResults] = useState<AIQuoteResult[]>([])
   const [measurement, setMeasurement] = useState<PlanMeasurementResult | null>(null)
-  const [measurementSettings, setMeasurementSettings] = useState<MeasurementSettings>({ defaultHeightM: 2.5, wastePct: 8, studSpacingM: 0.6 })
+  const [measurementSettings, setMeasurementSettings] = useState<PlanMeasurementSettings>(DEFAULT_MEASUREMENT_SETTINGS)
+  const [projectType, setProjectType] = useState<PlanProjectType>('renovation')
+  const [selectedTrades, setSelectedTrades] = useState<PlanMeasurementTrade[]>(initialMeasurementTrades)
+  const [workScopes, setWorkScopes] = useState<Partial<Record<PlanMeasurementTrade, PlanWorkScope>>>(() => Object.fromEntries(initialMeasurementTrades.map(trade => [trade, 'replace'])))
+  const [measurementTradeFilter, setMeasurementTradeFilter] = useState<PlanMeasurementTrade | 'all'>('all')
+  const [measurementRoomFilter, setMeasurementRoomFilter] = useState<string>('all')
+  const [draftStatus, setDraftStatus] = useState<string | null>(null)
   const [formulaError, setFormulaError] = useState<string | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -412,6 +363,12 @@ export default function AtelierIAClient() {
         const formData = new FormData()
         formData.append('file', file)
         if (pdfDescription.trim()) formData.append('description', pdfDescription.trim())
+        if (mode === 'measure') {
+          formData.append('projectType', projectType)
+          formData.append('selectedTrades', JSON.stringify(selectedTrades))
+          formData.append('workScopes', JSON.stringify(workScopes))
+          formData.append('settings', JSON.stringify(measurementSettings))
+        }
         setAnalyzeStage(mode === 'measure' ? 'Détection pièces et quantités' : 'OCR et lecture du document')
         res = await fetch(mode === 'measure' ? '/api/ai/measure-plan' : '/api/ai/analyze-quote', { method: 'POST', body: formData })
       } else {
@@ -432,13 +389,8 @@ export default function AtelierIAClient() {
         if (!nextMeasurement?.items?.length) setError('Aucun métré exploitable trouvé. Essayez un plan plus lisible ou ajoutez des précisions.')
         else {
           setFormulaError(null)
-          setMeasurement({
-            ...nextMeasurement,
-            items: nextMeasurement.items.map(item => ({
-              ...item,
-              formula: item.formula?.trim() || defaultFormulaForItem(item),
-            })),
-          })
+          setMeasurementSettings(nextMeasurement.settings)
+          setMeasurement(nextMeasurement)
         }
       } else setResults((data as { quotes: AIQuoteResult[] }).quotes ?? [])
     } catch {
@@ -479,6 +431,10 @@ export default function AtelierIAClient() {
 
   async function handleCreateMeasurementInEditor() {
     if (!measurement) return
+    if (hasBlockingMeasurementIssues(measurement)) {
+      setError('Confirmez la calibration et validez ou excluez les lignes critiques avant de créer le devis.')
+      return
+    }
     setIsCreating(true)
     setError(null)
 
@@ -489,6 +445,7 @@ export default function AtelierIAClient() {
         setIsCreating(false)
         return
       }
+      if (measurement.id) await markPlanMeasurementConverted(measurement.id, quoteRes.quoteId)
       const params = new URLSearchParams({ id: quoteRes.quoteId, returnTo: '/atelier-ia' })
       router.push(`/finances/quote-editor?${params}`)
     } catch {
@@ -504,6 +461,7 @@ export default function AtelierIAClient() {
     setResults([])
     setMeasurement(null)
     setFormulaError(null)
+    setDraftStatus(null)
     setCurrentIndex(0)
     setError(null)
   }
@@ -520,6 +478,16 @@ export default function AtelierIAClient() {
     setDocumentChoiceOpen(true)
   }
 
+  function toggleMeasurementTrade(trade: PlanMeasurementTrade) {
+    setSelectedTrades(current => current.includes(trade) ? current.filter(value => value !== trade) : [...current, trade])
+    setWorkScopes(current => ({ ...current, [trade]: current[trade] ?? (projectType === 'new' ? 'create' : 'replace') }))
+  }
+
+  function changeProjectType(next: PlanProjectType) {
+    setProjectType(next)
+    setWorkScopes(current => Object.fromEntries(selectedTrades.map(trade => [trade, current[trade] ?? (next === 'new' ? 'create' : 'replace')])))
+  }
+
   function updateMeasurementItem(index: number, patch: Partial<PlanMeasurementItem>) {
     setFormulaError(null)
     setMeasurement(current => {
@@ -531,18 +499,93 @@ export default function AtelierIAClient() {
     })
   }
 
+  function removeMeasurementItem(index: number) {
+    setMeasurement(current => current ? { ...current, items: current.items.filter((_, itemIndex) => itemIndex !== index) } : current)
+  }
+
+  function addMeasurementItem() {
+    const tradeId = measurementTradeFilter === 'all' ? selectedTrades[0] ?? 'placo_isolation' : measurementTradeFilter
+    setMeasurement(current => current ? {
+      ...current,
+      items: [...current.items, {
+        id: `manual-${crypto.randomUUID()}`, roomId: null, roomName: 'Général', tradeId,
+        trade: MEASUREMENT_TRADE_LABELS[tradeId], designation: 'Nouvelle ligne', quantity: 1, unit: 'u',
+        dimension_pricing_mode: 'none', confidence: 1, assumptions: ['Ligne ajoutée manuellement.'], warnings: [],
+        formula: 'quantity', formulaVariables: { quantity: 1 }, evidence: [{ label: 'Saisie artisan', source: 'user_input' }],
+        sourceKind: 'measured', validationStatus: 'pending', critical: false, rulesVersion: PLAN_MEASUREMENT_RULES_VERSION,
+      }],
+    } : current)
+  }
+
+  function updateMeasurementRoom(roomIndex: number, field: 'area_m2' | 'perimeter_m' | 'height_m', raw: string) {
+    setMeasurement(current => {
+      if (!current) return current
+      const value = raw === '' ? null : Math.max(0, Number(raw) || 0)
+      const rooms = current.rooms.map((room, index) => index === roomIndex ? {
+        ...room, [field]: value, confidence: 1,
+        evidence: [...room.evidence.filter(evidence => evidence.source !== 'user_input'), { label: `${field} corrigé`, source: 'user_input' as const, value: value == null ? null : String(value) }],
+      } : room)
+      const regenerated = buildMeasurementItems({ rooms, openings: current.openings, scope: current.scope, settings: measurementSettings })
+      const previousById = new Map(current.items.map(item => [item.id, item]))
+      const manualItems = current.items.filter(item => item.id.startsWith('manual-'))
+      return {
+        ...current, rooms,
+        items: [
+          ...regenerated.map(item => ({ ...item, validationStatus: previousById.get(item.id)?.validationStatus ?? item.validationStatus })),
+          ...manualItems,
+        ],
+      }
+    })
+  }
+
+  async function saveMeasurementDraft() {
+    if (!measurement) return
+    if (JSON.stringify(measurement.settings) !== JSON.stringify(measurementSettings)) {
+      setDraftStatus('Recalculez les lignes avant d’enregistrer')
+      return
+    }
+    setDraftStatus('Enregistrement…')
+    const next = { ...measurement, settings: measurementSettings }
+    const result = await savePlanMeasurementDraft(next)
+    setDraftStatus(result.error ? `Erreur : ${result.error}` : 'Brouillon enregistré')
+  }
+
+  async function resumeLatestMeasurement() {
+    setError(null)
+    setDraftStatus('Chargement…')
+    try {
+      const response = await fetch('/api/ai/measure-plan')
+      const data = await response.json()
+      if (!response.ok || !data.measurement) {
+        setDraftStatus('Aucun brouillon disponible')
+        return
+      }
+      const latest = data.measurement as PlanMeasurementResult
+      setMeasurement(latest)
+      setMeasurementSettings(latest.settings)
+      setProjectType(latest.scope.projectType)
+      setSelectedTrades(latest.scope.selectedTrades)
+      setWorkScopes(latest.scope.workScopes)
+      setDraftStatus('Brouillon repris')
+    } catch {
+      setDraftStatus('Impossible de charger le brouillon')
+    }
+  }
+
   function recalculateMeasurementItem(index: number) {
     setMeasurement(current => {
       if (!current) return current
       const item = current.items[index]
       if (!item) return current
       try {
-        const formula = item.formula?.trim() || defaultFormulaForItem(item)
-        const quantity = evaluateFormula(formula, formulaVariablesForItem(item, measurementSettings))
+        const formula = item.formula.trim()
+        const formulaVariables = formulaVariablesForItem(item, measurementSettings)
+        const quantity = evaluateMeasurementFormula(formula, formulaVariables)
         setFormulaError(null)
         return {
           ...current,
-          items: current.items.map((row, i) => i === index ? { ...row, formula, quantity } : row),
+          settings: measurementSettings,
+          items: current.items.map((row, i) => i === index ? { ...row, formula, formulaVariables, quantity } : row),
         }
       } catch (err) {
         setFormulaError(err instanceof Error ? err.message : 'Formule invalide')
@@ -556,15 +599,17 @@ export default function AtelierIAClient() {
       if (!current) return current
       try {
         const items = current.items.map(item => {
-          const formula = item.formula?.trim() || defaultFormulaForItem(item)
+          const formula = item.formula.trim()
+          const formulaVariables = formulaVariablesForItem(item, measurementSettings)
           return {
             ...item,
             formula,
-            quantity: evaluateFormula(formula, formulaVariablesForItem(item, measurementSettings)),
+            formulaVariables,
+            quantity: evaluateMeasurementFormula(formula, formulaVariables),
           }
         })
         setFormulaError(null)
-        return { ...current, items }
+        return { ...current, settings: measurementSettings, items }
       } catch (err) {
         setFormulaError(err instanceof Error ? err.message : 'Une formule est invalide')
         return current
@@ -573,9 +618,15 @@ export default function AtelierIAClient() {
   }
 
   const currentQuote = results[currentIndex] ?? null
-  const canAnalyze = mode === 'pdf' || mode === 'measure' ? !!file : text.trim().length >= 5
+  const canAnalyze = mode === 'pdf' ? !!file : mode === 'measure' ? Boolean(file && selectedTrades.length) : text.trim().length >= 5
   const totalItems = currentQuote?.sections.reduce((s: number, sec: AIQuoteResult['sections'][0]) => s + sec.items.length, 0) ?? 0
   const documentModeActive = mode === 'pdf' || mode === 'measure'
+  const filteredMeasurementItems = measurement?.items.filter(item =>
+    (measurementTradeFilter === 'all' || item.tradeId === measurementTradeFilter)
+    && (measurementRoomFilter === 'all' || item.roomId === measurementRoomFilter),
+  ) ?? []
+  const measurementSettingsDirty = measurement ? JSON.stringify(measurement.settings) !== JSON.stringify(measurementSettings) : false
+  const blockingMeasurementIssues = measurement ? hasBlockingMeasurementIssues(measurement) || measurementSettingsDirty : false
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -658,6 +709,8 @@ export default function AtelierIAClient() {
                       {/* Bouton micro 3D */}
                       <button
                         onClick={isRecording ? stopRecording : startRecording}
+                        title={isRecording ? 'Arrêter l’enregistrement' : 'Démarrer l’enregistrement'}
+                        aria-label={isRecording ? 'Arrêter l’enregistrement' : 'Démarrer l’enregistrement'}
                         className={`w-28 h-28 rounded-full flex items-center justify-center transition-all border-2 ${
                           isRecording
                             ? 'bg-red-500 border-red-700/40 animate-pulse shadow-[inset_0_2px_0_rgba(255,255,255,0.3),0_6px_0_0_#7f1d1d,0_6px_0_1px_rgba(127,29,29,0.2),0_14px_28px_rgba(239,68,68,0.4)]'
@@ -707,6 +760,60 @@ export default function AtelierIAClient() {
 
                 {(mode === 'pdf' || mode === 'measure') && (
                   <div className="flex-1 flex flex-col gap-2">
+                    {mode === 'measure' && (
+                      <div className="mb-3 space-y-3 rounded-2xl border border-[var(--elevation-border)] bg-black/[0.025] dark:bg-white/[0.035] p-4">
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-secondary">Périmètre du métré</p>
+                            <button type="button" onClick={resumeLatestMeasurement} className="text-[10px] font-semibold text-[rgb(var(--accent-primary))] hover:underline">Reprendre le dernier brouillon</button>
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            {([['renovation', 'Rénovation'], ['new', 'Neuf']] as const).map(([value, label]) => (
+                              <button key={value} type="button" onClick={() => changeProjectType(value)}
+                                className={`h-9 rounded-lg border text-xs font-semibold ${projectType === value ? 'border-[rgb(var(--accent-primary))] bg-[rgb(var(--accent-primary)/0.1)] text-primary' : 'border-[var(--elevation-border)] text-secondary'}`}>
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {PLAN_MEASUREMENT_TRADES.map(trade => {
+                            const checked = selectedTrades.includes(trade)
+                            return (
+                              <div key={trade} className={`rounded-xl border p-2.5 ${checked ? 'border-[rgb(var(--accent-primary)/0.45)] bg-[rgb(var(--accent-primary)/0.06)]' : 'border-[var(--elevation-border)]'}`}>
+                                <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-primary">
+                                  <input type="checkbox" checked={checked} onChange={() => toggleMeasurementTrade(trade)} />
+                                  {MEASUREMENT_TRADE_LABELS[trade]}
+                                </label>
+                                {checked && (
+                                  <select value={workScopes[trade] ?? (projectType === 'new' ? 'create' : 'replace')}
+                                    onChange={event => setWorkScopes(current => ({ ...current, [trade]: event.target.value as PlanWorkScope }))}
+                                    className="input mt-2 h-8 w-full rounded-lg px-2 text-[11px]">
+                                    <option value="create">Création</option>
+                                    <option value="replace">Remplacement</option>
+                                    <option value="remove">Dépose</option>
+                                    <option value="preserve">Conservation</option>
+                                  </select>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="text-[11px] text-secondary">HSP par défaut (m)
+                            <input type="number" min="1" step="0.01" value={measurementSettings.defaultHeightM}
+                              onChange={event => setMeasurementSettings(current => ({ ...current, defaultHeightM: Math.max(1, Number(event.target.value) || 1) }))}
+                              className="input mt-1 h-9 w-full rounded-lg px-2 text-xs" />
+                          </label>
+                          <label className="text-[11px] text-secondary">Pertes (%)
+                            <input type="number" min="0" max="50" step="0.5" value={measurementSettings.wastePct}
+                              onChange={event => setMeasurementSettings(current => ({ ...current, wastePct: Math.max(0, Number(event.target.value) || 0) }))}
+                              className="input mt-1 h-9 w-full rounded-lg px-2 text-xs" />
+                          </label>
+                        </div>
+                        {selectedTrades.length === 0 && <p className="text-xs text-red-500">Sélectionnez au moins un lot.</p>}
+                      </div>
+                    )}
                     <p className="text-xs text-secondary">
                       {mode === 'measure'
                         ? `Importez un plan PDF ou une photo de plan. ${AI_NAME} prépare un pré-métré à valider.`
@@ -883,7 +990,7 @@ export default function AtelierIAClient() {
                       <div className="min-w-0">
                         <p className="text-sm font-bold text-primary truncate">{measurement.title}</p>
                         <p className="text-xs text-secondary">
-                          {measurement.rooms.length} pièce{measurement.rooms.length > 1 ? 's' : ''} · {measurement.items.length} ligne{measurement.items.length > 1 ? 's' : ''} de métré
+                          {measurement.rooms.length} pièce{measurement.rooms.length > 1 ? 's' : ''} · {measurement.openings.length} ouverture{measurement.openings.length > 1 ? 's' : ''} · {measurement.observations.length} équipement{measurement.observations.length > 1 ? 's' : ''} visible{measurement.observations.length > 1 ? 's' : ''} · {measurement.items.length} ligne{measurement.items.length > 1 ? 's' : ''}
                         </p>
                       </div>
                       <button
@@ -899,7 +1006,12 @@ export default function AtelierIAClient() {
                         {measurement.needsCalibration && (
                           <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
                             <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                            <span>Échelle ou cotes à confirmer avant devis définitif.</span>
+                            <div className="flex-1">
+                              <span>Échelle ou cotes à confirmer avant devis définitif.</span>
+                              <button type="button" onClick={() => setMeasurement(current => current ? {
+                                ...current, needsCalibration: false, scale: { ...current.scale, needsCalibration: false },
+                              } : current)} className="ml-2 underline font-semibold">Confirmer après contrôle</button>
+                            </div>
                           </div>
                         )}
                         {measurement.globalWarnings.slice(0, 4).map((warning, wi) => (
@@ -910,6 +1022,51 @@ export default function AtelierIAClient() {
                         ))}
                       </div>
                     )}
+
+                    <div className="rounded-2xl border border-[var(--elevation-border)] p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-secondary">Géométrie détectée</p>
+                          <p className="text-xs text-secondary">Corriger une cote régénère les lignes dépendantes.</p>
+                        </div>
+                        <span className="text-xs font-semibold text-primary">Échelle {measurement.scale.value ?? 'non confirmée'}</span>
+                      </div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                        {measurement.rooms.map((room, roomIndex) => (
+                          <div key={room.id} className="rounded-xl bg-black/[0.025] dark:bg-white/[0.035] p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate text-xs font-semibold text-primary">{room.name}</span>
+                              <span className="text-[10px] text-secondary">{room.kind === 'exterior' ? 'Extérieur' : 'Intérieur'}</span>
+                            </div>
+                            <div className="mt-2 grid grid-cols-3 gap-1">
+                              {([['A', 'area_m2'], ['P', 'perimeter_m'], ['H', 'height_m']] as const).map(([label, field]) => (
+                                <label key={field} className="text-[9px] text-secondary">{label}
+                                  <input type="number" min="0" step="0.01" value={room[field] ?? ''}
+                                    onChange={event => updateMeasurementRoom(roomIndex, field, event.target.value)}
+                                    className="input mt-0.5 h-7 w-full rounded-md px-1 text-[10px]" />
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" onClick={() => setMeasurementTradeFilter('all')}
+                        className={`h-8 rounded-lg border px-3 text-xs ${measurementTradeFilter === 'all' ? 'border-[rgb(var(--accent-primary))] text-primary' : 'border-[var(--elevation-border)] text-secondary'}`}>Tous les lots</button>
+                      {measurement.scope.selectedTrades.map(trade => (
+                        <button key={trade} type="button" onClick={() => setMeasurementTradeFilter(trade)}
+                          className={`h-8 rounded-lg border px-3 text-xs ${measurementTradeFilter === trade ? 'border-[rgb(var(--accent-primary))] text-primary' : 'border-[var(--elevation-border)] text-secondary'}`}>
+                          {MEASUREMENT_TRADE_LABELS[trade]} · {measurement.items.filter(item => item.tradeId === trade && item.validationStatus !== 'excluded').length}
+                        </button>
+                      ))}
+                      <select value={measurementRoomFilter} onChange={event => setMeasurementRoomFilter(event.target.value)}
+                        className="input ml-auto h-8 min-w-36 rounded-lg px-2 text-xs">
+                        <option value="all">Toutes les pièces</option>
+                        {measurement.rooms.map(room => <option key={room.id} value={room.id}>{room.name}</option>)}
+                      </select>
+                    </div>
 
                     <div className="rounded-2xl border border-[var(--elevation-border)] bg-black/[0.025] dark:bg-white/[0.035] p-3">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -927,6 +1084,12 @@ export default function AtelierIAClient() {
                             onChange={e => setMeasurementSettings(s => ({ ...s, defaultHeightM: Math.max(0, Number(e.target.value) || 0) }))}
                             className="input mt-1 h-9 w-24 px-2 rounded-lg text-xs"
                           />
+                        </label>
+                        <label className="text-[11px] text-secondary font-medium">
+                          Couches
+                          <input type="number" min="1" max="5" step="1" value={measurementSettings.paintCoats}
+                            onChange={e => setMeasurementSettings(s => ({ ...s, paintCoats: Math.max(1, Number(e.target.value) || 1) }))}
+                            className="input mt-1 h-9 w-20 px-2 rounded-lg text-xs" />
                         </label>
                         <label className="text-[11px] text-secondary font-medium">
                           Pertes %
@@ -950,6 +1113,12 @@ export default function AtelierIAClient() {
                             className="input mt-1 h-9 w-24 px-2 rounded-lg text-xs"
                           />
                         </label>
+                        <label className="text-[11px] text-secondary font-medium">
+                          Faïence H
+                          <input type="number" min="0.1" max="5" step="0.1" value={measurementSettings.wallTileHeightM}
+                            onChange={e => setMeasurementSettings(s => ({ ...s, wallTileHeightM: Math.max(0.1, Number(e.target.value) || 0.1) }))}
+                            className="input mt-1 h-9 w-20 px-2 rounded-lg text-xs" />
+                        </label>
                         <button
                           type="button"
                           onClick={recalculateAllMeasurementItems}
@@ -964,8 +1133,10 @@ export default function AtelierIAClient() {
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto rounded-2xl border border-[var(--elevation-border)]">
+                  <div className="flex-1 overflow-auto rounded-2xl border border-[var(--elevation-border)]">
                     <div className="min-w-[820px]">
+                      {/* Sur mobile, ce tableau (6 colonnes, 820px min) dépasse largement
+                          l'écran : le scroll horizontal est contenu ici, pas sur la page. */}
                       <div className="grid grid-cols-[130px_190px_90px_80px_1fr_95px] gap-2 px-3 py-2 bg-black/[0.04] dark:bg-white/[0.06] border-b border-[var(--elevation-border)] text-[10px] font-bold uppercase tracking-widest text-secondary">
                         <span>Pièce</span>
                         <span>Poste</span>
@@ -974,8 +1145,10 @@ export default function AtelierIAClient() {
                         <span>Hypothèses</span>
                         <span>Confiance</span>
                       </div>
-                      {measurement.items.map((item, index) => (
-                        <div key={index} className="grid grid-cols-[130px_190px_90px_80px_1fr_95px] gap-2 px-3 py-3 border-b border-[var(--elevation-border)] last:border-b-0 items-start">
+                      {filteredMeasurementItems.map(item => {
+                        const index = measurement.items.findIndex(candidate => candidate.id === item.id)
+                        return (
+                        <div key={item.id} className={`grid grid-cols-[130px_190px_90px_80px_1fr_95px] gap-2 px-3 py-3 border-b border-[var(--elevation-border)] last:border-b-0 items-start ${item.validationStatus === 'excluded' ? 'opacity-50' : ''}`}>
                           <input
                             value={item.roomName}
                             onChange={e => updateMeasurementItem(index, { roomName: e.target.value })}
@@ -989,16 +1162,20 @@ export default function AtelierIAClient() {
                             />
                             <input
                               value={item.trade}
-                              onChange={e => updateMeasurementItem(index, { trade: e.target.value })}
+                              readOnly
                               className="input h-8 px-2 rounded-lg text-[11px] text-secondary"
                             />
+                            <p className="text-[10px] text-secondary">{item.sourceKind === 'measured' ? 'Mesuré' : item.sourceKind === 'derived' ? 'Dérivé' : 'Provision estimative'}</p>
                           </div>
                           <input
                             type="number"
                             min="0"
                             step="0.01"
                             value={Number.isFinite(item.quantity) ? item.quantity : 0}
-                            onChange={e => updateMeasurementItem(index, { quantity: Math.max(0, Number(e.target.value) || 0) })}
+                            onChange={e => {
+                              const quantity = Math.max(0, Number(e.target.value) || 0)
+                              updateMeasurementItem(index, { quantity, formulaVariables: { ...item.formulaVariables, quantity } })
+                            }}
                             className="input h-9 px-2 rounded-lg text-xs tabular-nums"
                           />
                           <input
@@ -1032,7 +1209,7 @@ export default function AtelierIAClient() {
                               ))}
                             </div>
                             <textarea
-                              value={item.formula ?? defaultFormulaForItem(item)}
+                              value={item.formula}
                               onChange={e => updateMeasurementItem(index, { formula: e.target.value })}
                               rows={1}
                               className="input w-full min-h-[2.25rem] px-2 py-1.5 rounded-lg text-xs resize-y font-mono"
@@ -1075,16 +1252,57 @@ export default function AtelierIAClient() {
                             >
                               Recalculer
                             </button>
+                            <div className="grid grid-cols-3 gap-1">
+                              <button type="button" title="Valider" aria-label="Valider la ligne"
+                                onClick={() => updateMeasurementItem(index, { validationStatus: 'validated' })}
+                                className={`h-7 rounded-md border flex items-center justify-center ${item.validationStatus === 'validated' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-500' : 'border-[var(--elevation-border)] text-secondary'}`}>
+                                <Check className="w-3 h-3" />
+                              </button>
+                              <button type="button" title="Exclure" aria-label="Exclure la ligne"
+                                onClick={() => updateMeasurementItem(index, { validationStatus: item.validationStatus === 'excluded' ? 'pending' : 'excluded' })}
+                                className={`h-7 rounded-md border flex items-center justify-center ${item.validationStatus === 'excluded' ? 'border-amber-500/40 bg-amber-500/10 text-amber-500' : 'border-[var(--elevation-border)] text-secondary'}`}>
+                                <Ban className="w-3 h-3" />
+                              </button>
+                              <button type="button" title="Supprimer" aria-label="Supprimer la ligne" onClick={() => removeMeasurementItem(index)}
+                                className="h-7 rounded-md border border-red-500/25 text-red-500 flex items-center justify-center">
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      ))}
+                      )})}
                     </div>
                   </div>
 
                   <div className="mt-4 shrink-0 border-t border-[var(--elevation-border)] pt-4">
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                      <button type="button" onClick={addMeasurementItem} className="btn-secondary h-9 px-3 text-xs flex items-center gap-1.5">
+                        <Plus className="w-3.5 h-3.5" /> Ajouter une ligne
+                      </button>
+                      <button type="button" onClick={() => setMeasurement(current => current ? {
+                        ...current, items: current.items.map(item => item.validationStatus === 'excluded'
+                          || (measurementTradeFilter !== 'all' && item.tradeId !== measurementTradeFilter)
+                          || (measurementRoomFilter !== 'all' && item.roomId !== measurementRoomFilter)
+                          ? item : { ...item, validationStatus: 'validated' }),
+                      } : current)} className="btn-secondary h-9 px-3 text-xs flex items-center gap-1.5">
+                        <Check className="w-3.5 h-3.5" /> Valider les lignes visibles
+                      </button>
+                      <button type="button" onClick={saveMeasurementDraft} className="btn-secondary h-9 px-3 text-xs flex items-center gap-1.5">
+                        <Save className="w-3.5 h-3.5" /> Enregistrer le brouillon
+                      </button>
+                      {draftStatus && <span className="text-xs text-secondary">{draftStatus}</span>}
+                    </div>
+                    {blockingMeasurementIssues && (
+                      <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                        {measurementSettingsDirty
+                          ? 'Les paramètres ont changé : cliquez sur « Recalculer tout » avant le passage au devis.'
+                          : 'Confirmez la calibration et validez ou excluez chaque ligne critique avant le passage au devis.'}
+                      </div>
+                    )}
                     <button
                       onClick={handleCreateMeasurementInEditor}
-                      disabled={isCreating || measurement.items.length === 0}
+                      disabled={isCreating || blockingMeasurementIssues || measurement.items.every(item => item.validationStatus === 'excluded')}
                       className="btn-primary w-full h-14 rounded-2xl text-sm font-bold disabled:opacity-60 flex items-center justify-center gap-2.5"
                     >
                       {isCreating ? (

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { resolveCatalogContext, getCatalogAIPromptContext } from '@/lib/catalog-context'
 import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
+import { buildDocumentContentBlock, buildPdfParserPlugins, validatePdfForVision, type PdfParserPlugin } from '@/lib/ai/document-content'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { buildIndustryQualityPrompt } from '@/lib/ai/industry-context'
@@ -618,6 +619,8 @@ export async function POST(req: NextRequest) {
     let isVision = false
     let imageBase64: string | null = null
     let imageMime = 'image/jpeg'
+    let imageFileName = 'document'
+    let pdfParserPlugins: PdfParserPlugin[] | undefined
     let isPresetsMode = false
     let presetsDescription = ''
 
@@ -640,9 +643,17 @@ export async function POST(req: NextRequest) {
       } else if (file) {
         const mime = file.type
         if (mime === 'application/pdf' || mime.startsWith('image/')) {
+          const buffer = Buffer.from(await file.arrayBuffer())
+          if (mime === 'application/pdf') {
+            const validation = await validatePdfForVision(buffer)
+            if (!validation.ok) {
+              return NextResponse.json({ error: validation.message, code: validation.code }, { status: validation.code === 'pdf_images_too_heavy' ? 422 : 400 })
+            }
+            pdfParserPlugins = buildPdfParserPlugins(validation.inspection)
+          }
           isVision = true
           imageMime = mime
-          const buffer = Buffer.from(await file.arrayBuffer())
+          imageFileName = file.name
           imageBase64 = buffer.toString('base64')
         }
       }
@@ -654,7 +665,7 @@ export async function POST(req: NextRequest) {
 
     type OpenRouterMessage = {
       role: 'system' | 'user'
-      content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>
+      content: string | Array<{ type: string; text?: string; image_url?: { url: string }; file?: { filename: string; file_data: string } }>
     }
 
     const activeSystemPrompt = isPresetsMode
@@ -678,10 +689,7 @@ export async function POST(req: NextRequest) {
             type: 'text',
             text: `Extrais tous les éléments de catalogue présents dans ce document. Utilise le vocabulaire métier "${promptCtx.activityLabel}" : ${promptCtx.materialLabel.toLowerCase()}s, ${promptCtx.serviceLabel.toLowerCase()}s, ${promptCtx.laborRateLabel.toLowerCase()}s, ${promptCtx.bundleTemplateLabel.toLowerCase()}s.`,
           },
-          {
-            type: 'image_url',
-            image_url: { url: `data:${imageMime};base64,${imageBase64}` },
-          },
+          buildDocumentContentBlock(imageMime, imageBase64, imageFileName),
         ],
       })
     } else {
@@ -701,6 +709,7 @@ export async function POST(req: NextRequest) {
         body: {
           messages,
           temperature: isPresetsMode ? 0.4 : 0.1,
+          plugins: pdfParserPlugins,
           response_format: { type: 'json_object' },
         },
         timeoutMs: 30000,
