@@ -211,16 +211,23 @@ export async function renderContractPdfWithFonts(snapshot: ContractPdfSnapshot, 
   doc.y -= SPACE.md
 
   // ── Blocs parties ──
-  function measurePartyBlock(lines: string[]): number {
-    return SPACE.md * 2 + SIZE.xxs + SPACE.xs + SIZE.md + 3 + lines.length * (SIZE.xs + 2)
+  const partyTitleStyle: TextStyle = { font: F.heading, size: SIZE.md, color: COLOR.black }
+  function measurePartyBlock(title: string, lines: string[], w: number): number {
+    const titleLines = title ? wrapText(pdfText(title), partyTitleStyle.font, partyTitleStyle.size, w - SPACE.md * 2) : ['']
+    return SPACE.md * 2 + SIZE.xxs + SPACE.xs + titleLines.length * textLineHeight(partyTitleStyle) + 3 + lines.length * (SIZE.xs + 2)
   }
   function drawPartyBlock(x: number, w: number, label: string, title: string, lines: string[]): void {
-    const h = measurePartyBlock(lines)
+    const titleLines = title ? wrapText(pdfText(title), partyTitleStyle.font, partyTitleStyle.size, w - SPACE.md * 2) : ['']
+    const h = measurePartyBlock(title, lines, w)
     doc.page.drawRectangle({ x, y: doc.y - h, width: w, height: h, color: COLOR.surface })
     let cy = doc.y - SPACE.md - SIZE.xxs
     doc.page.drawText(label.toUpperCase(), { x: x + SPACE.md, y: cy, size: SIZE.xxs, font: F.headingXBold, color: COLOR.secondary })
-    cy -= SPACE.xs + SIZE.md
-    doc.page.drawText(pdfText(title), { x: x + SPACE.md, y: cy, size: SIZE.md, font: F.heading, color: COLOR.black })
+    cy -= SPACE.xs + partyTitleStyle.size
+    for (const titleLine of titleLines) {
+      doc.page.drawText(titleLine, { x: x + SPACE.md, y: cy, size: partyTitleStyle.size, font: partyTitleStyle.font, color: partyTitleStyle.color })
+      cy -= textLineHeight(partyTitleStyle)
+    }
+    cy += textLineHeight(partyTitleStyle) - partyTitleStyle.size
     cy -= 3
     for (const line of lines) {
       cy -= SIZE.xs
@@ -230,7 +237,10 @@ export async function renderContractPdfWithFonts(snapshot: ContractPdfSnapshot, 
   }
 
   const boxW = (CONTENT_WIDTH - SPACE.md) / 2
-  const rowH1 = Math.max(measurePartyBlock(orgLines), measurePartyBlock(counterpartyLines))
+  const rowH1 = Math.max(
+    measurePartyBlock(org?.name ?? 'Organisation', orgLines, boxW),
+    measurePartyBlock(snapshot.counterparty.name, counterpartyLines, boxW),
+  )
   doc.ensureSpace(rowH1)
   const row1Y = doc.y
   drawPartyBlock(PAGE.margin, boxW, getRoleLabel(snapshot.contract.role, snapshot.contract.type), org?.name ?? 'Organisation', orgLines)
@@ -244,7 +254,10 @@ export async function renderContractPdfWithFonts(snapshot: ContractPdfSnapshot, 
       `Type : ${pdfText(CONTRACT_TYPE_LABELS[snapshot.contract.type])}`,
       `Référence : ${pdfText(snapshot.reference)}`,
     ]
-    const rowH2 = Math.max(measurePartyBlock(chantierLines), measurePartyBlock(cadreLines))
+    const rowH2 = Math.max(
+      measurePartyBlock(snapshot.chantier.title, chantierLines, boxW),
+      measurePartyBlock('', cadreLines, boxW),
+    )
     doc.ensureSpace(rowH2)
     const row2Y = doc.y
     drawPartyBlock(PAGE.margin, boxW, 'Chantier lié', snapshot.chantier.title, chantierLines)

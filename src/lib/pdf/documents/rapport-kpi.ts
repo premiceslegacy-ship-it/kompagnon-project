@@ -179,7 +179,7 @@ export async function renderRapportKpiPdfWithFonts(data: RapportKpiPdfData, font
       cells: [
         { value: pdfText(p.personName) },
         { value: fmtH(p.hours), style: { font: F.heading } },
-        { value: `${((p.hours / hoursReport.total) * 100).toFixed(0)} %` },
+        { value: hoursReport.total > 0 ? `${((p.hours / hoursReport.total) * 100).toFixed(0)} %` : '—' },
       ],
     }))
     drawTable(doc, cols, rows, tableOpts(F))
