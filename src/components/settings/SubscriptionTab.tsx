@@ -5,6 +5,8 @@ import { Check, ArrowRight, Zap, Star, Crown, ChevronDown, ChevronUp, AlertTrian
 import type { OrganizationModules } from '@/lib/organization-modules'
 import type { SubscriptionTier } from '@/lib/quota-catalog'
 import { createStripePortalSession } from '@/lib/data/mutations/stripe-portal'
+import { requestSelfServiceCancellation } from '@/lib/data/mutations/subscription-self-service'
+import type { AccessStatus } from '@/lib/subscription-access'
 
 // ── Données statiques des tiers ──────────────────────────────────────────────
 
@@ -44,7 +46,7 @@ const TIER_INFO: TierInfo[] = [
     stripeEnvKey: 'NEXT_PUBLIC_STRIPE_LINK_PRO',
     highlight: 'Le plus choisi',
     features: [
-      'Tout Starter, sans limites',
+      'Tous les outils de gestion, sans limites',
       'Sarah — secrétaire métier IA (120 appels/mois)',
       'Sarah vocale ElevenLabs (60 min/mois)',
       'Planning IA illimité',
@@ -54,7 +56,7 @@ const TIER_INFO: TierInfo[] = [
   {
     tier: 'expert',
     label: 'Expert',
-    price: '139',
+    price: '169',
     description: 'Tout illimité. Pour les structures qui vont vite.',
     stripeEnvKey: 'NEXT_PUBLIC_STRIPE_LINK_EXPERT',
     features: [
@@ -77,7 +79,7 @@ const CURRENT_TIER_BENEFITS: Record<SubscriptionTier, string[]> = {
   pro: [
     'Sarah répond à vos questions métier à tout moment',
     'Sarah vocale gère vos urgences les mains dans le cambouis',
-    'Toutes les fonctions Starter sans compteur qui stresse',
+    'Tous les outils du quotidien sans compteur qui stresse',
     '120 appels Sarah/mois — de quoi couvrir une semaine chargée chaque semaine',
   ],
   expert: [
@@ -119,17 +121,29 @@ const CANCEL_REASONS = [
 function CancellationFlow({
   tier,
   onClose,
+  selfService,
 }: {
   tier: SubscriptionTier
   onClose: () => void
+  selfService: boolean
 }) {
   const [step, setStep] = useState<CancelStep>('benefits')
   const [reason, setReason] = useState('')
   const [confirmText, setConfirmText] = useState('')
   const [portalError, setPortalError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
+  const [scheduledAt, setScheduledAt] = useState<string | null>(null)
   const benefits = CURRENT_TIER_BENEFITS[tier] ?? []
   const tierLabel = TIER_INFO.find(t => t.tier === tier)?.label ?? tier
+
+  if (scheduledAt) {
+    return (
+      <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+        <h3 className="font-bold text-primary">Résiliation programmée</h3>
+        <p className="mt-2 text-sm text-secondary">Votre accès reste actif jusqu&apos;au {new Date(scheduledAt).toLocaleDateString('fr-FR')}. La dernière période sera calculée au prorata par Stripe.</p>
+      </div>
+    )
+  }
 
   if (step === 'benefits') {
     return (
@@ -223,9 +237,9 @@ function CancellationFlow({
       <div className="p-4 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl space-y-1">
         <p className="text-sm font-semibold text-red-700 dark:text-red-400">Ce que vous perdez définitivement</p>
         <ul className="text-sm text-red-600 dark:text-red-400 space-y-0.5 list-disc list-inside">
-          <li>Toutes les fonctions IA ({tierLabel})</li>
-          <li>L&apos;historique des analyses et relances IA</li>
-          <li>L&apos;accès à Sarah et aux assistants</li>
+          <li>L&apos;accès opérationnel à Atelier ({tierLabel})</li>
+          <li>Sarah et les assistants métier</li>
+          <li>Les automatisations de suivi</li>
         </ul>
       </div>
       <div className="space-y-2">
@@ -258,12 +272,15 @@ function CancellationFlow({
           onClick={() => {
             setPortalError(null)
             startTransition(async () => {
-              const returnUrl = `${window.location.origin}/settings?tab=abonnement`
-              const result = await createStripePortalSession(returnUrl)
+              const result = selfService
+                ? await requestSelfServiceCancellation(reason)
+                : await createStripePortalSession(`${window.location.origin}/settings?tab=abonnement`)
               if ('error' in result) {
                 setPortalError(result.error)
+              } else if (selfService && 'cancel_at' in result) {
+                setScheduledAt(result.cancel_at)
               } else {
-                window.location.href = result.url
+                window.location.href = (result as { url: string }).url
               }
             })
           }}
@@ -274,11 +291,11 @@ function CancellationFlow({
           }`}
         >
           {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-          {isPending ? 'Redirection...' : 'Valider la résiliation'}
+          {isPending ? 'Traitement...' : 'Valider la résiliation'}
         </button>
       </div>
       <p className="text-xs text-secondary text-center">
-        La résiliation est traitée via le portail Stripe sécurisé. Vous recevrez une confirmation par email.
+        La résiliation sera programmée exactement à J+30. Vous recevrez une confirmation par email.
       </p>
     </div>
   )
@@ -292,6 +309,9 @@ type Props = {
   stripeLinkPro: string | null
   stripeLinkExpert: string | null
   currentTierOverride?: SubscriptionTier | null
+  selfService?: boolean
+  accessStatus?: AccessStatus | null
+  accessEndsAt?: string | null
 }
 
 export default function SubscriptionTab({
@@ -300,6 +320,9 @@ export default function SubscriptionTab({
   stripeLinkPro,
   stripeLinkExpert,
   currentTierOverride,
+  selfService = false,
+  accessStatus,
+  accessEndsAt,
 }: Props) {
   const stripeLinks: Record<string, string | null> = {
     NEXT_PUBLIC_STRIPE_LINK_STARTER: stripeLinkStarter,
@@ -310,6 +333,17 @@ export default function SubscriptionTab({
   const currentTier: SubscriptionTier = currentTierOverride ?? detectCurrentTier(modules)
   const [showCancelFlow, setShowCancelFlow] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
+  const [portalError, setPortalError] = useState<string | null>(null)
+  const [portalPending, startPortalTransition] = useTransition()
+
+  const openPortal = () => {
+    setPortalError(null)
+    startPortalTransition(async () => {
+      const result = await createStripePortalSession(`${window.location.origin}/settings?tab=abonnement`)
+      if ('error' in result) setPortalError(result.error)
+      else window.location.href = result.url
+    })
+  }
 
   const tierLabel = currentTier === 'setup_only'
     ? 'Sans abonnement IA'
@@ -337,7 +371,7 @@ export default function SubscriptionTab({
               )}
             </div>
             {currentTier !== 'setup_only' && (
-              <span className="px-3 py-1 bg-accent/15 text-accent text-xs font-bold rounded-full uppercase tracking-wide">Actif</span>
+              <span className="px-3 py-1 bg-accent/15 text-accent text-xs font-bold rounded-full uppercase tracking-wide">{accessStatus === 'canceling' ? 'Résiliation programmée' : accessStatus === 'past_due' ? 'Paiement à régulariser' : 'Actif'}</span>
             )}
           </div>
 
@@ -365,8 +399,15 @@ export default function SubscriptionTab({
 
           <p className="text-xs text-secondary">
             Tarifs HT. TVA non applicable, article 293 B du CGI.{' '}
-            <a href="/legal/terms" target="_blank" className="underline hover:text-primary transition-colors">CGV</a>
+            <a href="/terms" target="_blank" className="underline hover:text-primary transition-colors">CGV</a>
           </p>
+          {accessStatus === 'canceling' && accessEndsAt && <p className="text-sm text-amber-600 dark:text-amber-300">Accès maintenu jusqu&apos;au {new Date(accessEndsAt).toLocaleDateString('fr-FR')}.</p>}
+          {selfService && currentTier !== 'setup_only' && (
+            <button onClick={openPortal} disabled={portalPending} className="inline-flex items-center gap-2 rounded-xl border border-[var(--elevation-border)] px-4 py-2.5 text-sm font-semibold text-primary hover:border-accent disabled:opacity-50">
+              {portalPending && <Loader2 className="h-4 w-4 animate-spin" />} Gérer ma formule et mon moyen de paiement
+            </button>
+          )}
+          {portalError && <p className="text-sm text-red-500">{portalError}</p>}
         </div>
       </section>
 
@@ -379,7 +420,7 @@ export default function SubscriptionTab({
           </div>
 
           <div className="space-y-3">
-            {TIER_INFO.filter(t => tierRank(t.tier) > tierRank(currentTier)).map((t) => {
+            {TIER_INFO.filter(t => (!selfService || t.tier !== 'starter') && tierRank(t.tier) > tierRank(currentTier)).map((t) => {
               const link = stripeLinks[t.stripeEnvKey]
               return (
                 <div
@@ -418,7 +459,15 @@ export default function SubscriptionTab({
                     ))}
                   </ul>
 
-                  {link ? (
+                  {selfService ? (
+                    <button
+                      onClick={openPortal}
+                      disabled={portalPending}
+                      className={`flex items-center justify-center gap-2 w-full px-4 py-3 font-semibold rounded-xl transition-colors ${t.highlight ? 'bg-accent text-black hover:bg-accent/90' : 'border border-[var(--elevation-border)] text-primary hover:border-accent'}`}
+                    >
+                      {portalPending && <Loader2 className="h-4 w-4 animate-spin" />} Passer à {t.label}<ArrowRight className="w-4 h-4" />
+                    </button>
+                  ) : link ? (
                     <a
                       href={link}
                       target="_blank"
@@ -463,7 +512,7 @@ export default function SubscriptionTab({
               </button>
             </div>
           ) : (
-            <CancellationFlow tier={currentTier} onClose={() => setShowCancelFlow(false)} />
+            <CancellationFlow tier={currentTier} selfService={selfService} onClose={() => setShowCancelFlow(false)} />
           )}
         </section>
       )}

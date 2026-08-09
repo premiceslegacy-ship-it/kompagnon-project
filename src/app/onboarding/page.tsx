@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { getCurrentUserProfile } from '@/lib/data/queries/user'
 import { getOrgRoles, getOrgJoinCode } from '@/lib/data/queries/roles'
 import OnboardingClient from './OnboardingClient'
+import { isSelfServiceMode } from '@/lib/data/queries/subscription-access'
 
 /**
  * Page d'onboarding - accessible uniquement aux utilisateurs connectés
@@ -20,7 +21,13 @@ export default async function OnboardingPage() {
 
   return (
     <Suspense>
-      <OnboardingClient firstName={firstName} initialEmail={profile.email ?? null} roles={roles} joinCode={joinCode} />
+      <OnboardingClient
+        firstName={firstName}
+        initialEmail={profile.email ?? null}
+        roles={roles}
+        joinCode={joinCode}
+        selfService={isSelfServiceMode()}
+      />
     </Suspense>
   )
 }

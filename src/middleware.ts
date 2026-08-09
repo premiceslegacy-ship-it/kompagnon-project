@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { getSupabaseRuntimeConfig } from '@/lib/supabase/config'
+import { hasActiveAccess, entitlementFromDb } from '@/lib/subscription-access'
 
 const publicRoutePrefixes = [
   '/login',
@@ -34,6 +35,19 @@ const publicExactRoutes = [
   '/legal',
   '/privacy',
   '/terms',
+  '/api/manifest',
+  '/api/app-icon',
+  // Appels serveur-à-serveur signés par l'instance mutualisée. Le portail
+  // Stripe reste volontairement absent : il exige la session utilisateur.
+  '/api/stripe/checkout-session',
+  '/api/stripe/cancel-subscription',
+]
+
+const lockedAccessPrefixes = [
+  '/activation',
+  '/api/operator',
+  '/api/webhooks',
+  '/api/cron',
   '/api/manifest',
   '/api/app-icon',
 ]
@@ -102,6 +116,7 @@ export async function middleware(request: NextRequest) {
   // 3. Utilisateur connecté : vérifier onboarding_done
   // Optimisation : on lit d'abord le cookie hint (posé après onboarding) pour éviter
   // une query BDD à chaque navigation. Si absent, on retombe sur la query profiles.
+  let isOnboarded = false
   if (
     user &&
     !isPathOrChild(pathname, '/onboarding') &&
@@ -110,6 +125,7 @@ export async function middleware(request: NextRequest) {
   ) {
     const onboardedCookie = request.cookies.get('atelier_onboarded')
     const cookieIsValid = onboardedCookie?.value === user.id
+    isOnboarded = cookieIsValid
 
     if (!cookieIsValid) {
       const { data: profile } = await supabase
@@ -125,6 +141,7 @@ export async function middleware(request: NextRequest) {
       }
 
       if (profile?.onboarding_done === true) {
+        isOnboarded = true
         supabaseResponse.cookies.set('atelier_onboarded', user.id, {
           httpOnly: true,
           sameSite: 'strict',
@@ -132,6 +149,48 @@ export async function middleware(request: NextRequest) {
           path: '/',
         })
       }
+    }
+  }
+
+  // Le verrou commercial est propre à l'instance self-service. Les instances
+  // dédiées historiques ne créent aucune ligne d'entitlement et conservent donc
+  // exactement leur comportement actuel.
+  if (
+    process.env.SELF_SERVICE_MODE === 'true'
+    && user
+    && isOnboarded
+    && !isPublicRoute
+    && !lockedAccessPrefixes.some((prefix) => isPathOrChild(pathname, prefix))
+  ) {
+    const { data: membership } = await supabase
+      .from('memberships')
+      .select('organization_id')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .single()
+
+    const { data: entitlementRow } = membership?.organization_id
+      ? await supabase
+        .from('organization_entitlements')
+        .select('organization_id, access_status, effective_tier, preferred_tier, trial_started_at, trial_ends_at, access_ends_at, updated_at')
+        .eq('organization_id', membership.organization_id)
+        .maybeSingle()
+      : { data: null }
+    const entitlement = entitlementRow
+      ? entitlementFromDb(entitlementRow as Record<string, unknown>)
+      : null
+
+    if (!hasActiveAccess(entitlement)) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return NextResponse.json(
+          { error: 'access_locked', activation_url: '/activation' },
+          { status: 403 },
+        )
+      }
+      const url = request.nextUrl.clone()
+      url.pathname = '/activation'
+      url.search = ''
+      return NextResponse.redirect(url)
     }
   }
 

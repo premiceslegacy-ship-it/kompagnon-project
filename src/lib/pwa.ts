@@ -21,6 +21,9 @@ export function absoluteAppIconUrl(size: number, origin?: string): string {
 }
 
 export async function getPwaBrand(): Promise<PwaBrand> {
+  if (process.env.SELF_SERVICE_MODE === 'true') {
+    return { name: APP_NAME, logoUrl: null }
+  }
   try {
     // Hypothèse single-tenant : une seule organisation par instance déployée.
     // À résoudre par domaine/instance lors du passage à un déploiement mutualisé.
@@ -43,4 +46,3 @@ export async function getPwaBrand(): Promise<PwaBrand> {
     }
   }
 }
-

@@ -71,6 +71,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   org_not_found:     'Votre espace de travail est introuvable. Veuillez vous reconnecter.',
   org_update_failed: 'La mise à jour de votre espace a échoué. Veuillez réessayer.',
   invalid_org_details: 'Certaines informations entreprise doivent être corrigées avant de continuer.',
+  siret_required:     'Le SIRET est obligatoire pour activer votre essai gratuit.',
+  trial_activation_failed: 'Votre espace est prêt. Activez votre accès pour continuer.',
   invalid_code:      'Code entreprise introuvable. Vérifiez le code et réessayez.',
   join_failed:       "Une erreur est survenue lors de la connexion à l'entreprise. Veuillez réessayer.",
 }
@@ -104,9 +106,9 @@ function SubmitButton({ label }: { label: string }) {
   )
 }
 
-type Props = { firstName: string | null; initialEmail: string | null; roles: OrgRole[]; joinCode: string | null }
+type Props = { firstName: string | null; initialEmail: string | null; roles: OrgRole[]; joinCode: string | null; selfService: boolean }
 
-export default function OnboardingClient({ firstName, initialEmail, roles, joinCode }: Props) {
+export default function OnboardingClient({ firstName, initialEmail, roles, joinCode, selfService }: Props) {
   const [step, setStep] = useState<Step>(0)
 
   // Owner state
@@ -237,7 +239,8 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
     const nextErrors: OrganizationFieldErrors = {}
     const normalizedSiret = normalizeSiret(siret)
     const normalizedVat = normalizeFrenchVatNumber(vatNumber)
-    if (normalizedSiret.error) nextErrors.siret = normalizedSiret.error
+    if (selfService && !siret.trim()) nextErrors.siret = 'Le SIRET est obligatoire pour activer votre essai.'
+    else if (normalizedSiret.error) nextErrors.siret = normalizedSiret.error
     if (isVatSubject && normalizedVat.error) nextErrors.vat_number = normalizedVat.error
     if (!LEGAL_VAT_RATES.includes(defaultVatRate as typeof LEGAL_VAT_RATES[number])) {
       nextErrors.default_vat_rate = 'Choisissez un taux de TVA légal.'
@@ -729,7 +732,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
               <div className="space-y-5">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">SIRET</label>
+                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">SIRET{selfService ? ' *' : ''}</label>
                     <input
                       type="text"
                       inputMode="numeric"

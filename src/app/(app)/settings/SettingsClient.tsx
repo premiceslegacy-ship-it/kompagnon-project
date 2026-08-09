@@ -113,6 +113,10 @@ type Props = {
     stripeLinkStarter: string | null;
     stripeLinkPro: string | null;
     stripeLinkExpert: string | null;
+    selfService: boolean;
+    subscriptionTier: import('@/lib/quota-catalog').SubscriptionTier | null;
+    subscriptionAccessStatus: import('@/lib/subscription-access').AccessStatus | null;
+    subscriptionAccessEndsAt: string | null;
 };
 
 function PermissionCategoryAccordion({
@@ -206,7 +210,7 @@ function SecondaryActivitiesSelector({
     )
 }
 
-export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkStarter, stripeLinkPro, stripeLinkExpert }: Props) {
+export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkStarter, stripeLinkPro, stripeLinkExpert, selfService, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt }: Props) {
     const router = useRouter()
     const webhookUrl = supabaseUrl
         ? `${supabaseUrl}/functions/v1/whatsapp-webhook`
@@ -3196,6 +3200,10 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         stripeLinkStarter={stripeLinkStarter}
                         stripeLinkPro={stripeLinkPro}
                         stripeLinkExpert={stripeLinkExpert}
+                        selfService={selfService}
+                        currentTierOverride={subscriptionTier}
+                        accessStatus={subscriptionAccessStatus}
+                        accessEndsAt={subscriptionAccessEndsAt}
                     />
                 </div>
             )

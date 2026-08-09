@@ -13,14 +13,41 @@ export default function TermsPage() {
       eyebrow="Conditions générales"
       title="CGV et conditions d'utilisation"
       description="Ces conditions régissent la fourniture d'ATELIER comme logiciel métier B2B. Elles valent conditions générales de vente au sens de l'article L.441-1 du Code de commerce."
-      updatedAt="25 mai 2026"
+      updatedAt="9 août 2026"
     >
       <section className="space-y-4">
         <h2 className="text-2xl font-bold">Objet du service</h2>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
           ATELIER est une application métier B2B destinée à la gestion commerciale, financière et
-          opérationnelle d&apos;organisations clientes. Le service est fourni dans un modèle par client,
-          hébergé, maintenu et opéré par Orsayn.
+          opérationnelle d&apos;organisations clientes. Il peut être fourni soit dans un environnement
+          dédié configuré pour le client, soit sur la plateforme partagée Atelier. Dans les deux cas,
+          le logiciel est hébergé, maintenu et opéré par Orsayn.
+        </p>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-2xl font-bold">Deux modalités commerciales</h2>
+        <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
+          L&apos;offre « On s&apos;occupe de tout » comprend un environnement dédié, la configuration métier,
+          la reprise du catalogue, la formation et 30 jours d&apos;accompagnement, pour un prix de
+          3 000 € HT payable à la commande. Elle donne accès au service sans abonnement mensuel,
+          selon le périmètre convenu au devis.
+        </p>
+        <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
+          L&apos;offre « Je démarre maintenant » donne accès à la plateforme partagée sans frais de départ,
+          au tarif de 69 € HT par mois pour Pro ou 169 € HT par mois pour Expert. Ces prix sont établis
+          par organisation et n&apos;augmentent pas avec le nombre d&apos;utilisateurs invités.
+        </p>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-2xl font-bold">Essai Expert de 14 jours</h2>
+        <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
+          Une organisation éligible peut bénéficier une seule fois de 14 jours d&apos;accès Expert gratuit,
+          après vérification de l&apos;email et renseignement du SIRET. Aucune carte bancaire n&apos;est demandée.
+          À l&apos;expiration, aucun abonnement ni prélèvement n&apos;est déclenché automatiquement : l&apos;accès
+          opérationnel est verrouillé jusqu&apos;au choix volontaire d&apos;une formule. L&apos;email et le SIRET
+          peuvent être conservés sous forme d&apos;empreintes techniques afin de prévenir les essais répétés.
         </p>
       </section>
 
@@ -101,8 +128,9 @@ export default function TermsPage() {
         <h2 className="text-2xl font-bold">Conditions de paiement</h2>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
           Le setup one-shot est payable intégralement à la commande, avant le début du déploiement.
-          L&apos;abonnement mensuel est facturé à terme échu, avec un délai de règlement de 15 jours
-          à compter de la date de facture.
+          Sur la plateforme partagée, l&apos;abonnement mensuel est payé par carte via Stripe au début de
+          chaque période. Un passage à une formule supérieure prend effet immédiatement avec prorata ;
+          un passage à une formule inférieure prend effet à l&apos;échéance suivante.
         </p>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
           Conformément à l&apos;article L.441-10 du Code de commerce, tout retard de paiement entraîne
@@ -120,8 +148,14 @@ export default function TermsPage() {
         <h2 className="text-2xl font-bold">Résiliation</h2>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
           L&apos;abonnement mensuel est sans engagement de durée minimale. Chaque partie peut y mettre
-          fin avec un préavis de 30 jours calendaires notifié par email. Le setup one-shot n&apos;est
-          pas remboursé en cas de résiliation.
+          fin avec un préavis exact de 30 jours calendaires. Sur la plateforme partagée, la demande est
+          enregistrée depuis Atelier, l&apos;accès reste ouvert jusqu&apos;à la date de fin affichée et Stripe
+          calcule la dernière période au prorata. Le setup one-shot n&apos;est pas remboursé en cas de résiliation.
+        </p>
+        <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
+          En cas d&apos;échec de paiement, l&apos;accès est maintenu pendant les tentatives de récupération
+          signalées par Stripe. Il est verrouillé si l&apos;abonnement devient impayé ou prend effectivement fin.
+          L&apos;export des données et les pages légales restent accessibles depuis le hall d&apos;activation.
         </p>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
           En cas de manquement grave — notamment non-paiement répété ou usage contraire à la loi —

@@ -15,6 +15,7 @@ import { getSuppliers } from '@/lib/data/queries/suppliers'
 import { getQuoteClauseTemplates } from '@/lib/data/queries/clause-templates'
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules'
 import SettingsClient from './SettingsClient'
+import { getOrganizationEntitlement, isSelfServiceMode } from '@/lib/data/queries/subscription-access'
 
 const SETTINGS_TABS = new Set([
   'profil',
@@ -45,7 +46,7 @@ export default async function SettingsPage({
   const requestedTab = searchParams?.tab ?? 'profil'
   const initialTab = SETTINGS_TABS.has(requestedTab) ? requestedTab : 'profil'
 
-  const [profile, members, roles, joinCode, organization, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, membership, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialMetalPriceGrids, initialClauseTemplates, organizationModules] = await Promise.all([
+  const [profile, members, roles, joinCode, organization, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, membership, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialMetalPriceGrids, initialClauseTemplates, organizationModules, entitlement] = await Promise.all([
     getCurrentUserProfile(),
     getTeamMembers(),
     getOrgRoles(),
@@ -67,6 +68,7 @@ export default async function SettingsPage({
     getMetalPriceGrids(),
     getQuoteClauseTemplates(),
     getOrganizationModules(),
+    getOrganizationEntitlement(),
   ])
 
   const catalogContext = resolveCatalogContext(organization)
@@ -106,6 +108,10 @@ export default async function SettingsPage({
       stripeLinkStarter={process.env.NEXT_PUBLIC_STRIPE_LINK_STARTER ?? null}
       stripeLinkPro={process.env.NEXT_PUBLIC_STRIPE_LINK_PRO ?? null}
       stripeLinkExpert={process.env.NEXT_PUBLIC_STRIPE_LINK_EXPERT ?? null}
+      selfService={isSelfServiceMode()}
+      subscriptionTier={entitlement?.effectiveTier ?? null}
+      subscriptionAccessStatus={entitlement?.accessStatus ?? null}
+      subscriptionAccessEndsAt={entitlement?.accessEndsAt ?? null}
     />
   )
 }

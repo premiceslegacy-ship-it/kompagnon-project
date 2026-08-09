@@ -7,6 +7,9 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { sendAuthEmail } from '@/lib/email'
 import { buildSignupOtpEmail } from '@/lib/email/templates'
 import { APP_SIGNATURE } from '@/lib/brand'
+import { headers } from 'next/headers'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+import { isSellableTier } from '@/lib/subscription-access'
 
 export type AuthState = {
   error: string | null
@@ -62,6 +65,30 @@ export async function signup(_prevState: AuthState, formData: FormData): Promise
   const email = (formData.get('email') as string)?.trim().toLowerCase()
   const password = formData.get('password') as string
   const fullName = (formData.get('full_name') as string)?.trim()
+  const preferredRaw = formData.get('preferred_tier')
+  const preferredTier = isSellableTier(preferredRaw) ? preferredRaw : 'pro'
+  const intent = formData.get('intent') === 'trial' ? 'trial' : 'none'
+  const requestHeaders = await headers()
+  const ip = getClientIp(requestHeaders)
+  const signupLimit = await checkRateLimit({
+    scope: 'auth:signup',
+    identifier: `${ip}:${email}`,
+    limit: Number.parseInt(process.env.SIGNUP_RATE_LIMIT_PER_HOUR ?? '5', 10),
+    windowSeconds: 60 * 60,
+  })
+  if (!signupLimit.allowed) {
+    return { error: "Trop de créations de compte ont été tentées. Réessayez dans une heure." }
+  }
+
+  const signupMetadata = {
+    full_name: fullName,
+    pending_trial_intent: intent,
+    pending_trial_tier: preferredTier,
+    signup_source: String(formData.get('signup_source') ?? '').slice(0, 120),
+    utm_source: String(formData.get('utm_source') ?? '').slice(0, 120),
+    utm_medium: String(formData.get('utm_medium') ?? '').slice(0, 120),
+    utm_campaign: String(formData.get('utm_campaign') ?? '').slice(0, 120),
+  }
 
   // Tentative d'envoi OTP via Resend (si RESEND_FROM_ADDRESS configuré)
   if (process.env.RESEND_FROM_ADDRESS) {
@@ -71,7 +98,7 @@ export async function signup(_prevState: AuthState, formData: FormData): Promise
       type: 'signup',
       email,
       password,
-      options: { data: { full_name: fullName } },
+      options: { data: signupMetadata },
     })
 
     if (linkError) {
@@ -93,7 +120,7 @@ export async function signup(_prevState: AuthState, formData: FormData): Promise
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { full_name: fullName } },
+    options: { data: signupMetadata },
   })
 
   if (error) {

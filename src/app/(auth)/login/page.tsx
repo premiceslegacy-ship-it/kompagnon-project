@@ -2,6 +2,7 @@
 
 import { useFormState, useFormStatus } from 'react-dom'
 import { useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { AlertCircle, ArrowRight, Loader2, CheckCircle2, Eye, EyeOff } from 'lucide-react'
 import { login, signup, type AuthState } from '../actions'
 import { BrandWordmark } from '@/components/brand/BrandMonogram'
@@ -37,7 +38,8 @@ function SubmitButton({ label }: { label: string }) {
 }
 
 export default function AuthPage() {
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
+  const searchParams = useSearchParams()
+  const [mode, setMode] = useState<'login' | 'signup'>(() => searchParams.get('mode') === 'signup' ? 'signup' : 'login')
   const [loginState, loginAction] = useFormState(login, initialState)
   const [signupState, signupAction] = useFormState(signup, initialState)
   const [showLoginPw, setShowLoginPw] = useState(false)
@@ -174,6 +176,12 @@ export default function AuthPage() {
             {/* ── SIGNUP FORM ── */}
             {mode === 'signup' && (
               <form action={signupAction} className="space-y-4">
+                <input type="hidden" name="intent" value={searchParams.get('intent') === 'trial' ? 'trial' : 'none'} />
+                <input type="hidden" name="preferred_tier" value={searchParams.get('preferred') === 'expert' ? 'expert' : 'pro'} />
+                <input type="hidden" name="signup_source" value={searchParams.get('source') ?? 'app'} />
+                <input type="hidden" name="utm_source" value={searchParams.get('utm_source') ?? ''} />
+                <input type="hidden" name="utm_medium" value={searchParams.get('utm_medium') ?? ''} />
+                <input type="hidden" name="utm_campaign" value={searchParams.get('utm_campaign') ?? ''} />
                 <div className="space-y-2">
                   <div className="flex items-center">
                     <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">

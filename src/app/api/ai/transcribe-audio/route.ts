@@ -24,7 +24,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Transcription non configurée' }, { status: 500 })
   }
 
-  const orgId = currentMembership.organizationId ?? user.id
+  const orgId = currentMembership.organizationId
+  if (!orgId) {
+    return NextResponse.json({ error: 'Organisation introuvable.' }, { status: 403 })
+  }
 
   const formData = await req.formData()
   const audio = formData.get('audio')

@@ -17,6 +17,7 @@ import { getOperatorUser } from '@/lib/operator-auth'
 import { UNRESOLVED_ORGANIZATION_ID } from '@/lib/operator/trial-lifecycle'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { AccessStatus, SellableTier } from '@/lib/subscription-access'
 import { ORGANIZATION_MODULE_KEYS, normalizeOrganizationModules, type OrganizationModules } from '@/lib/organization-modules'
 import { VERTICAL_PACKS, getEligibleVerticalPack } from '@/lib/vertical-packs'
 import {
@@ -101,6 +102,13 @@ type OperatorClientSubscription = {
   einvoicing_annuaire_status: EinvoicingAnnuaireStatus | null
   overflow_mode: OverflowMode
   notes: string | null
+  preferred_tier: SellableTier | null
+  access_status: AccessStatus | null
+  trial_started_at: string | null
+  access_ends_at: string | null
+  cancel_at: string | null
+  stripe_status: string | null
+  payment_failed_at: string | null
 }
 
 type OperatorClientEvent = {
@@ -160,6 +168,12 @@ type ClientRow = {
   renewsAt: string | null
   trialEndsAt: string | null
   trialConverted: boolean
+  preferredTier: SellableTier
+  accessStatus: AccessStatus | null
+  accessEndsAt: string | null
+  cancelAt: string | null
+  stripeStatus: string | null
+  paymentFailedAt: string | null
   b2brouterActive: boolean
   einvoicingConfig: EinvoicingConfig
   overflowMode: OverflowMode
@@ -441,6 +455,7 @@ export default async function OrsaynPage() {
     recentEventsResult,
     operatorEventsResult,
     commercialEventsResult,
+    failedWebhookEventsResult,
   ] = await Promise.all([
     operator
       .from('operator_client_settings')
@@ -448,7 +463,7 @@ export default async function OrsaynPage() {
       .order('source_instance', { ascending: true }),
     operator
       .from('operator_client_subscriptions')
-      .select('source_instance, organization_id, tier, ai_billing_mode, mrr_ht, billing_currency, is_active, renews_at, trial_tier, trial_ends_at, trial_converted, b2brouter_active, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status, overflow_mode, notes')
+      .select('source_instance, organization_id, tier, ai_billing_mode, mrr_ht, billing_currency, is_active, renews_at, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at, cancel_at, stripe_status, payment_failed_at, b2brouter_active, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status, overflow_mode, notes')
       .order('source_instance', { ascending: true }),
     operator
       .from('operator_client_quotas')
@@ -480,9 +495,15 @@ export default async function OrsaynPage() {
       .select('id, source_instance, organization_id, event_type, tier_context, sent_at, sent_by, actor_email, email_template, subject_preview, body_text, recipient_email, delivery_status, auto_send_after, notes, metadata')
       .order('sent_at', { ascending: false })
       .limit(300),
+    operator
+      .from('webhook_events')
+      .select('source_id, event_type, error_msg, received_at')
+      .eq('status', 'failed')
+      .order('received_at', { ascending: false })
+      .limit(50),
   ])
 
-  if (settingsResult.error || subscriptionsResult.error || quotasResult.error || clientsResult.error || monthlyEventsResult.error || recentEventsResult.error || operatorEventsResult.error || commercialEventsResult.error) {
+  if (settingsResult.error || subscriptionsResult.error || quotasResult.error || clientsResult.error || monthlyEventsResult.error || recentEventsResult.error || operatorEventsResult.error || commercialEventsResult.error || failedWebhookEventsResult.error) {
     console.error('[orsayn.page]', {
       settings: settingsResult.error,
       subscriptions: subscriptionsResult.error,
@@ -492,6 +513,7 @@ export default async function OrsaynPage() {
       recentEvents: recentEventsResult.error,
       operatorEvents: operatorEventsResult.error,
       commercialEvents: commercialEventsResult.error,
+      failedWebhookEvents: failedWebhookEventsResult.error,
     })
     notFound()
   }
@@ -504,6 +526,7 @@ export default async function OrsaynPage() {
   const recentEvents = (recentEventsResult.data ?? []) as OperatorUsageEvent[]
   const operatorEvents = (operatorEventsResult.data ?? []) as OperatorClientEvent[]
   const commercialEvents = (commercialEventsResult.data ?? []) as OperatorCommercialEvent[]
+  const failedWebhookEvents = failedWebhookEventsResult.data ?? []
 
   // Clé composite : une instance mutualisée porte plusieurs organisations, chacune
   // avec son propre tier/settings/quotas — une clé source_instance seule les fusionnerait.
@@ -632,6 +655,12 @@ export default async function OrsaynPage() {
       renewsAt: subscription?.renews_at ?? null,
       trialEndsAt: subscription?.trial_ends_at ?? null,
       trialConverted: Boolean(subscription?.trial_converted),
+      preferredTier: subscription?.preferred_tier === 'expert' ? 'expert' : 'pro',
+      accessStatus: subscription?.access_status ?? null,
+      accessEndsAt: subscription?.access_ends_at ?? null,
+      cancelAt: subscription?.cancel_at ?? null,
+      stripeStatus: subscription?.stripe_status ?? null,
+      paymentFailedAt: subscription?.payment_failed_at ?? null,
       b2brouterActive: subscription?.b2brouter_active ?? false,
       einvoicingConfig,
       overflowMode: subscription?.overflow_mode ?? 'block',
@@ -859,10 +888,22 @@ export default async function OrsaynPage() {
           </p>
           <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
             {pendingManualRows.map((row) => (
-              <li key={row.sourceInstance}>
+              <li key={`${row.sourceInstance}:${row.organizationId}`}>
                 <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance})
                 {row.configSyncError ? ` — ${row.configSyncError}` : ''}
               </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {failedWebhookEvents.length > 0 && (
+        <section className="card border-l-4 border-l-red-500 bg-red-500/5 px-6 py-4">
+          <p className="text-sm font-bold text-red-700 font-display">{failedWebhookEvents.length} événement(s) Stripe à retraiter</p>
+          <p className="mt-1 text-xs text-secondary">Une nouvelle livraison Stripe rejouera ces événements : les échecs ne sont plus marqués comme définitivement consommés.</p>
+          <ul className="mt-2 space-y-1 text-xs text-secondary">
+            {failedWebhookEvents.slice(0, 5).map((event) => (
+              <li key={event.source_id}><span className="font-mono">{event.event_type}</span> — {event.error_msg || 'erreur inconnue'}</li>
             ))}
           </ul>
         </section>
@@ -944,7 +985,7 @@ export default async function OrsaynPage() {
             {pricingSignalRows.length === 0 ? (
               <p className="text-sm text-secondary font-body">Aucun signal pricing pour le moment.</p>
             ) : pricingSignalRows.map((row) => (
-              <div key={row.sourceInstance} className="rounded-lg border border-[var(--elevation-border)] bg-interactive/40 px-4 py-3">
+              <div key={`${row.sourceInstance}:${row.organizationId}`} className="rounded-lg border border-[var(--elevation-border)] bg-interactive/40 px-4 py-3">
                 <div className="flex items-center justify-between gap-3 text-sm">
                   <span className="truncate font-semibold text-primary">{row.label}</span>
                   <span className="text-secondary tabular-nums">{formatMoney(row.monthUsageCostEur)}</span>
@@ -1128,7 +1169,7 @@ export default async function OrsaynPage() {
           {lowMarginRows.length === 0 ? (
             <p className="text-sm text-secondary font-body">Aucune marge calculable pour le moment.</p>
           ) : lowMarginRows.map((row) => (
-            <div key={row.sourceInstance} className="flex items-center justify-between gap-4 text-sm">
+            <div key={`${row.sourceInstance}:${row.organizationId}`} className="flex items-center justify-between gap-4 text-sm">
               <div className="min-w-0">
                 <p className="truncate font-semibold text-primary font-body">{row.label}</p>
                 <p className="text-secondary font-body tabular-nums">{formatPercent(row.marginPct)}</p>
@@ -1146,7 +1187,7 @@ export default async function OrsaynPage() {
           {expensiveRows.length === 0 ? (
             <p className="text-sm text-secondary font-body">Aucune donnée de coût pour le mois en cours.</p>
           ) : expensiveRows.map((row) => (
-            <div key={row.sourceInstance} className="flex items-center justify-between gap-4 text-sm">
+            <div key={`${row.sourceInstance}:${row.organizationId}`} className="flex items-center justify-between gap-4 text-sm">
               <div className="min-w-0">
                 <p className="truncate font-semibold text-primary font-body">{row.label}</p>
                 <p className="text-secondary font-body tabular-nums">{row.monthEventCount} événement(s)</p>
@@ -1191,7 +1232,7 @@ export default async function OrsaynPage() {
                 const syncBadge = getSyncBadge(row.lastSeenAt, row.lastStatus)
 
                 return (
-                  <tr key={row.sourceInstance} className="border-b border-[var(--elevation-border)] align-top last:border-b-0">
+                  <tr key={`${row.sourceInstance}:${row.organizationId}`} className="border-b border-[var(--elevation-border)] align-top last:border-b-0">
                     <td className="py-4 pr-4">
                       <p className="font-semibold text-primary">{row.label}</p>
                       <p className="mt-1 text-xs text-secondary">{row.sourceInstance}</p>
@@ -1206,6 +1247,16 @@ export default async function OrsaynPage() {
                     </td>
                     <td className="py-4 pr-4 text-secondary tabular-nums">
                       {formatCommercialStatus(row)}
+                      {row.accessStatus && (
+                        <p className={`mt-1 text-[11px] font-semibold ${row.accessStatus === 'past_due' || row.accessStatus === 'unpaid' ? 'text-red-600' : row.accessStatus === 'trialing' ? 'text-amber-600' : 'text-secondary'}`}>
+                          Accès : {row.accessStatus} · préférence {row.preferredTier}
+                        </p>
+                      )}
+                      {row.accessStatus === 'trialing' && row.trialEndsAt && (
+                        <p className="mt-1 text-[11px]">{Math.max(0, Math.ceil((new Date(row.trialEndsAt).getTime() - Date.now()) / 86400000))} jour(s) restant(s)</p>
+                      )}
+                      {row.paymentFailedAt && <p className="mt-1 text-[11px] text-red-600">Échec paiement : {formatDate(row.paymentFailedAt)}</p>}
+                      {row.cancelAt && <p className="mt-1 text-[11px] text-amber-600">Fin prévue : {formatDate(row.cancelAt)}</p>}
                       {row.aiBillingMode === 'client_owned' && (
                         <p className="mt-1 text-[11px] text-secondary">
                           Sans abonnement Stripe
@@ -1390,6 +1441,7 @@ export default async function OrsaynPage() {
                         <div className="grid gap-2 sm:grid-cols-2">
                           <form action={resyncOperatorClientConfig}>
                             <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
+                            {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
                             <button
                               type="submit"
                               className="w-full rounded-pill bg-slate-500/10 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-500/20 dark:text-slate-200"
@@ -1400,12 +1452,13 @@ export default async function OrsaynPage() {
                           {!isActiveTrial(row.trialEndsAt) && (
                             <form action={activateOperatorTrial}>
                               <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
-                              <input type="hidden" name="trialDays" value="30" />
+                              {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
+                              <input type="hidden" name="trialDays" value={row.sourceInstance === 'atelier-app' ? '14' : '30'} />
                               <button
                                 type="submit"
                                 className="w-full rounded-pill bg-green-500/10 px-3 py-2 text-xs font-semibold text-green-700 transition hover:bg-green-500/20"
                               >
-                                Essai Expert 30j
+                                Essai Expert {row.sourceInstance === 'atelier-app' ? '14j' : '30j'}
                               </button>
                             </form>
                           )}
@@ -1413,6 +1466,7 @@ export default async function OrsaynPage() {
                             <>
                               <form action={convertOperatorTrial} className="flex gap-2">
                                 <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
+                                {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
                                 <select name="targetTier" defaultValue="pro" className={inputSmCls}>
                                   <option value="starter">starter</option>
                                   <option value="pro">pro</option>
@@ -1427,6 +1481,7 @@ export default async function OrsaynPage() {
                               </form>
                               <form action={expireOperatorTrial}>
                                 <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
+                                {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
                                 <input type="hidden" name="targetTier" value="setup_only" />
                                 <button
                                   type="submit"

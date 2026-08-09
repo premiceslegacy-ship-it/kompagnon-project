@@ -26,6 +26,13 @@ import {
   normalizeSiret,
 } from '@/lib/validations/organization'
 import { LEGAL_VAT_RATES } from '@/lib/utils'
+import { isSelfServiceMode } from '@/lib/data/queries/subscription-access'
+import { isSellableTier } from '@/lib/subscription-access'
+import {
+  activateTrialForCurrentOrganization,
+  ensureLockedEntitlement,
+  registerSelfServiceOrganization,
+} from '@/lib/data/mutations/subscription-self-service'
 
 const ONBOARDED_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -97,6 +104,7 @@ function buildOrganizationUpdateFromForm(formData: FormData) {
   const defaultVatRate = Number(formString(formData, 'default_vat_rate') || (isVatSubject ? 20 : 0))
 
   if (!companyName || !email.value) return { error: 'missing_fields' as const }
+  if (isSelfServiceMode() && !siret.value) return { error: 'siret_required' as const }
   if (
     siret.error ||
     vatNumber.error ||
@@ -146,6 +154,34 @@ function buildOrganizationUpdateFromForm(formData: FormData) {
       ...buildOrganizationCatalogDefaults(selection.activity.id),
     },
   }
+}
+
+async function finalizeSelfServiceAccess(user: { user_metadata?: Record<string, any> }, organizationId: string) {
+  if (!isSelfServiceMode()) return { destination: '/dashboard' }
+  const preferredTier = isSellableTier(user.user_metadata?.pending_trial_tier)
+    ? user.user_metadata.pending_trial_tier
+    : 'pro'
+  const locked = await ensureLockedEntitlement(organizationId, preferredTier)
+  if (locked.error) {
+    console.error('[onboarding.locked-entitlement]', locked.error)
+    return { destination: '/activation?error=trial_activation_failed' }
+  }
+  const registration = await registerSelfServiceOrganization()
+  if ('error' in registration) {
+    // L'entitlement local reste autoritaire et le hall permet de relancer
+    // l'activation. Une indisponibilité ponctuelle du cockpit ne doit pas faire
+    // perdre les données d'onboarding déjà validées.
+    console.error('[onboarding.self-service-registration]', registration.error)
+  }
+  if (user.user_metadata?.pending_trial_intent !== 'trial') {
+    return { destination: '/activation' }
+  }
+  const trial = await activateTrialForCurrentOrganization()
+  if ('error' in trial) {
+    console.error('[onboarding.trial-activation]', trial.error)
+    return { destination: `/activation?error=${trial.error === 'trial_already_used' ? 'trial_already_used' : 'trial_activation_failed'}` }
+  }
+  return { destination: '/dashboard' }
 }
 
 
@@ -279,11 +315,14 @@ export async function completeOnboarding(formData: FormData) {
   await setOnboardedCookie(user.id)
   revalidatePath('/', 'layout')
 
+  const access = await finalizeSelfServiceAccess(user, organizationId)
+
   if (inviteErrors.length > 0) {
-    redirect(`/dashboard?invite_errors=${encodeURIComponent(inviteErrors.join(','))}`)
+    const separator = access.destination.includes('?') ? '&' : '?'
+    redirect(`${access.destination}${separator}invite_errors=${encodeURIComponent(inviteErrors.join(','))}`)
   }
 
-  redirect('/dashboard')
+  redirect(access.destination)
 }
 
 /**
@@ -330,7 +369,8 @@ export async function skipInvites(formData: FormData) {
 
   await setOnboardedCookie(user.id)
   revalidatePath('/', 'layout')
-  redirect('/dashboard')
+  const access = await finalizeSelfServiceAccess(user, organizationId)
+  redirect(access.destination)
 }
 
 /**
