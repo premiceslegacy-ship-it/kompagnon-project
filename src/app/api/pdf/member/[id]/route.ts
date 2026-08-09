@@ -1,14 +1,18 @@
 import { NextResponse } from 'next/server'
-import React from 'react'
-import { renderToBuffer } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { createAdminClient } from '@/lib/supabase/admin'
-import MemberHoursReportPDF from '@/components/pdf/MemberHoursReportPDF'
+import { renderMemberHoursReportPdf } from '@/lib/pdf/documents/member-hours-report'
 import type { IndividualMember } from '@/lib/data/queries/members'
 import type { MemberPointage } from '@/lib/data/queries/members'
 import { isValidUuid } from '@/lib/security'
+
+function pdfOrigin(): string {
+  const origin = process.env.NEXT_PUBLIC_APP_URL
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  return origin
+}
 
 export async function GET(
   req: Request,
@@ -191,19 +195,17 @@ export async function GET(
 
   let buffer: Buffer
   try {
-    buffer = await renderToBuffer(
-      React.createElement(MemberHoursReportPDF as any, {
-        member,
-        organization: orgResult.data,
-        pointages,
-        periodFrom: dateFrom,
-        periodTo: dateTo,
-        totalHours,
-        isAppMember: idType === 'user',
-      }) as any,
-    )
+    buffer = await renderMemberHoursReportPdf({
+      member,
+      organization: orgResult.data,
+      pointages,
+      periodFrom: dateFrom,
+      periodTo: dateTo,
+      totalHours,
+      isAppMember: idType === 'user',
+    }, pdfOrigin())
   } catch (e) {
-    console.error('[pdf/member] renderToBuffer error:', e)
+    console.error('[pdf/member] renderMemberHoursReportPdf error:', e)
     return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.message : String(e)}`, { status: 500 })
   }
 

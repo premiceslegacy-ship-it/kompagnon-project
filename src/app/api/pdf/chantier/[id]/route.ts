@@ -1,6 +1,4 @@
 import { NextResponse } from 'next/server'
-import { renderToBuffer } from '@react-pdf/renderer'
-import React from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getOrganization } from '@/lib/data/queries/organization'
@@ -10,9 +8,14 @@ import {
   getChantierPointages,
   getChantierNotes,
 } from '@/lib/data/queries/chantiers'
-import ChantierPDF from '@/components/pdf/ChantierPDF'
-import type { ChantierPDFPhoto } from '@/components/pdf/ChantierPDF'
+import { renderChantierPdf, type ChantierPDFPhoto } from '@/lib/pdf/documents/chantier'
 import { isValidUuid } from '@/lib/security'
+
+function pdfOrigin(): string {
+  const origin = process.env.NEXT_PUBLIC_APP_URL
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  return origin
+}
 
 export async function GET(
   req: Request,
@@ -94,23 +97,21 @@ export async function GET(
     reportPhotos = withBase64.filter((p): p is ChantierPDFPhoto => p !== null)
   }
 
+  void pointages
+
   let buffer: Buffer
   try {
-    buffer = await renderToBuffer(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      React.createElement(ChantierPDF, {
-        chantier,
-        taches,
-        pointages,
-        notes,
-        organization,
-        periodFrom: dateFrom,
-        periodTo: dateTo,
-        reportPhotos,
-      }) as any,
-    )
+    buffer = await renderChantierPdf({
+      chantier,
+      taches,
+      notes,
+      organization,
+      periodFrom: dateFrom,
+      periodTo: dateTo,
+      reportPhotos,
+    }, pdfOrigin())
   } catch (e) {
-    console.error('[pdf/chantier] renderToBuffer error:', e)
+    console.error('[pdf/chantier] renderChantierPdf error:', e)
     return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.message : String(e)}`, { status: 500 })
   }
 

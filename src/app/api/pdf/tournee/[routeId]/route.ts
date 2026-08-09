@@ -1,14 +1,18 @@
 import { NextResponse } from 'next/server'
-import { renderToBuffer } from '@react-pdf/renderer'
-import React from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { getTourneeRoute } from '@/lib/data/mutations/planning'
 import { estimateTravelMin } from '@/app/(app)/chantiers/planning/TourneeOptimizer'
-import { TourneePDF } from '@/components/pdf/TourneePDF'
+import { renderTourneePdf } from '@/lib/pdf/documents/tournee'
 import type { TourneeSlot } from '@/lib/data/queries/chantiers'
 import { isValidUuid } from '@/lib/security'
+
+function pdfOrigin(): string {
+  const origin = process.env.NEXT_PUBLIC_APP_URL
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  return origin
+}
 
 function colorIdx(id: string): number {
   let h = 0
@@ -139,30 +143,28 @@ export async function GET(
 
   let buffer: Buffer
   try {
-    buffer = await renderToBuffer(
-      React.createElement(TourneePDF, {
-        organization: {
-          name: organization.name,
-          email: organization.email,
-          phone: organization.phone,
-          siret: organization.siret,
-          logo_url: organization.logo_url,
-          address_line1: organization.address_line1,
-          postal_code: organization.postal_code,
-          city: organization.city,
-        },
-        slots: slotsWithTravel,
-        date,
-        routeLabel,
-        totalSiteMin,
-        totalTravelMin,
-        departureAddress,
-        departurePostalCode,
-        departureCity,
-      }) as any,
-    )
+    buffer = await renderTourneePdf({
+      organization: {
+        name: organization.name,
+        email: organization.email,
+        phone: organization.phone,
+        siret: organization.siret,
+        logo_url: organization.logo_url,
+        address_line1: organization.address_line1,
+        postal_code: organization.postal_code,
+        city: organization.city,
+      },
+      slots: slotsWithTravel,
+      date,
+      routeLabel,
+      totalSiteMin,
+      totalTravelMin,
+      departureAddress,
+      departurePostalCode,
+      departureCity,
+    }, pdfOrigin())
   } catch (e) {
-    console.error('[pdf/tournee] renderToBuffer error:', e)
+    console.error('[pdf/tournee] renderTourneePdf error:', e)
     return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.message : String(e)}`, { status: 500 })
   }
 

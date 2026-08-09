@@ -1,7 +1,5 @@
 'use server'
 
-import React from 'react'
-import { renderToBuffer } from '@react-pdf/renderer'
 import { sendEmail } from '@/lib/email'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
@@ -13,10 +11,15 @@ import {
   getChantierNotes,
 } from '@/lib/data/queries/chantiers'
 import { getOrganization } from '@/lib/data/queries/organization'
-import ChantierPDF from '@/components/pdf/ChantierPDF'
-import type { ChantierPDFPhoto } from '@/components/pdf/ChantierPDF'
+import { renderChantierPdf, type ChantierPDFPhoto } from '@/lib/pdf/documents/chantier'
 import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
 import { renderEmailShell, renderInfoBox, escHtml } from '@/lib/email/layout'
+
+function pdfOrigin(): string {
+  const origin = process.env.NEXT_PUBLIC_APP_URL
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  return origin
+}
 
 export async function sendChantierReportEmail(
   chantierId: string,
@@ -97,20 +100,16 @@ export async function sendChantierReportEmail(
   })
 
   // ── Render PDF to Buffer ───────────────────────────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pdfBuffer: Buffer = await renderToBuffer(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    React.createElement(ChantierPDF as any, {
-      chantier,
-      taches,
-      pointages,
-      notes,
-      organization,
-      periodFrom: dateFrom ?? null,
-      periodTo:   dateTo   ?? null,
-      reportPhotos,
-    }) as any,
-  )
+  void pointages
+  const pdfBuffer: Buffer = await renderChantierPdf({
+    chantier,
+    taches,
+    notes,
+    organization,
+    periodFrom: dateFrom ?? null,
+    periodTo:   dateTo   ?? null,
+    reportPhotos,
+  }, pdfOrigin())
 
   const fileName = `rapport-chantier-${chantier.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.pdf`
 

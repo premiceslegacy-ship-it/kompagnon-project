@@ -1,13 +1,17 @@
-import React from 'react'
 import { NextResponse } from 'next/server'
-import { renderToBuffer } from '@react-pdf/renderer'
 import JSZip from 'jszip'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
-import MonthlyReportPDF, { type MonthlyReportData, type ReportInvoice, type ReportQuote } from '@/components/pdf/MonthlyReportPDF'
+import { renderMonthlyReportPdf, type MonthlyReportData, type ReportInvoice, type ReportQuote } from '@/lib/pdf/documents/monthly-report'
 import { assertSafeExternalFetchUrl } from '@/lib/security'
+
+function pdfOrigin(): string {
+  const origin = process.env.NEXT_PUBLIC_APP_URL
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  return origin
+}
 
 const REPORTABLE_INVOICE_STATUSES = ['sent', 'viewed', 'partial', 'paid', 'overdue'] as const
 const REPORTABLE_QUOTE_STATUSES = ['sent', 'viewed', 'accepted', 'refused', 'expired', 'converted', 'fully_invoiced'] as const
@@ -204,9 +208,7 @@ export async function GET(req: Request) {
 
   // ── Générer le PDF de synthèse ────────────────────────────────────────────
   const reportData: MonthlyReportData = { month, organization, invoices, quotes }
-  const reportBuffer = await renderToBuffer(
-    React.createElement(MonthlyReportPDF, { data: reportData }) as any,
-  )
+  const reportBuffer = await renderMonthlyReportPdf(reportData, pdfOrigin())
 
   // ── Construire le ZIP ─────────────────────────────────────────────────────
   const zip = new JSZip()
