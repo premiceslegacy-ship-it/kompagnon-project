@@ -129,7 +129,7 @@ export async function renderMaintenanceInterventionPdfWithFonts(data: Maintenanc
     if (contact) page.drawText(pdfText(contact), { x: infoX, y: iy, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
 
     // Badge à droite
-    const badgeLabel = "Rapport d'intervention"
+    const badgeLabel = "Rapport d'intervention".toUpperCase()
     const badgeStyle = { font: F.headingXBold, size: SIZE.xs }
     const bw = badgeStyle.font.widthOfTextAtSize(badgeLabel, badgeStyle.size)
     const badgeW = bw + SPACE.md * 2
@@ -137,7 +137,7 @@ export async function renderMaintenanceInterventionPdfWithFonts(data: Maintenanc
     const badgeX = PAGE.width - PAGE.margin - badgeW
     const badgeY = headerTop - badgeH
     page.drawRectangle({ x: badgeX, y: badgeY, width: badgeW, height: badgeH, borderColor: COLOR.black, borderWidth: 1 })
-    page.drawText(badgeLabel.toUpperCase(), { x: badgeX + SPACE.md, y: badgeY + SPACE.sm, size: SIZE.xs, font: F.headingXBold, color: COLOR.black })
+    page.drawText(badgeLabel, { x: badgeX + SPACE.md, y: badgeY + SPACE.sm, size: SIZE.xs, font: F.headingXBold, color: COLOR.black })
 
     y = Math.min(headerTop - logoH, badgeY) - SPACE.lg
     page.drawLine({ start: { x: PAGE.margin, y }, end: { x: PAGE.width - PAGE.margin, y }, thickness: 1, color: COLOR.divider })
