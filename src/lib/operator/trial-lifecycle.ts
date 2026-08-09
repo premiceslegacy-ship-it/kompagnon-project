@@ -15,6 +15,7 @@ import {
   normalizeEinvoicingConfigFromDb,
   type EinvoicingConfig,
 } from '@/lib/einvoicing-config'
+import type { EntitlementSyncPayload } from '@/lib/subscription-access'
 
 const AI_BILLING_MODES = new Set(['orsayn_shared', 'client_owned'])
 export type AIBillingMode = 'orsayn_shared' | 'client_owned'
@@ -132,6 +133,7 @@ export async function syncClientQuotaConfig(
   overflowMode: OverflowMode,
   aiBillingMode: AIBillingMode,
   einvoicingConfig: EinvoicingConfig,
+  entitlement?: EntitlementSyncPayload,
 ): Promise<{ status: 'synced' | 'pending_manual' | 'skipped' | 'failed'; error: string | null }> {
   const operator = createOperatorAdminClient()
 
@@ -180,6 +182,7 @@ export async function syncClientQuotaConfig(
     overflow_mode: overflowMode,
     ai_billing_mode: aiBillingMode,
     einvoicing_config: einvoicingConfig,
+    ...(entitlement ? { entitlement } : {}),
   })
   const signature = signOperatorPayload(body, secret)
 
@@ -259,7 +262,7 @@ export async function getOperatorClientContext(sourceInstance: string, organizat
     resolvedOrganizationId
       ? operator
         .from('operator_client_subscriptions')
-        .select('tier, ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status, trial_tier, trial_ends_at, trial_converted')
+        .select('tier, ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at')
         .eq('source_instance', sourceInstance)
         .eq('organization_id', resolvedOrganizationId)
         .maybeSingle()
@@ -298,6 +301,10 @@ export async function getOperatorClientContext(sourceInstance: string, organizat
         : null,
       trialEndsAt: subscription?.trial_ends_at ?? null,
       trialConverted: Boolean(subscription?.trial_converted),
+      trialStartedAt: subscription?.trial_started_at ?? null,
+      preferredTier: (subscription?.preferred_tier === 'expert' ? 'expert' : 'pro') as 'pro' | 'expert',
+      accessStatus: subscription?.access_status ?? null,
+      accessEndsAt: subscription?.access_ends_at ?? null,
     },
   }
 }
@@ -324,6 +331,8 @@ export async function expireTrialForInstance(input: {
     return { status: 'skipped' }
   }
 
+  const selfServiceTrial = subscription.accessStatus === 'trialing'
+  const expiredAt = new Date().toISOString()
   const { error } = await operator
     .from('operator_client_subscriptions')
     .upsert({
@@ -340,8 +349,12 @@ export async function expireTrialForInstance(input: {
       einvoicing_annuaire_status: subscription.einvoicingConfig.annuaire_status,
       b2brouter_active: subscription.einvoicingConfig.mode === 'b2brouter',
       trial_tier: null,
-      trial_ends_at: null,
+      trial_ends_at: selfServiceTrial ? subscription.trialEndsAt : null,
       trial_converted: false,
+      ...(selfServiceTrial ? {
+        access_status: 'expired',
+        access_ends_at: expiredAt,
+      } : {}),
       updated_at: new Date().toISOString(),
     }, { onConflict: 'source_instance,organization_id' })
 
@@ -356,6 +369,14 @@ export async function expireTrialForInstance(input: {
     subscription.overflowMode,
     subscription.aiBillingMode,
     subscription.einvoicingConfig,
+    selfServiceTrial ? {
+      access_status: 'expired',
+      effective_tier: targetTier,
+      preferred_tier: subscription.preferredTier,
+      trial_started_at: subscription.trialStartedAt,
+      trial_ends_at: subscription.trialEndsAt,
+      access_ends_at: expiredAt,
+    } : undefined,
   )
   await recordOperatorClientEvent({
     sourceInstance,

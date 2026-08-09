@@ -1,5 +1,5 @@
 import { ImageResponse } from 'next/og'
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getPwaBrand, PWA_ICON_SIZES } from '@/lib/pwa'
 
 export const dynamic = 'force-dynamic'
@@ -14,6 +14,21 @@ function resolveIconSize(request: NextRequest): number {
 export async function GET(request: NextRequest) {
   const size = resolveIconSize(request)
   const brand = await getPwaBrand()
+
+  // Sur le Worker mutualisé, le logo Atelier est déjà un asset statique. Le
+  // refaire via ImageResponse déclenche un fetch du Worker vers son propre
+  // domaine, que Cloudflare peut refuser (522/500). Une redirection laisse le
+  // navigateur charger directement l'asset et évite tout aller-retour interne.
+  if (process.env.SELF_SERVICE_MODE === 'true' || !brand.logoUrl) {
+    const staticPath = size === 512 ? '/icon%20meta.png' : '/icon-192.png'
+    return new NextResponse(null, {
+      status: 307,
+      headers: {
+        Location: staticPath,
+        'Cache-Control': 'public, max-age=3600',
+      },
+    })
+  }
 
   return new ImageResponse(
     (
@@ -55,4 +70,3 @@ export async function GET(request: NextRequest) {
     },
   )
 }
-

@@ -1,395 +1,366 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
-import { signOperatorPayload } from '@/lib/operator'
 import { constantTimeEqual } from '@/lib/security'
-import { isSubscriptionTier, isOverflowMode, getModulesForTier, getQuotaConfigForTier, getQuotaUnit, QUOTA_FEATURES, type SubscriptionTier } from '@/lib/quota-catalog'
-import { normalizeOrganizationModules } from '@/lib/organization-modules'
-import { normalizeEinvoicingConfigFromDb, DEFAULT_EINVOICING_CONFIG } from '@/lib/einvoicing-config'
-import { UNRESOLVED_ORGANIZATION_ID } from '@/lib/operator/trial-lifecycle'
+import {
+  initializeQuotasForTier,
+  recordOperatorClientEvent,
+  syncClientQuotaConfig,
+  UNRESOLVED_ORGANIZATION_ID,
+} from '@/lib/operator/trial-lifecycle'
+import { DEFAULT_EINVOICING_CONFIG, normalizeEinvoicingConfigFromDb } from '@/lib/einvoicing-config'
+import { isOverflowMode, isSubscriptionTier, type SubscriptionTier } from '@/lib/quota-catalog'
+import { isSellableTier, type AccessStatus, type EntitlementSyncPayload } from '@/lib/subscription-access'
+import { sendAuthEmail } from '@/lib/email'
 
 export const dynamic = 'force-dynamic'
 
-// ── Correspondance Price ID → tier ────────────────────────────────────────────
-function tierFromPriceId(priceId: string): SubscriptionTier | null {
-  const map: Record<string, SubscriptionTier> = {
-    [process.env.STRIPE_PRICE_STARTER ?? '']: 'starter',
-    [process.env.STRIPE_PRICE_PRO ?? '']:     'pro',
-    [process.env.STRIPE_PRICE_EXPERT ?? '']:  'expert',
-  }
-  return map[priceId] ?? null
+type StripeObject = Record<string, any>
+type TenantContext = { sourceInstance: string; organizationId: string }
+
+function tierFromPriceId(priceId: string | null | undefined): SubscriptionTier | null {
+  if (!priceId) return null
+  const entries: Array<[string | undefined, SubscriptionTier]> = [
+    [process.env.STRIPE_PRICE_STARTER, 'starter'],
+    [process.env.STRIPE_PRICE_PRO, 'pro'],
+    [process.env.STRIPE_PRICE_EXPERT, 'expert'],
+    [process.env.STRIPE_PRICE_EXPERT_LEGACY, 'expert'],
+  ]
+  return entries.find(([id]) => id && id === priceId)?.[1] ?? null
 }
 
-// ── Vérification signature Stripe (HMAC-SHA256, pas de SDK) ───────────────────
-async function verifyStripeSignature(
-  body: string,
-  sigHeader: string | null,
-  secret: string,
-): Promise<boolean> {
-  if (!sigHeader) return false
-  const parts = Object.fromEntries(sigHeader.split(',').map(p => p.split('=')))
-  const timestamp = parts['t']
-  const signature = parts['v1']
-  if (!timestamp || !signature) return false
-
-  const tolerance = 300 // 5 minutes
-  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > tolerance) return false
-
+async function verifyStripeSignature(body: string, header: string | null, secret: string): Promise<boolean> {
+  if (!header) return false
+  const values = header.split(',').reduce<Record<string, string[]>>((acc, part) => {
+    const [key, value] = part.split('=')
+    if (key && value) (acc[key] ||= []).push(value)
+    return acc
+  }, {})
+  const timestamp = values.t?.[0]
+  if (!timestamp || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false
   const encoder = new TextEncoder()
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-  const payload = `${timestamp}.${body}`
-  const signatureBytes = await crypto.subtle.sign('HMAC', key, encoder.encode(payload))
-  const computed = Array.from(new Uint8Array(signatureBytes))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-
-  // Comparaison constant-time (compatible Edge/Workers) — évite les timing attacks
-  return constantTimeEqual(computed, signature)
+  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const bytes = await crypto.subtle.sign('HMAC', key, encoder.encode(`${timestamp}.${body}`))
+  const computed = Array.from(new Uint8Array(bytes)).map((value) => value.toString(16).padStart(2, '0')).join('')
+  return values.v1?.some((candidate) => constantTimeEqual(computed, candidate)) ?? false
 }
 
-// ── Mise à jour abonnement + resync config client ─────────────────────────────
-// organizationId résolu par l'appelant (checkout.session.completed via
-// resolveSourceInstance+operator_clients, ou déjà connu depuis
-// operator_client_subscriptions pour subscription.updated) — cette fonction ne
-// le redécouvre jamais elle-même pour éviter l'ambiguïté sur une instance
-// mutualisée à plusieurs organisations.
-async function handleSubscriptionChange(sourceInstance: string, organizationId: string, tier: SubscriptionTier, stripeCustomerId: string, stripeSubscriptionId: string) {
-  const operator = createOperatorAdminClient()
+function metadataOf(object: StripeObject): Record<string, string> {
+  const metadata = object?.metadata
+  return metadata && typeof metadata === 'object' ? metadata : {}
+}
 
-  // Mise à jour operator_client_subscriptions
-  const { error: subError } = await operator
-    .from('operator_client_subscriptions')
-    .upsert({
-      source_instance: sourceInstance,
-      organization_id: organizationId,
-      tier,
-      is_active: true,
-      stripe_customer_id: stripeCustomerId,
-      stripe_subscription_id: stripeSubscriptionId,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'source_instance,organization_id' })
+function subscriptionIdOf(object: StripeObject): string | null {
+  if (typeof object.subscription === 'string') return object.subscription
+  if (typeof object.parent?.subscription_details?.subscription === 'string') return object.parent.subscription_details.subscription
+  return null
+}
 
-  if (subError) throw new Error(`operator_client_subscriptions: ${subError.message}`)
-
-  // Lecture du contexte complet pour le config-sync
-  const [settingResult, subscriptionResult] = await Promise.all([
-    operator.from('operator_client_settings').select('app_url').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
-    operator.from('operator_client_subscriptions').select('ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
-  ])
-
-  const appUrl = settingResult.data?.app_url ?? null
-  const sub = subscriptionResult.data
-
-  const aiBillingMode = sub?.ai_billing_mode === 'client_owned' ? 'client_owned' : 'orsayn_shared'
-  const overflowMode = isOverflowMode(sub?.overflow_mode ?? '') ? sub!.overflow_mode : 'block'
-  const einvoicingConfig = normalizeEinvoicingConfigFromDb({
-    mode: sub?.einvoicing_mode ?? DEFAULT_EINVOICING_CONFIG.mode,
-    provider: sub?.einvoicing_provider ?? null,
-    environment: sub?.einvoicing_environment ?? DEFAULT_EINVOICING_CONFIG.environment,
-    onboarding_model: sub?.einvoicing_onboarding_model ?? null,
-    b2brouter_account_id: sub?.b2brouter_account_id ?? null,
-    annuaire_status: sub?.einvoicing_annuaire_status ?? DEFAULT_EINVOICING_CONFIG.annuaire_status,
+async function retrieveStripeSubscription(subscriptionId: string): Promise<StripeObject | null> {
+  const key = process.env.STRIPE_SECRET_KEY?.trim()
+  if (!key) return null
+  const response = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+    headers: { Authorization: `Bearer ${key}` },
   })
+  if (!response.ok) return null
+  return response.json() as Promise<StripeObject>
+}
 
-  // Mise à jour quotas cockpit
-  const periodStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
-  const quotas = getQuotaConfigForTier(tier)
-  const rows = QUOTA_FEATURES.map(quotaFeature => ({
-    source_instance: sourceInstance,
-    organization_id: organizationId,
-    quota_feature: quotaFeature,
-    quota_unit: getQuotaUnit(quotaFeature),
-    quota_monthly: quotas[quotaFeature],
-    current_quantity: 0,
-    current_cost_eur: 0,
-    period_start: periodStart,
-    updated_at: new Date().toISOString(),
-  }))
-  await operator.from('operator_client_quotas').upsert(rows, { onConflict: 'source_instance,organization_id,quota_feature,period_start' })
+async function resolveTenant(object: StripeObject): Promise<TenantContext | null> {
+  const metadata = metadataOf(object)
+  const sourceInstance = metadata.source_instance
+  const organizationId = metadata.organization_id
+  if (sourceInstance && organizationId) return { sourceInstance, organizationId }
 
-  // Log événement
-  await operator.from('operator_client_events').insert({
-    source_instance: sourceInstance,
-    organization_id: organizationId,
-    event_category: 'subscription',
-    event_type: 'stripe_webhook_tier_updated',
-    actor_email: 'stripe@webhook',
-    metadata: { tier, stripe_customer_id: stripeCustomerId, stripe_subscription_id: stripeSubscriptionId },
-  })
-
-  // Config-sync vers l'instance cliente
-  if (!appUrl) {
-    await operator.from('operator_client_settings').update({
-      config_sync_status: 'pending_manual',
-      config_sync_error: 'app_url manquant',
-      updated_at: new Date().toISOString(),
-    }).eq('source_instance', sourceInstance).eq('organization_id', organizationId)
-    return
+  const subscriptionId = subscriptionIdOf(object) || (object.object === 'subscription' ? String(object.id || '') : '')
+  if (subscriptionId) {
+    const operator = createOperatorAdminClient()
+    const { data } = await operator.from('operator_client_subscriptions')
+      .select('source_instance, organization_id')
+      .eq('stripe_subscription_id', subscriptionId)
+      .maybeSingle()
+    if (data?.source_instance && data.organization_id) {
+      return { sourceInstance: data.source_instance, organizationId: data.organization_id }
+    }
+    const remote = await retrieveStripeSubscription(subscriptionId)
+    const remoteMetadata = remote ? metadataOf(remote) : {}
+    if (remoteMetadata.source_instance && remoteMetadata.organization_id) {
+      return { sourceInstance: remoteMetadata.source_instance, organizationId: remoteMetadata.organization_id }
+    }
   }
 
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim() || process.env.OPERATOR_INGEST_SECRET?.trim()
-  if (!secret) return
-
-  const syncedTier = aiBillingMode === 'client_owned' ? 'expert' : tier
-  const body = JSON.stringify({
-    source_instance: sourceInstance,
-    organization_id: organizationId,
-    modules: getModulesForTier(syncedTier),
-    quota_config: getQuotaConfigForTier(syncedTier),
-    overflow_mode: overflowMode,
-    ai_billing_mode: aiBillingMode,
-    einvoicing_config: einvoicingConfig,
-  })
-
-  try {
-    const response = await fetch(`${appUrl.replace(/\/$/, '')}/api/operator/config-sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-operator-signature': signOperatorPayload(body, secret) },
-      body,
-    })
-    const syncStatus = response.ok ? 'synced' : 'failed'
-    const syncError = response.ok ? null : `config-sync ${response.status}`
-    await operator.from('operator_client_settings').update({
-      config_sync_status: syncStatus,
-      config_synced_at: response.ok ? new Date().toISOString() : undefined,
-      config_sync_error: syncError,
-      updated_at: new Date().toISOString(),
-    }).eq('source_instance', sourceInstance).eq('organization_id', organizationId)
-  } catch (err) {
-    await operator.from('operator_client_settings').update({
-      config_sync_status: 'failed',
-      config_sync_error: err instanceof Error ? err.message : 'Config sync failed',
-      updated_at: new Date().toISOString(),
-    }).eq('source_instance', sourceInstance).eq('organization_id', organizationId)
-  }
-}
-
-// ── Résolution du tenant à partir de la session Stripe ─────────────────────────
-// client_reference_id (payment link préfixé par instance) est prioritaire — fiable
-// et automatique. Le champ custom_fields texte reste en repli pour les liens
-// existants qui ne le portent pas encore.
-function resolveSourceInstance(session: Record<string, unknown>): string | null {
-  const clientReferenceId = typeof session.client_reference_id === 'string' ? session.client_reference_id.trim().toLowerCase() : ''
-  if (clientReferenceId) return clientReferenceId
-
-  const customFields = (session.custom_fields as Array<{ key: string; text?: { value?: string } }> | undefined) ?? []
-  const instanceField = customFields.find(f => f.key === 'identifiant_de_votre_application')
-  const fromField = instanceField?.text?.value?.trim().toLowerCase()
-  return fromField || null
-}
-
-// Résout l'organization_id d'une instance connue depuis operator_clients — même
-// limite que partout ailleurs (ligne la plus récemment mise à jour) : correct
-// pour le modèle per-client historique (1 org/instance), à préciser via un
-// identifiant explicite côté Payment Link si l'instance devient mutualisée.
-async function resolveKnownInstanceOrganizationId(sourceInstance: string): Promise<string | null> {
+  // Compatibilité des anciens Payment Links per-client.
+  const legacySource = typeof object.client_reference_id === 'string' ? object.client_reference_id.trim().toLowerCase() : ''
+  if (!legacySource) return null
   const operator = createOperatorAdminClient()
-  const { data } = await operator
-    .from('operator_clients')
+  const { data } = await operator.from('operator_client_settings')
     .select('organization_id')
-    .eq('source_instance', sourceInstance)
+    .eq('source_instance', legacySource)
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle()
-  return data?.organization_id ?? null
+  return data?.organization_id ? { sourceInstance: legacySource, organizationId: data.organization_id } : null
 }
 
-// operator_client_events a une FK vers operator_client_settings : un paiement
-// orphelin (slug introuvable ou mal saisi) n'a nulle part où s'écrire tant que
-// l'instance n'existe pas côté cockpit. On crée une ligne minimale, désactivée
-// et clairement étiquetée, pour que l'événement reste visible et actionnable.
-async function recordOrphanPayment(input: { reason: string; stripeSessionId?: string; sourceInstance?: string | null }) {
-  const operator = createOperatorAdminClient()
-  const sourceInstance = input.sourceInstance || `orphan-${input.stripeSessionId ?? Date.now()}`
+function accessStatusFromStripe(status: string, cancelAt?: number | null): AccessStatus {
+  if (cancelAt && cancelAt * 1000 > Date.now() && ['active', 'trialing'].includes(status)) return 'canceling'
+  if (status === 'active') return 'active'
+  if (status === 'past_due') return 'past_due'
+  if (status === 'unpaid') return 'unpaid'
+  if (status === 'canceled' || status === 'incomplete_expired') return 'expired'
+  if (status === 'trialing') return 'trialing'
+  return 'locked'
+}
 
+function isoFromUnix(value: unknown): string | null {
+  return typeof value === 'number' && Number.isFinite(value) ? new Date(value * 1000).toISOString() : null
+}
+
+async function notifyLifecycle(to: string | null, eventType: string, tier: SubscriptionTier) {
+  const messages: Record<string, { subject: string; body: string }> = {
+    payment_succeeded: { subject: 'Votre accès Atelier est activé', body: `Votre formule ${tier === 'expert' ? 'Expert' : 'Pro'} est active. Toute votre équipe peut reprendre le travail.` },
+    payment_failed: { subject: 'Votre paiement Atelier doit être régularisé', body: 'Stripe va retenter le paiement. Votre accès reste ouvert pendant cette phase ; mettez votre moyen de paiement à jour pour éviter une interruption.' },
+    payment_recovered: { subject: 'Paiement régularisé — accès Atelier maintenu', body: 'Votre paiement a bien été récupéré. Vous pouvez continuer à utiliser Atelier normalement.' },
+    subscription_cancelled: { subject: 'Votre accès Atelier est arrivé à son terme', body: 'Votre abonnement est terminé. Vos données restent exportables depuis le hall d’activation.' },
+  }
+  const message = messages[eventType]
+  if (!message) return
+  const deliveries = []
+  if (to) deliveries.push(sendAuthEmail({
+    to,
+    subject: message.subject,
+    html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto"><h1 style="font-size:22px">${message.subject}</h1><p style="line-height:1.6">${message.body}</p><p style="color:#666;font-size:13px">L’équipe Atelier by Orsayn</p></div>`,
+  }))
+  const operatorEmail = process.env.OPERATOR_ALERT_EMAIL?.trim()
+  if (operatorEmail && operatorEmail !== to) deliveries.push(sendAuthEmail({
+    to: operatorEmail,
+    subject: `[Cockpit Atelier] ${message.subject}`,
+    html: `<p>${message.body}</p><p>Formule : <strong>${tier}</strong>. Événement : <strong>${eventType}</strong>.</p>`,
+  }))
+  await Promise.allSettled(deliveries)
+}
+
+async function applySubscriptionState(input: {
+  tenant: TenantContext
+  subscription: StripeObject
+  forcedStatus?: AccessStatus
+  eventType: string
+}) {
+  const operator = createOperatorAdminClient()
+  const { sourceInstance, organizationId } = input.tenant
+  const [{ data: settings }, { data: previous }] = await Promise.all([
+    operator.from('operator_client_settings').select('app_url, contact_email').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
+    operator.from('operator_client_subscriptions').select('*').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
+  ])
+  if (!settings) throw new Error(`Organisation cockpit introuvable: ${sourceInstance}/${organizationId}`)
+
+  const metadata = metadataOf(input.subscription)
+  const priceId = input.subscription.items?.data?.[0]?.price?.id as string | undefined
+  const tier = tierFromPriceId(priceId)
+    || (isSubscriptionTier(metadata.tier) ? metadata.tier : null)
+    || (isSubscriptionTier(previous?.tier) ? previous.tier : null)
+  if (!tier) throw new Error(`Price ID non reconnu: ${priceId || 'absent'}`)
+
+  const stripeStatus = String(input.subscription.status || previous?.stripe_status || 'active')
+  const cancelAt = typeof input.subscription.cancel_at === 'number' ? input.subscription.cancel_at : null
+  const accessStatus = input.forcedStatus ?? accessStatusFromStripe(stripeStatus, cancelAt)
+  const selfServiceSource = process.env.OPERATOR_SELF_SERVICE_SOURCE_INSTANCE?.trim() || 'atelier-app'
+  const isSelfServiceTenant = sourceInstance === selfServiceSource
+  const preferredTier = isSellableTier(tier)
+    ? tier
+    : isSellableTier(previous?.preferred_tier) ? previous.preferred_tier : 'pro'
+  const accessEndsAt = accessStatus === 'canceling'
+    ? isoFromUnix(cancelAt) || previous?.cancel_at || previous?.access_ends_at || null
+    : accessStatus === 'expired' || accessStatus === 'unpaid' ? new Date().toISOString() : null
+  const trialStartedAt = previous?.trial_started_at ?? null
+  const trialEndsAt = previous?.trial_ends_at ?? null
+  const syncedTier: SubscriptionTier = !isSelfServiceTenant && accessStatus === 'expired'
+    ? 'setup_only'
+    : tier
+  const entitlement: EntitlementSyncPayload = {
+    access_status: accessStatus,
+    effective_tier: syncedTier,
+    preferred_tier: preferredTier,
+    trial_started_at: trialStartedAt,
+    trial_ends_at: trialEndsAt,
+    access_ends_at: accessEndsAt,
+  }
+  const now = new Date().toISOString()
+  const mrr = accessStatus === 'expired'
+    ? 0
+    : tier === 'pro' ? 69 : tier === 'expert' ? 169 : previous?.mrr_ht ?? 0
+  const stripeCustomerId = typeof input.subscription.customer === 'string' ? input.subscription.customer : previous?.stripe_customer_id
+  const stripeSubscriptionId = String(input.subscription.id || previous?.stripe_subscription_id || '')
+  const { error } = await operator.from('operator_client_subscriptions').upsert({
+    source_instance: sourceInstance,
+    organization_id: organizationId,
+    tier: syncedTier,
+    preferred_tier: preferredTier,
+    access_status: accessStatus,
+    access_ends_at: accessEndsAt,
+    cancel_at: accessStatus === 'canceling' ? accessEndsAt : null,
+    stripe_status: stripeStatus,
+    stripe_customer_id: stripeCustomerId || null,
+    stripe_subscription_id: stripeSubscriptionId || null,
+    mrr_ht: mrr,
+    is_active: ['active', 'past_due', 'canceling', 'trialing'].includes(accessStatus),
+    renews_at: isoFromUnix(input.subscription.current_period_end),
+    trial_converted: ['active', 'past_due', 'canceling'].includes(accessStatus),
+    payment_failed_at: accessStatus === 'past_due' || accessStatus === 'unpaid' ? previous?.payment_failed_at || now : null,
+    updated_at: now,
+  }, { onConflict: 'source_instance,organization_id' })
+  if (error) throw new Error(error.message)
+
+  if (['active', 'past_due', 'canceling'].includes(accessStatus)) {
+    await initializeQuotasForTier(sourceInstance, organizationId, syncedTier)
+  }
+  const einvoicingConfig = normalizeEinvoicingConfigFromDb({
+    mode: previous?.einvoicing_mode ?? DEFAULT_EINVOICING_CONFIG.mode,
+    provider: previous?.einvoicing_provider ?? null,
+    environment: previous?.einvoicing_environment ?? DEFAULT_EINVOICING_CONFIG.environment,
+    onboarding_model: previous?.einvoicing_onboarding_model ?? null,
+    b2brouter_account_id: previous?.b2brouter_account_id ?? null,
+    annuaire_status: previous?.einvoicing_annuaire_status ?? DEFAULT_EINVOICING_CONFIG.annuaire_status,
+  })
+  await syncClientQuotaConfig(
+    sourceInstance,
+    organizationId,
+    settings.app_url,
+    syncedTier,
+    isOverflowMode(previous?.overflow_mode) ? previous.overflow_mode : 'block',
+    previous?.ai_billing_mode === 'client_owned' ? 'client_owned' : 'orsayn_shared',
+    einvoicingConfig,
+    isSelfServiceTenant ? entitlement : undefined,
+  )
+  const effectiveEventType = input.eventType === 'payment_succeeded' && ['past_due', 'unpaid'].includes(previous?.access_status)
+    ? 'payment_recovered'
+    : input.eventType
+  await recordOperatorClientEvent({
+    sourceInstance,
+    organizationId,
+    eventCategory: 'subscription',
+    eventType: effectiveEventType,
+    actorEmail: 'stripe@webhook',
+    metadata: { tier: syncedTier, access_status: accessStatus, stripe_status: stripeStatus, subscription_id: stripeSubscriptionId },
+  })
+  await notifyLifecycle(settings.contact_email, effectiveEventType, syncedTier)
+}
+
+async function subscriptionForObject(object: StripeObject): Promise<StripeObject | null> {
+  if (object.object === 'subscription') return object
+  const id = subscriptionIdOf(object) || (typeof object.subscription === 'string' ? object.subscription : null)
+  return id ? retrieveStripeSubscription(id) : null
+}
+
+async function subscriptionForCheckout(session: StripeObject): Promise<StripeObject | null> {
+  if (typeof session.subscription !== 'string') return null
+  return retrieveStripeSubscription(session.subscription)
+}
+
+async function recordOrphan(object: StripeObject, reason: string) {
+  const operator = createOperatorAdminClient()
+  const sourceInstance = `orphan-${String(object.id || Date.now())}`
   await operator.from('operator_client_settings').upsert({
     source_instance: sourceInstance,
     organization_id: UNRESOLVED_ORGANIZATION_ID,
-    label: `[PAIEMENT ORPHELIN] ${input.sourceInstance ? input.sourceInstance : 'instance non résolue'}`,
+    label: '[PAIEMENT ORPHELIN]',
     is_active: false,
     config_sync_status: 'pending_manual',
-    config_sync_error: input.reason,
+    config_sync_error: reason,
     updated_at: new Date().toISOString(),
-  }, { onConflict: 'source_instance,organization_id', ignoreDuplicates: false })
-
+  }, { onConflict: 'source_instance,organization_id' })
   await operator.from('operator_client_events').insert({
     source_instance: sourceInstance,
     organization_id: null,
     event_category: 'subscription',
     event_type: 'orphan_payment',
     actor_email: 'stripe@webhook',
-    metadata: { reason: input.reason, stripe_session_id: input.stripeSessionId ?? null },
+    metadata: { reason, stripe_object_id: String(object.id || '') },
   })
-  console.error('[stripe/webhook] orphan_payment', input)
 }
 
-async function handleSubscriptionCancelled(sourceInstance: string, organizationId: string) {
+async function claimWebhookEvent(eventId: string, eventType: string): Promise<'claimed' | 'duplicate'> {
   const operator = createOperatorAdminClient()
-  await operator.from('operator_client_subscriptions').update({
-    tier: 'setup_only',
-    is_active: false,
-    updated_at: new Date().toISOString(),
-  }).eq('source_instance', sourceInstance).eq('organization_id', organizationId)
-
-  await operator.from('operator_client_events').insert({
-    source_instance: sourceInstance,
-    organization_id: organizationId,
-    event_category: 'subscription',
-    event_type: 'stripe_webhook_subscription_cancelled',
-    actor_email: 'stripe@webhook',
-    metadata: {},
-  })
+  const { data: existing } = await operator.from('webhook_events').select('status, received_at').eq('provider', 'stripe').eq('source_id', eventId).maybeSingle()
+  if (existing?.status === 'success') return 'duplicate'
+  const processingIsFresh = existing?.status === 'processing'
+    && new Date(existing.received_at).getTime() > Date.now() - 10 * 60 * 1000
+  if (processingIsFresh) return 'duplicate'
+  if (existing) {
+    await operator.from('webhook_events').update({
+      status: 'processing',
+      error_msg: null,
+      processed_at: null,
+      received_at: new Date().toISOString(),
+    }).eq('provider', 'stripe').eq('source_id', eventId)
+    return 'claimed'
+  }
+  const { error } = await operator.from('webhook_events').insert({ provider: 'stripe', source_id: eventId, event_type: eventType, status: 'processing' })
+  return error?.code === '23505' ? 'duplicate' : 'claimed'
 }
 
-// ── Handler principal ──────────────────────────────────────────────────────────
+async function finishWebhookEvent(eventId: string, status: 'success' | 'failed', error?: string) {
+  await createOperatorAdminClient().from('webhook_events').update({
+    status,
+    error_msg: error?.slice(0, 1000) ?? null,
+    processed_at: status === 'success' ? new Date().toISOString() : null,
+  }).eq('provider', 'stripe').eq('source_id', eventId)
+}
+
 export async function POST(req: NextRequest) {
-  // Réservé au cockpit
-  if (process.env.OPERATOR_MODE !== 'true') {
-    return NextResponse.json({ error: 'Not available' }, { status: 404 })
-  }
-
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
-  if (!webhookSecret) {
-    console.error('[stripe/webhook] STRIPE_WEBHOOK_SECRET manquant')
-    return NextResponse.json({ error: 'Configuration error' }, { status: 500 })
-  }
-
+  if (process.env.OPERATOR_MODE !== 'true') return NextResponse.json({ error: 'Not available' }, { status: 404 })
+  const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim()
+  if (!secret) return NextResponse.json({ error: 'Configuration error' }, { status: 500 })
   const rawBody = await req.text()
-  const sigHeader = req.headers.get('stripe-signature')
-
-  const valid = await verifyStripeSignature(rawBody, sigHeader, webhookSecret)
-  if (!valid) {
-    console.error('[stripe/webhook] Signature invalide')
+  if (!await verifyStripeSignature(rawBody, req.headers.get('stripe-signature'), secret)) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 })
   }
 
-  let event: { id?: string; type: string; data: { object: Record<string, unknown> } }
-  try {
-    event = JSON.parse(rawBody)
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
-
-  // Idempotence : Stripe redélivre les webhooks (at-least-once). On enregistre
-  // event.id AVANT traitement ; si déjà présent, on renvoie 200 sans retraiter
-  // (sinon double reset de quotas cockpit / double config-sync).
-  const eventId = event.id
-  if (eventId) {
-    const operatorDb = createOperatorAdminClient()
-    const { data: inserted, error: dedupError } = await operatorDb
-      .from('webhook_events')
-      .insert({ provider: 'stripe', source_id: eventId, event_type: event.type })
-      .select('id')
-      .maybeSingle()
-    if (dedupError && dedupError.code === '23505') {
-      // Conflit sur (provider, source_id) : déjà traité
-      return NextResponse.json({ received: true, duplicate: true })
-    }
-    if (!dedupError && !inserted) {
-      return NextResponse.json({ received: true, duplicate: true })
-    }
+  let event: { id: string; type: string; data: { object: StripeObject } }
+  try { event = JSON.parse(rawBody) } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
+  if (!event.id || !event.type || !event.data?.object) return NextResponse.json({ error: 'Invalid event' }, { status: 400 })
+  if (await claimWebhookEvent(event.id, event.type) === 'duplicate') {
+    return NextResponse.json({ received: true, duplicate: true })
   }
 
   try {
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object
+    const object = event.data.object
+    const watched = new Set([
+      'checkout.session.completed',
+      'invoice.paid',
+      'invoice.payment_failed',
+      'customer.subscription.updated',
+      'customer.subscription.deleted',
+    ])
+    if (watched.has(event.type)) {
+      const tenant = await resolveTenant(object)
+      if (!tenant) {
+        await recordOrphan(object, `Tenant introuvable pour ${event.type}`)
+      } else {
+        const subscription = event.type === 'checkout.session.completed'
+          ? await subscriptionForCheckout(object)
+          : await subscriptionForObject(object)
+        if (!subscription) throw new Error(`Abonnement Stripe introuvable pour ${event.type}`)
 
-      const sourceInstance = resolveSourceInstance(session)
-
-      if (!sourceInstance) {
-        await recordOrphanPayment({ reason: 'source_instance manquant (ni client_reference_id ni champ custom)', stripeSessionId: String(session.id ?? '') })
-        return NextResponse.json({ received: true, warning: 'source_instance manquant' })
-      }
-
-      const organizationId = await resolveKnownInstanceOrganizationId(sourceInstance)
-      if (!organizationId) {
-        await recordOrphanPayment({ reason: 'source_instance inconnu du cockpit (aucun organization_id résolu)', stripeSessionId: String(session.id ?? ''), sourceInstance })
-        return NextResponse.json({ received: true, warning: 'source_instance inconnu' })
-      }
-
-      // Récupérer le price ID depuis la session Stripe
-      const lineItems = session.line_items as { data?: Array<{ price?: { id?: string } }> } | undefined
-      const priceId = lineItems?.data?.[0]?.price?.id
-
-      // Si pas dans la session, récupérer via API Stripe
-      let resolvedPriceId = priceId
-      if (!resolvedPriceId && session.id) {
-        const stripeKey = process.env.STRIPE_SECRET_KEY
-        if (stripeKey) {
-          const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${session.id}/line_items`, {
-            headers: { Authorization: `Bearer ${stripeKey}` },
-          })
-          const data = await res.json() as { data?: Array<{ price?: { id?: string } }> }
-          resolvedPriceId = data.data?.[0]?.price?.id
+        if (event.type === 'invoice.payment_failed') {
+          await applySubscriptionState({ tenant, subscription, forcedStatus: subscription.status === 'unpaid' ? 'unpaid' : 'past_due', eventType: 'payment_failed' })
+        } else if (event.type === 'invoice.paid') {
+          const previousStatus = String(subscription.status || '') === 'past_due'
+          await applySubscriptionState({ tenant, subscription, forcedStatus: subscription.cancel_at ? 'canceling' : 'active', eventType: previousStatus ? 'payment_recovered' : 'payment_succeeded' })
+        } else if (event.type === 'customer.subscription.deleted') {
+          await applySubscriptionState({ tenant, subscription, forcedStatus: 'expired', eventType: 'subscription_cancelled' })
+        } else if (event.type === 'checkout.session.completed') {
+          await applySubscriptionState({ tenant, subscription, eventType: 'checkout_completed' })
+        } else {
+          await applySubscriptionState({ tenant, subscription, eventType: 'subscription_updated' })
         }
       }
-
-      const tier = resolvedPriceId ? tierFromPriceId(resolvedPriceId) : null
-      if (!tier) {
-        console.error('[stripe/webhook] Price ID non reconnu :', resolvedPriceId)
-        return NextResponse.json({ received: true, warning: 'price_id non reconnu' })
-      }
-
-      const stripeCustomerId = String(session.customer ?? '')
-      const stripeSubscriptionId = String(session.subscription ?? '')
-      await handleSubscriptionChange(sourceInstance, organizationId, tier, stripeCustomerId, stripeSubscriptionId)
     }
-
-    else if (event.type === 'customer.subscription.updated') {
-      const subscription = event.data.object
-      const priceId = (subscription.items as { data?: Array<{ price?: { id?: string } }> } | undefined)?.data?.[0]?.price?.id
-      const tier = priceId ? tierFromPriceId(priceId) : null
-
-      if (!tier) {
-        console.error('[stripe/webhook] subscription.updated : price ID non reconnu', priceId)
-        return NextResponse.json({ received: true, warning: 'price_id non reconnu' })
-      }
-
-      // Récupérer source_instance + organization_id depuis stripe_subscription_id stocké en DB
-      // (stripe_subscription_id identifie une organisation précise même sur une instance mutualisée)
-      const operator = createOperatorAdminClient()
-      const { data } = await operator
-        .from('operator_client_subscriptions')
-        .select('source_instance, organization_id')
-        .eq('stripe_subscription_id', String(subscription.id))
-        .maybeSingle()
-
-      if (!data?.source_instance || !data.organization_id) {
-        console.error('[stripe/webhook] subscription.updated : source_instance/organization_id introuvable pour', subscription.id)
-        return NextResponse.json({ received: true, warning: 'source_instance introuvable' })
-      }
-
-      await handleSubscriptionChange(
-        data.source_instance,
-        data.organization_id,
-        tier,
-        String(subscription.customer ?? ''),
-        String(subscription.id),
-      )
-    }
-
-    else if (event.type === 'customer.subscription.deleted') {
-      const subscription = event.data.object
-      const operator = createOperatorAdminClient()
-      const { data } = await operator
-        .from('operator_client_subscriptions')
-        .select('source_instance, organization_id')
-        .eq('stripe_subscription_id', String(subscription.id))
-        .maybeSingle()
-
-      if (data?.source_instance && data.organization_id) {
-        await handleSubscriptionCancelled(data.source_instance, data.organization_id)
-      }
-    }
-
+    await finishWebhookEvent(event.id, 'success')
     return NextResponse.json({ received: true })
-  } catch (err) {
-    console.error('[stripe/webhook] Erreur traitement événement:', event.type, err)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal error'
+    console.error('[stripe/webhook]', event.type, message)
+    await finishWebhookEvent(event.id, 'failed', message)
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })
   }
 }

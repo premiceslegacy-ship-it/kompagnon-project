@@ -66,7 +66,10 @@ export async function seedStarterPresetsIfNeeded(params: {
       organization_id: organizationId,
       position: index,
       section_title: line.section_title ?? '',
-      item_type: line.item_type,
+      // `mixed` décrit bien le contenu commercial de certains presets, mais
+      // n'est pas une valeur SQL de prestation_type_items. Une ligne composite
+      // reste éditable comme ligne libre, sans faire échouer tout l'onboarding.
+      item_type: line.item_type === 'mixed' ? 'free' : line.item_type,
       designation: line.designation,
       quantity: line.quantity,
       unit: line.unit,

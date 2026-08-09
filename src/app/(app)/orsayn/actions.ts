@@ -273,7 +273,6 @@ export async function upsertOperatorSubscription(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
-
   const tier = parseTier(formData.get('tier'))
   const overflowMode = parseOverflowMode(formData.get('overflowMode'))
   const billingCurrency = String(formData.get('billingCurrency') ?? 'EUR').trim().toUpperCase()
@@ -393,11 +392,12 @@ export async function activateOperatorTrial(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
+  const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
 
   const daysRaw = Number.parseInt(String(formData.get('trialDays') ?? '30'), 10)
   const trialDays = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(daysRaw, 90) : 30
   const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString()
-  const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance)
+  const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance, requestedOrganizationId)
 
   if (!organizationId) {
     throw new Error('organization_id introuvable pour cette instance — le client doit d\'abord avoir un appel IA synchronisé (ingest) ou être préconfiguré.')
@@ -460,9 +460,10 @@ export async function convertOperatorTrial(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
+  const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
 
   const targetTier = parseTier(formData.get('targetTier'))
-  const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance)
+  const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance, requestedOrganizationId)
 
   if (!organizationId) {
     throw new Error('organization_id introuvable pour cette instance')
@@ -525,9 +526,11 @@ export async function expireOperatorTrial(formData: FormData) {
   if (!sourceInstance) throw new Error('source_instance requis')
 
   const targetTier = parseTier(formData.get('targetTier'))
+  const organizationId = String(formData.get('organizationId') ?? '').trim() || undefined
 
   await expireTrialForInstance({
     sourceInstance,
+    organizationId,
     targetTier,
     actorEmail: user.email ?? null,
     eventType: 'trial_ended',
@@ -542,8 +545,9 @@ export async function resyncOperatorClientConfig(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
+  const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
 
-  const { organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance)
+  const { organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance, requestedOrganizationId)
   const effectiveTier = getEffectiveTier({
     tier: subscription.tier,
     trial_tier: subscription.trialTier,

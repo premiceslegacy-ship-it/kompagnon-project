@@ -4,6 +4,8 @@ import { normalizeOrganizationModules } from '@/lib/organization-modules'
 import { isOverflowMode } from '@/lib/quota-catalog'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeEinvoicingConfig } from '@/lib/einvoicing-config'
+import { isSubscriptionTier } from '@/lib/quota-catalog'
+import { isAccessStatus, isSellableTier, type EntitlementSyncPayload } from '@/lib/subscription-access'
 
 type ConfigSyncPayload = {
   source_instance: string
@@ -13,6 +15,20 @@ type ConfigSyncPayload = {
   overflow_mode: string
   ai_billing_mode?: string
   einvoicing_config?: Record<string, unknown>
+  entitlement?: EntitlementSyncPayload
+}
+
+function isValidEntitlement(value: unknown): value is EntitlementSyncPayload {
+  if (!isRecord(value)) return false
+  return (
+    isAccessStatus(value.access_status)
+    && typeof value.effective_tier === 'string'
+    && isSubscriptionTier(value.effective_tier)
+    && isSellableTier(value.preferred_tier)
+    && (value.trial_started_at === null || typeof value.trial_started_at === 'string')
+    && (value.trial_ends_at === null || typeof value.trial_ends_at === 'string')
+    && (value.access_ends_at === null || typeof value.access_ends_at === 'string')
+  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -30,6 +46,7 @@ function isValidPayload(value: unknown): value is ConfigSyncPayload {
     && typeof value.overflow_mode === 'string'
     && (value.ai_billing_mode === undefined || typeof value.ai_billing_mode === 'string')
     && (value.einvoicing_config === undefined || isRecord(value.einvoicing_config))
+    && (value.entitlement === undefined || isValidEntitlement(value.entitlement))
   )
 }
 
@@ -105,6 +122,21 @@ export async function POST(req: NextRequest) {
   if (einvoicingError) {
     console.error('[operator/config-sync.einvoicing]', einvoicingError)
     return NextResponse.json({ error: 'Unable to sync einvoicing config' }, { status: 500 })
+  }
+
+  if (payload.entitlement) {
+    const { error: entitlementError } = await admin
+      .from('organization_entitlements')
+      .upsert({
+        organization_id: payload.organization_id,
+        ...payload.entitlement,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'organization_id' })
+
+    if (entitlementError) {
+      console.error('[operator/config-sync.entitlement]', entitlementError)
+      return NextResponse.json({ error: 'Unable to sync entitlement' }, { status: 500 })
+    }
   }
 
   return NextResponse.json({ ok: true })

@@ -34,7 +34,8 @@ export async function POST(req: NextRequest) {
 
   const { data: membership } = await supabase
     .from('memberships').select('organization_id').eq('user_id', user.id).single()
-  const orgId = membership?.organization_id ?? user.id
+  const orgId = membership?.organization_id
+  if (!orgId) return NextResponse.json({ error: 'Organisation introuvable.' }, { status: 403 })
 
   const body = await req.json()
   const items: Array<{ description: string; item_type?: string; item_kind?: string }> = body.items ?? []
