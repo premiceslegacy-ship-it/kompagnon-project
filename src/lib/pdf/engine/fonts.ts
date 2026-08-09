@@ -18,16 +18,18 @@ type FontKey = keyof typeof FONT_FILES
 
 const bytesCache = new Map<FontKey, ArrayBuffer>()
 
-async function fetchViaAssetsBinding(key: FontKey): Promise<ArrayBuffer | null> {
+type AssetsAttempt = { bytes: ArrayBuffer } | { error: string }
+
+async function fetchViaAssetsBinding(key: FontKey): Promise<AssetsAttempt> {
   try {
     const { getCloudflareContext } = await import('@opennextjs/cloudflare')
     const { env } = await getCloudflareContext({ async: true })
-    if (!env.ASSETS) return null
+    if (!env.ASSETS) return { error: 'env.ASSETS absent' }
     const res = await env.ASSETS.fetch(new URL(`/fonts/${FONT_FILES[key]}`, 'http://assets.local'))
-    if (!res.ok) return null
-    return await res.arrayBuffer()
-  } catch {
-    return null
+    if (!res.ok) return { error: `ASSETS.fetch status=${res.status}` }
+    return { bytes: await res.arrayBuffer() }
+  } catch (e) {
+    return { error: `ASSETS.fetch exception: ${e instanceof Error ? e.stack || e.message : String(e)}` }
   }
 }
 
@@ -36,15 +38,17 @@ async function fetchFontBytes(origin: string, key: FontKey): Promise<ArrayBuffer
   if (cached) return cached
 
   const viaAssets = await fetchViaAssetsBinding(key)
-  if (viaAssets) {
-    bytesCache.set(key, viaAssets)
-    return viaAssets
+  if ('bytes' in viaAssets) {
+    bytesCache.set(key, viaAssets.bytes)
+    return viaAssets.bytes
   }
 
   // Fallback (dev local sans binding ASSETS disponible) : fetch HTTP classique.
   const url = new URL(`/fonts/${FONT_FILES[key]}`, origin).toString()
   const res = await fetch(url)
-  if (!res.ok) throw new Error(`Police introuvable : ${url} (${res.status})`)
+  if (!res.ok) {
+    throw new Error(`Police introuvable via ASSETS (${viaAssets.error}) et via fetch HTTP : ${url} (${res.status})`)
+  }
   const bytes = await res.arrayBuffer()
   bytesCache.set(key, bytes)
   return bytes
