@@ -132,6 +132,7 @@ export default function MonEspaceDashboardClient({
   icalUrl,
   memberGoals,
   upcomingInterventions = [],
+  upcomingAbsences = [],
 }: {
   member: IndividualMember
   organizationName: string
@@ -153,6 +154,12 @@ export default function MonEspaceDashboardClient({
     rapport: string | null
     observations: string | null
     contract: { id: string; title: string; frequence: string } | null
+  }>
+  upcomingAbsences?: Array<{
+    id: string
+    start_date: string
+    end_date: string
+    reason: string | null
   }>
 }) {
   const router = useRouter()
@@ -709,6 +716,22 @@ export default function MonEspaceDashboardClient({
           </div>
         )}
       </section>
+
+      {upcomingAbsences.length > 0 && (
+        <section className="space-y-2">
+          {upcomingAbsences.map(a => (
+            <div key={a.id} className="card p-3.5 flex items-start gap-2.5 border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10">
+              <UserX className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-900 dark:text-amber-200">
+                <span className="font-bold">
+                  {a.start_date === a.end_date ? `Absent(e) le ${fmtDate(a.start_date)}` : `Absent(e) du ${fmtDate(a.start_date)} au ${fmtDate(a.end_date)}`}
+                </span>
+                {a.reason ? ` — ${a.reason}` : ''}
+              </p>
+            </div>
+          ))}
+        </section>
+      )}
 
       {/* Créneaux à venir */}
       <section className="space-y-2">
