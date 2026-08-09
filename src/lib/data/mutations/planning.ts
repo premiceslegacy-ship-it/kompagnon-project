@@ -91,6 +91,38 @@ function validatePlanningAssigneeLabel(data: {
   return null
 }
 
+async function findAbsentMemberError(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  slots: Array<{ memberId?: string | null; plannedDate: string }>,
+): Promise<string | null> {
+  const memberIds = [...new Set(slots.map(s => s.memberId).filter((id): id is string => !!id))]
+  if (memberIds.length === 0) return null
+
+  const dates = slots.map(s => s.plannedDate)
+  const minDate = dates.reduce((a, b) => (a < b ? a : b))
+  const maxDate = dates.reduce((a, b) => (a > b ? a : b))
+
+  const { data: absences } = await supabase
+    .from('member_absences')
+    .select('member_id, start_date, end_date, reason')
+    .eq('organization_id', orgId)
+    .in('member_id', memberIds)
+    .lte('start_date', maxDate)
+    .gte('end_date', minDate)
+
+  if (!absences?.length) return null
+
+  for (const slot of slots) {
+    if (!slot.memberId) continue
+    const hit = absences.find(a => a.member_id === slot.memberId && a.start_date <= slot.plannedDate && a.end_date >= slot.plannedDate)
+    if (hit) {
+      return `Membre absent le ${slot.plannedDate}${hit.reason ? ` (${hit.reason})` : ''}. Supprimez son absence ou choisissez un autre membre.`
+    }
+  }
+  return null
+}
+
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 export async function createPlanningSlot(data: PlanningSlotInput): Promise<{ error: string | null }> {
@@ -133,6 +165,9 @@ export async function createPlanningSlot(data: PlanningSlotInput): Promise<{ err
       .maybeSingle()
     if (!member) return { error: 'Membre introuvable ou non autorisé.' }
   }
+
+  const absenceError = await findAbsentMemberError(supabase, orgId, [data])
+  if (absenceError) return { error: absenceError }
 
   const { error } = await supabase.from('chantier_plannings').insert({
     chantier_id: data.chantierId,
@@ -207,6 +242,9 @@ export async function createPlanningSlots(slots: PlanningSlotInput[]): Promise<{
       return { error: 'Membre introuvable ou non autorisé.', created: 0 }
     }
   }
+
+  const absenceError = await findAbsentMemberError(supabase, orgId, slots)
+  if (absenceError) return { error: absenceError, created: 0 }
 
   const rows = slots.map(s => ({
     chantier_id: s.chantierId,
@@ -328,6 +366,9 @@ export async function createMaintenancePlanningSlots(slots: MaintenancePlanningS
     }
   }
 
+  const absenceError = await findAbsentMemberError(supabase, orgId, slots)
+  if (absenceError) return { error: absenceError, created: 0 }
+
   const rows = slots.map(s => ({
     maintenance_contract_id: s.maintenanceContractId,
     organization_id: orgId,
@@ -438,7 +479,7 @@ export async function updatePlanningSlot(id: string, data: PlanningSlotUpdateInp
 
   const { data: existing } = await supabase
     .from('chantier_plannings')
-    .select('id, chantier_id, label, member_id, equipe_id, chantiers!inner(organization_id)')
+    .select('id, chantier_id, label, member_id, equipe_id, planned_date, chantiers!inner(organization_id)')
     .eq('id', id)
     .single()
 
@@ -485,6 +526,10 @@ export async function updatePlanningSlot(id: string, data: PlanningSlotUpdateInp
     equipeId: nextEquipeId,
   })
   if (validationError) return { error: validationError }
+
+  const nextPlannedDate = data.plannedDate ?? (existing as any).planned_date
+  const absenceError = await findAbsentMemberError(supabase, orgId, [{ memberId: nextMemberId, plannedDate: nextPlannedDate }])
+  if (absenceError) return { error: absenceError }
 
   const { error } = await supabase.from('chantier_plannings').update(patch).eq('id', id)
   if (error) return { error: error.message }
