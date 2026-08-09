@@ -2,7 +2,7 @@
 // Le XML CII EN 16931 est accessible via /Names/EmbeddedFiles + /AF.
 // Le XMP Metadata est un stream non compressé (PDFRawStream) - obligatoire pour les validateurs.
 
-import { AFRelationship, PDFDocument, PDFName, PDFRawStream, PDFString } from 'pdf-lib'
+import { AFRelationship, PDFArray, PDFDocument, PDFHexString, PDFName, PDFRawStream, PDFString } from 'pdf-lib'
 import { FACTURX_FILENAME, FACTURX_VERSION, FACTURX_XMP_NAMESPACE, normalizeFacturxConformanceLevel } from '@/lib/pdf/facturx-profile'
 import { SRGB_ICC_PROFILE_BASE64 } from '@/lib/pdf/srgb-icc'
 
@@ -128,6 +128,18 @@ function buildXmpMetadata(metadata: {
 <?xpacket end="w"?>`
 }
 
+// PDF/A-3 (ISO 19005-3:2012 §6.1.3) exige un trailer /ID — pdf-lib ne le génère
+// jamais automatiquement. Deux identifiants hex 16 octets : le même à la création
+// (permanent) et à la modification (courant), comme le veut la spec PDF pour un
+// document créé en une seule passe.
+function setTrailerId(pdfDoc: PDFDocument): void {
+  const id = PDFHexString.of(crypto.randomUUID().replace(/-/g, ''))
+  const idArray = PDFArray.withContext(pdfDoc.context)
+  idArray.push(id)
+  idArray.push(id)
+  pdfDoc.context.trailerInfo.ID = idArray
+}
+
 function addOutputIntent(pdfDoc: PDFDocument): void {
   const iccProfileBytes = Buffer.from(SRGB_ICC_PROFILE_BASE64, 'base64')
   const colorProfileStream = PDFRawStream.of(
@@ -200,6 +212,8 @@ export async function embedFacturXml(
   const xmpStream = PDFRawStream.of(xmpDict, xmpBytes)
   const xmpRef = pdfDoc.context.register(xmpStream)
   pdfDoc.catalog.set(PDFName.of('Metadata'), xmpRef)
+
+  setTrailerId(pdfDoc)
 
   const resultBytes = await pdfDoc.save({ useObjectStreams: false })
   return Buffer.from(resultBytes)

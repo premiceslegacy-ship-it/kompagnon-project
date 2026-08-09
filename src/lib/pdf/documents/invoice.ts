@@ -144,12 +144,12 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
 
   doc.onFinishPage = ({ page, pageIndex, pageCount }) => {
     const footerY = 14
-    page.drawLine({ start: { x: PAGE.margin, y: footerY + 12 }, end: { x: PAGE.width - PAGE.margin, y: footerY + 12 }, thickness: 0.5, color: COLOR.divider })
-    let ly = footerY + 12 - 4
+    const lineStep = SIZE.xxs * 1.4
+    page.drawLine({ start: { x: PAGE.margin, y: footerY + 8 + legalLines.length * lineStep }, end: { x: PAGE.width - PAGE.margin, y: footerY + 8 + legalLines.length * lineStep }, thickness: 0.5, color: COLOR.divider })
+    let ly = footerY + (legalLines.length - 1) * lineStep
     for (const line of legalLines) {
-      ly -= SIZE.xxs
       page.drawText(line, { x: PAGE.margin, y: ly, size: SIZE.xxs, font: F.regular, color: COLOR.muted })
-      ly -= (SIZE.xxs * 1.4) - SIZE.xxs
+      ly -= lineStep
     }
     if (pageCount > 1) {
       const label = `${pageIndex + 1} / ${pageCount}`
