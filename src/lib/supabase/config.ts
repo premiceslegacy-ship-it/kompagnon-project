@@ -36,13 +36,16 @@ export function getPublicRuntimeConfig(): AppRuntimeConfig {
 }
 
 export function getBrowserRuntimeConfig(): AppRuntimeConfig {
-  const config = window.__APP_RUNTIME_CONFIG__
+  const root = document.documentElement
+  const injected = window.__APP_RUNTIME_CONFIG__
+  const supabaseUrl = injected?.supabaseUrl ?? root.dataset.supabaseUrl
+  const supabaseAnonKey = injected?.supabaseAnonKey ?? root.dataset.supabaseAnonKey
 
-  if (!config?.supabaseUrl || !config?.supabaseAnonKey) {
-    throw new Error('Missing browser runtime config. The root layout must inject window.__APP_RUNTIME_CONFIG__.')
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Missing browser runtime config. The root layout must expose the public Supabase configuration.')
   }
 
-  return config
+  return { supabaseUrl, supabaseAnonKey }
 }
 
 export function serializeRuntimeConfig(config: AppRuntimeConfig): string {

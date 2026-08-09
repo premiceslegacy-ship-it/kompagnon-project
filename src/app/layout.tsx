@@ -7,7 +7,7 @@ import { PostHogProvider } from '@/components/posthog-provider';
 import { SentryInit } from '@/components/sentry-init';
 import { APP_NAME } from '@/lib/brand';
 import { appIconPath } from '@/lib/pwa';
-import { getPublicRuntimeConfig, serializeRuntimeConfig } from '@/lib/supabase/config';
+import { getPublicRuntimeConfig } from '@/lib/supabase/config';
 
 import { Plus_Jakarta_Sans, Inter } from 'next/font/google';
 
@@ -44,22 +44,20 @@ export default function RootLayout({
     children: React.ReactNode;
 }) {
     const runtimeConfig = getPublicRuntimeConfig();
-    const runtimeConfigScript = `window.__APP_RUNTIME_CONFIG__ = ${serializeRuntimeConfig(runtimeConfig)};`;
 
     return (
-        <html lang="fr" suppressHydrationWarning>
+        <html
+            lang="fr"
+            data-supabase-url={runtimeConfig.supabaseUrl}
+            data-supabase-anon-key={runtimeConfig.supabaseAnonKey}
+            data-sentry-dsn={process.env.NEXT_PUBLIC_SENTRY_DSN || undefined}
+            data-posthog-key={process.env.NEXT_PUBLIC_POSTHOG_KEY || undefined}
+            data-posthog-host={process.env.NEXT_PUBLIC_POSTHOG_HOST || undefined}
+            suppressHydrationWarning
+        >
             <body className={`${displayFont.variable} ${bodyFont.variable} font-body bg-base min-h-screen transition-colors duration-300 ease-out`}>
-                <script
-                    id="app-runtime-config"
-                    dangerouslySetInnerHTML={{ __html: runtimeConfigScript }}
-                />
                 <SentryInit />
-                <ThemeProvider
-                    attribute="class"
-                    defaultTheme="system"
-                    enableSystem
-                    disableTransitionOnChange
-                >
+                <ThemeProvider>
                     <PostHogProvider>
                         {children}
                     </PostHogProvider>
