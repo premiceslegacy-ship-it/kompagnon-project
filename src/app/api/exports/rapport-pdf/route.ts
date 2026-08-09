@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { renderToStream } from '@react-pdf/renderer'
+import { renderToBuffer } from '@react-pdf/renderer'
 import React from 'react'
 import { createClient } from '@/lib/supabase/server'
 import {
@@ -133,20 +133,26 @@ export async function GET(req: Request) {
     ? `rapport-${monthLabel}-${year}.pdf`
     : `rapport-annuel-${year}.pdf`
 
-  const stream = await renderToStream(
-    React.createElement(RapportKpiPDF, {
-      vue, year, month,
-      organization: orgWithLogo as any,
-      monthlyReport,
-      annualReport,
-      hoursReport,
-      topClients,
-      topChantiers,
-      objectives,
-    }) as any
-  )
+  let buffer: Buffer
+  try {
+    buffer = await renderToBuffer(
+      React.createElement(RapportKpiPDF, {
+        vue, year, month,
+        organization: orgWithLogo as any,
+        monthlyReport,
+        annualReport,
+        hoursReport,
+        topClients,
+        topChantiers,
+        objectives,
+      }) as any
+    )
+  } catch (e) {
+    console.error('[exports/rapport-pdf] renderToBuffer error:', e)
+    return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.message : String(e)}`, { status: 500 })
+  }
 
-  return new NextResponse(stream as unknown as ReadableStream, {
+  return new NextResponse(buffer, {
     headers: {
       'Content-Type': 'application/pdf',
       'Cache-Control': 'no-store, max-age=0',

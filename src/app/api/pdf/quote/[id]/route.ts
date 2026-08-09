@@ -1,15 +1,13 @@
 import { NextResponse } from 'next/server'
-import { renderToStream } from '@react-pdf/renderer'
-import React from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getQuoteById } from '@/lib/data/queries/quotes'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import QuotePDF from '@/components/pdf/QuotePDF'
 import type { Client } from '@/lib/data/queries/clients'
 import { assertSafeExternalFetchUrl, isValidUuid } from '@/lib/security'
 import { renderQuotePdfBufferById } from '@/lib/pdf/server'
+import { renderQuotePdf } from '@/lib/pdf/documents/quote'
 
 export const dynamic = 'force-dynamic'
 
@@ -126,14 +124,17 @@ export async function GET(
   }
 
   // 5. Render PDF
-  const stream = await renderToStream(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    React.createElement(QuotePDF, { quote: fullQuote, organization: orgWithLogo, client }) as any,
-  )
+  let buffer: Buffer
+  try {
+    buffer = await renderQuotePdf({ quote: fullQuote, organization: orgWithLogo, client }, url.origin)
+  } catch (e) {
+    console.error('[pdf/quote] renderQuotePdf error:', e)
+    return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.stack || e.message : String(e)}`, { status: 500 })
+  }
 
   const fileName = `devis-${quote.number ?? params.id}.pdf`
 
-  return new NextResponse(stream as unknown as ReadableStream, {
+  return new NextResponse(buffer, {
     headers: {
       'Content-Type': 'application/pdf',
       'Cache-Control': 'no-store, max-age=0',

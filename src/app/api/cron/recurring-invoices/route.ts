@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import React from 'react'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic';
@@ -10,8 +9,7 @@ import type { RecurringFrequency } from '@/lib/data/recurring-utils'
 import { APP_SIGNATURE } from '@/lib/brand'
 import { dateParis } from '@/lib/utils'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
-import { renderToBuffer } from '@react-pdf/renderer'
-import InvoicePDF from '@/components/pdf/InvoicePDF'
+import { renderInvoicePdf } from '@/lib/pdf/documents/invoice'
 
 // ─── POST /api/cron/recurring-invoices ────────────────────────────────────────
 // Appelé chaque matin par le Cloudflare Worker cron (x-cron-secret).
@@ -339,9 +337,10 @@ async function autoSendInvoice(
     // Générer le PDF
     let attachments: Array<{ filename: string; content: Buffer }> | undefined
     try {
-      const pdfBuffer = await renderToBuffer(
-        React.createElement(InvoicePDF, { invoice: invoice as any, organization: org as any }) as any,
-      )
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL
+      if (!appUrl) throw new Error('NEXT_PUBLIC_APP_URL manquant')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pdfBuffer = await renderInvoicePdf({ invoice: invoice as any, organization: org as any }, appUrl)
       attachments = [{ filename: `facture-${invoice.number ?? invoiceId}.pdf`, content: Buffer.from(pdfBuffer) }]
     } catch (pdfErr) {
       console.error('[cron/recurring] PDF generation error:', pdfErr)

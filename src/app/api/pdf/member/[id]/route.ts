@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import React from 'react'
-import { renderToStream } from '@react-pdf/renderer'
+import { renderToBuffer } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
@@ -189,9 +189,9 @@ export async function GET(
 
   const totalHours = pointages.reduce((s, p) => s + p.hours, 0)
 
-  let stream: NodeJS.ReadableStream
+  let buffer: Buffer
   try {
-    stream = await renderToStream(
+    buffer = await renderToBuffer(
       React.createElement(MemberHoursReportPDF as any, {
         member,
         organization: orgResult.data,
@@ -203,7 +203,7 @@ export async function GET(
       }) as any,
     )
   } catch (e) {
-    console.error('[pdf/member] renderToStream error:', e)
+    console.error('[pdf/member] renderToBuffer error:', e)
     return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.message : String(e)}`, { status: 500 })
   }
 
@@ -212,7 +212,7 @@ export async function GET(
   const periodSlug = isAnnual ? dateFrom.slice(0, 4) : `${dateFrom}-${dateTo}`
   const fileName = `rapport-heures-${memberSlug}-${periodSlug}.pdf`
 
-  return new NextResponse(stream as unknown as ReadableStream, {
+  return new NextResponse(buffer, {
     headers: {
       'Content-Type': 'application/pdf',
       'Cache-Control': 'no-store, max-age=0',

@@ -1,8 +1,6 @@
 import React from 'react'
 import { renderToBuffer } from '@react-pdf/renderer'
 import { createAdminClient } from '@/lib/supabase/admin'
-import QuotePDF from '@/components/pdf/QuotePDF'
-import InvoicePDF from '@/components/pdf/InvoicePDF'
 import ChantierPDF from '@/components/pdf/ChantierPDF'
 import MemberHoursReportPDF from '@/components/pdf/MemberHoursReportPDF'
 import ContractPDF, { type ContractPdfSnapshot } from '@/components/pdf/ContractPDF'
@@ -12,6 +10,14 @@ import { generateFacturXml } from '@/lib/pdf/facturx-xml'
 import { embedFacturXml } from '@/lib/pdf/facturx-embed'
 import { getMemberPointages } from '@/lib/data/queries/members'
 import { assertSafeExternalFetchUrl } from '@/lib/security'
+import { renderQuotePdf } from '@/lib/pdf/documents/quote'
+import { renderInvoicePdf } from '@/lib/pdf/documents/invoice'
+
+function pdfOrigin(): string {
+  const origin = process.env.NEXT_PUBLIC_APP_URL
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  return origin
+}
 
 async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null
@@ -91,13 +97,7 @@ export async function renderQuotePdfBufferById(quoteId: string, orgId: string): 
     technical_checklist: (quote as any).technical_checklist ?? null,
   }
 
-  const buffer = await renderToBuffer(
-    React.createElement(QuotePDF, {
-      quote: fullQuote,
-      organization,
-      client,
-    }) as any,
-  )
+  const buffer = await renderQuotePdf({ quote: fullQuote, organization, client }, pdfOrigin())
 
   const fileName = `${sanitizeFileName(quote.number ?? quote.title ?? quoteId, 'devis')}.pdf`
   return { buffer, fileName }
@@ -138,12 +138,7 @@ export async function renderInvoicePdfBufferById(invoiceId: string, orgId: strin
     quote_number: quoteNumber,
   }
 
-  const pdfBuffer = await renderToBuffer(
-    React.createElement(InvoicePDF, {
-      invoice: invoiceRecord,
-      organization,
-    }) as any,
-  )
+  const pdfBuffer = await renderInvoicePdf({ invoice: invoiceRecord, organization }, pdfOrigin())
 
   // Embarquer le XML Factur-X dans le PDF (PDF/A-3 + XMP)
   const xml = generateFacturXml(invoiceRecord as any, organization)

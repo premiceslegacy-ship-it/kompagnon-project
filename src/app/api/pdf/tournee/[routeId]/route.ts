@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { renderToStream } from '@react-pdf/renderer'
+import { renderToBuffer } from '@react-pdf/renderer'
 import React from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
@@ -137,33 +137,39 @@ export async function GET(
   const departurePostalCode = tourneeRoute?.departure_postal_code ?? organization.departure_postal_code ?? null
   const departureCity = tourneeRoute?.departure_city ?? organization.departure_city ?? null
 
-  const stream = await renderToStream(
-    React.createElement(TourneePDF, {
-      organization: {
-        name: organization.name,
-        email: organization.email,
-        phone: organization.phone,
-        siret: organization.siret,
-        logo_url: organization.logo_url,
-        address_line1: organization.address_line1,
-        postal_code: organization.postal_code,
-        city: organization.city,
-      },
-      slots: slotsWithTravel,
-      date,
-      routeLabel,
-      totalSiteMin,
-      totalTravelMin,
-      departureAddress,
-      departurePostalCode,
-      departureCity,
-    }) as any,
-  )
+  let buffer: Buffer
+  try {
+    buffer = await renderToBuffer(
+      React.createElement(TourneePDF, {
+        organization: {
+          name: organization.name,
+          email: organization.email,
+          phone: organization.phone,
+          siret: organization.siret,
+          logo_url: organization.logo_url,
+          address_line1: organization.address_line1,
+          postal_code: organization.postal_code,
+          city: organization.city,
+        },
+        slots: slotsWithTravel,
+        date,
+        routeLabel,
+        totalSiteMin,
+        totalTravelMin,
+        departureAddress,
+        departurePostalCode,
+        departureCity,
+      }) as any,
+    )
+  } catch (e) {
+    console.error('[pdf/tournee] renderToBuffer error:', e)
+    return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.message : String(e)}`, { status: 500 })
+  }
 
   const safeLabel = routeLabel.replace(/[^a-z0-9]/gi, '-').toLowerCase()
   const fileName = `tournee-${date}-${safeLabel}.pdf`
 
-  return new NextResponse(stream as unknown as ReadableStream, {
+  return new NextResponse(buffer, {
     headers: {
       'Content-Type': 'application/pdf',
       'Content-Disposition': download

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { renderToStream } from '@react-pdf/renderer'
+import { renderToBuffer } from '@react-pdf/renderer'
 import React from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
@@ -73,12 +73,18 @@ export async function GET(
   const orgWithLogo = { ...organization, logo_url: logoDataUrl ?? organization.logo_url }
   const url = new URL(req.url)
   const download = url.searchParams.get('download') === '1'
-  const stream = await renderToStream(
-    React.createElement(MaintenanceInterventionPDF, { intervention, organization: orgWithLogo, reportPhotos }) as any,
-  )
+  let buffer: Buffer
+  try {
+    buffer = await renderToBuffer(
+      React.createElement(MaintenanceInterventionPDF, { intervention, organization: orgWithLogo, reportPhotos }) as any,
+    )
+  } catch (e) {
+    console.error('[pdf/maintenance/intervention] renderToBuffer error:', e)
+    return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.message : String(e)}`, { status: 500 })
+  }
 
   const fileName = `rapport-intervention-${params.id.slice(0, 8)}.pdf`
-  return new NextResponse(stream as unknown as ReadableStream, {
+  return new NextResponse(buffer, {
     headers: {
       'Content-Type': 'application/pdf',
       'Content-Disposition': download
