@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useTheme } from 'next-themes';
+import { useTheme } from '@/components/theme-provider';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {

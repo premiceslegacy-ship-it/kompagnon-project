@@ -1,7 +1,6 @@
 'use client'
 
-import { useFormState, useFormStatus } from 'react-dom'
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { AlertCircle, ArrowRight, Loader2, CheckCircle2, Eye, EyeOff } from 'lucide-react'
 import { login, signup, type AuthState } from '../actions'
@@ -14,8 +13,7 @@ const initialState: AuthState = { error: null }
 const inputCls =
   'w-full px-4 py-3 bg-white/[0.06] border border-white/[0.08] focus:border-accent/50 focus:ring-1 focus:ring-accent/20 rounded-xl text-white text-sm outline-none transition-all placeholder:text-white/20'
 
-function SubmitButton({ label }: { label: string }) {
-  const { pending } = useFormStatus()
+function SubmitButton({ label, pending }: { label: string; pending: boolean }) {
   return (
     <button
       type="submit"
@@ -40,13 +38,43 @@ function SubmitButton({ label }: { label: string }) {
 export default function AuthPage() {
   const searchParams = useSearchParams()
   const [mode, setMode] = useState<'login' | 'signup'>(() => searchParams.get('mode') === 'signup' ? 'signup' : 'login')
-  const [loginState, loginAction] = useFormState(login, initialState)
-  const [signupState, signupAction] = useFormState(signup, initialState)
+  const [loginState, setLoginState] = useState<AuthState>(initialState)
+  const [signupState, setSignupState] = useState<AuthState>(initialState)
+  const [loginPending, setLoginPending] = useState(false)
+  const [signupPending, setSignupPending] = useState(false)
   const [showLoginPw, setShowLoginPw] = useState(false)
   const [showSignupPw, setShowSignupPw] = useState(false)
 
   const error = mode === 'login' ? loginState.error : signupState.error
   const message = mode === 'signup' ? signupState.message : undefined
+
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setLoginPending(true)
+    setLoginState(initialState)
+    try {
+      const result = await login(initialState, new FormData(event.currentTarget))
+      if (result) setLoginState(result)
+    } catch {
+      setLoginState({ error: 'Connexion impossible pour le moment. Veuillez réessayer.' })
+    } finally {
+      setLoginPending(false)
+    }
+  }
+
+  async function handleSignup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSignupPending(true)
+    setSignupState(initialState)
+    try {
+      const result = await signup(initialState, new FormData(event.currentTarget))
+      if (result) setSignupState(result)
+    } catch {
+      setSignupState({ error: 'Inscription impossible pour le moment. Veuillez réessayer.' })
+    } finally {
+      setSignupPending(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 flex bg-[#050505] text-white overflow-y-auto font-body">
@@ -122,7 +150,7 @@ export default function AuthPage() {
 
             {/* ── LOGIN FORM ── */}
             {mode === 'login' && (
-              <form action={loginAction} className="space-y-4">
+              <form onSubmit={handleLogin} className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex items-center">
                     <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
@@ -168,14 +196,14 @@ export default function AuthPage() {
                 </div>
 
                 <div className="pt-2">
-                  <SubmitButton label="Se connecter" />
+                  <SubmitButton label="Se connecter" pending={loginPending} />
                 </div>
               </form>
             )}
 
             {/* ── SIGNUP FORM ── */}
             {mode === 'signup' && (
-              <form action={signupAction} className="space-y-4">
+              <form onSubmit={handleSignup} className="space-y-4">
                 <input type="hidden" name="intent" value={searchParams.get('intent') === 'trial' ? 'trial' : 'none'} />
                 <input type="hidden" name="preferred_tier" value={searchParams.get('preferred') === 'expert' ? 'expert' : 'pro'} />
                 <input type="hidden" name="signup_source" value={searchParams.get('source') ?? 'app'} />
@@ -240,7 +268,7 @@ export default function AuthPage() {
                 </div>
 
                 <div className="pt-2">
-                  <SubmitButton label="Créer mon compte" />
+                  <SubmitButton label="Créer mon compte" pending={signupPending} />
                 </div>
               </form>
             )}

@@ -1,52 +1,49 @@
 'use client'
 
-import { useEffect, Suspense } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { usePathname, useSearchParams } from 'next/navigation'
 import posthog from 'posthog-js'
 import { PostHogProvider as PHProvider } from 'posthog-js/react'
-import { getClientInstanceLabel } from '@/lib/client-instance'
 
-const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY
-const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-
-// Suivi de base uniquement : pages vues + événements métier explicites
-// (voir /lib/analytics.ts). Pas d'autocapture de clics/formulaires, pas de
-// session recording — app métier avec des données financières/personnelles
-// à l'écran (montants, coordonnées clients).
-if (typeof window !== 'undefined' && POSTHOG_KEY) {
-  posthog.init(POSTHOG_KEY, {
-    api_host: POSTHOG_HOST,
-    autocapture: false,
-    capture_pageview: false, // capturé manuellement via PostHogPageview ci-dessous
-    disable_session_recording: true,
-    person_profiles: 'identified_only',
-  })
-  // Compte PostHog Orsayn partagé entre tous les clients per-client : cette
-  // propriété est attachée à chaque événement pour filtrer par instance
-  // déployée dans les dashboards (group by client_instance).
-  posthog.register({ client_instance: getClientInstanceLabel() })
-}
-
-function PostHogPageview() {
+function PostHogPageview({ enabled }: { enabled: boolean }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
   useEffect(() => {
-    if (!POSTHOG_KEY || !pathname) return
+    if (!enabled || !pathname) return
     const url = searchParams?.toString() ? `${pathname}?${searchParams.toString()}` : pathname
     posthog.capture('$pageview', { $current_url: url })
-  }, [pathname, searchParams])
+  }, [enabled, pathname, searchParams])
 
   return null
 }
 
 export function PostHogProvider({ children }: { children: React.ReactNode }) {
-  if (!POSTHOG_KEY) return <>{children}</>
+  const [enabled, setEnabled] = useState(false)
+
+  useEffect(() => {
+    const root = document.documentElement
+    const key = root.dataset.posthogKey || process.env.NEXT_PUBLIC_POSTHOG_KEY
+    if (!key) return
+    const host = root.dataset.posthogHost || process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.i.posthog.com'
+
+    // Initialiser l'analytics après l'hydratation : aucune instrumentation du
+    // navigateur ne doit modifier la page pendant que React la rattache au SSR.
+    posthog.init(key, {
+      api_host: host,
+      autocapture: false,
+      capture_pageview: false,
+      disable_session_recording: true,
+      person_profiles: 'identified_only',
+    })
+    posthog.register({ client_instance: window.location.host })
+    setEnabled(true)
+  }, [])
 
   return (
     <PHProvider client={posthog}>
       <Suspense fallback={null}>
-        <PostHogPageview />
+        <PostHogPageview enabled={enabled} />
       </Suspense>
       {children}
     </PHProvider>
