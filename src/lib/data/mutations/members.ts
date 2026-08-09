@@ -1,8 +1,6 @@
 'use server'
 
-import React from 'react'
 import { revalidatePath } from 'next/cache'
-import { renderToBuffer } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
@@ -16,7 +14,13 @@ import {
 } from '@/lib/email/templates'
 import { generateMagicToken, hashToken, getMemberSession, clearMemberSessionCookie } from '@/lib/auth/member-session'
 import { getMemberPointages, getMemberByIdAdmin, getMemberAccessibleChantiers } from '@/lib/data/queries/members'
-import MemberHoursReportPDF from '@/components/pdf/MemberHoursReportPDF'
+import { renderMemberHoursReportPdf } from '@/lib/pdf/documents/member-hours-report'
+
+function pdfOrigin(): string {
+  const origin = process.env.NEXT_PUBLIC_APP_URL
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  return origin
+}
 
 type Result = { error: string | null }
 
@@ -694,15 +698,14 @@ export async function sendMemberHoursReport(
   const totalHours = pointages.reduce((s, p) => s + p.hours, 0)
   const periodLabel = formatPeriodLabel(dateFrom, dateTo)
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pdfBuffer = await renderToBuffer(React.createElement(MemberHoursReportPDF as any, {
+  const pdfBuffer = await renderMemberHoursReportPdf({
     member,
     organization: org,
     pointages,
     periodFrom: dateFrom,
     periodTo: dateTo,
     totalHours,
-  }) as any)
+  }, pdfOrigin())
 
   const fileName = `rapport-heures-${(member.prenom ?? '').toLowerCase()}-${member.name.toLowerCase()}-${dateFrom}-${dateTo}.pdf`
     .replace(/[^a-z0-9.-]/gi, '-')

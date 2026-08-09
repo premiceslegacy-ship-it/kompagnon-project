@@ -1,6 +1,4 @@
 import { NextResponse } from 'next/server'
-import { renderToBuffer } from '@react-pdf/renderer'
-import React from 'react'
 import { createClient } from '@/lib/supabase/server'
 import {
   getMonthlyReport,
@@ -11,8 +9,14 @@ import {
   getAnnualObjectives,
   getMonthlyObjectives,
 } from '@/lib/data/queries/reporting'
-import RapportKpiPDF from '@/components/pdf/RapportKpiPDF'
+import { renderRapportKpiPdf } from '@/lib/pdf/documents/rapport-kpi'
 import { assertSafeExternalFetchUrl } from '@/lib/security'
+
+function pdfOrigin(): string {
+  const origin = process.env.NEXT_PUBLIC_APP_URL
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  return origin
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -135,20 +139,18 @@ export async function GET(req: Request) {
 
   let buffer: Buffer
   try {
-    buffer = await renderToBuffer(
-      React.createElement(RapportKpiPDF, {
-        vue, year, month,
-        organization: orgWithLogo as any,
-        monthlyReport,
-        annualReport,
-        hoursReport,
-        topClients,
-        topChantiers,
-        objectives,
-      }) as any
-    )
+    buffer = await renderRapportKpiPdf({
+      vue, year, month,
+      organization: orgWithLogo as any,
+      monthlyReport,
+      annualReport,
+      hoursReport,
+      topClients,
+      topChantiers,
+      objectives,
+    }, pdfOrigin())
   } catch (e) {
-    console.error('[exports/rapport-pdf] renderToBuffer error:', e)
+    console.error('[exports/rapport-pdf] renderRapportKpiPdf error:', e)
     return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.message : String(e)}`, { status: 500 })
   }
 

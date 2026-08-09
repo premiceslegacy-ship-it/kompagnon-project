@@ -1,7 +1,5 @@
 'use server'
 
-import React from 'react'
-import { renderToBuffer } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getOrganization } from '@/lib/data/queries/organization'
@@ -9,8 +7,13 @@ import { hasPermission } from '@/lib/data/queries/membership'
 import { sendEmail } from '@/lib/email'
 import { renderEmailShell, renderInfoBox, escHtml } from '@/lib/email/layout'
 import { assertSafeExternalFetchUrl } from '@/lib/security'
-import MaintenanceInterventionPDF from '@/components/pdf/MaintenanceInterventionPDF'
-import type { MaintenanceReportPhoto } from '@/components/pdf/MaintenanceInterventionPDF'
+import { renderMaintenanceInterventionPdf, type MaintenanceReportPhoto } from '@/lib/pdf/documents/maintenance-intervention'
+
+function pdfOrigin(): string {
+  const origin = process.env.NEXT_PUBLIC_APP_URL
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  return origin
+}
 
 export async function sendMaintenanceInterventionReportEmail(
   interventionId: string,
@@ -59,13 +62,11 @@ export async function sendMaintenanceInterventionReportEmail(
   ])
   const orgWithLogo = { ...organization, logo_url: logoDataUrl ?? organization.logo_url }
 
-  const pdfBuffer: Buffer = await renderToBuffer(
-    React.createElement(MaintenanceInterventionPDF, {
-      intervention,
-      organization: orgWithLogo,
-      reportPhotos,
-    }) as any,
-  )
+  const pdfBuffer: Buffer = await renderMaintenanceInterventionPdf({
+    intervention,
+    organization: orgWithLogo,
+    reportPhotos,
+  }, pdfOrigin())
 
   const fileName = `rapport-intervention-${interventionId.slice(0, 8)}.pdf`
   const subject = `Rapport d'intervention : ${contract?.title ?? 'Entretien'}`

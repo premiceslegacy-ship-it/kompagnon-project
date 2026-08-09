@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server'
-import { renderToBuffer } from '@react-pdf/renderer'
-import React from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getOrganization } from '@/lib/data/queries/organization'
-import MaintenanceInterventionPDF from '@/components/pdf/MaintenanceInterventionPDF'
-import type { MaintenanceReportPhoto } from '@/components/pdf/MaintenanceInterventionPDF'
+import { renderMaintenanceInterventionPdf, type MaintenanceReportPhoto } from '@/lib/pdf/documents/maintenance-intervention'
 import { assertSafeExternalFetchUrl, isValidUuid } from '@/lib/security'
+
+function pdfOrigin(): string {
+  const origin = process.env.NEXT_PUBLIC_APP_URL
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  return origin
+}
 
 async function fetchAsDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null
@@ -75,11 +78,9 @@ export async function GET(
   const download = url.searchParams.get('download') === '1'
   let buffer: Buffer
   try {
-    buffer = await renderToBuffer(
-      React.createElement(MaintenanceInterventionPDF, { intervention, organization: orgWithLogo, reportPhotos }) as any,
-    )
+    buffer = await renderMaintenanceInterventionPdf({ intervention, organization: orgWithLogo, reportPhotos }, pdfOrigin())
   } catch (e) {
-    console.error('[pdf/maintenance/intervention] renderToBuffer error:', e)
+    console.error('[pdf/maintenance/intervention] renderMaintenanceInterventionPdf error:', e)
     return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.message : String(e)}`, { status: 500 })
   }
 

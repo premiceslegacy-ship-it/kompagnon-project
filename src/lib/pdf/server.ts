@@ -1,10 +1,4 @@
-import React from 'react'
-import { renderToBuffer } from '@react-pdf/renderer'
 import { createAdminClient } from '@/lib/supabase/admin'
-import ChantierPDF from '@/components/pdf/ChantierPDF'
-import MemberHoursReportPDF from '@/components/pdf/MemberHoursReportPDF'
-import ContractPDF, { type ContractPdfSnapshot } from '@/components/pdf/ContractPDF'
-import DgdPDF, { type DgdLine } from '@/components/pdf/DgdPDF'
 import { sanitizeFileName } from '@/lib/organization-exports/csv'
 import { generateFacturXml } from '@/lib/pdf/facturx-xml'
 import { embedFacturXml } from '@/lib/pdf/facturx-embed'
@@ -12,6 +6,10 @@ import { getMemberPointages } from '@/lib/data/queries/members'
 import { assertSafeExternalFetchUrl } from '@/lib/security'
 import { renderQuotePdf } from '@/lib/pdf/documents/quote'
 import { renderInvoicePdf } from '@/lib/pdf/documents/invoice'
+import { renderChantierPdf } from '@/lib/pdf/documents/chantier'
+import { renderMemberHoursReportPdf } from '@/lib/pdf/documents/member-hours-report'
+import { renderContractPdf, type ContractPdfSnapshot } from '@/lib/pdf/documents/contract'
+import { renderDgdPdf, type DgdLine } from '@/lib/pdf/documents/dgd'
 
 function pdfOrigin(): string {
   const origin = process.env.NEXT_PUBLIC_APP_URL
@@ -154,18 +152,9 @@ export async function renderInvoicePdfBufferById(invoiceId: string, orgId: strin
 export async function renderChantierPdfBufferById(chantierId: string, orgId: string): Promise<{ buffer: Buffer; fileName: string } | null> {
   const admin = createAdminClient()
 
-  const [chantier, taches, pointages, notes, organization] = await Promise.all([
+  const [chantier, taches, notes, organization] = await Promise.all([
     admin.from('chantiers').select('*').eq('id', chantierId).eq('organization_id', orgId).single(),
     admin.from('chantier_taches').select('*').eq('chantier_id', chantierId).order('position', { ascending: true }),
-    admin
-      .from('chantier_pointages')
-      .select(`
-        id, chantier_id, tache_id, user_id, date, hours, description, created_at, start_time,
-        profile:profiles(full_name),
-        tache:chantier_taches(title)
-      `)
-      .eq('chantier_id', chantierId)
-      .order('date', { ascending: false }),
     admin
       .from('chantier_notes')
       .select(`
@@ -179,28 +168,19 @@ export async function renderChantierPdfBufferById(chantierId: string, orgId: str
 
   if (!chantier.data || !organization) return null
 
-  const normalizedPointages = (pointages.data ?? []).map((row: any) => ({
-    ...row,
-    user_name: row.profile?.full_name ?? 'Inconnu',
-    tache_title: row.tache?.title ?? null,
-  }))
-
   const normalizedNotes = (notes.data ?? []).map((row: any) => ({
     ...row,
     author_name: row.author?.full_name ?? 'Inconnu',
   }))
 
-  const buffer = await renderToBuffer(
-    React.createElement(ChantierPDF, {
-      chantier: chantier.data,
-      taches: taches.data ?? [],
-      pointages: normalizedPointages,
-      notes: normalizedNotes,
-      organization,
-      periodFrom: null,
-      periodTo: null,
-    }) as any,
-  )
+  const buffer = await renderChantierPdf({
+    chantier: chantier.data,
+    taches: taches.data ?? [],
+    notes: normalizedNotes,
+    organization,
+    periodFrom: null,
+    periodTo: null,
+  }, pdfOrigin())
 
   const fileName = `${sanitizeFileName(chantier.data.title ?? chantierId, 'chantier')}.pdf`
   return { buffer, fileName }
@@ -231,16 +211,14 @@ export async function renderMemberHoursReportPdfBuffer(
   const pointages = await getMemberPointages(memberId, { dateFrom, dateTo, useAdmin: true })
   const totalHours = pointages.reduce((s, p) => s + p.hours, 0)
 
-  const buffer = await renderToBuffer(
-    React.createElement(MemberHoursReportPDF as any, {
-      member,
-      organization: org,
-      pointages,
-      periodFrom: dateFrom,
-      periodTo: dateTo,
-      totalHours,
-    }) as any,
-  )
+  const buffer = await renderMemberHoursReportPdf({
+    member,
+    organization: org,
+    pointages,
+    periodFrom: dateFrom,
+    periodTo: dateTo,
+    totalHours,
+  }, pdfOrigin())
 
   const memberSlug = [member.prenom, member.name].filter(Boolean).join('-').toLowerCase().replace(/[^a-z0-9-]/gi, '-')
   const fileName = `rapport-heures-${memberSlug}-${dateFrom}-${dateTo}.pdf`
@@ -272,11 +250,7 @@ export async function renderContractPdfBufferById(contractId: string, orgId: str
       }
     : snapshot
 
-  const buffer = await renderToBuffer(
-    React.createElement(ContractPDF, {
-      snapshot: snapshotForPdf,
-    }) as any,
-  )
+  const buffer = await renderContractPdf(snapshotForPdf, pdfOrigin())
 
   const fileName = `${sanitizeFileName(contract.pdf_reference ?? contract.title ?? contractId, 'contrat')}.pdf`
   return { buffer, fileName }
@@ -387,22 +361,20 @@ export async function renderDgdPdfBufferByChantierId(
     type: 'total',
   })
 
-  const buffer = await renderToBuffer(
-    React.createElement(DgdPDF, {
-      chantierTitle: chantier.title,
-      chantierAddress: chantierAddress || null,
-      clientName,
-      marketReference: marketRef,
-      lines,
-      totalMarcheHt,
-      totalSituationsHt,
-      totalRetentionHt,
-      totalNetHt,
-      receptionDate: chantier.reception_at ?? null,
-      receptionStatus: chantier.reception_status ?? null,
-      organization,
-    }) as any,
-  )
+  const buffer = await renderDgdPdf({
+    chantierTitle: chantier.title,
+    chantierAddress: chantierAddress || null,
+    clientName,
+    marketReference: marketRef,
+    lines,
+    totalMarcheHt,
+    totalSituationsHt,
+    totalRetentionHt,
+    totalNetHt,
+    receptionDate: chantier.reception_at ?? null,
+    receptionStatus: chantier.reception_status ?? null,
+    organization,
+  }, pdfOrigin())
 
   const fileName = `${sanitizeFileName(chantier.title, 'dgd')}.pdf`
   return { buffer, fileName }
