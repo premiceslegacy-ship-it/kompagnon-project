@@ -1,8 +1,6 @@
 'use server'
 
-import React from 'react'
 import { revalidatePath } from 'next/cache'
-import { renderToBuffer } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
@@ -21,7 +19,7 @@ import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { sendPushToOrg } from '@/lib/push'
 import { logAuditEvent } from '@/lib/audit-log'
 import { trackServerEvent } from '@/lib/analytics-server'
-import InvoicePDF from '@/components/pdf/InvoicePDF'
+import { renderInvoicePdf } from '@/lib/pdf/documents/invoice'
 import { coerceLegalVatRate } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { renderInvoicePdfBufferById, renderContractPdfBufferById } from '@/lib/pdf/server'
@@ -623,9 +621,9 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
     if (rendered) {
       attachments = [{ filename: rendered.fileName, content: rendered.buffer }]
     } else {
-      const pdfBuffer = await renderToBuffer(
-        React.createElement(InvoicePDF, { invoice, organization }) as any,
-      )
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL
+      if (!appUrl) throw new Error('NEXT_PUBLIC_APP_URL manquant')
+      const pdfBuffer = await renderInvoicePdf({ invoice, organization }, appUrl)
       attachments = [{ filename: `facture-${invoice.number ?? invoiceId}.pdf`, content: Buffer.from(pdfBuffer) }]
     }
   } catch (pdfErr) {

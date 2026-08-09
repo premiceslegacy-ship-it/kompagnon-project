@@ -1,6 +1,5 @@
 'use server'
 
-import React from 'react'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
@@ -11,8 +10,7 @@ import { sendEmail } from '@/lib/email'
 import { sendPushToOrg } from '@/lib/push'
 import { buildQuoteSentEmail } from '@/lib/email/templates'
 import { getClientGreetingName } from '@/lib/client'
-import { renderToBuffer } from '@react-pdf/renderer'
-import QuotePDF from '@/components/pdf/QuotePDF'
+import { renderQuotePdf } from '@/lib/pdf/documents/quote'
 import { renderContractPdfBufferById } from '@/lib/pdf/server'
 import type { Client } from '@/lib/data/queries/clients'
 import { coerceLegalVatRate } from '@/lib/utils'
@@ -782,14 +780,13 @@ export async function sendQuote(quoteId: string, options?: { attachContractIds?:
         }
 
         try {
-          const pdfBuffer = await renderToBuffer(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            React.createElement(QuotePDF, {
-              quote: fullQuoteWithExtras,
-              organization,
-              client: client as unknown as Client,
-            }) as any,
-          )
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL
+          if (!appUrl) throw new Error('NEXT_PUBLIC_APP_URL manquant')
+          const pdfBuffer = await renderQuotePdf({
+            quote: fullQuoteWithExtras,
+            organization,
+            client: client as unknown as Client,
+          }, appUrl)
           attachments = [{
             filename: `devis-${quote.number ?? quoteId}.pdf`,
             content: Buffer.from(pdfBuffer),

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { renderToStream } from '@react-pdf/renderer'
+import { renderToBuffer } from '@react-pdf/renderer'
 import React from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
@@ -94,23 +94,29 @@ export async function GET(
     reportPhotos = withBase64.filter((p): p is ChantierPDFPhoto => p !== null)
   }
 
-  const stream = await renderToStream(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    React.createElement(ChantierPDF, {
-      chantier,
-      taches,
-      pointages,
-      notes,
-      organization,
-      periodFrom: dateFrom,
-      periodTo: dateTo,
-      reportPhotos,
-    }) as any,
-  )
+  let buffer: Buffer
+  try {
+    buffer = await renderToBuffer(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(ChantierPDF, {
+        chantier,
+        taches,
+        pointages,
+        notes,
+        organization,
+        periodFrom: dateFrom,
+        periodTo: dateTo,
+        reportPhotos,
+      }) as any,
+    )
+  } catch (e) {
+    console.error('[pdf/chantier] renderToBuffer error:', e)
+    return new NextResponse(`Erreur génération PDF: ${e instanceof Error ? e.message : String(e)}`, { status: 500 })
+  }
 
   const fileName = `rapport-chantier-${chantier.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.pdf`
 
-  return new NextResponse(stream as unknown as ReadableStream, {
+  return new NextResponse(buffer, {
     headers: {
       'Content-Type': 'application/pdf',
       'Content-Disposition': download

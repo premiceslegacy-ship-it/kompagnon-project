@@ -208,18 +208,38 @@ echo ""
 
 ORIGINAL_NAME=$(grep '"name"' "$WRANGLER" | head -1 | sed 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
 
-restore_wrangler_name() {
+# Instance mutualisee atelier-app : KV dedies, ne jamais reutiliser ceux du
+# cockpit (name est deja swappe ci-dessous, les kv_namespaces doivent l'etre
+# aussi le temps du deploiement, sinon le Worker ecrit dans le cache du cockpit).
+# Ids codes en dur des deux cotes (pas de capture dynamique de l'etat courant) :
+# si wrangler.jsonc est deja dans un etat incoherent avant ce lancement (ex.
+# script precedent interrompu), une restauration basee sur "ce qu'il y avait
+# avant" perpetuerait l'erreur au lieu de la corriger.
+ATELIER_APP_INC_CACHE_KV_ID="0e3366eb6dd7462f9560cd7529c56283"
+ATELIER_APP_TAG_CACHE_KV_ID="16283fb3099d478eb306d04b482f671e"
+COCKPIT_INC_CACHE_KV_ID="5a526e05657d4d0b944a1f8d8d09b109"
+COCKPIT_TAG_CACHE_KV_ID="d0c1ba14b0a441679d0ccc9fa0a448e0"
+
+restore_wrangler_config() {
   sed_inplace "s/\"name\":[[:space:]]*\"[^\"]*\"/\"name\": \"$ORIGINAL_NAME\"/" "$WRANGLER"
+  if [[ "$WORKER_NAME" == "atelier-app" ]]; then
+    sed_inplace "s/\"NEXT_INC_CACHE_KV\", \"id\": \"[^\"]*\"/\"NEXT_INC_CACHE_KV\", \"id\": \"$COCKPIT_INC_CACHE_KV_ID\"/" "$WRANGLER"
+    sed_inplace "s/\"NEXT_TAG_CACHE_KV\", \"id\": \"[^\"]*\"/\"NEXT_TAG_CACHE_KV\", \"id\": \"$COCKPIT_TAG_CACHE_KV_ID\"/" "$WRANGLER"
+  fi
 }
 
-trap restore_wrangler_name EXIT
+trap restore_wrangler_config EXIT
 
 sed_inplace "s/\"name\":[[:space:]]*\"[^\"]*\"/\"name\": \"$WORKER_NAME\"/" "$WRANGLER"
+if [[ "$WORKER_NAME" == "atelier-app" ]]; then
+  sed_inplace "s/\"NEXT_INC_CACHE_KV\", \"id\": \"[^\"]*\"/\"NEXT_INC_CACHE_KV\", \"id\": \"$ATELIER_APP_INC_CACHE_KV_ID\"/" "$WRANGLER"
+  sed_inplace "s/\"NEXT_TAG_CACHE_KV\", \"id\": \"[^\"]*\"/\"NEXT_TAG_CACHE_KV\", \"id\": \"$ATELIER_APP_TAG_CACHE_KV_ID\"/" "$WRANGLER"
+fi
 
 npm run deploy
 
 trap - EXIT
-restore_wrangler_name
+restore_wrangler_config
 
 echo ""
 echo "Deploiement $WORKER_NAME termine."

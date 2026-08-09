@@ -1,8 +1,6 @@
 'use server'
 
-import React from 'react'
 import { revalidatePath } from 'next/cache'
-import { renderToBuffer } from '@react-pdf/renderer'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getOrganization } from '@/lib/data/queries/organization'
@@ -10,7 +8,7 @@ import { getQuoteById } from '@/lib/data/queries/quotes'
 import { sendEmail } from '@/lib/email'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { sendPushToOrg } from '@/lib/push'
-import QuotePDF from '@/components/pdf/QuotePDF'
+import { renderQuotePdf } from '@/lib/pdf/documents/quote'
 import type { Client } from '@/lib/data/queries/clients'
 import { getClientGreetingName } from '@/lib/client'
 import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
@@ -239,13 +237,13 @@ export async function sendQuoteFollowup(
   let attachments: Array<{ filename: string; content: Buffer }> | undefined
   if (fullQuote && organization) {
     try {
-      const pdfBuffer = await renderToBuffer(
-        React.createElement(QuotePDF, {
-          quote: fullQuote,
-          organization,
-          client: clientData,
-        }) as any,
-      )
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL
+      if (!appUrl) throw new Error('NEXT_PUBLIC_APP_URL manquant')
+      const pdfBuffer = await renderQuotePdf({
+        quote: fullQuote,
+        organization,
+        client: clientData,
+      }, appUrl)
       attachments = [{ filename: `devis-${quote.number ?? quoteId}.pdf`, content: Buffer.from(pdfBuffer) }]
     } catch (pdfErr) {
       console.error('[sendQuoteFollowup] PDF generation error:', pdfErr)
