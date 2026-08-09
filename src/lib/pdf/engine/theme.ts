@@ -30,7 +30,7 @@ export const PAGE = {
   width: 595.28,
   height: 841.89,
   margin: SPACE.page,
-  footerHeight: 50,
+  footerHeight: 70,
   headerTop: SPACE.xxl,
 }
 
