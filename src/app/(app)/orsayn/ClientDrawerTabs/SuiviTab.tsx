@@ -16,7 +16,7 @@ const sectionTitleCls = 'text-sm font-bold uppercase tracking-wide text-secondar
 
 export default function SuiviTab({ row }: { row: ClientRow }) {
   return (
-    <div className="space-y-5">
+    <div className="grid gap-5 lg:grid-cols-3">
       <div className="card px-6 py-5 space-y-3">
         <p className={sectionTitleCls}>Quotas du mois en cours</p>
         {row.quotas.length === 0 ? (

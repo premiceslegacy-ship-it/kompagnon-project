@@ -25,7 +25,7 @@ export default function ModulesTab({ row }: { row: ClientRow }) {
   const suggestedPack = getEligibleVerticalPack(row.businessActivityId)
 
   return (
-    <div className="space-y-5">
+    <div className="grid gap-5 lg:grid-cols-3">
       <form action={upsertOperatorClientModules} className="card px-6 py-5 space-y-3">
         <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
         <input type="hidden" name="organizationId" value={row.organizationId} />

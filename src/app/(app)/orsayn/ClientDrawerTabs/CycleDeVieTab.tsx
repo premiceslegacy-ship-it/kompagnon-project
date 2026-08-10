@@ -16,7 +16,7 @@ export default function CycleDeVieTab({ row }: { row: ClientRow }) {
   const syncBadge = getSyncBadge(row.lastSeenAt, row.lastStatus)
 
   return (
-    <div className="space-y-5">
+    <div className="grid gap-5 lg:grid-cols-2">
       <div className="card px-6 py-5 space-y-4">
         <div className="flex items-center justify-between gap-3">
           <p className={sectionTitleCls}>Statut de synchro</p>
