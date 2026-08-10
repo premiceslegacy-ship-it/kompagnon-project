@@ -31,7 +31,7 @@ export default function ClientDrawer({ row, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-[9995] flex flex-col bg-base">
       {/* Header pleine largeur */}
-      <div className="flex items-center gap-4 border-b border-[var(--elevation-border)] bg-surface px-6 py-4 shadow-sm">
+      <div className="flex items-center gap-4 header-glass px-6 py-4">
         <button
           onClick={onClose}
           className="flex shrink-0 items-center gap-2 rounded-pill border border-[var(--elevation-border)] px-4 py-2 text-sm font-semibold text-secondary hover:text-primary hover:bg-interactive/60 transition-colors"
@@ -56,9 +56,9 @@ export default function ClientDrawer({ row, onClose }: Props) {
         </div>
       </div>
 
-      {/* Corps : centré, largeur de lecture confortable, scrollable */}
+      {/* Corps : plein écran, scrollable */}
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-4xl px-6 py-6 space-y-6">
+        <div className="w-full max-w-[1500px] mx-auto px-6 py-6 space-y-6">
           {/* KPI résumé */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="card px-5 py-4">

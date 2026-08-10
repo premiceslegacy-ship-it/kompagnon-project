@@ -26,12 +26,12 @@ export default function OffreTab({ row }: { row: ClientRow }) {
   const einvoicingBadge = getEinvoicingBadge(row.einvoicingConfig)
 
   return (
-    <form action={upsertOperatorSubscription} className="space-y-5">
+    <form action={upsertOperatorSubscription} className="grid gap-5 lg:grid-cols-2">
       <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
       {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
 
       {row.configSyncError && (
-        <div className="card border-l-4 border-l-red-500 bg-red-500/5 px-5 py-4">
+        <div className="card border-l-4 border-l-red-500 bg-red-500/5 px-5 py-4 lg:col-span-2">
           <p className="text-sm font-bold text-red-700 font-display">Erreur de synchronisation</p>
           <p className="mt-1 text-sm text-red-600">{row.configSyncError}</p>
         </div>
@@ -118,7 +118,7 @@ export default function OffreTab({ row }: { row: ClientRow }) {
       </div>
 
       {/* Section : Facturation électronique */}
-      <div className="card px-6 py-5 space-y-4">
+      <div className="card px-6 py-5 space-y-4 lg:col-span-2">
         <div className="flex items-center justify-between gap-3">
           <p className={sectionTitleCls}>Facturation électronique</p>
           <span className={`rounded-pill px-3 py-1 text-xs font-semibold ${einvoicingBadge.className}`}>
@@ -169,7 +169,7 @@ export default function OffreTab({ row }: { row: ClientRow }) {
         </p>
       </div>
 
-      <button type="submit" className="btn-pill btn-pill-primary w-full text-sm">
+      <button type="submit" className="btn-pill btn-pill-primary w-full text-sm lg:col-span-2">
         Appliquer l&apos;offre
       </button>
     </form>
