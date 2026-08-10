@@ -2,10 +2,12 @@
 
 import { useRef, useState, useTransition } from 'react'
 import { sendOperatorEmail, validateQuotaAlert } from './actions'
+import { clientKey } from './utils'
 
 type CommercialEvent = {
   id: string
   source_instance: string
+  organization_id: string | null
   event_type: string
   tier_context: string | null
   sent_at: string
@@ -23,6 +25,7 @@ type CommercialEvent = {
 
 type ClientOption = {
   sourceInstance: string
+  organizationId: string | null
   label: string
   tier: string
   recipientEmail: string | null
@@ -58,7 +61,7 @@ function AlertRow({ alert, clients }: { alert: CommercialEvent; clients: ClientO
   const [error, setError] = useState<string | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
 
-  const client = clients.find((c) => c.sourceInstance === alert.source_instance)
+  const client = clients.find((c) => c.sourceInstance === alert.source_instance && c.organizationId === alert.organization_id)
   const autoSendLabel = alert.auto_send_after
     ? `Envoi auto ${formatDate(alert.auto_send_after)}`
     : 'Pas d\'envoi auto'
@@ -160,16 +163,16 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
   const [selectedClients, setSelectedClients] = useState<string[]>([])
   const formRef = useRef<HTMLFormElement>(null)
 
-  function toggleClient(sourceInstance: string) {
+  function toggleClient(key: string) {
     setSelectedClients((prev) =>
-      prev.includes(sourceInstance)
-        ? prev.filter((s) => s !== sourceInstance)
-        : [...prev, sourceInstance]
+      prev.includes(key)
+        ? prev.filter((s) => s !== key)
+        : [...prev, key]
     )
   }
 
   function selectAll() {
-    setSelectedClients(clients.map((c) => c.sourceInstance))
+    setSelectedClients(clients.map((c) => clientKey(c.sourceInstance, c.organizationId)))
   }
 
   function clearAll() {
@@ -183,9 +186,13 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
 
     const fd = new FormData(formRef.current!)
 
-    // Récupérer les emails des clients sélectionnés
-    const emails = selectedClients
-      .map((si) => clients.find((c) => c.sourceInstance === si)?.recipientEmail)
+    // Récupérer les clients sélectionnés via leur clé composite (source_instance seul
+    // ne suffit pas : plusieurs organisations peuvent partager la même instance)
+    const selected = selectedClients
+      .map((key) => clients.find((c) => clientKey(c.sourceInstance, c.organizationId) === key))
+      .filter((c): c is ClientOption => !!c)
+    const emails = selected
+      .map((c) => c.recipientEmail)
       .filter((e): e is string => !!e)
 
     // Ajouter l'email libre si saisi
@@ -193,7 +200,7 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
     if (freeEmail) emails.push(freeEmail)
 
     fd.set('recipientEmails', emails.join('\n'))
-    fd.set('sourceInstance', selectedClients.length === 1 ? selectedClients[0] : 'cockpit-broadcast')
+    fd.set('sourceInstance', selected.length === 1 ? selected[0].sourceInstance : 'cockpit-broadcast')
 
     startTransition(async () => {
       try {
@@ -221,12 +228,14 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
           </div>
         </div>
         <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
-          {clients.map((client) => (
-            <label key={client.sourceInstance} className="flex items-center gap-2 cursor-pointer">
+          {clients.map((client) => {
+            const key = clientKey(client.sourceInstance, client.organizationId)
+            return (
+            <label key={key} className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
-                checked={selectedClients.includes(client.sourceInstance)}
-                onChange={() => toggleClient(client.sourceInstance)}
+                checked={selectedClients.includes(key)}
+                onChange={() => toggleClient(key)}
                 className="rounded"
               />
               <span className="text-sm text-primary font-body">{client.label}</span>
@@ -235,7 +244,8 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
                 : <span className="text-xs text-red-500 font-body">pas d'email</span>
               }
             </label>
-          ))}
+            )
+          })}
         </div>
       </div>
 
