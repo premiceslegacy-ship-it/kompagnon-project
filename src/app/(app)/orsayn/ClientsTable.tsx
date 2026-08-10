@@ -62,7 +62,7 @@ export default function ClientsTable({ rows }: Props) {
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => { if (e.key === 'Enter') openClient(key) }}
-                  className="cursor-pointer border-b border-[var(--elevation-border)] last:border-b-0 transition-colors hover:bg-interactive/40"
+                  className="cursor-pointer border-b border-[var(--elevation-border)] last:border-b-0 transition-colors hover:bg-accent/5"
                 >
                   <td className="py-4 pr-4">
                     <p className="font-semibold text-primary">{row.label}</p>
