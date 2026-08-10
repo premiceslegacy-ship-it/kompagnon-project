@@ -6,6 +6,7 @@ import {
   expireOperatorTrial,
   resyncOperatorClientConfig,
 } from '../actions'
+import ActionForm from '../ActionForm'
 import { getSyncBadge, getTrialLabel, isActiveTrial } from '../utils'
 import type { ClientRow } from '../types'
 
@@ -28,13 +29,13 @@ export default function CycleDeVieTab({ row }: { row: ClientRow }) {
         {row.configSyncError && (
           <p className="text-sm font-medium text-red-600">{row.configSyncError}</p>
         )}
-        <form action={resyncOperatorClientConfig}>
+        <ActionForm action={resyncOperatorClientConfig} successMessage="Resync lancée.">
           <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
           {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
           <button type="submit" className="w-full rounded-pill bg-slate-500/10 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/20 dark:text-slate-200">
             Resync config
           </button>
-        </form>
+        </ActionForm>
       </div>
 
       <div className="card px-6 py-5 space-y-4">
@@ -44,19 +45,19 @@ export default function CycleDeVieTab({ row }: { row: ClientRow }) {
         </div>
 
         {!isActiveTrial(row.trialEndsAt) && (
-          <form action={activateOperatorTrial}>
+          <ActionForm action={activateOperatorTrial} successMessage="Essai activé.">
             <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
             {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
             <input type="hidden" name="trialDays" value={row.sourceInstance === 'atelier-app' ? '14' : '30'} />
             <button type="submit" className="w-full rounded-pill bg-green-500/10 px-4 py-2.5 text-sm font-semibold text-green-700 transition hover:bg-green-500/20">
               Essai Expert {row.sourceInstance === 'atelier-app' ? '14j' : '30j'}
             </button>
-          </form>
+          </ActionForm>
         )}
 
         {isActiveTrial(row.trialEndsAt) && (
           <div className="space-y-3">
-            <form action={convertOperatorTrial} className="flex gap-2">
+            <ActionForm action={convertOperatorTrial} className="flex gap-2" successMessage="Essai converti.">
               <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
               {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
               <select name="targetTier" defaultValue="pro" className={inputSmCls}>
@@ -67,15 +68,15 @@ export default function CycleDeVieTab({ row }: { row: ClientRow }) {
               <button type="submit" className="shrink-0 rounded-pill bg-accent/10 px-4 py-2.5 text-sm font-semibold text-accent transition hover:bg-accent/20">
                 Convertir
               </button>
-            </form>
-            <form action={expireOperatorTrial}>
+            </ActionForm>
+            <ActionForm action={expireOperatorTrial} successMessage="Essai terminé.">
               <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
               {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
               <input type="hidden" name="targetTier" value="setup_only" />
               <button type="submit" className="w-full rounded-pill bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-500/20">
                 Terminer essai
               </button>
-            </form>
+            </ActionForm>
           </div>
         )}
       </div>

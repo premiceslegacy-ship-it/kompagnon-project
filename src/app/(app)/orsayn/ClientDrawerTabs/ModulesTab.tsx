@@ -5,6 +5,7 @@ import {
   upsertOperatorClientModules,
   upsertOperatorClientVerticalPack,
 } from '../actions'
+import ActionForm from '../ActionForm'
 import type { ClientRow } from '../types'
 import { ORGANIZATION_MODULE_KEYS } from '@/lib/organization-modules'
 import { VERTICAL_PACKS, getEligibleVerticalPack } from '@/lib/vertical-packs'
@@ -26,7 +27,7 @@ export default function ModulesTab({ row }: { row: ClientRow }) {
 
   return (
     <div className="grid gap-5 lg:grid-cols-3">
-      <form action={upsertOperatorClientModules} className="card px-6 py-5 space-y-3">
+      <ActionForm action={upsertOperatorClientModules} className="card px-6 py-5 space-y-3" successMessage="Modules appliqués.">
         <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
         <input type="hidden" name="organizationId" value={row.organizationId} />
         <p className={sectionTitleCls}>Modules</p>
@@ -46,9 +47,9 @@ export default function ModulesTab({ row }: { row: ClientRow }) {
         <button type="submit" className="btn-pill btn-pill-primary w-full text-sm">
           Appliquer
         </button>
-      </form>
+      </ActionForm>
 
-      <form action={upsertOperatorClientVerticalPack} className="card px-6 py-5 space-y-3">
+      <ActionForm action={upsertOperatorClientVerticalPack} className="card px-6 py-5 space-y-3" successMessage="Pack verticale appliqué.">
         <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
         <input type="hidden" name="organizationId" value={row.organizationId} />
         <div className="flex items-center justify-between gap-3">
@@ -72,9 +73,9 @@ export default function ModulesTab({ row }: { row: ClientRow }) {
         <button type="submit" className="btn-pill btn-pill-primary w-full text-sm">
           Appliquer
         </button>
-      </form>
+      </ActionForm>
 
-      <form action={upsertOperatorClientMetalPricing} className="card px-6 py-5 space-y-3">
+      <ActionForm action={upsertOperatorClientMetalPricing} className="card px-6 py-5 space-y-3" successMessage="Module métal appliqué.">
         <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
         <input type="hidden" name="organizationId" value={row.organizationId} />
         <p className={sectionTitleCls}>Module prix matières (métal)</p>
@@ -90,7 +91,7 @@ export default function ModulesTab({ row }: { row: ClientRow }) {
         <button type="submit" className="btn-pill btn-pill-primary w-full text-sm">
           Appliquer
         </button>
-      </form>
+      </ActionForm>
     </div>
   )
 }

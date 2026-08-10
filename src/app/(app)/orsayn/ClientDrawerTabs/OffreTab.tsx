@@ -1,6 +1,7 @@
 'use client'
 
 import { upsertOperatorSubscription } from '../actions'
+import ActionForm from '../ActionForm'
 import { formatDateInput, formatMoney, getEinvoicingBadge, getTrialLabel } from '../utils'
 import { AI_BILLING_MODES, type ClientRow } from '../types'
 import {
@@ -26,7 +27,12 @@ export default function OffreTab({ row }: { row: ClientRow }) {
   const einvoicingBadge = getEinvoicingBadge(row.einvoicingConfig)
 
   return (
-    <form action={upsertOperatorSubscription} className="grid gap-5 lg:grid-cols-2">
+    <ActionForm
+      action={upsertOperatorSubscription}
+      className="grid gap-5 lg:grid-cols-2"
+      feedbackClassName="lg:col-span-2"
+      successMessage="Offre appliquée."
+    >
       <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
       {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
 
@@ -172,6 +178,6 @@ export default function OffreTab({ row }: { row: ClientRow }) {
       <button type="submit" className="btn-pill btn-pill-primary w-full text-sm lg:col-span-2">
         Appliquer l&apos;offre
       </button>
-    </form>
+    </ActionForm>
   )
 }
