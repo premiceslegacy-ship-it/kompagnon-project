@@ -326,8 +326,13 @@ export default async function OrsaynPage() {
     (row) => row.configSyncError === 'app_url manquant' && (instanceOrgCount[row.sourceInstance] ?? 0) > 1,
   )
   const missingOrgIdRows = pendingManualRows.filter((row) => row.configSyncError === 'organization_id manquant')
+  // pending_manual sans erreur ni synchro passée = jamais tenté (préconfiguré via le
+  // formulaire "Ajouter/préconfigurer" qui ne pousse pas la config), pas un échec réel.
+  const neverAttemptedRows = pendingManualRows.filter(
+    (row) => !row.configSyncError && !row.lastSeenAt && !sharedAppUrlRows.includes(row) && !missingOrgIdRows.includes(row),
+  )
   const technicalFailureRows = pendingManualRows.filter(
-    (row) => !sharedAppUrlRows.includes(row) && !missingOrgIdRows.includes(row),
+    (row) => !sharedAppUrlRows.includes(row) && !missingOrgIdRows.includes(row) && !neverAttemptedRows.includes(row),
   )
   const lowMarginRows = rowsWithFee
     .slice()
@@ -530,6 +535,25 @@ export default async function OrsaynPage() {
           </p>
           <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
             {missingOrgIdRows.map((row) => (
+              <li key={`${row.sourceInstance}:${row.organizationId}`}>
+                <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance})
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {neverAttemptedRows.length > 0 && (
+        <section className="card border-l-4 border-l-slate-400 bg-slate-500/5 px-6 py-4">
+          <p className="text-sm font-bold text-slate-700 font-display dark:text-slate-200">
+            {neverAttemptedRows.length} organisation{neverAttemptedRows.length > 1 ? 's' : ''} préconfigurée{neverAttemptedRows.length > 1 ? 's' : ''}, jamais synchronisée{neverAttemptedRows.length > 1 ? 's' : ''}
+          </p>
+          <p className="mt-1 text-xs text-secondary font-body">
+            Créées via le formulaire de préconfiguration, aucune offre n&apos;a encore été appliquée ni de synchro tentée — ce n&apos;est pas un échec.
+            Ouvrir la fiche puis &quot;Appliquer l&apos;offre&quot; (onglet Offre) pour lancer la première synchro.
+          </p>
+          <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
+            {neverAttemptedRows.map((row) => (
               <li key={`${row.sourceInstance}:${row.organizationId}`}>
                 <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance})
               </li>
