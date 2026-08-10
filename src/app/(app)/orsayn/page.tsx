@@ -1,7 +1,5 @@
 import { notFound } from 'next/navigation'
-import { recordOperatorCommercialAction, upsertOperatorClientSettings } from './actions'
-import EmailsTab from './EmailsTab'
-import ClientsTable from './ClientsTable'
+import CockpitTabs from './CockpitTabs'
 import { getOperatorUsdToEurRate } from '@/lib/operator'
 import { getOperatorUser } from '@/lib/operator-auth'
 import { UNRESOLVED_ORGANIZATION_ID } from '@/lib/operator/trial-lifecycle'
@@ -30,13 +28,8 @@ import {
   convertAmountToEur,
   convertProviderCostToEur,
   convertUsdToCurrency,
-  formatAIBillingMode,
-  formatCommercialStatus,
-  formatCompactNumber,
-  formatDate,
   formatMoney,
   formatPercent,
-  getRecommendationClass,
   getSuggestedTier,
   getUsageFeatureLabel,
   normalizeAIBillingMode,
@@ -484,8 +477,19 @@ export default async function OrsaynPage() {
     return score[b.severity] - score[a.severity]
   }).slice(0, 8)
 
-  const inputCls = "w-full input-glass px-4 py-3 text-primary font-body text-sm outline-none"
-  const inputSmCls = "w-full input-glass px-3 py-2 text-primary font-body text-xs outline-none"
+  const pendingAlerts = commercialEvents.filter((e) => e.delivery_status === 'pending_review')
+  const sentEmails = commercialEvents.filter((e) => e.delivery_status !== 'pending_review')
+  const emailClients = clientRows
+    .filter((row) => row.isActive)
+    .map((row) => ({
+      sourceInstance: row.sourceInstance,
+      organizationId: row.organizationId,
+      label: row.label,
+      tier: row.tier,
+      recipientEmail: row.contactEmail
+        ?? (row.commercialEvents.find((e) => e.recipient_email)?.recipient_email)
+        ?? null,
+    }))
 
   return (
     <main className="flex-1 px-6 py-8 max-w-[1500px] mx-auto w-full space-y-8">
@@ -505,463 +509,33 @@ export default async function OrsaynPage() {
         </div>
       </div>
 
-      {sharedAppUrlRows.length > 0 && (
-        <section className="card border-l-4 border-l-amber-500 bg-amber-500/5 px-6 py-4">
-          <p className="text-sm font-bold text-amber-700 font-display">
-            {sharedAppUrlRows.length} organisation{sharedAppUrlRows.length > 1 ? 's' : ''} sans URL d&apos;app propre (instance mutualisée)
-          </p>
-          <p className="mt-1 text-xs text-secondary font-body">
-            Ces organisations partagent une même instance avec d&apos;autres clients — une seule URL d&apos;app suffit pour toutes.
-            Renseignez <span className="font-mono">app_url</span> (même valeur) sur chacune, puis relancez &quot;Resync config&quot;.
-          </p>
-          <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
-            {sharedAppUrlRows.map((row) => (
-              <li key={`${row.sourceInstance}:${row.organizationId}`}>
-                <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance}, {instanceOrgCount[row.sourceInstance]} organisations sur cette instance)
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {missingOrgIdRows.length > 0 && (
-        <section className="card border-l-4 border-l-red-500 bg-red-500/5 px-6 py-4">
-          <p className="text-sm font-bold text-red-700 font-display">
-            {missingOrgIdRows.length} instance{missingOrgIdRows.length > 1 ? 's' : ''} sans organisation résolue
-          </p>
-          <p className="mt-1 text-xs text-secondary font-body">
-            Le dernier changement de tier/module n&apos;a pas atteint l&apos;instance cliente — le client peut avoir payé sans que ses droits
-            aient été mis à jour. Vérifier <span className="font-mono">organization_id</span> puis relancer &quot;Resync config&quot;.
-          </p>
-          <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
-            {missingOrgIdRows.map((row) => (
-              <li key={`${row.sourceInstance}:${row.organizationId}`}>
-                <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance})
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {neverAttemptedRows.length > 0 && (
-        <section className="card border-l-4 border-l-slate-400 bg-slate-500/5 px-6 py-4">
-          <p className="text-sm font-bold text-slate-700 font-display dark:text-slate-200">
-            {neverAttemptedRows.length} organisation{neverAttemptedRows.length > 1 ? 's' : ''} préconfigurée{neverAttemptedRows.length > 1 ? 's' : ''}, jamais synchronisée{neverAttemptedRows.length > 1 ? 's' : ''}
-          </p>
-          <p className="mt-1 text-xs text-secondary font-body">
-            Créées via le formulaire de préconfiguration, aucune offre n&apos;a encore été appliquée ni de synchro tentée — ce n&apos;est pas un échec.
-            Ouvrir la fiche puis &quot;Appliquer l&apos;offre&quot; (onglet Offre) pour lancer la première synchro.
-          </p>
-          <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
-            {neverAttemptedRows.map((row) => (
-              <li key={`${row.sourceInstance}:${row.organizationId}`}>
-                <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance})
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {technicalFailureRows.length > 0 && (
-        <section className="card border-l-4 border-l-red-500 bg-red-500/5 px-6 py-4">
-          <p className="text-sm font-bold text-red-700 font-display">
-            {technicalFailureRows.length} instance{technicalFailureRows.length > 1 ? 's' : ''} en échec technique de synchro
-          </p>
-          <p className="mt-1 text-xs text-secondary font-body">
-            La configuration n&apos;a pas pu être poussée vers l&apos;app cliente (réseau, signature HMAC, ou app indisponible).
-            Vérifier la connectivité de l&apos;instance puis relancer &quot;Resync config&quot;.
-          </p>
-          <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
-            {technicalFailureRows.map((row) => (
-              <li key={`${row.sourceInstance}:${row.organizationId}`}>
-                <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance})
-                {row.configSyncError ? <span className="font-medium text-red-600"> — {row.configSyncError}</span> : ''}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {failedWebhookEvents.length > 0 && (
-        <section className="card border-l-4 border-l-red-500 bg-red-500/5 px-6 py-4">
-          <p className="text-sm font-bold text-red-700 font-display">{failedWebhookEvents.length} événement(s) Stripe à retraiter</p>
-          <p className="mt-1 text-xs text-secondary">Une nouvelle livraison Stripe rejouera ces événements : les échecs ne sont plus marqués comme définitivement consommés.</p>
-          <ul className="mt-2 space-y-1 text-xs text-secondary">
-            {failedWebhookEvents.slice(0, 5).map((event) => (
-              <li key={event.source_id}><span className="font-mono">{event.event_type}</span> — {event.error_msg || 'erreur inconnue'}</li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* KPI Bento Grid */}
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
-        <section className="card px-8 py-6">
-          <p className="text-xs font-bold uppercase tracking-wider text-secondary font-display">Coût IA porté</p>
-          <p className="mt-3 text-3xl font-extrabold text-primary font-display tabular-nums">{formatMoney(costTotalEur)}</p>
-          <p className="mt-2 text-sm text-secondary font-body">
-            Usage total indicatif : {formatMoney(usageTotalEur)} sur {activeRows.length} client(s).
-          </p>
-        </section>
-        <section className="card px-8 py-6">
-          <p className="text-xs font-bold uppercase tracking-wider text-secondary font-display">CA mensuel saisi</p>
-          <p className="mt-3 text-3xl font-extrabold text-primary font-display tabular-nums">{formatMoney(revenueTotalEur)}</p>
-          <p className="mt-2 text-sm text-secondary font-body">{rowsWithFee.length} client(s) avec forfait renseigné.</p>
-        </section>
-        <section className="card px-8 py-6">
-          <p className="text-xs font-bold uppercase tracking-wider text-secondary font-display">Marge brute estimée</p>
-          <p className="mt-3 text-3xl font-extrabold text-primary font-display tabular-nums">{formatMoney(grossMarginTotalEur)}</p>
-          <p className="mt-2 text-sm text-secondary font-body">Comparaison forfait HT vs coût IA réellement porté par Orsayn.</p>
-        </section>
-        <section className="card px-8 py-6">
-          <p className="text-xs font-bold uppercase tracking-wider text-secondary font-display">Taux de marge</p>
-          <p className="mt-3 text-3xl font-extrabold text-accent font-display tabular-nums">{formatPercent(marginRate)}</p>
-          <p className="mt-2 text-sm text-secondary font-body">{missingBillingRows.length} client(s) encore à compléter.</p>
-        </section>
-      </div>
-
-      <section className="card px-8 py-6 space-y-5">
-        <div>
-          <h2 className="text-lg font-bold text-primary font-display">Conso IA & pricing</h2>
-          <p className="mt-1 text-sm text-secondary font-body">
-            Lecture mensuelle des usages IA : coût réellement porté par Orsayn, coût indicatif des clés client, et signaux pour ajuster les offres.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-          <div className="space-y-3">
-            <p className="text-xs font-bold uppercase tracking-wide text-secondary font-display">Features coûteuses</p>
-            {featureUsageRows.length === 0 ? (
-              <p className="text-sm text-secondary font-body">Aucun usage IA ce mois-ci.</p>
-            ) : featureUsageRows.map((row) => (
-              <div key={row.key} className="rounded-lg border border-[var(--elevation-border)] bg-interactive/40 px-4 py-3">
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="font-semibold text-primary">{row.label}</span>
-                  <span className="text-secondary tabular-nums">{formatMoney(row.usageCostEur)}</span>
-                </div>
-                <div className="mt-1 flex items-center justify-between gap-3 text-xs text-secondary">
-                  <span>{row.events} appel(s) · {formatCompactNumber(row.tokens)} tokens</span>
-                  <span>porté {formatMoney(row.orsaynCostEur)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="space-y-3">
-            <p className="text-xs font-bold uppercase tracking-wide text-secondary font-display">Modèles coûteux</p>
-            {modelUsageRows.length === 0 ? (
-              <p className="text-sm text-secondary font-body">Aucun modèle consommé ce mois-ci.</p>
-            ) : modelUsageRows.map((row) => (
-              <div key={row.key} className="rounded-lg border border-[var(--elevation-border)] bg-interactive/40 px-4 py-3">
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="truncate font-semibold text-primary">{row.label}</span>
-                  <span className="text-secondary tabular-nums">{formatMoney(row.usageCostEur)}</span>
-                </div>
-                <div className="mt-1 flex items-center justify-between gap-3 text-xs text-secondary">
-                  <span>{row.events} appel(s)</span>
-                  <span>{formatCompactNumber(row.tokens)} tokens</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="space-y-3">
-            <p className="text-xs font-bold uppercase tracking-wide text-secondary font-display">Signaux clients</p>
-            {pricingSignalRows.length === 0 ? (
-              <p className="text-sm text-secondary font-body">Aucun signal pricing pour le moment.</p>
-            ) : pricingSignalRows.map((row) => (
-              <div key={`${row.sourceInstance}:${row.organizationId}`} className="rounded-lg border border-[var(--elevation-border)] bg-interactive/40 px-4 py-3">
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="truncate font-semibold text-primary">{row.label}</span>
-                  <span className="text-secondary tabular-nums">{formatMoney(row.monthUsageCostEur)}</span>
-                </div>
-                <div className="mt-1 flex items-center justify-between gap-3 text-xs text-secondary">
-                  <span>{formatCommercialStatus(row)} · {formatAIBillingMode(row.aiBillingMode)}</span>
-                  <span>{row.monthEventCount} event(s)</span>
-                </div>
-                {row.aiBillingMode === 'client_owned' && (
-                  <p className="mt-2 text-[11px] text-secondary">
-                    Usage à garder pour le pricing, non soustrait de ta marge.
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="card px-8 py-6 space-y-5">
-        <div>
-          <h2 className="text-lg font-bold text-primary font-display">Recommandations commerciales</h2>
-          <p className="mt-1 text-sm text-secondary font-body">
-            Opportunités détectées automatiquement à partir des quotas, de la marge et des usages IA/WhatsApp.
-          </p>
-        </div>
-
-        {recommendations.length === 0 ? (
-          <p className="text-sm text-secondary font-body">Aucune recommandation commerciale pour le moment.</p>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {recommendations.map((recommendation) => (
-              <div key={recommendation.id} className="rounded-lg border border-[var(--elevation-border)] bg-interactive/40 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-primary">{recommendation.clientLabel}</p>
-                    <p className="mt-1 text-sm text-secondary">{recommendation.title}</p>
-                  </div>
-                  <span className={`rounded-pill px-2 py-0.5 text-[11px] font-semibold ${getRecommendationClass(recommendation.severity)}`}>
-                    {recommendation.severity}
-                  </span>
-                </div>
-                <p className="mt-3 text-xs text-secondary">{recommendation.reason}</p>
-                <p className="mt-1 text-xs text-secondary">
-                  {recommendation.currentTier} → {recommendation.suggestedTier}
-                </p>
-                <form action={recordOperatorCommercialAction} className="mt-3 grid gap-2">
-                  <input type="hidden" name="sourceInstance" value={recommendation.sourceInstance} />
-                  <input type="hidden" name="clientLabel" value={recommendation.clientLabel} />
-                  <input type="hidden" name="currentTier" value={recommendation.currentTier} />
-                  <input type="hidden" name="suggestedTier" value={recommendation.suggestedTier} />
-                  <input type="hidden" name="eventType" value={recommendation.eventType} />
-                  <input type="hidden" name="usageCostLabel" value={recommendation.usageCostLabel} />
-                  <input
-                    name="recipientEmail"
-                    type="email"
-                    placeholder="email client si envoi"
-                    className={inputSmCls}
-                  />
-                  <input
-                    name="notes"
-                    placeholder={recommendation.notePlaceholder}
-                    className={inputSmCls}
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="submit"
-                      name="deliveryMode"
-                      value="draft"
-                      className="rounded-pill bg-slate-500/10 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-500/20 dark:text-slate-200"
-                    >
-                      Tracer
-                    </button>
-                    <button
-                      type="submit"
-                      name="deliveryMode"
-                      value="send"
-                      className="rounded-pill bg-accent/10 px-3 py-2 text-xs font-semibold text-accent transition hover:bg-accent/20"
-                    >
-                      Envoyer
-                    </button>
-                  </div>
-                </form>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.2fr,0.8fr,0.8fr]">
-        <section className="card px-8 py-6">
-          <div className="mb-5">
-            <h2 className="text-lg font-bold text-primary font-display">Ajouter ou préconfigurer un client</h2>
-            <p className="mt-1 text-sm text-secondary font-body">
-              Crée une ligne cockpit avant même le premier événement si tu connais déjà le `source_instance`.
-            </p>
-          </div>
-
-          <form action={upsertOperatorClientSettings} className="grid gap-3 md:grid-cols-2">
-            <label className="space-y-1.5 text-sm font-body">
-              <span className="font-semibold text-primary text-xs uppercase tracking-wide font-display">source_instance</span>
-              <input
-                required
-                name="sourceInstance"
-                placeholder="maconnerie-durand"
-                className={inputCls}
-              />
-            </label>
-            <label className="space-y-1.5 text-sm font-body">
-              <span className="font-semibold text-primary text-xs uppercase tracking-wide font-display">organization_id (SaaS mutualisé)</span>
-              <input
-                name="organizationId"
-                placeholder="laisser vide pour une instance per-client"
-                className={inputCls}
-              />
-            </label>
-            <label className="space-y-1.5 text-sm font-body">
-              <span className="font-semibold text-primary text-xs uppercase tracking-wide font-display">Libellé</span>
-              <input
-                name="label"
-                placeholder="Maconnerie Durand"
-                className={inputCls}
-              />
-            </label>
-            <label className="space-y-1.5 text-sm font-body">
-              <span className="font-semibold text-primary text-xs uppercase tracking-wide font-display">Mensuel HT</span>
-              <input
-                name="monthlyFeeHt"
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="390"
-                className={inputCls}
-              />
-            </label>
-            <label className="space-y-1.5 text-sm font-body">
-              <span className="font-semibold text-primary text-xs uppercase tracking-wide font-display">URL app client</span>
-              <input
-                name="appUrl"
-                type="url"
-                placeholder="https://client.fr"
-                className={inputCls}
-              />
-            </label>
-            <label className="space-y-1.5 text-sm font-body">
-              <span className="font-semibold text-primary text-xs uppercase tracking-wide font-display">Devise</span>
-              <select
-                name="billingCurrency"
-                defaultValue="EUR"
-                className={inputCls}
-              >
-                <option value="EUR">EUR</option>
-                <option value="USD">USD</option>
-              </select>
-            </label>
-            <label className="input-glass flex items-center gap-3 px-4 py-3 text-sm text-primary font-body">
-              <input
-                defaultChecked
-                name="isActive"
-                type="checkbox"
-                className="h-4 w-4 rounded border-[var(--elevation-border)] accent-accent"
-              />
-              Client actif
-            </label>
-            <div className="flex items-end justify-end">
-              <button
-                type="submit"
-                className="btn-pill btn-pill-primary inline-flex text-sm"
-              >
-                Enregistrer
-              </button>
-            </div>
-          </form>
-        </section>
-
-        <section className="card px-8 py-6 space-y-3">
-          <div>
-            <h2 className="text-lg font-bold text-primary font-display">Peu rentables</h2>
-            <p className="mt-1 text-sm text-secondary font-body">Classement sur le mois en équivalent EUR.</p>
-          </div>
-          {lowMarginRows.length === 0 ? (
-            <p className="text-sm text-secondary font-body">Aucune marge calculable pour le moment.</p>
-          ) : lowMarginRows.map((row) => (
-            <div key={`${row.sourceInstance}:${row.organizationId}`} className="flex items-center justify-between gap-4 text-sm">
-              <div className="min-w-0">
-                <p className="truncate font-semibold text-primary font-body">{row.label}</p>
-                <p className="text-secondary font-body tabular-nums">{formatPercent(row.marginPct)}</p>
-              </div>
-              <span className="text-right text-secondary font-display tabular-nums text-xs">{formatMoney(row.grossMarginEur ?? 0)}</span>
-            </div>
-          ))}
-        </section>
-
-        <section className="card px-8 py-6 space-y-3">
-          <div>
-            <h2 className="text-lg font-bold text-primary font-display">Clients coûteux</h2>
-            <p className="mt-1 text-sm text-secondary font-body">Coûts IA du mois les plus élevés.</p>
-          </div>
-          {expensiveRows.length === 0 ? (
-            <p className="text-sm text-secondary font-body">Aucune donnée de coût pour le mois en cours.</p>
-          ) : expensiveRows.map((row) => (
-            <div key={`${row.sourceInstance}:${row.organizationId}`} className="flex items-center justify-between gap-4 text-sm">
-              <div className="min-w-0">
-                <p className="truncate font-semibold text-primary font-body">{row.label}</p>
-                <p className="text-secondary font-body tabular-nums">{row.monthEventCount} événement(s)</p>
-              </div>
-              <span className="text-right text-secondary font-display tabular-nums text-xs">{formatMoney(row.monthUsageCostEur)}</span>
-            </div>
-          ))}
-        </section>
-      </div>
-
-      <section className="card px-8 py-6 space-y-5">
-        <div>
-          <h2 className="text-lg font-bold text-primary font-display">Clients et marge</h2>
-          <p className="mt-1 text-sm text-secondary font-body">
-            Le coût est converti dans la devise du forfait pour chaque ligne. Les totaux globaux restent normalisés en EUR.
-            Cliquez une ligne pour ouvrir sa fiche complète (offre, cycle de vie, modules, suivi).
-          </p>
-        </div>
-
-        <ClientsTable rows={clientRows} />
-      </section>
-
-      {/* ── Module emails cockpit ────────────────────────────────────────── */}
-      {(() => {
-        const pendingAlerts = commercialEvents.filter((e) => e.delivery_status === 'pending_review')
-        const sentEmails = commercialEvents.filter((e) => e.delivery_status !== 'pending_review')
-        const emailClients = clientRows
-          .filter((row) => row.isActive)
-          .map((row) => ({
-            sourceInstance: row.sourceInstance,
-            organizationId: row.organizationId,
-            label: row.label,
-            tier: row.tier,
-            recipientEmail: row.contactEmail
-              ?? (row.commercialEvents.find((e) => e.recipient_email)?.recipient_email)
-              ?? null,
-          }))
-        return (
-          <EmailsTab
-            pendingAlerts={pendingAlerts}
-            sentEmails={sentEmails}
-            clients={emailClients}
-          />
-        )
-      })()}
-
-      <section className="card px-8 py-6 space-y-5">
-        <div>
-          <h2 className="text-lg font-bold text-primary font-display">Derniers événements</h2>
-          <p className="mt-1 text-sm text-secondary font-body">20 derniers appels synchronisés depuis les instances clientes.</p>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] text-sm font-body">
-            <thead>
-              <tr className="border-b border-[var(--elevation-border)] text-left">
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Date</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Client</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Fournisseur</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Fonction</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Coût</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Statut</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentEvents.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-secondary">
-                    Aucun événement synchronisé pour le moment.
-                  </td>
-                </tr>
-              ) : recentEvents.slice(0, 20).map((event, index) => (
-                <tr key={`${event.source_instance}-${event.occurred_at}-${index}`} className="border-b border-[var(--elevation-border)] last:border-b-0">
-                  <td className="py-3 text-primary tabular-nums">{formatDate(event.occurred_at)}</td>
-                  <td className="py-3 text-primary">{settingsBySource.get(orgKey(event.source_instance, event.organization_id))?.label || event.source_instance}</td>
-                  <td className="py-3 text-secondary">{event.provider}</td>
-                  <td className="py-3 text-secondary">{event.feature}</td>
-                  <td className="py-3 text-secondary tabular-nums">{formatMoney(Number(event.provider_cost ?? 0), 'USD')}</td>
-                  <td className="py-3">
-                    <span className={`inline-flex rounded-pill px-3 py-1 text-xs font-semibold font-display ${event.status === 'success' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
-                      {event.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <CockpitTabs
+        activeCount={activeRows.length}
+        costTotalEur={costTotalEur}
+        usageTotalEur={usageTotalEur}
+        revenueTotalEur={revenueTotalEur}
+        rowsWithFeeCount={rowsWithFee.length}
+        grossMarginTotalEur={grossMarginTotalEur}
+        marginRate={marginRate}
+        missingBillingCount={missingBillingRows.length}
+        sharedAppUrlRows={sharedAppUrlRows}
+        missingOrgIdRows={missingOrgIdRows}
+        neverAttemptedRows={neverAttemptedRows}
+        technicalFailureRows={technicalFailureRows}
+        failedWebhookEvents={failedWebhookEvents}
+        instanceOrgCount={instanceOrgCount}
+        recentEvents={recentEvents}
+        clientRows={clientRows}
+        lowMarginRows={lowMarginRows}
+        expensiveRows={expensiveRows}
+        featureUsageRows={featureUsageRows}
+        modelUsageRows={modelUsageRows}
+        pricingSignalRows={pricingSignalRows}
+        recommendations={recommendations}
+        pendingAlerts={pendingAlerts}
+        sentEmails={sentEmails}
+        emailClients={emailClients}
+      />
     </main>
   )
 }
