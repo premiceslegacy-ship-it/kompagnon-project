@@ -68,6 +68,14 @@ export async function signup(_prevState: AuthState, formData: FormData): Promise
   const preferredRaw = formData.get('preferred_tier')
   const preferredTier = isSellableTier(preferredRaw) ? preferredRaw : 'pro'
   const intent = formData.get('intent') === 'trial' ? 'trial' : 'none'
+
+  // Une session déjà active (ex: onglet resté ouvert depuis une précédente
+  // connexion) doit être fermée avant toute inscription : sinon signUp() peut
+  // ne pas créer de nouvelle session et laisser l'ancienne active, faisant
+  // s'exécuter tout le reste du parcours (onboarding, essai) sur le mauvais compte.
+  const supabaseForSignOut = await createClient()
+  await supabaseForSignOut.auth.signOut()
+
   const requestHeaders = await headers()
   const ip = getClientIp(requestHeaders)
   const signupLimit = await checkRateLimit({
