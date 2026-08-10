@@ -1,439 +1,48 @@
 import { notFound } from 'next/navigation'
-import {
-  activateOperatorTrial,
-  convertOperatorTrial,
-  expireOperatorTrial,
-  recordOperatorCommercialAction,
-  resyncOperatorClientConfig,
-  upsertOperatorClientSettings,
-  upsertOperatorClientModules,
-  upsertOperatorClientVerticalPack,
-  upsertOperatorClientMetalPricing,
-  upsertOperatorSubscription,
-} from './actions'
+import { recordOperatorCommercialAction, upsertOperatorClientSettings } from './actions'
 import EmailsTab from './EmailsTab'
+import ClientsTable from './ClientsTable'
 import { getOperatorUsdToEurRate } from '@/lib/operator'
 import { getOperatorUser } from '@/lib/operator-auth'
 import { UNRESOLVED_ORGANIZATION_ID } from '@/lib/operator/trial-lifecycle'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { AccessStatus, SellableTier } from '@/lib/subscription-access'
-import { ORGANIZATION_MODULE_KEYS, normalizeOrganizationModules, type OrganizationModules } from '@/lib/organization-modules'
-import { VERTICAL_PACKS, getEligibleVerticalPack } from '@/lib/vertical-packs'
-import {
-  QUOTA_DEFINITIONS,
-  SUBSCRIPTION_TIERS,
-  OVERFLOW_MODES,
-  type OverflowMode,
-  type QuotaFeature,
-  type QuotaUnit,
-  type SubscriptionTier,
-} from '@/lib/quota-catalog'
+import { normalizeOrganizationModules } from '@/lib/organization-modules'
+import { QUOTA_DEFINITIONS } from '@/lib/quota-catalog'
 import {
   DEFAULT_EINVOICING_CONFIG,
-  EINVOICING_ANNUAIRE_STATUSES,
-  EINVOICING_ENVIRONMENTS,
-  EINVOICING_MODES,
-  EINVOICING_ONBOARDING_MODELS,
   normalizeEinvoicingConfigFromDb,
-  type EinvoicingAnnuaireStatus,
-  type EinvoicingConfig,
-  type EinvoicingEnvironment,
-  type EinvoicingMode,
-  type EinvoicingOnboardingModel,
-  type EinvoicingProvider,
 } from '@/lib/einvoicing-config'
-
-const AI_BILLING_MODES = ['orsayn_shared', 'client_owned'] as const
-type AIBillingMode = typeof AI_BILLING_MODES[number]
-
-type OperatorUsageEvent = {
-  source_instance: string
-  organization_id: string | null
-  provider: string
-  feature: string
-  quota_feature: QuotaFeature | null
-  model: string
-  provider_cost: number | null
-  currency: string
-  total_tokens: number | null
-  status: string
-  occurred_at: string
-}
-
-type OperatorClient = {
-  source_instance: string
-  organization_id: string | null
-  label: string | null
-  updated_at: string
-}
-
-type OperatorClientSetting = {
-  source_instance: string
-  organization_id: string
-  label: string | null
-  monthly_fee_ht: number | string | null
-  billing_currency: 'EUR' | 'USD'
-  is_active: boolean
-  app_url: string | null
-  config_sync_status: string | null
-  config_synced_at: string | null
-  config_sync_error: string | null
-}
-
-type OperatorClientSubscription = {
-  source_instance: string
-  organization_id: string
-  tier: SubscriptionTier
-  ai_billing_mode: AIBillingMode | null
-  mrr_ht: number | string | null
-  billing_currency: 'EUR' | 'USD'
-  is_active: boolean
-  renews_at: string | null
-  trial_tier: SubscriptionTier | null
-  trial_ends_at: string | null
-  trial_converted: boolean | null
-  b2brouter_active: boolean
-  einvoicing_mode: EinvoicingMode | null
-  einvoicing_provider: EinvoicingProvider | null
-  einvoicing_environment: EinvoicingEnvironment | null
-  einvoicing_onboarding_model: EinvoicingOnboardingModel | null
-  b2brouter_account_id: string | null
-  einvoicing_annuaire_status: EinvoicingAnnuaireStatus | null
-  overflow_mode: OverflowMode
-  notes: string | null
-  preferred_tier: SellableTier | null
-  access_status: AccessStatus | null
-  trial_started_at: string | null
-  access_ends_at: string | null
-  cancel_at: string | null
-  stripe_status: string | null
-  payment_failed_at: string | null
-}
-
-type OperatorClientEvent = {
-  id: string
-  source_instance: string
-  organization_id: string | null
-  event_category: string
-  event_type: string
-  actor_email: string | null
-  metadata: Record<string, unknown> | null
-  notes: string | null
-  created_at: string
-}
-
-type OperatorCommercialEvent = {
-  id: string
-  source_instance: string
-  organization_id: string | null
-  event_type: string
-  tier_context: string | null
-  sent_at: string
-  sent_by: string
-  actor_email: string | null
-  email_template: string | null
-  subject_preview: string | null
-  body_text: string | null
-  recipient_email: string | null
-  delivery_status: string
-  auto_send_after: string | null
-  notes: string | null
-  metadata: Record<string, unknown> | null
-}
-
-type OperatorClientQuota = {
-  source_instance: string
-  organization_id: string
-  quota_feature: QuotaFeature
-  quota_unit: QuotaUnit
-  quota_monthly: number | string
-  current_quantity: number | string
-  current_cost_eur: number | string
-  period_start: string
-}
-
-type ClientRow = {
-  sourceInstance: string
-  organizationId: string | null
-  label: string
-  tier: SubscriptionTier
-  appUrl: string | null
-  configSyncStatus: string | null
-  configSyncError: string | null
-  monthlyFee: number | null
-  billingCurrency: 'EUR' | 'USD'
-  aiBillingMode: AIBillingMode
-  isActive: boolean
-  renewsAt: string | null
-  trialEndsAt: string | null
-  trialConverted: boolean
-  preferredTier: SellableTier
-  accessStatus: AccessStatus | null
-  accessEndsAt: string | null
-  cancelAt: string | null
-  stripeStatus: string | null
-  paymentFailedAt: string | null
-  b2brouterActive: boolean
-  einvoicingConfig: EinvoicingConfig
-  overflowMode: OverflowMode
-  notes: string | null
-  monthCost: number
-  monthCostEur: number
-  monthUsageCost: number
-  monthUsageCostEur: number
-  grossMargin: number | null
-  grossMarginEur: number | null
-  marginPct: number | null
-  lastSeenAt: string | null
-  lastStatus: string | null
-  monthEventCount: number
-  modules: OrganizationModules
-  businessActivityId: string | null
-  businessVerticalPackId: string | null
-  hasMetalPricing: boolean
-  quotas: OperatorClientQuota[]
-  events: OperatorClientEvent[]
-  commercialEvents: OperatorCommercialEvent[]
-}
-
-type UsageAggregateRow = {
-  key: string
-  label: string
-  events: number
-  tokens: number
-  usageCostEur: number
-  orsaynCostEur: number
-}
-
-type CommercialRecommendation = {
-  id: string
-  sourceInstance: string
-  clientLabel: string
-  title: string
-  reason: string
-  severity: 'high' | 'medium' | 'low'
-  eventType: 'upgrade_prompt_quota' | 'usage_signal_client_owned'
-  currentTier: SubscriptionTier
-  suggestedTier: SubscriptionTier
-  usageCostLabel: string
-  notePlaceholder: string
-}
-
-const GLOBAL_CURRENCY = 'EUR'
-
-function formatMoney(value: number, currency: 'EUR' | 'USD' = GLOBAL_CURRENCY): string {
-  return new Intl.NumberFormat('fr-FR', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 2,
-  }).format(value)
-}
-
-function formatPercent(value: number | null): string {
-  if (value === null) return 'À compléter'
-  return new Intl.NumberFormat('fr-FR', {
-    style: 'percent',
-    maximumFractionDigits: 1,
-  }).format(value / 100)
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return 'Jamais'
-
-  return new Intl.DateTimeFormat('fr-FR', {
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value))
-}
-
-function formatDateInput(value: string | null): string {
-  if (!value) return ''
-  return value.slice(0, 10)
-}
-
-function isActiveTrial(value: string | null): boolean {
-  return !!value && new Date(value).getTime() > Date.now()
-}
-
-function getTrialLabel(value: string | null, converted: boolean): string {
-  if (converted) return 'Converti'
-  if (!value) return 'Aucun essai'
-
-  const endsAt = new Date(value)
-  const daysLeft = Math.ceil((endsAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-  if (daysLeft < 0) return 'Essai expiré'
-  if (daysLeft === 0) return 'Expire aujourd’hui'
-  return `J-${daysLeft}`
-}
-
-function getEventLabel(eventType: string): string {
-  const labels: Record<string, string> = {
-    subscription_updated: 'Offre appliquée',
-    trial_started: 'Essai activé',
-    trial_converted: 'Essai converti',
-    trial_ended: 'Essai terminé',
-    config_resync_requested: 'Config resynchronisée',
-    modules_updated: 'Modules appliqués',
-  }
-
-  return labels[eventType] ?? eventType
-}
-
-function getCommercialEventLabel(eventType: string): string {
-  const labels: Record<string, string> = {
-    upgrade_prompt_quota: 'Upgrade quota',
-    manual_email: 'Email manuel',
-    trial_expiry_7d: 'Relance essai J-7',
-    trial_expiry_2d: 'Relance essai J-2',
-    trial_expired: 'Essai expiré',
-    subscription_activated: 'Abonnement activé',
-  }
-
-  return labels[eventType] ?? eventType
-}
-
-function getSuggestedTier(tier: SubscriptionTier): SubscriptionTier {
-  if (tier === 'setup_only') return 'starter'
-  if (tier === 'starter') return 'pro'
-  if (tier === 'pro') return 'expert'
-  return 'expert'
-}
-
-function getRecommendationClass(severity: CommercialRecommendation['severity']): string {
-  if (severity === 'high') return 'bg-red-500/10 text-red-700'
-  if (severity === 'medium') return 'bg-amber-500/10 text-amber-700'
-  return 'bg-slate-500/10 text-slate-700 dark:text-slate-200'
-}
-
-function normalizeFee(value: number | string | null | undefined): number | null {
-  if (value === null || value === undefined || value === '') return null
-  const parsed = typeof value === 'number' ? value : Number.parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-function normalizeNumber(value: number | string | null | undefined): number {
-  if (value === null || value === undefined || value === '') return 0
-  const parsed = typeof value === 'number' ? value : Number.parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-function normalizeAIBillingMode(value: unknown): AIBillingMode {
-  return (AI_BILLING_MODES as readonly unknown[]).includes(value) ? value as AIBillingMode : 'orsayn_shared'
-}
-
-function formatAIBillingMode(value: AIBillingMode): string {
-  return value === 'client_owned' ? 'Clé client' : 'Clé Orsayn'
-}
-
-function formatCommercialStatus(row: Pick<ClientRow, 'tier' | 'aiBillingMode'>): string {
-  if (row.aiBillingMode === 'client_owned') return 'BYOK - clé client'
-  return `Stripe ${row.tier}`
-}
-
-function formatQuotaValue(value: number): string {
-  if (value < 0) return 'Illimité'
-  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(value)
-}
-
-function formatCompactNumber(value: number): string {
-  return new Intl.NumberFormat('fr-FR', {
-    notation: value >= 10000 ? 'compact' : 'standard',
-    maximumFractionDigits: 1,
-  }).format(value)
-}
-
-function getUsageFeatureLabel(event: OperatorUsageEvent): string {
-  if (event.quota_feature && QUOTA_DEFINITIONS[event.quota_feature]) {
-    return QUOTA_DEFINITIONS[event.quota_feature].label
-  }
-
-  return event.feature
-}
-
-function getQuotaBadgeClass(quota: OperatorClientQuota): string {
-  const monthly = normalizeNumber(quota.quota_monthly)
-  const current = normalizeNumber(quota.current_quantity)
-  if (monthly < 0) return 'bg-slate-500/10 text-slate-600'
-  if (monthly === 0 && current > 0) return 'bg-red-500/10 text-red-600'
-  const pct = monthly > 0 ? (current / monthly) * 100 : 0
-  if (current > monthly) return 'bg-red-500/10 text-red-600'
-  if (pct >= 90) return 'bg-orange-500/10 text-orange-700'
-  if (pct >= 70) return 'bg-amber-500/10 text-amber-700'
-  return 'bg-green-500/10 text-green-700'
-}
-
-function convertUsdToCurrency(value: number, currency: 'EUR' | 'USD', usdToEurRate: number): number {
-  if (currency === 'USD') return value
-  return value * usdToEurRate
-}
-
-function convertAmountToEur(value: number, currency: 'EUR' | 'USD', usdToEurRate: number): number {
-  if (currency === 'EUR') return value
-  return value * usdToEurRate
-}
-
-function convertProviderCostToEur(value: number | null, currency: string, usdToEurRate: number): number {
-  const amount = Number(value ?? 0)
-  if (!Number.isFinite(amount)) return 0
-  if (currency.toUpperCase() === 'EUR') return amount
-  if (currency.toUpperCase() === 'USD') return amount * usdToEurRate
-  return amount
-}
-
-function getSyncBadge(lastSeenAt: string | null, lastStatus: string | null) {
-  if (!lastSeenAt) {
-    return {
-      label: 'Jamais synchronisé',
-      className: 'bg-slate-500/10 text-slate-600',
-    }
-  }
-
-  const ageMs = Date.now() - new Date(lastSeenAt).getTime()
-  const ageDays = ageMs / (1000 * 60 * 60 * 24)
-
-  if (lastStatus === 'error' && ageDays <= 2) {
-    return {
-      label: 'Erreurs récentes',
-      className: 'bg-red-500/10 text-red-600',
-    }
-  }
-
-  if (ageDays > 7) {
-    return {
-      label: 'Silencieux',
-      className: 'bg-amber-500/10 text-amber-700',
-    }
-  }
-
-  return {
-    label: 'Actif',
-    className: 'bg-green-500/10 text-green-700',
-  }
-}
-
-function getEinvoicingBadge(config: EinvoicingConfig) {
-  if (config.mode === 'b2brouter') {
-    return {
-      label: `B2Brouter ${config.environment}`,
-      className: 'bg-green-500/10 text-green-700',
-    }
-  }
-
-  if (config.mode === 'export_only') {
-    return {
-      label: 'Factur-X prêt',
-      className: 'bg-amber-500/10 text-amber-700',
-    }
-  }
-
-  return {
-    label: 'Non configuré',
-    className: 'bg-slate-500/10 text-slate-600',
-  }
-}
+import type {
+  ClientRow,
+  CommercialRecommendation,
+  OperatorClient,
+  OperatorClientEvent,
+  OperatorClientQuota,
+  OperatorClientSetting,
+  OperatorClientSubscription,
+  OperatorCommercialEvent,
+  OperatorUsageEvent,
+  UsageAggregateRow,
+} from './types'
+import {
+  clientKey,
+  convertAmountToEur,
+  convertProviderCostToEur,
+  convertUsdToCurrency,
+  formatAIBillingMode,
+  formatCommercialStatus,
+  formatCompactNumber,
+  formatDate,
+  formatMoney,
+  formatPercent,
+  getRecommendationClass,
+  getSuggestedTier,
+  getUsageFeatureLabel,
+  normalizeAIBillingMode,
+  normalizeFee,
+  normalizeNumber,
+} from './utils'
 
 export default async function OrsaynPage() {
   const user = await getOperatorUser()
@@ -459,7 +68,7 @@ export default async function OrsaynPage() {
   ] = await Promise.all([
     operator
       .from('operator_client_settings')
-      .select('source_instance, organization_id, label, monthly_fee_ht, billing_currency, is_active, app_url, config_sync_status, config_synced_at, config_sync_error')
+      .select('source_instance, organization_id, label, monthly_fee_ht, billing_currency, is_active, app_url, contact_email, config_sync_status, config_synced_at, config_sync_error')
       .order('source_instance', { ascending: true }),
     operator
       .from('operator_client_subscriptions')
@@ -534,8 +143,7 @@ export default async function OrsaynPage() {
   // pas encore synchronisé) ou operator_client_events/commercial_events (broadcast,
   // paiement orphelin) : ces lignes sont alors rattachées via UNRESOLVED_ORGANIZATION_ID
   // côté écriture, mais on garde un fallback ici par robustesse de lecture.
-  const orgKey = (sourceInstance: string, organizationId: string | null) =>
-    `${sourceInstance}::${organizationId ?? UNRESOLVED_ORGANIZATION_ID}`
+  const orgKey = clientKey
 
   const settingsBySource = new Map(settings.map((item) => [orgKey(item.source_instance, item.organization_id), item]))
   const subscriptionsBySource = new Map(subscriptions.map((item) => [orgKey(item.source_instance, item.organization_id), item]))
@@ -646,6 +254,7 @@ export default async function OrsaynPage() {
       label,
       tier: subscription?.tier ?? 'setup_only',
       appUrl: setting?.app_url ?? null,
+      contactEmail: setting?.contact_email ?? null,
       configSyncStatus: setting?.config_sync_status ?? null,
       configSyncError: setting?.config_sync_error ?? null,
       monthlyFee,
@@ -706,6 +315,20 @@ export default async function OrsaynPage() {
   const marginRate = revenueTotalEur > 0 ? (grossMarginTotalEur / revenueTotalEur) * 100 : null
   const missingBillingRows = clientRows.filter((row) => row.monthlyFee === null)
   const pendingManualRows = clientRows.filter((row) => row.configSyncStatus === 'pending_manual')
+  // Une instance mutualisée (plusieurs organisations sur le même sourceInstance) n'a
+  // souvent besoin que d'un seul app_url — "app_url manquant" n'y est donc pas un vrai
+  // échec de synchro mais un champ à renseigner une fois pour l'instance entière.
+  const instanceOrgCount = clientRows.reduce<Record<string, number>>((acc, row) => {
+    acc[row.sourceInstance] = (acc[row.sourceInstance] ?? 0) + 1
+    return acc
+  }, {})
+  const sharedAppUrlRows = pendingManualRows.filter(
+    (row) => row.configSyncError === 'app_url manquant' && (instanceOrgCount[row.sourceInstance] ?? 0) > 1,
+  )
+  const missingOrgIdRows = pendingManualRows.filter((row) => row.configSyncError === 'organization_id manquant')
+  const technicalFailureRows = pendingManualRows.filter(
+    (row) => !sharedAppUrlRows.includes(row) && !missingOrgIdRows.includes(row),
+  )
   const lowMarginRows = rowsWithFee
     .slice()
     .sort((a, b) => (a.grossMarginEur ?? Number.POSITIVE_INFINITY) - (b.grossMarginEur ?? Number.POSITIVE_INFINITY))
@@ -877,20 +500,58 @@ export default async function OrsaynPage() {
         </div>
       </div>
 
-      {pendingManualRows.length > 0 && (
+      {sharedAppUrlRows.length > 0 && (
+        <section className="card border-l-4 border-l-amber-500 bg-amber-500/5 px-6 py-4">
+          <p className="text-sm font-bold text-amber-700 font-display">
+            {sharedAppUrlRows.length} organisation{sharedAppUrlRows.length > 1 ? 's' : ''} sans URL d&apos;app propre (instance mutualisée)
+          </p>
+          <p className="mt-1 text-xs text-secondary font-body">
+            Ces organisations partagent une même instance avec d&apos;autres clients — une seule URL d&apos;app suffit pour toutes.
+            Renseignez <span className="font-mono">app_url</span> (même valeur) sur chacune, puis relancez &quot;Resync config&quot;.
+          </p>
+          <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
+            {sharedAppUrlRows.map((row) => (
+              <li key={`${row.sourceInstance}:${row.organizationId}`}>
+                <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance}, {instanceOrgCount[row.sourceInstance]} organisations sur cette instance)
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {missingOrgIdRows.length > 0 && (
         <section className="card border-l-4 border-l-red-500 bg-red-500/5 px-6 py-4">
           <p className="text-sm font-bold text-red-700 font-display">
-            {pendingManualRows.length} instance{pendingManualRows.length > 1 ? 's' : ''} en configuration bloquée (pending_manual)
+            {missingOrgIdRows.length} instance{missingOrgIdRows.length > 1 ? 's' : ''} sans organisation résolue
           </p>
           <p className="mt-1 text-xs text-secondary font-body">
             Le dernier changement de tier/module n&apos;a pas atteint l&apos;instance cliente — le client peut avoir payé sans que ses droits
-            aient été mis à jour. Vérifier <span className="font-mono">app_url</span> et <span className="font-mono">organization_id</span> puis relancer &quot;Resync config&quot;.
+            aient été mis à jour. Vérifier <span className="font-mono">organization_id</span> puis relancer &quot;Resync config&quot;.
           </p>
           <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
-            {pendingManualRows.map((row) => (
+            {missingOrgIdRows.map((row) => (
               <li key={`${row.sourceInstance}:${row.organizationId}`}>
                 <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance})
-                {row.configSyncError ? ` — ${row.configSyncError}` : ''}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {technicalFailureRows.length > 0 && (
+        <section className="card border-l-4 border-l-red-500 bg-red-500/5 px-6 py-4">
+          <p className="text-sm font-bold text-red-700 font-display">
+            {technicalFailureRows.length} instance{technicalFailureRows.length > 1 ? 's' : ''} en échec technique de synchro
+          </p>
+          <p className="mt-1 text-xs text-secondary font-body">
+            La configuration n&apos;a pas pu être poussée vers l&apos;app cliente (réseau, signature HMAC, ou app indisponible).
+            Vérifier la connectivité de l&apos;instance puis relancer &quot;Resync config&quot;.
+          </p>
+          <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
+            {technicalFailureRows.map((row) => (
+              <li key={`${row.sourceInstance}:${row.organizationId}`}>
+                <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance})
+                {row.configSyncError ? <span className="font-medium text-red-600"> — {row.configSyncError}</span> : ''}
               </li>
             ))}
           </ul>
@@ -1203,458 +864,11 @@ export default async function OrsaynPage() {
           <h2 className="text-lg font-bold text-primary font-display">Clients et marge</h2>
           <p className="mt-1 text-sm text-secondary font-body">
             Le coût est converti dans la devise du forfait pour chaque ligne. Les totaux globaux restent normalisés en EUR.
+            Cliquez une ligne pour ouvrir sa fiche complète (offre, cycle de vie, modules, suivi).
           </p>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px] text-sm font-body">
-            <thead>
-              <tr className="border-b border-[var(--elevation-border)] text-left">
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Client</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Synchro</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Offre</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Forfait HT</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Coût du mois</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Marge brute</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Marge %</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Dernier événement</th>
-                <th className="pb-3 text-xs font-bold uppercase tracking-wide text-secondary font-display">Configuration</th>
-              </tr>
-            </thead>
-            <tbody>
-              {clientRows.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="py-8 text-center text-secondary">
-                    Aucun client dans le cockpit pour le moment. Ajoute un `source_instance` ci-dessus ou attends le premier événement synchronisé depuis une instance cliente.
-                  </td>
-                </tr>
-              ) : clientRows.map((row) => {
-                const syncBadge = getSyncBadge(row.lastSeenAt, row.lastStatus)
-
-                return (
-                  <tr key={`${row.sourceInstance}:${row.organizationId}`} className="border-b border-[var(--elevation-border)] align-top last:border-b-0">
-                    <td className="py-4 pr-4">
-                      <p className="font-semibold text-primary">{row.label}</p>
-                      <p className="mt-1 text-xs text-secondary">{row.sourceInstance}</p>
-                    </td>
-                    <td className="py-4 pr-4">
-                      <span className={`inline-flex rounded-pill px-3 py-1 text-xs font-semibold font-display ${syncBadge.className}`}>
-                        {syncBadge.label}
-                      </span>
-                      <p className="mt-2 text-[11px] text-secondary">
-                        Configuration : {row.configSyncStatus ?? 'n/a'}
-                      </p>
-                    </td>
-                    <td className="py-4 pr-4 text-secondary tabular-nums">
-                      {formatCommercialStatus(row)}
-                      {row.accessStatus && (
-                        <p className={`mt-1 text-[11px] font-semibold ${row.accessStatus === 'past_due' || row.accessStatus === 'unpaid' ? 'text-red-600' : row.accessStatus === 'trialing' ? 'text-amber-600' : 'text-secondary'}`}>
-                          Accès : {row.accessStatus} · préférence {row.preferredTier}
-                        </p>
-                      )}
-                      {row.accessStatus === 'trialing' && row.trialEndsAt && (
-                        <p className="mt-1 text-[11px]">{Math.max(0, Math.ceil((new Date(row.trialEndsAt).getTime() - Date.now()) / 86400000))} jour(s) restant(s)</p>
-                      )}
-                      {row.paymentFailedAt && <p className="mt-1 text-[11px] text-red-600">Échec paiement : {formatDate(row.paymentFailedAt)}</p>}
-                      {row.cancelAt && <p className="mt-1 text-[11px] text-amber-600">Fin prévue : {formatDate(row.cancelAt)}</p>}
-                      {row.aiBillingMode === 'client_owned' && (
-                        <p className="mt-1 text-[11px] text-secondary">
-                          Sans abonnement Stripe
-                        </p>
-                      )}
-                    </td>
-                    <td className="py-4 pr-4 text-secondary tabular-nums">
-                      {row.monthlyFee === null ? 'À compléter' : formatMoney(row.monthlyFee, row.billingCurrency)}
-                    </td>
-                    <td className="py-4 pr-4 text-secondary tabular-nums">
-                      {formatMoney(row.monthCost, row.billingCurrency)}
-                      {row.aiBillingMode === 'client_owned' && (
-                        <p className="mt-1 text-[11px] text-secondary">
-                          Usage indicatif {formatMoney(row.monthUsageCost, row.billingCurrency)}
-                        </p>
-                      )}
-                    </td>
-                    <td className="py-4 pr-4 text-secondary tabular-nums">
-                      {row.grossMargin === null ? 'À compléter' : formatMoney(row.grossMargin, row.billingCurrency)}
-                    </td>
-                    <td className="py-4 pr-4 text-secondary tabular-nums">{formatPercent(row.marginPct)}</td>
-                    <td className="py-4 pr-4 text-secondary tabular-nums">{formatDate(row.lastSeenAt)}</td>
-                    <td className="py-4">
-                      <form action={upsertOperatorSubscription} className="grid gap-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3 backdrop-blur-frost">
-                        {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
-                        {(() => {
-                          const einvoicingBadge = getEinvoicingBadge(row.einvoicingConfig)
-                          return (
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-xs font-bold uppercase tracking-wide text-secondary font-display">Offre & orchestration</p>
-                              <span className={`rounded-pill px-2 py-0.5 text-[11px] font-semibold ${einvoicingBadge.className}`}>
-                                {einvoicingBadge.label}
-                              </span>
-                            </div>
-                          )
-                        })()}
-                        <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
-                        <input
-                          name="label"
-                          defaultValue={row.label === row.sourceInstance ? '' : row.label}
-                          placeholder="Libellé"
-                          className={inputSmCls}
-                        />
-                        <input
-                          name="appUrl"
-                          type="url"
-                          defaultValue={row.appUrl ?? ''}
-                          placeholder="https://client.fr"
-                          className={inputSmCls}
-                        />
-                        <div className="grid grid-cols-[1fr,92px] gap-2">
-                          <select name="tier" defaultValue={row.tier} className={inputSmCls}>
-                            {SUBSCRIPTION_TIERS.map((tier) => (
-                              <option key={tier} value={tier}>{tier}</option>
-                            ))}
-                          </select>
-                          <input
-                            name="mrrHt"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            defaultValue={row.monthlyFee ?? ''}
-                            placeholder="390"
-                            className={inputSmCls}
-                          />
-                        </div>
-                        <div className="grid grid-cols-[1fr,92px] gap-2">
-                          <select
-                            name="billingCurrency"
-                            defaultValue={row.billingCurrency}
-                            className={inputSmCls}
-                          >
-                            <option value="EUR">EUR</option>
-                            <option value="USD">USD</option>
-                          </select>
-                          <select name="overflowMode" defaultValue={row.overflowMode} className={inputSmCls}>
-                            {OVERFLOW_MODES.map((mode) => (
-                              <option key={mode} value={mode}>{mode}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <select name="aiBillingMode" defaultValue={row.aiBillingMode} className={inputSmCls}>
-                          {AI_BILLING_MODES.map((mode) => (
-                            <option key={mode} value={mode}>{formatAIBillingMode(mode)}</option>
-                          ))}
-                        </select>
-                        <input
-                          name="renewsAt"
-                          type="date"
-                          defaultValue={formatDateInput(row.renewsAt)}
-                          className={inputSmCls}
-                        />
-                        <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--elevation-border)] bg-white/[0.03] px-3 py-2 text-xs">
-                          <span className="font-semibold text-primary font-display">Essai</span>
-                          <span className="text-secondary">
-                            {getTrialLabel(row.trialEndsAt, row.trialConverted)}
-                            {row.trialEndsAt && !row.trialConverted ? ` · fin ${formatDate(row.trialEndsAt)}` : ''}
-                          </span>
-                        </div>
-                        <textarea
-                          name="notes"
-                          defaultValue={row.notes ?? ''}
-                          placeholder="Notes abonnement"
-                          rows={2}
-                          className={inputSmCls}
-                        />
-                        <div className="rounded-lg border border-[var(--elevation-border)] bg-white/[0.03] p-3">
-                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-secondary font-display">Facturation électronique</p>
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <select
-                              name="einvoicingMode"
-                              defaultValue={row.einvoicingConfig.mode}
-                              className={inputSmCls}
-                            >
-                              {EINVOICING_MODES.map((mode) => (
-                                <option key={mode} value={mode}>{mode}</option>
-                              ))}
-                            </select>
-                            <select
-                              name="einvoicingEnvironment"
-                              defaultValue={row.einvoicingConfig.environment}
-                              className={inputSmCls}
-                            >
-                              {EINVOICING_ENVIRONMENTS.map((environment) => (
-                                <option key={environment} value={environment}>{environment}</option>
-                              ))}
-                            </select>
-                            <select
-                              name="einvoicingOnboardingModel"
-                              defaultValue={row.einvoicingConfig.onboarding_model ?? ''}
-                              className={inputSmCls}
-                            >
-                              <option value="">Sans onboarding</option>
-                              {EINVOICING_ONBOARDING_MODELS.map((model) => (
-                                <option key={model} value={model}>{model}</option>
-                              ))}
-                            </select>
-                            <input
-                              name="b2brouterAccountId"
-                              defaultValue={row.einvoicingConfig.b2brouter_account_id ?? ''}
-                              placeholder="B2Brouter account id"
-                              className={inputSmCls}
-                            />
-                            <select
-                              name="einvoicingAnnuaireStatus"
-                              defaultValue={row.einvoicingConfig.annuaire_status}
-                              className={inputSmCls}
-                            >
-                              {EINVOICING_ANNUAIRE_STATUSES.map((status) => (
-                                <option key={status} value={status}>{status}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <p className="mt-2 text-[11px] leading-relaxed text-secondary">
-                            Réception UI 2026 uniquement en mode B2Brouter. Avant 2027, l'envoi PDF/mail reste normal pour TPE/PME.
-                          </p>
-                        </div>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <label className="flex items-center gap-2 text-xs text-secondary font-body">
-                            <input
-                              name="isActive"
-                              type="checkbox"
-                              defaultChecked={row.isActive}
-                              className="h-4 w-4 rounded border-[var(--elevation-border)] accent-accent"
-                            />
-                            Actif
-                          </label>
-                        </div>
-                        {row.configSyncError && (
-                          <p className="text-[11px] text-red-600">{row.configSyncError}</p>
-                        )}
-                        <button
-                          type="submit"
-                          className="inline-flex justify-center rounded-pill bg-accent/10 text-accent px-3 py-2 text-xs font-semibold font-display transition hover:bg-accent/20"
-                        >
-                          Appliquer l’offre
-                        </button>
-                      </form>
-
-                      <div className="mt-2 grid gap-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3 backdrop-blur-frost">
-                        <p className="text-xs font-bold uppercase tracking-wide text-secondary font-display">Actions cockpit</p>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <form action={resyncOperatorClientConfig}>
-                            <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
-                            {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
-                            <button
-                              type="submit"
-                              className="w-full rounded-pill bg-slate-500/10 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-500/20 dark:text-slate-200"
-                            >
-                              Resync config
-                            </button>
-                          </form>
-                          {!isActiveTrial(row.trialEndsAt) && (
-                            <form action={activateOperatorTrial}>
-                              <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
-                              {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
-                              <input type="hidden" name="trialDays" value={row.sourceInstance === 'atelier-app' ? '14' : '30'} />
-                              <button
-                                type="submit"
-                                className="w-full rounded-pill bg-green-500/10 px-3 py-2 text-xs font-semibold text-green-700 transition hover:bg-green-500/20"
-                              >
-                                Essai Expert {row.sourceInstance === 'atelier-app' ? '14j' : '30j'}
-                              </button>
-                            </form>
-                          )}
-                          {isActiveTrial(row.trialEndsAt) && (
-                            <>
-                              <form action={convertOperatorTrial} className="flex gap-2">
-                                <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
-                                {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
-                                <select name="targetTier" defaultValue="pro" className={inputSmCls}>
-                                  <option value="starter">starter</option>
-                                  <option value="pro">pro</option>
-                                  <option value="expert">expert</option>
-                                </select>
-                                <button
-                                  type="submit"
-                                  className="rounded-pill bg-accent/10 px-3 py-2 text-xs font-semibold text-accent transition hover:bg-accent/20"
-                                >
-                                  Convertir
-                                </button>
-                              </form>
-                              <form action={expireOperatorTrial}>
-                                <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
-                                {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
-                                <input type="hidden" name="targetTier" value="setup_only" />
-                                <button
-                                  type="submit"
-                                  className="w-full rounded-pill bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-500/20"
-                                >
-                                  Terminer essai
-                                </button>
-                              </form>
-                            </>
-                          )}
-                        </div>
-                      </div>
-
-                      {row.organizationId && (
-                        <form action={upsertOperatorClientModules} className="mt-2 grid gap-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3 backdrop-blur-frost">
-                          <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
-                          <p className="text-xs font-bold uppercase tracking-wide text-secondary font-display mb-1">Modules</p>
-                          {ORGANIZATION_MODULE_KEYS.map((key) => (
-                            <label key={key} className="flex items-center gap-2 text-xs text-secondary font-body">
-                              <input
-                                name={`module_${key}`}
-                                type="checkbox"
-                                defaultChecked={row.modules[key]}
-                                className="h-4 w-4 rounded border-[var(--elevation-border)] accent-accent"
-                              />
-                              {key}
-                            </label>
-                          ))}
-                          <button
-                            type="submit"
-                            className="inline-flex justify-center rounded-pill bg-accent/10 text-accent px-3 py-2 text-xs font-semibold font-display transition hover:bg-accent/20"
-                          >
-                            Appliquer
-                          </button>
-                        </form>
-                      )}
-                      {row.organizationId && (() => {
-                        const suggestedPack = getEligibleVerticalPack(row.businessActivityId)
-                        return (
-                          <form action={upsertOperatorClientVerticalPack} className="mt-2 grid gap-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3 backdrop-blur-frost">
-                            <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
-                            <p className="text-xs font-bold uppercase tracking-wide text-secondary font-display mb-1">
-                              Pack verticale métier
-                              {suggestedPack && !row.businessVerticalPackId && (
-                                <span className="ml-2 rounded-pill bg-accent/10 px-2 py-0.5 text-[10px] font-semibold normal-case text-accent">
-                                  Suggéré : {suggestedPack.label}
-                                </span>
-                              )}
-                            </p>
-                            <select
-                              name="vertical_pack_id"
-                              defaultValue={row.businessVerticalPackId ?? ''}
-                              className="rounded-md border border-[var(--elevation-border)] bg-transparent px-2 py-1.5 text-xs text-primary"
-                            >
-                              <option value="">Aucun pack</option>
-                              {Object.values(VERTICAL_PACKS).map((pack) => (
-                                <option key={pack.id} value={pack.id}>{pack.label}</option>
-                              ))}
-                            </select>
-                            <button
-                              type="submit"
-                              className="inline-flex justify-center rounded-pill bg-accent/10 text-accent px-3 py-2 text-xs font-semibold font-display transition hover:bg-accent/20"
-                            >
-                              Appliquer
-                            </button>
-                          </form>
-                        )
-                      })()}
-                      {row.organizationId && (
-                        <form action={upsertOperatorClientMetalPricing} className="mt-2 grid gap-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3 backdrop-blur-frost">
-                          <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
-                          <p className="text-xs font-bold uppercase tracking-wide text-secondary font-display mb-1">
-                            Module prix matières (métal)
-                          </p>
-                          <label className="flex items-center gap-2 text-xs text-secondary font-body">
-                            <input
-                              name="hasMetalPricing"
-                              type="checkbox"
-                              defaultChecked={row.hasMetalPricing}
-                              className="h-4 w-4 rounded border-[var(--elevation-border)] accent-accent"
-                            />
-                            Actif — s'active normalement seul (tier Pro+ et activité métal), ce toggle sert de filet manuel
-                          </label>
-                          <button
-                            type="submit"
-                            className="inline-flex justify-center rounded-pill bg-accent/10 text-accent px-3 py-2 text-xs font-semibold font-display transition hover:bg-accent/20"
-                          >
-                            Appliquer
-                          </button>
-                        </form>
-                      )}
-                      <div className="mt-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3">
-                        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-secondary font-display">Quotas du mois en cours</p>
-                        {row.quotas.length === 0 ? (
-                          <p className="text-xs text-secondary">Aucun quota initialisé.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {row.quotas.map((quota) => {
-                              const definition = QUOTA_DEFINITIONS[quota.quota_feature]
-                              const current = normalizeNumber(quota.current_quantity)
-                              const monthly = normalizeNumber(quota.quota_monthly)
-                              const pct = monthly > 0 ? Math.round((current / monthly) * 100) : null
-                              return (
-                                <div key={quota.quota_feature} className="space-y-1 text-xs">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <span className="text-primary">{definition?.label ?? quota.quota_feature}</span>
-                                    <span className={`rounded-pill px-2 py-0.5 font-semibold ${getQuotaBadgeClass(quota)}`}>
-                                      {monthly < 0 ? 'illimité' : `${pct ?? 0}%`}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between gap-3 text-secondary tabular-nums">
-                                    <span>{formatQuotaValue(current)} / {formatQuotaValue(monthly)} {quota.quota_unit}</span>
-                                    <span>{formatMoney(normalizeNumber(quota.current_cost_eur))}</span>
-                                  </div>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                      <div className="mt-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3">
-                        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-secondary font-display">Journal cockpit</p>
-                        {row.events.length === 0 ? (
-                          <p className="text-xs text-secondary">Aucune action tracée.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {row.events.slice(0, 4).map((event) => (
-                              <div key={event.id} className="text-xs">
-                                <div className="flex items-center justify-between gap-3">
-                                  <span className="font-semibold text-primary">{getEventLabel(event.event_type)}</span>
-                                  <span className="text-secondary tabular-nums">{formatDate(event.created_at)}</span>
-                                </div>
-                                <p className="mt-0.5 text-secondary">
-                                  {event.actor_email ?? 'system'}
-                                  {event.notes ? ` · ${event.notes}` : ''}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <div className="mt-2 rounded-lg border border-[var(--elevation-border)] bg-interactive/40 dark:bg-white/[0.02] p-3">
-                        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-secondary font-display">CRM commercial</p>
-                        {row.commercialEvents.length === 0 ? (
-                          <p className="text-xs text-secondary">Aucune action commerciale tracée.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {row.commercialEvents.slice(0, 4).map((event) => {
-                              const deliveryStatus = typeof event.metadata?.delivery_status === 'string'
-                                ? event.metadata.delivery_status
-                                : null
-                              return (
-                                <div key={event.id} className="text-xs">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <span className="font-semibold text-primary">{getCommercialEventLabel(event.event_type)}</span>
-                                    <span className="text-secondary tabular-nums">{formatDate(event.sent_at)}</span>
-                                  </div>
-                                  <p className="mt-0.5 text-secondary">
-                                    {deliveryStatus ? `${deliveryStatus} · ` : ''}{event.subject_preview ?? event.email_template ?? event.sent_by}
-                                  </p>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        <ClientsTable rows={clientRows} />
       </section>
 
       {/* ── Module emails cockpit ────────────────────────────────────────── */}
@@ -1665,9 +879,12 @@ export default async function OrsaynPage() {
           .filter((row) => row.isActive)
           .map((row) => ({
             sourceInstance: row.sourceInstance,
+            organizationId: row.organizationId,
             label: row.label,
             tier: row.tier,
-            recipientEmail: (row.commercialEvents.find((e) => e.recipient_email)?.recipient_email) ?? null,
+            recipientEmail: row.contactEmail
+              ?? (row.commercialEvents.find((e) => e.recipient_email)?.recipient_email)
+              ?? null,
           }))
         return (
           <EmailsTab

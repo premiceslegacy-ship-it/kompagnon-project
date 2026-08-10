@@ -29,9 +29,9 @@ import {
 } from '@/lib/operator/trial-lifecycle'
 
 /** Résout l'organization_id depuis operator_clients pour une instance, en prenant
- *  la ligne la plus récemment mise à jour — même limite que getOperatorClientContext :
- *  pour une instance mutualisée à N organisations, appeler avec un organizationId
- *  explicite (champ de formulaire) plutôt que compter sur cette résolution arbitraire. */
+ *  la ligne la plus récemment mise à jour. Fallback UNIQUEMENT si l'appelant n'a
+ *  pas d'organizationId explicite (champ de formulaire) : sur une instance mutualisée
+ *  à N organisations, ce fallback peut résoudre la mauvaise organisation. */
 async function resolveOrganizationId(
   operator: ReturnType<typeof createOperatorAdminClient>,
   sourceInstance: string,
@@ -285,6 +285,7 @@ export async function upsertOperatorSubscription(formData: FormData) {
   const renewsAt = formData.get('renewsAt') ? new Date(String(formData.get('renewsAt'))) : null
   const einvoicingConfig = parseEinvoicingConfig(formData)
   const notes = String(formData.get('notes') ?? '').trim() || null
+  const contactEmail = parseOptionalEmail(formData.get('contactEmail'))
 
   const operator = createOperatorAdminClient()
   const organizationIdField = String(formData.get('organizationId') ?? '').trim()
@@ -317,6 +318,7 @@ export async function upsertOperatorSubscription(formData: FormData) {
       billing_currency: billingCurrency,
       is_active: formData.get('isActive') === 'on',
       app_url: appUrl,
+      contact_email: contactEmail,
       config_sync_status: appUrl ? 'pending' : 'pending_manual',
       updated_at: new Date().toISOString(),
     }, { onConflict: 'source_instance,organization_id' })
@@ -827,9 +829,10 @@ export async function upsertOperatorClientModules(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
+  const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
 
   const operator = createOperatorAdminClient()
-  const orgId = await resolveOrganizationId(operator, sourceInstance)
+  const orgId = requestedOrganizationId ?? await resolveOrganizationId(operator, sourceInstance)
 
   if (!orgId) {
     throw new Error('Client introuvable ou organization_id manquant')
@@ -881,9 +884,10 @@ export async function upsertOperatorClientVerticalPack(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
+  const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
 
   const operator = createOperatorAdminClient()
-  const orgId = await resolveOrganizationId(operator, sourceInstance)
+  const orgId = requestedOrganizationId ?? await resolveOrganizationId(operator, sourceInstance)
 
   if (!orgId) {
     throw new Error('Client introuvable ou organization_id manquant')
@@ -927,9 +931,10 @@ export async function upsertOperatorClientMetalPricing(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
+  const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
 
   const operator = createOperatorAdminClient()
-  const orgId = await resolveOrganizationId(operator, sourceInstance)
+  const orgId = requestedOrganizationId ?? await resolveOrganizationId(operator, sourceInstance)
 
   if (!orgId) {
     throw new Error('Client introuvable ou organization_id manquant')
