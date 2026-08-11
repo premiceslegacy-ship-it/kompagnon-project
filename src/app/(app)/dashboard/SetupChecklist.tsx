@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Building2,
   Check,
+  ChevronDown,
   ClipboardSignature,
   CreditCard,
   FileText,
@@ -175,7 +176,12 @@ function SetupCompleteCard({ organizationName, earnedPoints }: { organizationNam
 }
 
 export default function SetupChecklist({ readiness }: { readiness: DashboardSetupReadiness | null }) {
-  if (!readiness) return null
+  const [hidden, setHidden] = useState(false)
+  // Replié par défaut sous xl (mobile/tablette) : les 9 cartes empilées en une
+  // colonne feraient un mur de scroll avant le reste du dashboard.
+  const [expanded, setExpanded] = useState(false)
+
+  if (!readiness || hidden) return null
   const organizationName = readiness.organizationName?.trim() || 'votre entreprise'
   const catalogCopy = getCatalogSetupCopy(readiness.businessActivityId)
 
@@ -302,8 +308,17 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
                 Chaque mission débloque un gain concret dans l&#39;app. Les bonus restent facultatifs pour les entreprises qui en ont besoin.
               </p>
             </div>
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-accent/25 bg-accent/10">
-              <span className="text-lg font-extrabold tabular-nums text-accent">{completedRequired}/{requiredTotal}</span>
+            <div className="flex shrink-0 flex-col items-center gap-2">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-accent/25 bg-accent/10">
+                <span className="text-lg font-extrabold tabular-nums text-accent">{completedRequired}/{requiredTotal}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setHidden(true); dismissSetupChecklist() }}
+                className="text-xs font-semibold text-secondary underline-offset-2 hover:text-primary hover:underline"
+              >
+                Plus tard
+              </button>
             </div>
           </div>
 
@@ -333,12 +348,31 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
           )}
         </div>
 
-        <div className="space-y-3 p-4 sm:p-5">
-          <div className="grid gap-3 xl:grid-cols-2">
-            {requiredItems.map((item) => <ChecklistItem key={item.title} item={item} />)}
-          </div>
-          <div className="grid gap-3 border-t border-[var(--elevation-border)] pt-3 xl:grid-cols-2">
-            {optionalItems.map((item) => <ChecklistItem key={item.title} item={item} />)}
+        <div className="p-4 sm:p-5">
+          {/* Sous xl (mobile/tablette) : la liste est repliée par défaut derrière
+              ce bouton (la prochaine mission reste accessible via le bouton
+              "primary" du panneau de gauche). Au-delà de xl, tout reste affiché
+              comme avant (grille 2 colonnes, pas de repli). */}
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="flex w-full items-center justify-center gap-1.5 text-xs font-semibold text-secondary hover:text-primary xl:hidden"
+          >
+            {expanded ? 'Masquer les missions' : `Voir les ${requiredItems.length + optionalItems.length} missions`}
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </button>
+
+          <div
+            className={`grid transition-[grid-template-rows] duration-300 ease-out xl:!grid-rows-[1fr] ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
+          >
+            <div className="space-y-3 overflow-hidden xl:overflow-visible">
+              <div className="grid gap-3 pt-3 xl:pt-0 xl:grid-cols-2">
+                {requiredItems.map((item) => <ChecklistItem key={item.title} item={item} />)}
+              </div>
+              <div className="grid gap-3 border-t border-[var(--elevation-border)] pt-3 xl:grid-cols-2">
+                {optionalItems.map((item) => <ChecklistItem key={item.title} item={item} />)}
+              </div>
+            </div>
           </div>
         </div>
       </div>
