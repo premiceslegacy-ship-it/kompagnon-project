@@ -103,7 +103,7 @@ export default function SignaturePad({ value, onChange, width = 480, height = 18
 
   return (
     <div className="space-y-2">
-      <div className="relative block w-full">
+      <div className="relative inline-block max-w-full">
         <canvas
           ref={canvasRef}
           onPointerDown={handlePointerDown}
