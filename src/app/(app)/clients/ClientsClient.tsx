@@ -214,20 +214,23 @@ function ContactFields({ defaultValues }: { defaultValues?: Partial<Client> }) {
             <input name="company_name" type="text" defaultValue={defaultValues?.company_name ?? ''} placeholder="Dupont Bâtiment SARL" className={inputCls} />
           </div>
         )}
-        {isCompany && (
+        {isCompany ? (
           <div className="md:col-span-2 space-y-2">
             <label className="text-sm font-semibold text-secondary">Nom du contact référent</label>
             <input name="contact_name" type="text" defaultValue={defaultValues?.contact_name ?? ''} placeholder="Marie Dupont" className={inputCls} />
           </div>
+        ) : (
+          <>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-secondary">Prénom *</label>
+              <input name="first_name" type="text" defaultValue={defaultValues?.first_name ?? ''} placeholder="Jean" className={inputCls} />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-secondary">Nom *</label>
+              <input name="last_name" type="text" defaultValue={defaultValues?.last_name ?? ''} placeholder="Dupont" className={inputCls} />
+            </div>
+          </>
         )}
-        <div className="space-y-2">
-          <label className="text-sm font-semibold text-secondary">{isCompany ? 'Prénom contact' : 'Prénom *'}</label>
-          <input name="first_name" type="text" defaultValue={defaultValues?.first_name ?? ''} placeholder="Jean" className={inputCls} />
-        </div>
-        <div className="space-y-2">
-          <label className="text-sm font-semibold text-secondary">{isCompany ? 'Nom contact' : 'Nom *'}</label>
-          <input name="last_name" type="text" defaultValue={defaultValues?.last_name ?? ''} placeholder="Dupont" className={inputCls} />
-        </div>
         {isCompany && (
           <div className="space-y-2">
             <label className="text-sm font-semibold text-secondary">SIRET</label>
