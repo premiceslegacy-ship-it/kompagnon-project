@@ -9,13 +9,17 @@
  *   - envoie les rappels d'essai à J-7 et J-2
  *   - crée/envoie les alertes de dépassement de quota
  *
- * Variables d'environnement à configurer dans Cloudflare Dashboard :
- *   COCKPIT_URL  → URL du cockpit (ex: https://orsayn-cockpit.mbebourasam.workers.dev)
+ * COCKPIT est un Service Binding (voir wrangler.toml [[services]]) vers le
+ * Worker orsayn-cockpit : un fetch() classique vers l'URL publique échoue
+ * avec l'erreur Cloudflare 1042 (restriction Worker-vers-Worker sur le réseau
+ * public) — le binding route l'appel en interne, sans passer par internet.
+ *
+ * Variable à configurer dans Cloudflare Dashboard :
  *   CRON_SECRET  → même valeur que CRON_SECRET sur le Worker cockpit
  */
 
 export interface Env {
-  COCKPIT_URL: string
+  COCKPIT: { fetch(request: Request): Promise<Response> }
   CRON_SECRET: string
 }
 
@@ -50,15 +54,14 @@ export default {
 }
 
 async function runQuotaAlerts(env: Env): Promise<void> {
-  const url = `${env.COCKPIT_URL}/api/operator/cron/quota-alerts`
   try {
-    const res = await fetch(url, {
+    const res = await env.COCKPIT.fetch(new Request('https://orsayn-cockpit.mbebourasam.workers.dev/api/operator/cron/quota-alerts', {
       method: 'POST',
       headers: {
         'x-cron-secret': env.CRON_SECRET,
         'Content-Type': 'application/json',
       },
-    })
+    }))
     const data = await res.json() as Record<string, unknown>
     if (!res.ok) {
       console.error(`[operator-cron] quota-alerts returned ${res.status}:`, data)

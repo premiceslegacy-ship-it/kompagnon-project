@@ -7,8 +7,15 @@ compatibility_date = "2024-01-01"
 [triggers]
 crons = ["0 7 * * *"]
 
+# Service Binding vers le Worker cockpit : un fetch() classique vers l'URL
+# publique *.workers.dev échoue avec l'erreur Cloudflare 1042 (restriction
+# Worker-vers-Worker sur le réseau interne) — le binding contourne le réseau
+# public entièrement et route l'appel en interne, à l'intérieur du même compte.
+[[services]]
+binding = "COCKPIT"
+service = "orsayn-cockpit"
+
 # Variables d'environnement (valeurs à définir dans le Dashboard Cloudflare)
 # Ne pas mettre les vraies valeurs ici — utiliser `wrangler secret put`
 #
-# wrangler secret put COCKPIT_URL
 # wrangler secret put CRON_SECRET
