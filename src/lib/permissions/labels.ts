@@ -73,7 +73,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'settings.edit_emails':   'Modifier les modèles d’emails',
   'settings.edit_goals':    'Configurer les objectifs',
   'settings.edit_roles':    'Configurer les rôles',
-  'einvoicing.configure':   'Configurer la facturation électronique (B2Brouter)',
+  'einvoicing.configure':   'Configurer la facturation électronique (Super PDP)',
 
   // ─── Contrats ──────────────────────────────────────────────────────────────
   'contracts.view':   'Voir les contrats',

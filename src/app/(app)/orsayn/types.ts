@@ -6,7 +6,7 @@ import type {
   EinvoicingConfig,
   EinvoicingEnvironment,
   EinvoicingMode,
-  EinvoicingOnboardingModel,
+  EinvoicingOauthStatus,
   EinvoicingProvider,
 } from '@/lib/einvoicing-config'
 
@@ -60,13 +60,13 @@ export type OperatorClientSubscription = {
   trial_tier: SubscriptionTier | null
   trial_ends_at: string | null
   trial_converted: boolean | null
-  b2brouter_active: boolean
   einvoicing_mode: EinvoicingMode | null
   einvoicing_provider: EinvoicingProvider | null
   einvoicing_environment: EinvoicingEnvironment | null
-  einvoicing_onboarding_model: EinvoicingOnboardingModel | null
-  b2brouter_account_id: string | null
   einvoicing_annuaire_status: EinvoicingAnnuaireStatus | null
+  oauth_status: EinvoicingOauthStatus | null
+  oauth_connected_at: string | null
+  super_pdp_connection_id: string | null
   overflow_mode: OverflowMode
   notes: string | null
   preferred_tier: SellableTier | null
@@ -142,7 +142,6 @@ export type ClientRow = {
   cancelAt: string | null
   stripeStatus: string | null
   paymentFailedAt: string | null
-  b2brouterActive: boolean
   einvoicingConfig: EinvoicingConfig
   overflowMode: OverflowMode
   notes: string | null

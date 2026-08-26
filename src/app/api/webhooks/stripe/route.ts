@@ -19,6 +19,9 @@ type TenantContext = { sourceInstance: string; organizationId: string }
 
 function tierFromPriceId(priceId: string | null | undefined): SubscriptionTier | null {
   if (!priceId) return null
+  // STRIPE_PRICE_STARTER volontairement conservé : Starter n'est plus vendu, mais un
+  // customer.subscription.updated peut encore arriver pour un abonné historique sur cette
+  // Price ID. La retirer ferait échouer le webhook pour lui ("Price ID non reconnu").
   const entries: Array<[string | undefined, SubscriptionTier]> = [
     [process.env.STRIPE_PRICE_STARTER, 'starter'],
     [process.env.STRIPE_PRICE_PRO, 'pro'],
@@ -217,9 +220,10 @@ async function applySubscriptionState(input: {
     mode: previous?.einvoicing_mode ?? DEFAULT_EINVOICING_CONFIG.mode,
     provider: previous?.einvoicing_provider ?? null,
     environment: previous?.einvoicing_environment ?? DEFAULT_EINVOICING_CONFIG.environment,
-    onboarding_model: previous?.einvoicing_onboarding_model ?? null,
-    b2brouter_account_id: previous?.b2brouter_account_id ?? null,
     annuaire_status: previous?.einvoicing_annuaire_status ?? DEFAULT_EINVOICING_CONFIG.annuaire_status,
+    oauth_status: previous?.oauth_status ?? DEFAULT_EINVOICING_CONFIG.oauth_status,
+    oauth_connected_at: previous?.oauth_connected_at ?? null,
+    super_pdp_connection_id: previous?.super_pdp_connection_id ?? null,
   })
   await syncClientQuotaConfig(
     sourceInstance,

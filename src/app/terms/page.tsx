@@ -193,9 +193,9 @@ export default function TermsPage() {
           <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-zinc-300">
             Orsayn n&apos;est pas une Plateforme de Dématérialisation Partenaire (PDP) au sens du Décret
             2022-1299. En mode export, la transmission du fichier Factur-X vers une plateforme est
-            de la responsabilité du client. En mode B2Brouter, la transmission est assurée par
-            B2Brouter, PDP immatriculée par la DGFiP. La conformité légale de la transmission
-            incombe à B2Brouter et au client.
+            de la responsabilité du client. En mode Super PDP, la transmission est assurée par
+            SUPER PDP, PDP immatriculée par la DGFiP. La conformité légale de la transmission
+            incombe à SUPER PDP et au client.
           </p>
         </div>
       </section>

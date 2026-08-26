@@ -204,10 +204,22 @@ export function getSyncBadge(lastSeenAt: string | null, lastStatus: string | nul
 }
 
 export function getEinvoicingBadge(config: EinvoicingConfig) {
-  if (config.mode === 'b2brouter') {
+  if (config.mode === 'super_pdp') {
+    if (config.oauth_status === 'connected') {
+      return {
+        label: `Super PDP connecté (${config.environment})`,
+        className: 'bg-green-500/10 text-green-700',
+      }
+    }
+    if (config.oauth_status === 'error') {
+      return {
+        label: 'Super PDP en erreur',
+        className: 'bg-red-500/10 text-red-700',
+      }
+    }
     return {
-      label: `B2Brouter ${config.environment}`,
-      className: 'bg-green-500/10 text-green-700',
+      label: `Super PDP ${config.environment} — non connecté`,
+      className: 'bg-amber-500/10 text-amber-700',
     }
   }
 

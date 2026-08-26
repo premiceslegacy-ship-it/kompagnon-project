@@ -1,31 +1,33 @@
-export const EINVOICING_MODES = ['off', 'export_only', 'b2brouter'] as const
-export const EINVOICING_PROVIDERS = ['external_pa', 'b2brouter'] as const
+export const EINVOICING_MODES = ['off', 'export_only', 'super_pdp'] as const
+export const EINVOICING_PROVIDERS = ['external_pa', 'super_pdp'] as const
 export const EINVOICING_ENVIRONMENTS = ['sandbox', 'production'] as const
-export const EINVOICING_ONBOARDING_MODELS = ['edoc_exchange', 'edoc_sync'] as const
 export const EINVOICING_ANNUAIRE_STATUSES = ['not_started', 'pending', 'active', 'error'] as const
+export const EINVOICING_OAUTH_STATUSES = ['not_connected', 'pending', 'connected', 'error', 'revoked'] as const
 
 export type EinvoicingMode = typeof EINVOICING_MODES[number]
 export type EinvoicingProvider = typeof EINVOICING_PROVIDERS[number]
 export type EinvoicingEnvironment = typeof EINVOICING_ENVIRONMENTS[number]
-export type EinvoicingOnboardingModel = typeof EINVOICING_ONBOARDING_MODELS[number]
 export type EinvoicingAnnuaireStatus = typeof EINVOICING_ANNUAIRE_STATUSES[number]
+export type EinvoicingOauthStatus = typeof EINVOICING_OAUTH_STATUSES[number]
 
 export type EinvoicingConfig = {
   mode: EinvoicingMode
   provider: EinvoicingProvider | null
   environment: EinvoicingEnvironment
-  onboarding_model: EinvoicingOnboardingModel | null
-  b2brouter_account_id: string | null
   annuaire_status: EinvoicingAnnuaireStatus
+  oauth_status: EinvoicingOauthStatus
+  oauth_connected_at: string | null
+  super_pdp_connection_id: string | null
 }
 
 export const DEFAULT_EINVOICING_CONFIG: EinvoicingConfig = {
   mode: 'off',
   provider: null,
   environment: 'sandbox',
-  onboarding_model: null,
-  b2brouter_account_id: null,
   annuaire_status: 'not_started',
+  oauth_status: 'not_connected',
+  oauth_connected_at: null,
+  super_pdp_connection_id: null,
 }
 
 function isOneOf<T extends readonly string[]>(values: T, value: unknown): value is T[number] {
@@ -48,14 +50,8 @@ export function normalizeEinvoicingConfig(input: unknown): EinvoicingConfig {
     : DEFAULT_EINVOICING_CONFIG.mode
 
   const provider =
-    mode === 'b2brouter' ? 'b2brouter'
+    mode === 'super_pdp' ? 'super_pdp'
     : mode === 'export_only' ? 'external_pa'
-    : null
-
-  const onboardingModel = mode === 'b2brouter'
-    ? isOneOf(EINVOICING_ONBOARDING_MODELS, source.onboarding_model)
-      ? source.onboarding_model
-      : 'edoc_exchange'
     : null
 
   return {
@@ -64,11 +60,14 @@ export function normalizeEinvoicingConfig(input: unknown): EinvoicingConfig {
     environment: isOneOf(EINVOICING_ENVIRONMENTS, source.environment)
       ? source.environment
       : DEFAULT_EINVOICING_CONFIG.environment,
-    onboarding_model: onboardingModel,
-    b2brouter_account_id: mode === 'b2brouter' ? optionalString(source.b2brouter_account_id) : null,
-    annuaire_status: mode === 'b2brouter' && isOneOf(EINVOICING_ANNUAIRE_STATUSES, source.annuaire_status)
+    annuaire_status: mode === 'super_pdp' && isOneOf(EINVOICING_ANNUAIRE_STATUSES, source.annuaire_status)
       ? source.annuaire_status
       : DEFAULT_EINVOICING_CONFIG.annuaire_status,
+    oauth_status: mode === 'super_pdp' && isOneOf(EINVOICING_OAUTH_STATUSES, source.oauth_status)
+      ? source.oauth_status
+      : DEFAULT_EINVOICING_CONFIG.oauth_status,
+    oauth_connected_at: mode === 'super_pdp' ? optionalString(source.oauth_connected_at) : null,
+    super_pdp_connection_id: mode === 'super_pdp' ? optionalString(source.super_pdp_connection_id) : null,
   }
 }
 

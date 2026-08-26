@@ -88,9 +88,10 @@ export async function POST(req: NextRequest) {
     mode: subscription.einvoicing_mode ?? DEFAULT_EINVOICING_CONFIG.mode,
     provider: subscription.einvoicing_provider ?? null,
     environment: subscription.einvoicing_environment ?? DEFAULT_EINVOICING_CONFIG.environment,
-    onboarding_model: subscription.einvoicing_onboarding_model ?? null,
-    b2brouter_account_id: subscription.b2brouter_account_id ?? null,
     annuaire_status: subscription.einvoicing_annuaire_status ?? DEFAULT_EINVOICING_CONFIG.annuaire_status,
+    oauth_status: subscription.oauth_status ?? DEFAULT_EINVOICING_CONFIG.oauth_status,
+    oauth_connected_at: subscription.oauth_connected_at ?? null,
+    super_pdp_connection_id: subscription.super_pdp_connection_id ?? null,
   })
   await syncClientQuotaConfig(
     sourceInstance,

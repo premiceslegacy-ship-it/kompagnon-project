@@ -65,7 +65,7 @@ export default async function OrsaynPage() {
       .order('source_instance', { ascending: true }),
     operator
       .from('operator_client_subscriptions')
-      .select('source_instance, organization_id, tier, ai_billing_mode, mrr_ht, billing_currency, is_active, renews_at, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at, cancel_at, stripe_status, payment_failed_at, b2brouter_active, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status, overflow_mode, notes')
+      .select('source_instance, organization_id, tier, ai_billing_mode, mrr_ht, billing_currency, is_active, renews_at, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at, cancel_at, stripe_status, payment_failed_at, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, overflow_mode, notes')
       .order('source_instance', { ascending: true }),
     operator
       .from('operator_client_quotas')
@@ -233,12 +233,13 @@ export default async function OrsaynPage() {
       || client?.label?.trim()
       || sourceInstance
     const einvoicingConfig = normalizeEinvoicingConfigFromDb({
-      mode: subscription?.einvoicing_mode ?? (subscription?.b2brouter_active ? 'b2brouter' : DEFAULT_EINVOICING_CONFIG.mode),
+      mode: subscription?.einvoicing_mode ?? DEFAULT_EINVOICING_CONFIG.mode,
       provider: subscription?.einvoicing_provider ?? null,
       environment: subscription?.einvoicing_environment ?? DEFAULT_EINVOICING_CONFIG.environment,
-      onboarding_model: subscription?.einvoicing_onboarding_model ?? null,
-      b2brouter_account_id: subscription?.b2brouter_account_id ?? null,
       annuaire_status: subscription?.einvoicing_annuaire_status ?? DEFAULT_EINVOICING_CONFIG.annuaire_status,
+      oauth_status: subscription?.oauth_status ?? DEFAULT_EINVOICING_CONFIG.oauth_status,
+      oauth_connected_at: subscription?.oauth_connected_at ?? null,
+      super_pdp_connection_id: subscription?.super_pdp_connection_id ?? null,
     })
 
     return {
@@ -263,7 +264,6 @@ export default async function OrsaynPage() {
       cancelAt: subscription?.cancel_at ?? null,
       stripeStatus: subscription?.stripe_status ?? null,
       paymentFailedAt: subscription?.payment_failed_at ?? null,
-      b2brouterActive: subscription?.b2brouter_active ?? false,
       einvoicingConfig,
       overflowMode: subscription?.overflow_mode ?? 'block',
       notes: subscription?.notes ?? null,

@@ -164,7 +164,7 @@ CREATE TABLE IF NOT EXISTS public.invoice_schedules (
 
 -- ----------------------------------------------------------
 -- received_invoices
--- Factures fournisseurs reçues via webhook B2Brouter (PA)
+-- Factures fournisseurs reçues via la Plateforme Agréée (PA) configurée
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.received_invoices (
   id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -113,8 +113,6 @@ export async function POST(req: NextRequest) {
       mode: einvoicingConfig.mode,
       provider: einvoicingConfig.provider,
       environment: einvoicingConfig.environment,
-      onboarding_model: einvoicingConfig.onboarding_model,
-      b2brouter_account_id: einvoicingConfig.b2brouter_account_id,
       annuaire_status: einvoicingConfig.annuaire_status,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'organization_id' })
