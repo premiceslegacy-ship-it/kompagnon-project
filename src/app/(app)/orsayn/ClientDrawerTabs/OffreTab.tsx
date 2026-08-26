@@ -12,8 +12,15 @@ import {
   EINVOICING_ANNUAIRE_STATUSES,
   EINVOICING_ENVIRONMENTS,
   EINVOICING_MODES,
-  EINVOICING_ONBOARDING_MODELS,
 } from '@/lib/einvoicing-config'
+
+const oauthStatusLabels: Record<string, string> = {
+  not_connected: 'Non connecté',
+  pending: 'Connexion en cours',
+  connected: 'Connecté',
+  error: 'Erreur',
+  revoked: 'Révoqué',
+}
 
 const inputCls = 'w-full input-glass px-3 py-2 text-sm text-primary font-body outline-none'
 const fieldLabelCls = 'block text-xs font-bold uppercase tracking-wide text-secondary font-display mb-1.5'
@@ -149,19 +156,6 @@ export default function OffreTab({ row }: { row: ClientRow }) {
             </select>
           </label>
           <label className="block">
-            <span className={fieldLabelCls}>Modèle d&apos;onboarding</span>
-            <select name="einvoicingOnboardingModel" defaultValue={row.einvoicingConfig.onboarding_model ?? ''} className={inputCls}>
-              <option value="">Sans onboarding</option>
-              {EINVOICING_ONBOARDING_MODELS.map((model) => (
-                <option key={model} value={model}>{model}</option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className={fieldLabelCls}>B2Brouter account id</span>
-            <input name="b2brouterAccountId" defaultValue={row.einvoicingConfig.b2brouter_account_id ?? ''} placeholder="B2Brouter account id" className={inputCls} />
-          </label>
-          <label className="block">
             <span className={fieldLabelCls}>Statut annuaire</span>
             <select name="einvoicingAnnuaireStatus" defaultValue={row.einvoicingConfig.annuaire_status} className={inputCls}>
               {EINVOICING_ANNUAIRE_STATUSES.map((status) => (
@@ -170,8 +164,20 @@ export default function OffreTab({ row }: { row: ClientRow }) {
             </select>
           </label>
         </div>
+        <div className="rounded-lg border border-[var(--elevation-border)] bg-interactive/40 px-4 py-3">
+          <p className={fieldLabelCls}>Connexion Super PDP</p>
+          <p className="text-sm text-secondary">
+            {oauthStatusLabels[row.einvoicingConfig.oauth_status] ?? row.einvoicingConfig.oauth_status}
+            {row.einvoicingConfig.super_pdp_connection_id && (
+              <span className="ml-2 text-xs text-tertiary">({row.einvoicingConfig.super_pdp_connection_id})</span>
+            )}
+          </p>
+          <p className="mt-1 text-xs text-secondary">
+            L&apos;activation OAuth se fait par le client, depuis son instance — non pilotable depuis ce formulaire.
+          </p>
+        </div>
         <p className="text-xs leading-relaxed text-secondary">
-          Réception UI 2026 uniquement en mode B2Brouter. Avant 2027, l&apos;envoi PDF/mail reste normal pour TPE/PME.
+          Réception UI 2026 uniquement en mode Super PDP. Avant 2027, l&apos;envoi PDF/mail reste normal pour TPE/PME.
         </p>
       </div>
 

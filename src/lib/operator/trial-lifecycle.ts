@@ -174,11 +174,23 @@ export async function syncClientQuotaConfig(
   }
 
   const syncedTier = aiBillingMode === 'client_owned' ? 'expert' : tier
+  const modules = getModulesForTier(syncedTier)
+  const quotaConfig = getQuotaConfigForTier(syncedTier)
+
+  if (aiBillingMode === 'client_owned') {
+    // Le vocal live Sarah tourne toujours sur l'agent ElevenLabs centralisé Orsayn,
+    // jamais sur une clé fournie par le client : le coût (~0,10-0,12€/min) reste à la
+    // charge d'Orsayn quel que soit ai_billing_mode. Ne jamais l'ouvrir automatiquement
+    // ici — seul un add-on vocal configuré explicitement dans le cockpit doit l'activer.
+    modules.voice_live = false
+    quotaConfig.voice_live_minutes = 0
+  }
+
   const body = JSON.stringify({
     source_instance: sourceInstance,
     organization_id: organizationId,
-    modules: getModulesForTier(syncedTier),
-    quota_config: getQuotaConfigForTier(syncedTier),
+    modules,
+    quota_config: quotaConfig,
     overflow_mode: overflowMode,
     ai_billing_mode: aiBillingMode,
     einvoicing_config: einvoicingConfig,
@@ -262,7 +274,7 @@ export async function getOperatorClientContext(sourceInstance: string, organizat
     resolvedOrganizationId
       ? operator
         .from('operator_client_subscriptions')
-        .select('tier, ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_onboarding_model, b2brouter_account_id, einvoicing_annuaire_status, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at')
+        .select('tier, ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at')
         .eq('source_instance', sourceInstance)
         .eq('organization_id', resolvedOrganizationId)
         .maybeSingle()
@@ -282,9 +294,10 @@ export async function getOperatorClientContext(sourceInstance: string, organizat
     mode: subscription?.einvoicing_mode ?? DEFAULT_EINVOICING_CONFIG.mode,
     provider: subscription?.einvoicing_provider ?? null,
     environment: subscription?.einvoicing_environment ?? DEFAULT_EINVOICING_CONFIG.environment,
-    onboarding_model: subscription?.einvoicing_onboarding_model ?? null,
-    b2brouter_account_id: subscription?.b2brouter_account_id ?? null,
     annuaire_status: subscription?.einvoicing_annuaire_status ?? DEFAULT_EINVOICING_CONFIG.annuaire_status,
+    oauth_status: subscription?.oauth_status ?? DEFAULT_EINVOICING_CONFIG.oauth_status,
+    oauth_connected_at: subscription?.oauth_connected_at ?? null,
+    super_pdp_connection_id: subscription?.super_pdp_connection_id ?? null,
   })
 
   return {
@@ -344,10 +357,7 @@ export async function expireTrialForInstance(input: {
       einvoicing_mode: subscription.einvoicingConfig.mode,
       einvoicing_provider: subscription.einvoicingConfig.provider,
       einvoicing_environment: subscription.einvoicingConfig.environment,
-      einvoicing_onboarding_model: subscription.einvoicingConfig.onboarding_model,
-      b2brouter_account_id: subscription.einvoicingConfig.b2brouter_account_id,
       einvoicing_annuaire_status: subscription.einvoicingConfig.annuaire_status,
-      b2brouter_active: subscription.einvoicingConfig.mode === 'b2brouter',
       trial_tier: null,
       trial_ends_at: selfServiceTrial ? subscription.trialEndsAt : null,
       trial_converted: false,

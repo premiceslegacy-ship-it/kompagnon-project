@@ -4,7 +4,7 @@
 > Modèle : **1 Supabase + 1 déploiement Cloudflare Workers + 1 domaine** par client — données totalement isolées.
 
 > **Etat réel mai 2026 :** le déploiement app client, les migrations, les Edge Functions et les Workers cron sont opérables. Les variables Cloudflare sont entièrement automatisables : `scripts/prepare-cloudflare-env.mjs` injecte les secrets via Wrangler (`--apply-secrets`) et les variables texte via l'API REST Cloudflare (`--apply-all`). `CLOUDFLARE_ACCOUNT_ID` et `CLOUDFLARE_API_TOKEN` requis dans `.env.local` pour `--apply-all`.
-> **Scopes séparées :** Stripe abonnements cockpit → `docs/scope-cockpit-stripe-abonnements.md`. B2Brouter / sandbox facturation électronique → `docs/atelier-facturation-electronique.md`. Paiement en ligne des factures artisan → `docs/scope-paiement-en-ligne.md`. WhatsApp mutualisé → en attente de vérification Meta / routage central.
+> **Scopes séparées :** Stripe abonnements cockpit → `docs/scope-cockpit-stripe-abonnements.md`. Super PDP / facturation électronique → `docs/atelier-facturation-electronique.md`. Paiement en ligne des factures artisan → `docs/scope-paiement-en-ligne.md`. WhatsApp mutualisé → en attente de vérification Meta / routage central.
 
 ---
 
@@ -94,9 +94,59 @@ Cloudflare Workers — Atelier-Dupont
 
 ---
 
+## ─── PHASE 0 — INTERVIEW CLIENT ────────────────────────────────────────────────
+
+> Pour déployer un nouveau client, tu n'as plus besoin de remplir le bloc technique
+> "Protocole de session" toi-même. Dis simplement à Claude "on onboarde un nouveau client"
+> (ou équivalent) en début de session. **Claude pose les questions ci-dessous, une par une
+> ou groupées par thème, en langage simple — pas de jargon technique.** Une fois les réponses
+> obtenues, Claude reformule et remplit lui-même le bloc "Protocole de session" plus bas,
+> te le montre pour confirmation, puis exécute.
+
+**Questions à poser (dans cet ordre, sauter celles déjà répondues spontanément) :**
+
+1. **Nom de l'entreprise cliente ?** → sert à dériver le nom du worker (`atelier-nomclient`),
+   le nom affiché dans les emails, et à vérifier si un pack métier existe (ex. métallerie/tôlerie
+   → `business_vertical_pack = metal`, voir migration `164_vertical_packs.sql`).
+2. **Quel est son métier principal ?** (menuiserie, électricité, plomberie, métallerie/tôlerie,
+   rénovation, autre BTP...) → détermine si un pack vertical s'applique, sans jamais gater les
+   fonctionnalités BTP génériques par métier.
+3. **Quelle offre a-t-il pris ?** setup seul à 3000€ sans abonnement / abonnement Pro 69€/mois /
+   abonnement Expert 169€/mois → remplit `Offre souscrite`. Ne jamais proposer Starter, il n'est
+   plus vendu.
+4. **Si setup seul : le client a-t-il (ou va-t-il créer) sa propre clé OpenRouter ?**
+   Oui → Sarah texte et les autres modules IA s'activeront automatiquement (niveau Expert, vocal
+   live exclu — voir section IA plus bas), le client paie directement OpenRouter. Non → l'app
+   tourne sans aucune IA active pour l'instant, activable plus tard.
+5. **A-t-il déjà un nom de domaine à utiliser, ou on démarre sur une URL provisoire ?**
+   → remplit `Domaine`. Si oui, demander aussi le nom de domaine exact et si l'accès DNS chez le
+   registrar est disponible pour T2/T5.
+6. **Comment veut-il apparaître dans ses emails clients (devis, factures, relances) ?**
+   → nom affiché + adresse d'expéditeur, remplit `Nom affiché email` / `Adresse email expéditeur`.
+7. **Veut-il un essai de 30 jours en Expert offert au démarrage ?** → remplit `Essai IA offert`.
+8. **Pour la facturation électronique : rien pour l'instant (export PDF/XML Factur-X inclus
+   d'office, sans surcoût), ou passer directement en mode Super PDP (transmission/réception
+   pilotées par Orsayn) ?** → remplit `Facturation électronique`. Aucun compte ni secret à créer
+   pour ce choix : le mode se change en un clic dans le cockpit, c'est ensuite l'artisan qui
+   autorise la connexion Super PDP depuis son propre Atelier.
+9. **WhatsApp : le client en a-t-il besoin dès maintenant ?** (rappeler que le canal mutualisé
+   est encore en attente de vérification Meta) → remplit `WhatsApp activé`.
+
+**Ce que Claude ne demande jamais** (dérivé automatiquement ou déjà dans `.env.local`) :
+`Worker name` (slugifié depuis le nom d'entreprise), `Project ref Supabase` / clés (créés
+manuellement par toi en T1, donnés à ce moment-là), `CRON_SECRET` et les autres secrets générés,
+`Overflow mode` (garder le défaut `block` sauf raison explicite du client de vouloir plus de
+souplesse en fin de quota).
+
+Une fois les 9 réponses obtenues, Claude reformule le bloc "Protocole de session" rempli et
+demande confirmation avant de lancer T1-T7 / C1-C10.
+
+---
+
 ## ─── PROTOCOLE DE SESSION ──────────────────────────────────────────────────────
 
-> Quand tu demandes à Claude de déployer un nouveau client, donne-lui **uniquement ça** en début de session. Claude fait le reste.
+> Si tu préfères remplir ce bloc toi-même plutôt que de passer par l'interview ci-dessus,
+> donne-le **directement** à Claude en début de session, complété. Claude fait le reste.
 
 > **Ce que Claude lit automatiquement depuis ton `.env.local`** (ne pas répéter dans le protocole) :
 > - `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` — injection vars Cloudflare via `--apply-all`
@@ -105,7 +155,7 @@ Cloudflare Workers — Atelier-Dupont
 > - `OPERATOR_INGEST_URL` + `OPERATOR_ALLOWED_EMAILS` + `OPERATOR_USD_TO_EUR_RATE`
 > - `OPERATOR_SOURCE_INSTANCE` — **déduit automatiquement du worker-name** fourni dans le protocole (ex: `atelier-weber`)
 > - `VAPID_PRIVATE_KEY` + `NEXT_PUBLIC_VAPID_PUBLIC_KEY` — paire partagée notifications push
-> - `OPENROUTER_API_KEY` + `MISTRAL_API_KEY` — clés IA Atelier partagées (sauf si Client fournit la sienne)
+> - `OPENROUTER_API_KEY` — clé IA Atelier partagée pour le Worker (sauf si Client fournit la sienne). Couvre aussi la transcription vocale (Voxtral via OpenRouter depuis le 2026-08-22) — `MISTRAL_API_KEY` n'est plus nécessaire sur le Worker, seulement pour l'Edge Function `whatsapp-webhook` (voir étape 6)
 > - `ELEVENLABS_API_KEY` + `ELEVENLABS_AGENT_ID` — compte ElevenLabs Orsayn centralisé (1 agent partagé, contexte injecté par org). Toujours lu depuis `.env.local`, jamais fourni par le client.
 > - `RESEND_API_KEY` Atelier partagée (sauf si client a son propre compte Resend)
 > - `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET` — générés par Claude si absents du protocole
@@ -126,26 +176,49 @@ Clé OpenRouter : Atelier (défaut) / Client (fournir sk-or-xxx)
   → Atelier : clé partagée depuis .env.local, Atelier porte le coût IA
   → Client : le client crée son compte openrouter.ai et fournit sa clé — il paye directement
   → setup_only avec clé client : possible — injecter la clé via OPENROUTER_API_KEY dans le template setup-only,
-    noter ai_billing_mode = client_owned dans le cockpit. Tous les modules restent à false côté cockpit
-    (l'app ne fera aucun appel IA) mais la clé est disponible si un module est activé ponctuellement.
+    noter ai_billing_mode = client_owned dans le cockpit. Comportement réel (voir ci-dessous) :
+    tous les modules IA texte s'activent automatiquement (niveau Expert, Sarah widget comprise),
+    SAUF voice_live qui reste toujours à false par défaut — vocal live jamais offert gratuitement.
 Mode facturation IA cockpit : orsayn_shared / client_owned
   → orsayn_shared : coût IA soustrait de la marge dans le cockpit
   → client_owned : conso visible pour pricing, mais coût non porté par Orsayn
+  → client_owned bascule automatiquement modules + quotas sur le niveau Expert (`syncClientQuotaConfig`,
+    src/lib/operator/trial-lifecycle.ts) — logique volontaire : les seules offres vendues sont
+    setup_only / pro / expert, donc un setup_only qui fournit sa propre clé doit avoir Sarah texte
+    comme un client payant. Le vocal live est explicitement exclu de cette bascule (voir ci-dessous)
+    car il coûte à Orsayn même en client_owned.
 Sarah vocale ElevenLabs : toujours compte Orsayn centralisé, 1 agent partagé pour tous les clients
+  → Le vocal live tourne TOUJOURS sur l'agent + la clé ElevenLabs d'Orsayn, jamais sur une clé du client
+    (l'agent Conversational AI est un objet lié au compte qui l'a créé — pas de "bring your own key").
+    Coût réel ~0,10-0,12€/min quel que soit ai_billing_mode : voice_live et voice_live_minutes restent
+    donc à false/0 par défaut pour tout client sans MRR couvrant ce poste, y compris en client_owned.
   → Pro/Expert standard : quota voice_live_minutes inclus dans le MRR, clés depuis .env.local
-  → Client self-hosted (add-on vocal) : même agent Orsayn, quota voice_live_minutes configuré dans le cockpit et re-facturé avec marge — pas de clés séparées à fournir
-  → Starter / setup_only : widget Sarah ABSENT de l'UI (conditionné sur modules.sarah_assistant) — ni chatbot texte ni vocal, aucun appel ElevenLabs possible
-  → Starter : feature "rédiger un email client" accessible (module relances_ai, quota partagé) — ce n'est pas le widget Sarah
-  → Ne pas oublier au déploiement Pro/Expert : ajouter le domaine client dans ElevenLabs > Agent > Sécurité > Liste d'autorisation
+  → Client setup_only qui veut quand même le vocal (add-on) : même agent Orsayn, module voice_live
+    et quota voice_live_minutes activés manuellement dans le cockpit et re-facturés avec marge —
+    pas de clés séparées à fournir, mais jamais automatique
+  → setup_only sans add-on vocal : widget Sarah texte présent si client_owned (voir ci-dessus),
+    mais aucun appel ElevenLabs possible tant que voice_live n'est pas activé à la main
+  → Starter n'est plus une offre commerciale active (seules setup_only / pro / expert sont vendues,
+    voir docs/STRATEGIE-COMMERCIALE.md) — le tier reste dans le code (quota-catalog.ts) mais ne doit
+    plus être proposé à un nouveau client
+  → Ne pas oublier au déploiement Pro/Expert (ou setup_only + add-on vocal) : ajouter le domaine
+    client dans ElevenLabs > Agent > Sécurité > Liste d'autorisation
 WhatsApp activé : oui / non
   → Etat actuel : en attente de vérification Meta / routage central Orsayn non livré
   → Mode mutualisé Twilio cible : rien à fournir côté client — routing via webhook central Orsayn
   → Mode propre WABA : Phone Number ID + Access Token Meta/Graph-compatible, permanent
-Offre souscrite : [setup_only | starter | pro | expert]
+Offre souscrite : [setup_only | pro | expert]
+  → Starter n'est plus une offre commerciale active (retiré de la vente le 22 août 2026) —
+    ne jamais le proposer à un nouveau client. Le tier reste géré techniquement en interne
+    (quota-catalog.ts, webhook Stripe) pour ne pas casser un client historique déjà dessus,
+    mais il n'apparaît plus dans les choix d'achat de l'app ni dans ce protocole.
   → Détermine modules + quota_config dans organization_modules au déploiement (étape C8)
-  → setup_only : app complète sans IA — tous les modules IA à false, tous quotas à 0, OPENROUTER_API_KEY optionnel (si client veut sa propre clé pour usage futur)
-  → starter : IA web (devis, relances, planning, catalogue, OCR, rapports chantier) + rédaction emails clients IA — Sarah widget ABSENT (pas de chatbot, pas de vocal ElevenLabs)
-  → pro : Starter + Sarah widget texte (120 appels/mois) + Sarah vocale ElevenLabs (60 min/mois) — WhatsApp suspendu
+  → setup_only : app complète sans IA par défaut — tous les modules IA à false, tous quotas à 0,
+    OPENROUTER_API_KEY optionnel (si client veut sa propre clé pour usage futur). Si le client
+    fournit sa clé (ai_billing_mode = client_owned), Sarah texte et le reste des modules IA
+    s'activent automatiquement au niveau Expert — sauf voice_live, toujours à false par défaut
+    (voir section "Sarah vocale ElevenLabs" plus haut)
+  → pro : Sarah widget texte (120 appels/mois) + Sarah vocale ElevenLabs (60 min/mois) — WhatsApp suspendu
   → expert : IA illimitée + Sarah widget texte illimitée + Sarah vocale (300 min/mois) — WhatsApp suspendu
   → facturation électronique gérée séparément par le cockpit
   → les modules WhatsApp (whatsapp_agent, whatsapp_ocr, whatsapp_proactive) restent à false sur tous les tiers jusqu'à réouverture du canal Meta
@@ -155,10 +228,16 @@ Overflow mode : block (défaut) | upgrade_prompt | charge
   → charge : usage supplémentaire facturé (+0,50€/tranche 50 msg WA)
 Essai IA offert : oui (30 jours Expert) / non
   → Si oui : active tous les modules Expert + note trial_ends_at = today + 30j dans operator_client_subscriptions
-Facturation électronique : off | export_only (défaut) | b2brouter
+Facturation électronique : off | export_only (défaut) | super_pdp
   → export_only : Atelier génère PDF + XML Factur-X, envoi PDF/mail normal jusqu'au 31/08/2027 — aucun surcoût
-  → b2brouter : sandbox ouverte, intégration en cours dans `docs/atelier-facturation-electronique.md`
-  → mode Orsayn cible : eDocExchange. Le compte entreprise est créé/configuré dans l'UI B2Brouter, le cockpit stocke l'account_id et pousse la config.
+  → super_pdp : Orsayn transmet et suit les statuts via Super PDP (immatriculé DGFiP, Peppol AP+SMP) —
+    architecture détaillée dans `docs/atelier-facturation-electronique.md`
+  → Aucun secret ni compte à créer par client : l'app OAuth Super PDP est unique et portée par Orsayn
+    (sandbox + production). Passer `einvoicing_config.mode = 'super_pdp'` dans le cockpit suffit côté
+    déploiement ; c'est ensuite l'artisan qui clique "Activer la facturation électronique" depuis son
+    Atelier (`/settings`), autorise la connexion côté Super PDP, et revient connecté. Le cockpit stocke
+    ses tokens chiffrés via le callback OAuth dédié (`/api/einvoicing/oauth/callback`, encore à construire —
+    voir §7.3 de `docs/atelier-facturation-electronique.md`).
 ```
 
 ---
@@ -266,12 +345,14 @@ Après avoir peuplé `company_memory`, je configure `organization_modules.module
 
 | Offre | Modules / quotas |
 |-------|----------------|
-| `setup_only` | Tous modules à `false`, tous quotas à `0`. OPENROUTER_API_KEY peut être injectée si clé client propre, mais aucun module actif. |
-| `starter` | IA web complète (devis, relances, planning, catalogue, OCR, rapports, emails clients IA) — `sarah_assistant: false` (ni widget chatbot ni vocal), `voice_live: false`, WhatsApp à `false` |
-| `pro` | Starter + `sarah_assistant: true` (Sarah widget texte + vocal ElevenLabs, 120 appels texte + 60 min vocal/mois) — WhatsApp à `false` |
+| `setup_only` (orsayn_shared) | Tous modules à `false`, tous quotas à `0`. |
+| `setup_only` (client_owned) | Modules/quotas niveau Expert appliqués automatiquement (Sarah widget texte comprise, illimité), SAUF `voice_live: false` / `voice_live_minutes: 0` — jamais de vocal gratuit (`syncClientQuotaConfig`, src/lib/operator/trial-lifecycle.ts) |
+| `pro` | `sarah_assistant: true` (Sarah widget texte + vocal ElevenLabs, 120 appels texte + 60 min vocal/mois) — WhatsApp à `false` |
 | `expert` | Tous modules IA à `true`, quotas illimités sauf vocal live (300 min/mois) — WhatsApp à `false` jusqu'à réouverture Meta |
 
-La facturation électronique est configurée séparément dans le cockpit après le tier : `off`, `export_only` ou `b2brouter`.
+> Starter (`quota-catalog.ts`) n'est conservé que pour ne pas casser un éventuel client déjà dessus — plus proposé à la vente, à ne plus utiliser en déploiement.
+
+La facturation électronique est configurée séparément dans le cockpit après le tier : `off`, `export_only` ou `super_pdp`.
 
 Si "Essai IA offert : oui" :
 1. Activer tous les modules Expert côté instance cliente (config-sync)
@@ -394,7 +475,7 @@ Le cockpit Orsayn reste la source de vérité pour modifier tier, modules, quota
 100_org_annual_objectives.sql             ← Objectifs annuels organisation : CA HT, marge €/%, chantiers, heures, clients — table org_annual_objectives
 101_org_tva_sur_debits.sql                ← TVA sur débits vs encaissements : organizations.tva_sur_debits BOOLEAN — impacte les rapports et l'export FEC
 102_pointage_rate_snapshot.sql            ← Snapshot taux horaire au moment du pointage : chantier_pointages.rate_snapshot — fige le taux au moment de la saisie
-103_organization_einvoicing_config.sql    ← Config locale e-facturation sync cockpit : off/export_only/b2brouter, sandbox/prod, account id, annuaire
+103_organization_einvoicing_config.sql    ← Config locale e-facturation sync cockpit : off/export_only/super_pdp, sandbox/prod, annuaire (colonnes OAuth ajoutées par la 173, voir plus bas)
 104_quote_client_signature.sql            ← Signature manuscrite du client sur devis : nom, fonction, image dans le PDF signé
 105_setup_checklist_dismissed.sql         ← Dashboard : mémorise que l'owner a masqué la checklist de lancement
 106_chantier_task_assignments.sql         ← Assignations multiples des tâches chantier à des équipes ou membres terrain
@@ -461,6 +542,10 @@ Le cockpit Orsayn reste la source de vérité pour modifier tier, modules, quota
 167_nickel_lme_pricing.sql                      ← Ajoute NI (nickel, proxy de cours pour l'inox) comme 5ème métal LME dans le module prix matières
 168_metal_price_history.sql                     ← Historique quotidien des cours (metal_price_history) — alimente le calcul de tendance/variation affiché dans la bannière prix matières
 169_plan_measurements.sql                       ← Brouillons de pré-métré RLS + métadonnées de traçabilité sur les lignes de devis
+...
+173_super_pdp_einvoicing_config.sql             ← Bascule `organization_einvoicing_config` sur Super PDP : retire onboarding_model/b2brouter_account_id, ajoute oauth_status/oauth_connected_at/super_pdp_connection_id, mode CHECK off|export_only|super_pdp
+174_pa_provider_default_cleanup.sql             ← Corrige le défaut trompeur de organizations.pa_provider (résidu B2Brouter jamais lu par le code) et nettoie les lignes existantes à 'b2brouter'
+175_einvoicing_permission_label.sql             ← Corrige le libellé seedé de la permission einvoicing.configure ("Configurer la PA (Super PDP)"), affichait encore "(B2Brouter)"
 ```
 
 Note historique :
@@ -756,10 +841,20 @@ Effets de ces migrations :
 
 - `103` :
   - nouvelle table `organization_einvoicing_config` — copie locale de la configuration e-facturation pilotée par le cockpit
-  - modes supportés : `off`, `export_only`, `b2brouter`
+  - modes supportés à l'origine : `off`, `export_only`, `b2brouter` — **remplacés par la migration `173`** (voir plus bas), le modèle B2Brouter n'a jamais eu d'implémentation réelle derrière
   - `export_only` prépare/télécharge le Factur-X sans transmission PA par Atelier
-  - `b2brouter` active la réception UI 2026 et prépare l'orchestration B2Brouter via `b2brouter_account_id`
   - **NOTICE :** migration additive. Le défaut est `off`; appliquer une offre depuis `/orsayn` pour pousser la config réelle.
+
+- `173` :
+  - remplace le mode `b2brouter` par `super_pdp` sur `organization_einvoicing_config` (`mode CHECK off | export_only | super_pdp`)
+  - retire les colonnes `onboarding_model` et `b2brouter_account_id` (concepts propres à B2Brouter, sans équivalent Super PDP)
+  - ajoute `oauth_status` (`not_connected | pending | connected | error | revoked`), `oauth_connected_at`, `super_pdp_connection_id` — métadonnées de statut uniquement, aucun secret stocké côté instance cliente
+  - miroir cockpit : `supabase/operator-migrations/014_super_pdp_einvoicing_config.sql` sur `operator_client_subscriptions` (retire aussi `b2brouter_active`)
+  - **NOTICE :** migration destructive sur les colonnes B2Brouter retirées — sans conséquence, aucun client actif n'était en mode `b2brouter`
+- `174` :
+  - corrige le défaut trompeur de `organizations.pa_provider` (résidu B2Brouter jamais lu par le code applicatif — le pilotage réel passe par `organization_einvoicing_config`) et nettoie les lignes existantes valant `'b2brouter'`
+- `175` :
+  - corrige le libellé seedé de la permission `einvoicing.configure` en base (affichait encore "(B2Brouter)" après la bascule vers Super PDP) → "Configurer la PA (Super PDP)"
 - `104` :
   - signature manuscrite du client sur devis : nom, fonction et image de signature dans le PDF signé
   - obligatoire avant d'utiliser le parcours de signature client côté devis
@@ -868,7 +963,7 @@ Impact déploiement :
 - `057` vide les embeddings existants : déclencher le cron `/api/cron/embeddings` après migration pour re-générer
 - ajouter les 3 variables opérateur dans Cloudflare Workers pour activer la sync vers le cockpit (voir §3)
 - `083` : obligatoire avant le nouveau cockpit quotas ; après push, appliquer un tier depuis `/orsayn` pour peupler `organization_modules.quota_config`
-- `103` : obligatoire avant que le cockpit puisse pousser `einvoicing_config` vers une instance client ; après push, utiliser `/orsayn` → Facturation électronique → mode `off` / `export_only` / `b2brouter`
+- `103` (puis `173`) : obligatoire avant que le cockpit puisse pousser `einvoicing_config` vers une instance client ; après push, utiliser `/orsayn` → Facturation électronique → mode `off` / `export_only` / `super_pdp`
 - après migration, vérifier rapidement dans l'app :
   - Settings → activité métier bien sélectionnée
   - Catalogue → création/édition produit/service OK
@@ -942,9 +1037,8 @@ NEXT_PUBLIC_LEGAL_HOSTING_WEBSITE=https://www.cloudflare.com
 NEXT_PUBLIC_SUPPORT_EMAIL=...
 NEXT_PUBLIC_PRIVACY_EMAIL=...
 NEXT_PUBLIC_LEGAL_EMAIL=...
-OPENROUTER_API_KEY=sk-or-...          ← clé Atelier partagée
+OPENROUTER_API_KEY=sk-or-...          ← clé Atelier partagée (couvre aussi la transcription vocale Voxtral depuis le 2026-08-22)
 METALPRICEAPI_KEY=...                  ← uniquement si has_metal_pricing activé (plan Basic 12$/mois, mutualisé entre tous les clients du module) — obtenir sur metalpriceapi.com
-MISTRAL_API_KEY=...                    ← clé Atelier partagée
 CRON_SECRET=...                        ← unique par client (openssl rand -hex 32)
 MEMBER_SESSION_SECRET=...              ← unique par client, signe le cookie de session /mon-espace (openssl rand -hex 32)
 RATE_LIMIT_SECRET=...                   ← optionnel, unique par client ; fallback CRON_SECRET si absent
@@ -961,14 +1055,9 @@ OPERATOR_INGEST_URL=https://orsayn-cockpit.mbebourasam.workers.dev/api/operator/
 OPERATOR_INGEST_SECRET=...             ← secret HMAC partagé (identique sur toutes les instances + cockpit)
 OPERATOR_CONFIG_SYNC_SECRET=...        ← optionnel ; si absent, /api/operator/config-sync utilise OPERATOR_INGEST_SECRET
 # OPERATOR_SOURCE_INSTANCE=nom-client ← optionnel : si absent, utilise le host de NEXT_PUBLIC_APP_URL (ex: atelier-weber.workers.dev). Renommable dans le cockpit après.
-
-# B2Brouter — uniquement si einvoicing_config.mode = b2brouter
-B2BROUTER_ENV=sandbox                   ← sandbox | production
-B2BROUTER_API_VERSION=2026-03-02        ← version minimum DGFiP
-B2BROUTER_API_KEY=...                   ← secret API B2Brouter eDocExchange
-B2BROUTER_ACCOUNT_ID=...                ← account id B2Brouter du compte client (sandbox/prod distincts)
-B2BROUTER_WEBHOOK_SECRET=...            ← signing secret webhook B2Brouter, quand les webhooks seront activés
 ```
+
+> **Facturation électronique — aucune variable Cloudflare côté instance client.** Contrairement au modèle B2Brouter précédent, Super PDP fonctionne en OAuth 2.1 multi-tenant : une seule app OAuth (sandbox + production) portée par Orsayn, dont les credentials vivent uniquement dans `.env.cockpit` (`SUPER_PDP_*`, jamais sur une instance cliente). Il n'y a ni compte, ni clé API, ni `account_id` à créer ou injecter par client. Passer `einvoicing_config.mode = 'super_pdp'` dans le cockpit suffit ; l'artisan connecte ensuite son propre compte via le flux OAuth déclenché depuis `/settings`. Voir `docs/atelier-facturation-electronique.md` §7.
 
 > **Note :** les variables `OPERATOR_*` sont optionnelles. Sans `OPERATOR_INGEST_URL/SECRET`, les appels IA fonctionnent normalement mais les coûts ne remontent pas au cockpit (`operator_sync_status = 'skipped'` dans `usage_logs`). Sans secret de config sync, le cockpit garde la configuration client en `skipped` et il faut peupler `organization_modules` / `organization_einvoicing_config` manuellement.
 
@@ -995,8 +1084,6 @@ OPERATOR_ALLOWED_EMAILS=...
 ```
 
 Elles sont réservées au Worker `orsayn-cockpit`.
-
-> **Note B2Brouter :** en `export_only`, ne pas renseigner les variables `B2BROUTER_*`. En `b2brouter`, le compte est créé/configuré dans l'UI B2Brouter (eDocExchange), puis `B2BROUTER_ACCOUNT_ID` est reporté dans Cloudflare et dans le cockpit. Les environnements sandbox et production ont des clés et account ids distincts.
 
 **Note :** les variables `NEXT_PUBLIC_LEGAL_*` et `NEXT_PUBLIC_*EMAIL` servent aux pages publiques `privacy`, `terms`, `legal`
 et devront être reprises telles quelles sur la future landing pour garder un wording cohérent.
@@ -1099,8 +1186,8 @@ CLOUDFLARE_API_TOKEN=<Token API — My Profile → API Tokens, scope "Edit Worke
 
 | Type | Variables |
 |------|-----------|
-| **Secret** | `OPERATOR_INGEST_SECRET`, `OPERATOR_CONFIG_SYNC_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET`, `VAPID_PRIVATE_KEY`; `B2BROUTER_API_KEY` et `B2BROUTER_WEBHOOK_SECRET` seulement en mode B2Brouter ; `SHARED_WABA_ACCESS_TOKEN` seulement en mode Meta/Graph-compatible |
-| **Text** | `SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `AI_RATE_LIMIT_PER_HOUR`, `PUBLIC_FORM_RATE_LIMIT_PER_HOUR`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE`, `B2BROUTER_ENV`, `B2BROUTER_API_VERSION`, `B2BROUTER_ACCOUNT_ID`, `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER`; `SHARED_WABA_PHONE_NUMBER_ID` seulement en mode Meta/Graph-compatible; et toutes les `NEXT_PUBLIC_LEGAL_*` |
+| **Secret** | `OPERATOR_INGEST_SECRET`, `OPERATOR_CONFIG_SYNC_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET`, `VAPID_PRIVATE_KEY`; `SHARED_WABA_ACCESS_TOKEN` seulement en mode Meta/Graph-compatible. `MISTRAL_API_KEY` n'est plus requise ici (transcription migrée sur OpenRouter) — seulement sur l'Edge Function `whatsapp-webhook`, voir §6. Aucune variable de facturation électronique ici : le mode `super_pdp` ne demande ni secret ni compte par client — les credentials OAuth Super PDP (`SUPER_PDP_*`) vivent uniquement dans `.env.cockpit`, jamais sur une instance cliente |
+| **Text** | `SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `AI_RATE_LIMIT_PER_HOUR`, `PUBLIC_FORM_RATE_LIMIT_PER_HOUR`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE`, `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER`; `SHARED_WABA_PHONE_NUMBER_ID` seulement en mode Meta/Graph-compatible; et toutes les `NEXT_PUBLIC_LEGAL_*` |
 
 Les variables `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_SUPABASE_SERVICE_ROLE_KEY` et `OPERATOR_USD_TO_EUR_RATE` sont réservées au Worker cockpit. Ne pas les poser sur un Worker client.
 
@@ -1389,7 +1476,7 @@ Impact support appareils :
 - [ ] **Objectifs annuels** : Settings → Objectifs → saisir CA cible → Dashboard → vérifier barre de progression visible
 - [ ] **TVA sur débits** : Settings → Organisation → activer "TVA sur débits" → vérifier que le rapport mensuel impute la TVA à la date de facturation
 - [ ] **Coût unitaire catalogue** : créer un article avec prix d'achat → générer un devis avec cet article → vérifier que `unit_cost_ht` est renseigné sur la ligne (via Supabase ou onglet Rentabilité si visible)
-- [ ] **Factures reçues** *(si `einvoicing_config.mode = 'b2brouter'`)* : Finances → Factures reçues → vérifier réception/statuts (reçue / à payer / payée)
+- [ ] **Factures reçues** *(si `einvoicing_config.mode = 'super_pdp'` et `oauth_status = 'connected'`)* : Finances → Factures reçues → vérifier réception/statuts (reçue / à payer / payée)
 
 ### Checklist onboarding WhatsApp client (mode mutualisé — en attente)
 
@@ -1520,7 +1607,7 @@ Ce mode n'utilise pas le numéro Twilio mutualisé Atelier.
 
 **T-O1 — Créer le projet Supabase opérateur**
 - Nouveau projet Supabase (ex: `orsayn-operator`) dans la même région
-- Appliquer dans l'ordre : `001_operator_usage.sql` → `002_operator_client_settings.sql` → `003_operator_subscriptions_quotas.sql` → `004_operator_einvoicing_config.sql` → `005_operator_cockpit_actions.sql` → `006_stripe_subscription_columns.sql` → `007_commercial_events_v2.sql`
+- Appliquer dans l'ordre : `001_operator_usage.sql` → `002_operator_client_settings.sql` → `003_operator_subscriptions_quotas.sql` → `004_operator_einvoicing_config.sql` → `005_operator_cockpit_actions.sql` → `006_stripe_subscription_columns.sql` → `007_commercial_events_v2.sql` → `008_webhook_events.sql` → `009_multi_org_per_instance.sql` → `010_organization_id_orphan_handling.sql` → `011_increment_quota_counter_org_id.sql` → `012_self_service_entitlements.sql` → `013_super_pdp_oauth_credentials.sql` → `014_super_pdp_einvoicing_config.sql`
 - Récupérer l'URL et la service role key
 
 **Pour un cockpit déjà existant :**
@@ -1591,15 +1678,15 @@ Variables cockpit requises (dans `.env.local` + Cloudflare secrets via `--apply-
 ```
 STRIPE_SECRET_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_PRICE_STARTER=price_1Thr7dJwMU6o9YwI5LSqnnh4
 STRIPE_PRICE_PRO=price_1ThrAWJwMU6o9YwIboiFGndn
 STRIPE_PRICE_EXPERT=price_1ThrCtJwMU6o9YwIFQrahtnv
 STRIPE_PORTAL_CONFIGURATION_ID=bpc_...  ← ID config portail Stripe dédiée Atelier (Stripe Dashboard → Customer portal → Configurations)
 ```
 
+> `STRIPE_PRICE_STARTER` reste géré côté webhook (`tierFromPriceId`) pour ne pas casser un abonné historique déjà sur cette Price ID, mais n'est plus à provisionner pour un nouveau client — Starter n'est plus vendu.
+
 Variables injectées dans **chaque instance cliente** (utilisées pour afficher le bouton upgrade dans l'app) :
 ```
-NEXT_PUBLIC_STRIPE_LINK_STARTER=https://buy.stripe.com/...
 NEXT_PUBLIC_STRIPE_LINK_PRO=https://buy.stripe.com/...
 NEXT_PUBLIC_STRIPE_LINK_EXPERT=https://buy.stripe.com/...
 ```
@@ -1608,14 +1695,14 @@ NEXT_PUBLIC_STRIPE_LINK_EXPERT=https://buy.stripe.com/...
 
 ### Checklist cockpit
 
-- [ ] Migrations cockpit appliquées sur le Supabase opérateur : `001` → `002` → `003` → `004` → `005` → `006_stripe_subscription_columns.sql` → `007_commercial_events_v2.sql`
+- [ ] Migrations cockpit appliquées sur le Supabase opérateur : `001` → `002` → `003` → `004` → `005` → `006_stripe_subscription_columns.sql` → `007_commercial_events_v2.sql` → `008_webhook_events.sql` → `009_multi_org_per_instance.sql` → `010_organization_id_orphan_handling.sql` → `011_increment_quota_counter_org_id.sql` → `012_self_service_entitlements.sql` → `013_super_pdp_oauth_credentials.sql` → `014_super_pdp_einvoicing_config.sql`
 - [ ] Tables opérateur créées : `operator_clients`, `operator_usage_events`, `operator_whatsapp_cost_snapshots`, `operator_client_settings`, `operator_client_subscriptions`, `operator_client_quotas`, `operator_quota_usage_events`, `operator_client_events`, `operator_commercial_events`
-- [ ] Colonnes e-facturation présentes sur `operator_client_subscriptions` : `einvoicing_mode`, `einvoicing_environment`, `b2brouter_account_id`, `einvoicing_annuaire_status`
+- [ ] Colonnes e-facturation présentes sur `operator_client_subscriptions` : `einvoicing_mode`, `einvoicing_environment`, `einvoicing_annuaire_status`, `oauth_status`, `oauth_connected_at`, `super_pdp_connection_id` (miroir de `organization_einvoicing_config`, ajoutées par `supabase/operator-migrations/014_super_pdp_einvoicing_config.sql`, qui retire aussi `b2brouter_active`, `b2brouter_account_id` et `einvoicing_onboarding_model`)
 - [ ] Colonne essai présente : `operator_client_subscriptions.trial_converted`
 - [ ] Colonne pricing IA présente : `operator_client_subscriptions.ai_billing_mode`
 - [ ] Colonnes Stripe présentes : `operator_client_subscriptions.stripe_customer_id` + `stripe_subscription_id` (migration `supabase/operator-migrations/006_stripe_subscription_columns.sql`)
 - [ ] Variables d'env cockpit injectées dans Cloudflare Workers (y compris `RESEND_API_KEY` + `RESEND_FROM_ADDRESS` pour les emails commerciaux)
-- [ ] Variables Stripe cockpit injectées : `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_EXPERT`, `STRIPE_PORTAL_CONFIGURATION_ID`
+- [ ] Variables Stripe cockpit injectées : `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_EXPERT`, `STRIPE_PORTAL_CONFIGURATION_ID`
 - [ ] Page `/orsayn` accessible (renvoie 404 sinon → `OPERATOR_MODE` non reconnu)
 - [ ] Envoyer un appel IA de test depuis une instance cliente → vérifier que l'event apparaît dans le cockpit
 - [ ] Renseigner un `monthly_fee_ht` dans le cockpit → vérifier le calcul de marge
@@ -1657,7 +1744,7 @@ curl -X POST https://orsayn-cockpit.mbebourasam.workers.dev/api/operator/cron/qu
 
 > Règle d'or : **même code pour tous les clients, configuration différente par client**.
 
-Un client peut avoir B2Brouter, un autre non. Un client peut utiliser ta clé OpenRouter, un autre sa propre clé. Un client peut avoir seulement Devis IA, un autre Planning IA + Documents IA + WhatsApp. On ne crée pas de branche, pas de fork, pas de version spéciale.
+Un client peut être en mode `super_pdp`, un autre en `export_only`. Un client peut utiliser ta clé OpenRouter, un autre sa propre clé. Un client peut avoir seulement Devis IA, un autre Planning IA + Documents IA + WhatsApp. On ne crée pas de branche, pas de fork, pas de version spéciale.
 
 ### Les 3 niveaux de configuration
 
@@ -1665,10 +1752,12 @@ Un client peut avoir B2Brouter, un autre non. Un client peut utiliser ta clé Op
 |--------|-------------|----------|-----------|
 | **Flags produit** | Afficher/autoriser une fonctionnalité | `quote_ai`, `planning_ai`, `document_import_ai`, `catalog_ai`, `whatsapp_agent` | Table `organization_modules`, pilotée depuis Cockpit Orsayn |
 | **Configuration orchestrée** | Appliquer un mode produit hors IA | `einvoicing_config.mode`, `einvoicing_config.provider`, `einvoicing_config.environment` | Cockpit Orsayn puis copie locale `organization_einvoicing_config` |
-| **Secrets infra** | Donner accès à un provider externe | `OPENROUTER_API_KEY`, `B2BROUTER_API_KEY`, `RESEND_API_KEY` | Variables/secrets du Worker client ou Edge Function |
+| **Secrets infra** | Donner accès à un provider externe | `OPENROUTER_API_KEY`, `RESEND_API_KEY` | Variables/secrets du Worker client ou Edge Function |
 | **Paramètres métier** | Adapter l'usage client | tarifs, SIREN, IBAN, modules, numéros WhatsApp autorisés | Base Supabase client + cockpit |
 
 Un flag sans secret ne suffit pas : la fonctionnalité apparaît peut-être, mais l'appel provider échoue. Un secret sans flag ne suffit pas non plus : le provider est configuré, mais la fonctionnalité reste désactivée côté produit.
+
+**Cas particulier Super PDP :** la facturation électronique n'a pas de "secret infra" par client — c'est le seul cas où la "Configuration orchestrée" (`einvoicing_config.mode = 'super_pdp'`) suffit à elle seule, sans variable Cloudflare à poser. Les credentials OAuth de l'app Super PDP (une seule, portée par Orsayn) vivent dans `.env.cockpit`, pas dans le Worker client.
 
 ### V1 core livrée par défaut
 
@@ -1679,32 +1768,29 @@ Chaque nouveau client est livré en V1 core :
 - emails
 - IA selon le pack vendu
 - facturation électronique en mode `export_only`
-- B2Brouter désactivé par défaut
+- Super PDP non connecté par défaut (`oauth_status = 'not_connected'`)
 - WhatsApp désactivé tant que le module n'est pas activé
 
 Le mode `export_only` est inclus comme socle conformité : PDF + XML/Factur-X téléchargeable, avec envoi PDF/email normal tant que l'obligation d'émission n'est pas active. L'app ne marque pas une facture comme déposée sur une PA tant que ce flux n'est pas réellement connecté.
 
 ### Upgrades activables après livraison
 
-#### Upgrade B2Brouter
+#### Upgrade Super PDP
 
-B2Brouter est un upgrade client par client. Etat réel mai 2026 : sandbox ouverte, architecture cadrée dans `docs/atelier-facturation-electronique.md`, intégration app/cockpit encore à finaliser avant activation client réelle.
+Passer un client en Super PDP est un upgrade client par client, mais **sans aucun secret ni compte à créer** — c'est la différence structurante avec l'ancien modèle B2Brouter. Etat réel août 2026 : flux OAuth confirmé de bout en bout en sandbox (voir `docs/atelier-facturation-electronique.md` §7.2), mais l'UI cliente "Activer la facturation électronique" (`/settings`) et le callback OAuth (`/api/einvoicing/oauth/callback`) restent à construire (Phase 1) avant activation réelle.
 
 ```text
 Client A → export_only
 Client B → export_only
-Client C → b2brouter intégré
+Client C → super_pdp connecté
 ```
 
-Activation cible :
-1. Valider le flux sandbox / compte B2Brouter du client selon `docs/atelier-facturation-electronique.md`
-2. Ajouter les secrets du client dans son Worker :
-   - `B2BROUTER_API_KEY`
-   - `B2BROUTER_ACCOUNT_ID`
-   - `B2BROUTER_WEBHOOK_SECRET`
-3. Passer `einvoicing_config.mode` à `b2brouter` dans le cockpit, renseigner environnement, modèle `edoc_exchange`, `account_id` et statut annuaire
-4. Tester une facture sandbox ou pilote
-5. Passer prod quand le client est prêt et quand les flux réception/statuts/webhook sont validés
+Activation cible, une fois la Phase 1 livrée :
+1. Passer `einvoicing_config.mode` à `super_pdp` dans le cockpit — aucun secret, aucune variable Cloudflare, aucun compte à créer côté client
+2. L'artisan clique "Activer la facturation électronique" depuis son Atelier (`/settings`), est redirigé vers le tunnel d'autorisation Super PDP, s'authentifie/autorise, et revient connecté
+3. Le cockpit reçoit le callback OAuth, chiffre et stocke les tokens dans `super_pdp_oauth_credentials` (DB opérateur uniquement), met à jour `oauth_status = 'connected'` côté instance cliente via `config-sync`
+4. Tester une facture sandbox ou pilote avant de considérer le client comme opérationnel en production
+5. Basculer l'environnement en production quand le client est prêt et que les flux émission/réception/statuts sont validés (voir §15 de `docs/atelier-facturation-electronique.md` pour les points encore ouverts)
 
 Le client qui ne prend pas l'upgrade reste en `export_only`. Rien ne change pour lui.
 
@@ -1751,20 +1837,18 @@ Client A → clés IA Atelier, coût porté par Orsayn
 Client B → clés IA du client, coût porté par le client
 ```
 
-Pour OpenRouter, le code lit toujours `OPENROUTER_API_KEY`. La différence vient seulement de la valeur injectée dans le Worker et les Edge Functions du client.
+Pour OpenRouter, le code lit toujours `OPENROUTER_API_KEY`. La différence vient seulement de la valeur injectée dans le Worker. Depuis le 2026-08-22, `OPENROUTER_API_KEY` couvre aussi la transcription vocale de l'app (Voxtral Mini Transcribe via l'endpoint unifié OpenRouter, `mistralai/voxtral-mini-transcribe`) — il n'y a donc plus qu'une seule clé à gérer pour tout le Worker.
 
-Pour Mistral/Voxtral, même principe avec `MISTRAL_API_KEY`, surtout pour la transcription vocale. Par défaut, on utilise la clé Mistral Orsayn car le coût vocal est faible. Un client autonome ou à gros usage vocal peut fournir sa propre clé Mistral.
+`MISTRAL_API_KEY` ne concerne plus le Worker. Elle reste utilisée uniquement par l'Edge Function `whatsapp-webhook` (transcription vocale WhatsApp, `whatsapp_transcription`), tant que ce canal reste sur un appel Mistral direct — voir §6 Edge Function WhatsApp.
 
-Mode Atelier :
+Mode Atelier (Worker) :
 - `OPENROUTER_API_KEY` = clé Orsayn
-- `MISTRAL_API_KEY` = clé Orsayn
-- Orsayn porte le coût IA
+- Orsayn porte le coût IA (texte, devis, planning, Sarah, transcription vocale)
 - usage visible dans OpenRouter Orsayn + cockpit Orsayn
 
-Mode client :
+Mode client (Worker) :
 - `OPENROUTER_API_KEY` = clé fournie par le client
-- `MISTRAL_API_KEY` = clé fournie par le client si le client veut aussi porter le coût vocal
-- le client paye OpenRouter, et éventuellement Mistral, directement
+- le client paye OpenRouter directement, transcription vocale comprise
 - Orsayn voit quand même l'usage passé par Atelier via `usage_logs` et le cockpit
 - Orsayn ne voit pas les usages faits par le client hors Atelier
 
@@ -1782,10 +1866,10 @@ Un client sans WhatsApp garde l'app web inchangée.
 
 | Client | IA | OpenRouter | Fact. élec. | WhatsApp |
 |--------|----|------------|-------------|----------|
-| Artisan Starter | Devis IA | Clé Atelier | `export_only` | Non |
+| Artisan setup_only | Devis IA (si client_owned) | Clé Atelier ou client | `export_only` | Non |
 | Client autonome IA | Devis + Documents | Clé client | `export_only` | Non |
-| Client conformité | Devis IA | Clé Atelier | B2Brouter | Non |
-| Client premium terrain | Tous modules IA | Clé Atelier ou client | B2Brouter | Oui |
+| Client conformité | Devis IA | Clé Atelier | `super_pdp` | Non |
+| Client premium terrain | Tous modules IA | Clé Atelier ou client | `super_pdp` | Oui |
 
 ### Procédure en cas de demande client spécifique
 
@@ -1803,7 +1887,7 @@ Créer du code spécifique client uniquement si la fonctionnalité a vocation à
 
 > Obligatoire : réception sept. 2026 / émission sept. 2027 (TPE/PME/artisans).
 
-**Stratégie Atelier :** `export_only` pour tous les clients par défaut, puis B2Brouter comme upgrade intégré pour les clients qui le veulent. En mode B2Brouter, prévoir une clé/API ou un compte B2Brouter propre au client.
+**Stratégie Atelier :** `export_only` pour tous les clients par défaut, puis Super PDP comme upgrade intégré pour les clients qui le veulent. Contrairement à l'ancien plan B2Brouter, le mode `super_pdp` ne demande **ni clé API ni compte à créer par client** : une seule app OAuth (sandbox + production) est portée par Orsayn, et c'est l'artisan lui-même qui autorise la connexion depuis son Atelier. Voir `docs/atelier-facturation-electronique.md` pour l'architecture complète.
 
 ### Checklist par client en `export_only` (socle par défaut)
 
@@ -1812,23 +1896,24 @@ Créer du code spécifique client uniquement si la fonctionnalité a vocation à
 - [ ] Vérifier téléchargement PDF + XML/Factur-X
 - [ ] Conserver l'envoi normal PDF/email tant que l'émission obligatoire n'est pas active
 
-### Checklist upgrade B2Brouter
+### Checklist upgrade Super PDP
 
-- [x] Ouvrir compte sandbox B2Brouter
-- [ ] Récupérer `B2BROUTER_API_KEY` + `B2BROUTER_ACCOUNT_ID`
-- [ ] Injecter les secrets dans le Worker client
-- [ ] Configurer `einvoicing_config.mode = 'b2brouter'` dans le cockpit
-- [ ] Tester réception sandbox 2026, puis émission sandbox avant passage prod quand le flux émission est activé
+- [x] Flux OAuth `authorization_code` multi-tenant validé de bout en bout en sandbox (25/08/2026, voir `docs/atelier-facturation-electronique.md` §7.2)
+- [ ] Construire l'UI cliente "Activer la facturation électronique" (`/settings`, n'existe pas encore)
+- [ ] Construire le callback OAuth cockpit `POST /api/einvoicing/oauth/callback` (échange code → tokens, chiffrement, stockage `super_pdp_oauth_credentials`, mise à jour `organization_einvoicing_config` via config-sync)
+- [ ] Passer `einvoicing_config.mode = 'super_pdp'` dans le cockpit — aucun secret ni variable Cloudflare à poser côté client
+- [ ] Faire autoriser la connexion par l'artisan lui-même depuis son Atelier, vérifier `oauth_status = 'connected'`
+- [ ] Tester réception (polling `GET /v1.beta/invoices`, voir §7.4) et émission sandbox avant passage prod
 
 ### Checklist de dev (non bloquant avant 2026)
 
 - [ ] Validation du Factur-X EN 16931 Comfort existant dans le flux réel
 - [ ] SIREN dans fiche client (UI + PDF)
 - [ ] Type opération + TVA débits dans éditeur facture
-- [ ] App client : réception 2026 uniquement si `einvoicing_config.mode = 'b2brouter'`
-- [ ] `POST /api/webhooks/b2brouter-reception` → stockage factures reçues
+- [ ] App client : réception 2026 uniquement si `einvoicing_config.mode = 'super_pdp'` et `oauth_status = 'connected'`
+- [ ] Mécanisme de réception : **polling** sur `GET /v1.beta/invoices?starting_after_id=` côté cockpit — aucun webhook Super PDP trouvé dans les exemples officiels à date. Il n'existe pas de route `/api/webhooks/b2brouter-reception` fonctionnelle dans ce repo ; ne pas s'y référer, c'était un résidu du plan précédent jamais implémenté
 - [ ] App client : UI factures reçues dans Finances
-- [ ] Émission via API B2Brouter pour l'échéance 2027
+- [ ] Émission via `POST /v1.beta/invoices` (XML brut) pour l'échéance 2027
 
 ---
 
@@ -1852,7 +1937,7 @@ Deux modes disponibles, choisissables client par client au moment du déploiemen
 
 **Mode A — Clé Atelier partagée (défaut)**
 
-1 clé OpenRouter Atelier et 1 clé Mistral Atelier injectées dans les Edge Functions et Workers depuis `.env.local`. Tu portes le coût IA et tu le répercutes dans l'abonnement mensuel.
+1 clé OpenRouter Atelier injectée dans le Worker depuis `.env.local` (couvre tout : texte, Sarah, transcription vocale Voxtral). Tu portes le coût IA et tu le répercutes dans l'abonnement mensuel. La clé Mistral Atelier n'est injectée que dans l'Edge Function `whatsapp-webhook`, pas dans le Worker.
 
 Dans le cockpit : `ai_billing_mode = 'orsayn_shared'`.
 
@@ -1863,19 +1948,20 @@ Déploiement Edge Function :
 ./scripts/deploy-edge-functions.sh <PROJECT_REF> \
   --resend-key re_xxx --resend-from contact@client.fr --app-url https://client.fr
 # OPENROUTER_API_KEY et MISTRAL_API_KEY lues automatiquement depuis .env.local
+# (MISTRAL_API_KEY sert uniquement à la transcription vocale WhatsApp ici)
 ```
 
-Déploiement Worker Cloudflare : injecter `OPENROUTER_API_KEY` et `MISTRAL_API_KEY` (clés Atelier) dans les variables du Worker.
+Déploiement Worker Cloudflare : injecter `OPENROUTER_API_KEY` (clé Atelier) dans les variables du Worker. `MISTRAL_API_KEY` n'y est plus nécessaire.
 
 **Mode B — Clé propre au client**
 
-Le client crée son compte sur [openrouter.ai](https://openrouter.ai), génère une clé API, et te la fournit dans le protocole de session. Il paye directement OpenRouter — tu n'es plus revendeur IA pour ce client. Risque isolé, facturation simplifiée.
+Le client crée son compte sur [openrouter.ai](https://openrouter.ai), génère une clé API, et te la fournit dans le protocole de session. Il paye directement OpenRouter — texte et transcription vocale compris — tu n'es plus revendeur IA pour ce client sur le Worker. Risque isolé, facturation simplifiée.
 
 Dans le cockpit : `ai_billing_mode = 'client_owned'`. La consommation reste visible pour le pricing, mais elle n'est pas soustraite de la marge Orsayn.
 
-Pour Mistral, deux choix :
-- par défaut : garder `MISTRAL_API_KEY` Orsayn, même si OpenRouter est côté client
-- autonomie complète : injecter aussi une `MISTRAL_API_KEY` fournie par le client, notamment si gros usage vocal
+Pour Mistral (WhatsApp uniquement, Edge Function), deux choix indépendants du choix OpenRouter du Worker :
+- par défaut : garder `MISTRAL_API_KEY` Orsayn
+- autonomie complète : injecter une `MISTRAL_API_KEY` fournie par le client, si gros usage vocal WhatsApp
 
 Déploiement Edge Function :
 ```bash
@@ -1885,7 +1971,7 @@ Déploiement Edge Function :
 # La clé Atelier dans .env.local est ignorée pour ce client
 ```
 
-Déploiement Worker Cloudflare : injecter la clé client à la place de la clé Atelier dans `OPENROUTER_API_KEY` du Worker. Pour Mistral, injecter `MISTRAL_API_KEY` Orsayn ou client selon le mode choisi.
+Déploiement Worker Cloudflare : injecter la clé client à la place de la clé Atelier dans `OPENROUTER_API_KEY` du Worker — couvre aussi la transcription vocale de l'app. Pas de `MISTRAL_API_KEY` à poser sur le Worker.
 
 **Cas sans domaine custom :** le client utilise l'URL `atelier-nomclient.workers.dev`. T2 (Resend + domaine) disparaît. Les emails sortants (devis, factures, invitations) partent depuis `noreply@atelier.orsayn.fr` (Resend Atelier mutualisé) — à configurer en injectant les variables Resend Atelier dans le Worker du client.
 
@@ -1897,7 +1983,7 @@ WHERE created_at > now() - interval '30 days'
 GROUP BY organization_id, feature;
 ```
 
-**Aujourd'hui :** clés Atelier partagées par défaut. `OPENROUTER_API_KEY` peut être remplacée par une clé client via `--openrouter-key`. `MISTRAL_API_KEY` reste Atelier par défaut, sauf client autonome vocal.
+**Aujourd'hui :** clé Atelier partagée par défaut sur le Worker. `OPENROUTER_API_KEY` peut être remplacée par une clé client via `--openrouter-key` — couvre aussi la transcription vocale de l'app depuis le 2026-08-22. `MISTRAL_API_KEY` ne concerne plus que l'Edge Function WhatsApp, reste Atelier par défaut sauf client autonome vocal WhatsApp.
 
 #### Inventaire complet des appels IA
 
@@ -1933,7 +2019,7 @@ GROUP BY organization_id, feature;
 
 ### Marges selon le tier facturation électronique
 
-Trois situations possibles — le mode est piloté par `einvoicing_config.mode` dans le cockpit, puis copié localement dans `organization_einvoicing_config`.
+Le mode est piloté par `einvoicing_config.mode` dans le cockpit, puis copié localement dans `organization_einvoicing_config`. Valeurs possibles : `off`, `export_only`, `super_pdp`.
 
 #### Tier 1 — Sans facturation électronique (ou export only inclus dans l'abonnement)
 
@@ -1948,72 +2034,22 @@ Export only ne coûte rien de plus : c'est du code qui génère un XML. Tu peux 
 
 #### Tier 2 — Export only explicite (si tu veux en faire un palier tarifaire distinct)
 
-Même coût que Tier 1 — zéro surcoût B2Brouter. Marge identique. Utile si tu veux afficher un prix légèrement supérieur pour "pack conformité 2026" sans rien débourser de plus.
+Même coût que Tier 1 — zéro surcoût fournisseur. Marge identique. Utile si tu veux afficher un prix légèrement supérieur pour "pack conformité 2026" sans rien débourser de plus.
 
-#### Tier 3 — B2Brouter intégré (`einvoicing_config.mode = 'b2brouter'`)
+#### Tier 3 — Super PDP intégré (`einvoicing_config.mode = 'super_pdp'`)
 
-B2Brouter est facturé annuellement en prestation séparée du MRR — il ne rentre pas dans les marges mensuelles. Coût Atelier type M0 : 15€/mois (180€/an) + activation 150€ an 1. Refacturé client : 250€/an + activation 200€.
+**Pricing Super PDP non encore confirmé — ne pas citer de chiffres au client tant que ce n'est pas validé.** Contrairement à l'ancienne grille B2Brouter (tarification par tranche de transactions/mois, abonnement annuel payé d'avance), le modèle Super PDP n'est pas encore documenté côté coût dans ce repo. Le seul élément connu à date (voir `docs/atelier-facturation-electronique.md` §15 "Toujours ouvert") est une mention de **KYC à 2€HT**, dont le déclenchement exact et le mode de facturation (par SIREN client connecté, ou globalement à Orsayn) restent à clarifier avec le support Super PDP avant de construire une grille de revente.
 
-La marge sur le MRR reste identique aux tiers précédents. B2Brouter est une ligne séparée dans le devis setup/annuel, pas dans le MRR.
+À faire avant de pouvoir remplir cette section : obtenir la grille tarifaire officielle Super PDP (contact commercial ou documentation `superpdp.tech`), puis reconstruire ici une logique de marge équivalente à l'ancienne section B2Brouter (coût Atelier vs refacturation client, activation vs abonnement).
 
-**Résumé de la logique tarifaire :**
-- Export only → inclus dans tous les setups, argument commercial gratuit, coût Atelier 0€
-- B2Brouter → prestation annuelle séparée (~250€-900€/an selon volume) + activation 200€ an 1 — ne pas intégrer dans le MRR mensuel
-
-### B2Brouter — grille tarifaire officielle (HT)
-
-Source : tarifs B2Brouter mai 2026. Facturation mensuelle, engagement annuel, payé d'avance. Frais d'activation 150€ HT one-shot la première année.
-
-| Tranche | Transactions incluses/mois | Prix/mois HT | Trans. suppl. HT | Coût annuel HT (hors activation) | Coût an 1 (avec activation) |
-|---------|---------------------------|--------------|-----------------|----------------------------------|----------------------------|
-| M0 | 1-50 | 15€ | 0,435€ | 180€ | 330€ |
-| M1 | 51-100 | 29€ | 0,435€ | 348€ | 498€ |
-| M2 | 101-300 | 59€ | 0,295€ | 708€ | 858€ |
-| M3 | 301-600 | 89€ | 0,222€ | 1 068€ | 1 218€ |
-| M4 | 601-1 500 | 169€ | 0,169€ | 2 028€ | 2 178€ |
-| M5 | 1 501-4 000 | 520€ | 0,130€ | 6 240€ | 6 390€ |
-| M6 | 4 001-10 000 | 1 100€ | 0,110€ | 13 200€ | Sur devis |
-| M7+ | > 10 000 | Sur devis | — | — | Sur devis |
-
-> Une transaction = tout eDocument émis, reçu, ou importé et téléchargé. Transactions non consommées perdues à l'échéance. Changement de tier possible une fois par période contractuelle (réduction : tier inférieur suivant uniquement).
-
-### Profils client Atelier et tranche recommandée
-
-La majorité des artisans BTP (1-5 personnes) émet 10-50 factures/mois et reçoit quelques bons de commande. Le profil type est M0 ou M1.
-
-| Profil client | Volume estimé | Tranche | Coût annuel Atelier |
-|---------------|---------------|---------|---------------------|
-| Artisan seul, faible volume | < 30 tx/mois | M0 | 180€/an |
-| Artisan actif ou petite équipe | 30-80 tx/mois | M0-M1 | 180-348€/an |
-| PME BTP, plusieurs chantiers simultanés | 80-250 tx/mois | M1-M2 | 348-708€/an |
-| Structure avec achats fournisseurs intenses | 250-500 tx/mois | M2-M3 | 708-1 068€/an |
-| Fort volume (promoteur, négoce) | > 500 tx/mois | M3+ | Sur devis |
-
-### Revente B2Brouter — stratégie de facturation client
-
-**Principe :** le coût B2Brouter est annuel et payé d'avance. Il est refacturé au client en prestation annuelle séparée du MRR. Ne pas intégrer B2Brouter dans le MRR mensuel — ça rendrait la grille MRR illisible et crée une confusion entre coût fixe et coût d'usage.
-
-**Marge appliquée :** environ 20-40% sur le coût Atelier selon le profil. L'activation 150€ est refacturée 200€ HT (frais de mise en service).
-
-| Poste | Coût Atelier HT | Refacturé client HT | Marge brute |
-|-------|----------------|---------------------|-------------|
-| Activation one-shot (an 1 uniquement) | 150€ | 200€ | 50€ |
-| Abonnement M0 an 1 | 180€ | 250€/an | 70€ |
-| Abonnement M1 an 1 | 348€ | 450€/an | 102€ |
-| Abonnement M2 an 1 | 708€ | 900€/an | 192€ |
-| Abonnement M3 an 1 | 1 068€ | 1 350€/an | 282€ |
-
-**An 1 :** activation 200€ + abonnement annuel = facturé au client en une ligne dans le devis setup ou en devis séparé.
-**An 2+ :** renouvellement annuel uniquement, Atelier préfinance et refacture.
+**Ce qui est acquis, indépendamment du prix :** comme il n'y a plus de compte/clé à créer par client, il n'y a plus de "frais d'activation" technique par client à refacturer — seul un éventuel coût récurrent ou par usage facturé par Super PDP resterait à modéliser.
 
 ### Frais one-shot à l'onboarding (référence)
 
 | Poste | Montant HT |
 |-------|-----------|
 | Setup & déploiement | 800€-2 800€ (selon offre) |
-| Activation B2Brouter (si fact. élec.) | 200€ |
-| Abonnement B2Brouter an 1 selon profil | 250€-1 350€/an |
-| **Total avec fact. élec. (profil M0)** | **~1 250€ minimum** |
+| Facturation électronique Super PDP | Pricing non confirmé — voir Tier 3 ci-dessus, ne pas chiffrer au client avant validation |
 | **Total sans fact. élec.** | **800€-2 800€** |
 
 ---
@@ -2065,8 +2101,8 @@ n'a besoin d'une cohérence à la seconde près après une écriture.
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | Email support public | Non |
 | `NEXT_PUBLIC_PRIVACY_EMAIL` | Email confidentialité public | Non |
 | `NEXT_PUBLIC_LEGAL_EMAIL` | Email juridique public | Non |
-| `OPENROUTER_API_KEY` | Clé Atelier depuis `.env.local` (défaut) **ou** clé propre au client via `--openrouter-key` | **Selon client** (voir §IA) |
-| `MISTRAL_API_KEY` | Clé Atelier Mistral par défaut **ou** clé propre au client si autonomie vocale/IA complète | **Selon client** (Atelier par défaut) |
+| `OPENROUTER_API_KEY` | Clé Atelier depuis `.env.local` (défaut) **ou** clé propre au client via `--openrouter-key` — couvre texte + transcription vocale de l'app (Voxtral via OpenRouter, migré le 2026-08-22) | **Selon client** (voir §IA), Worker uniquement |
+| `MISTRAL_API_KEY` | Non utilisée par le Worker depuis le 2026-08-22. Clé Atelier Mistral par défaut **ou** clé propre au client si autonomie vocale WhatsApp | **Selon client** (Atelier par défaut), Edge Function `whatsapp-webhook` uniquement |
 | `CRON_SECRET` | `openssl rand -hex 32` | Non (unique par client) |
 | `MEMBER_SESSION_SECRET` | `openssl rand -hex 32` — signe le cookie de session de l'espace membre `/mon-espace` (HMAC SHA-256) | Non (unique par client) |
 | `RATE_LIMIT_SECRET` | `openssl rand -hex 32` — salt de hash rate limit, optionnel si `CRON_SECRET` est présent | Non (unique par client) |

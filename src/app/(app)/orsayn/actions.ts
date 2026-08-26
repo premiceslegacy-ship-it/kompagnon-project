@@ -93,14 +93,22 @@ function parseAIBillingMode(value: FormDataEntryValue | null): AIBillingMode {
   return mode as AIBillingMode
 }
 
-function parseEinvoicingConfig(formData: FormData): EinvoicingConfig {
+// oauth_status / oauth_connected_at / super_pdp_connection_id ne sont pas
+// editables depuis ce formulaire (l'activation OAuth se fait cote instance
+// cliente) : on les preserve tels quels plutot que de les laisser retomber
+// sur leurs valeurs par defaut a chaque soumission.
+function parseEinvoicingConfig(
+  formData: FormData,
+  current: Pick<EinvoicingConfig, 'oauth_status' | 'oauth_connected_at' | 'super_pdp_connection_id'>,
+): EinvoicingConfig {
   return normalizeEinvoicingConfig({
     mode: formData.get('einvoicingMode'),
     provider: formData.get('einvoicingProvider'),
     environment: formData.get('einvoicingEnvironment'),
-    onboarding_model: formData.get('einvoicingOnboardingModel'),
-    b2brouter_account_id: formData.get('b2brouterAccountId'),
     annuaire_status: formData.get('einvoicingAnnuaireStatus'),
+    oauth_status: current.oauth_status,
+    oauth_connected_at: current.oauth_connected_at,
+    super_pdp_connection_id: current.super_pdp_connection_id,
   })
 }
 
@@ -283,7 +291,6 @@ export async function upsertOperatorSubscription(formData: FormData) {
   const mrrHt = parseMonthlyFee(formData.get('mrrHt'))
   const aiBillingMode = parseAIBillingMode(formData.get('aiBillingMode'))
   const renewsAt = formData.get('renewsAt') ? new Date(String(formData.get('renewsAt'))) : null
-  const einvoicingConfig = parseEinvoicingConfig(formData)
   const notes = String(formData.get('notes') ?? '').trim() || null
   const contactEmail = parseOptionalEmail(formData.get('contactEmail'))
 
@@ -297,10 +304,17 @@ export async function upsertOperatorSubscription(formData: FormData) {
 
   const { data: existingSubscription } = await operator
     .from('operator_client_subscriptions')
-    .select('trial_tier, trial_ends_at, trial_converted')
+    .select('trial_tier, trial_ends_at, trial_converted, oauth_status, oauth_connected_at, super_pdp_connection_id')
     .eq('source_instance', sourceInstance)
     .eq('organization_id', organizationId)
     .maybeSingle()
+
+  const currentOauthFields: Pick<EinvoicingConfig, 'oauth_status' | 'oauth_connected_at' | 'super_pdp_connection_id'> = {
+    oauth_status: existingSubscription?.oauth_status ?? 'not_connected',
+    oauth_connected_at: existingSubscription?.oauth_connected_at ?? null,
+    super_pdp_connection_id: existingSubscription?.super_pdp_connection_id ?? null,
+  }
+  const einvoicingConfig = parseEinvoicingConfig(formData, currentOauthFields)
 
   const trialTier = existingSubscription?.trial_tier && isSubscriptionTier(existingSubscription.trial_tier)
     ? existingSubscription.trial_tier
@@ -342,12 +356,9 @@ export async function upsertOperatorSubscription(formData: FormData) {
       trial_tier: trialTier,
       trial_ends_at: trialEndsAt,
       trial_converted: trialConverted,
-      b2brouter_active: einvoicingConfig.mode === 'b2brouter',
       einvoicing_mode: einvoicingConfig.mode,
       einvoicing_provider: einvoicingConfig.provider,
       einvoicing_environment: einvoicingConfig.environment,
-      einvoicing_onboarding_model: einvoicingConfig.onboarding_model,
-      b2brouter_account_id: einvoicingConfig.b2brouter_account_id,
       einvoicing_annuaire_status: einvoicingConfig.annuaire_status,
       overflow_mode: overflowMode,
       notes,
@@ -416,10 +427,7 @@ export async function activateOperatorTrial(formData: FormData) {
       einvoicing_mode: subscription.einvoicingConfig.mode,
       einvoicing_provider: subscription.einvoicingConfig.provider,
       einvoicing_environment: subscription.einvoicingConfig.environment,
-      einvoicing_onboarding_model: subscription.einvoicingConfig.onboarding_model,
-      b2brouter_account_id: subscription.einvoicingConfig.b2brouter_account_id,
       einvoicing_annuaire_status: subscription.einvoicingConfig.annuaire_status,
-      b2brouter_active: subscription.einvoicingConfig.mode === 'b2brouter',
       trial_tier: 'expert',
       trial_ends_at: trialEndsAt,
       trial_converted: false,
@@ -482,10 +490,7 @@ export async function convertOperatorTrial(formData: FormData) {
       einvoicing_mode: subscription.einvoicingConfig.mode,
       einvoicing_provider: subscription.einvoicingConfig.provider,
       einvoicing_environment: subscription.einvoicingConfig.environment,
-      einvoicing_onboarding_model: subscription.einvoicingConfig.onboarding_model,
-      b2brouter_account_id: subscription.einvoicingConfig.b2brouter_account_id,
       einvoicing_annuaire_status: subscription.einvoicingConfig.annuaire_status,
-      b2brouter_active: subscription.einvoicingConfig.mode === 'b2brouter',
       trial_tier: null,
       trial_ends_at: null,
       trial_converted: true,
