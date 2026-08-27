@@ -29,6 +29,11 @@ const publicRoutePrefixes = [
   '/api/cron',
   '/api/webhooks',
   '/api/operator',
+  // Callback OAuth Super PDP (cote cockpit) : Super PDP y redirige l'utilisateur
+  // cross-domain apres autorisation, sans cookie de session Atelier. Le state
+  // signe HMAC (src/lib/super-pdp/oauth-state.ts) est la seule protection —
+  // meme categorie de piege que le commentaire ci-dessus sur ingest/config-sync.
+  '/api/einvoicing',
 ]
 
 const publicExactRoutes = [
@@ -50,6 +55,7 @@ const lockedAccessPrefixes = [
   '/api/cron',
   '/api/manifest',
   '/api/app-icon',
+  '/api/einvoicing',
 ]
 
 function isPathOrChild(pathname: string, prefix: string) {

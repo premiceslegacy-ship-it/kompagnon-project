@@ -25,8 +25,9 @@ const secretKeys = [
   'OPERATOR_INGEST_SECRET',
   'OPERATOR_CONFIG_SYNC_SECRET',
   'OPERATOR_SUPABASE_SERVICE_ROLE_KEY',
-  // Super PDP : cockpit uniquement (voir docs/atelier-facturation-electronique.md §3/§7.2) —
-  // ne jamais renseigner dans un .env.client-* ni pousser vers une instance cliente.
+  // Super PDP : le vrai secret, cockpit uniquement — jamais dans un .env.client-*
+  // (voir docs/atelier-facturation-electronique.md §3/§7.2). Le client_id, lui,
+  // n'est pas un secret et va sur toutes les instances (voir textKeys ci-dessous).
   'SUPER_PDP_CLIENT_SECRET',
   'SUPER_PDP_ENCRYPTION_KEY',
   'STRIPE_SECRET_KEY',
@@ -53,10 +54,14 @@ const textKeys = [
   'OPERATOR_ALERT_EMAIL',
   'SELF_SERVICE_MODE',
   'SIGNUP_RATE_LIMIT_PER_HOUR',
-  // Super PDP : cockpit uniquement, voir note sur secretKeys ci-dessus.
+  // Super PDP : ces 4 variables sont publiques (aucun secret) et vont sur TOUTES
+  // les instances (cockpit + clients) — chaque instance construit elle-même l'URL
+  // /oauth2/authorize pour rediriger l'artisan (voir docs/atelier-facturation-electronique.md
+  // §7.3). SUPER_PDP_CLIENT_SECRET et SUPER_PDP_ENCRYPTION_KEY restent cockpit-only (secretKeys).
   'SUPER_PDP_API_ENDPOINT',
   'SUPER_PDP_CLIENT_ID',
   'SUPER_PDP_ENV',
+  'SUPER_PDP_REDIRECT_URL',
   'AI_RATE_LIMIT_PER_HOUR',
   'PUBLIC_FORM_RATE_LIMIT_PER_HOUR',
   'ELEVENLABS_AGENT_ID',
@@ -75,6 +80,7 @@ const textKeys = [
   'NEXT_PUBLIC_STRIPE_LINK_STARTER',
   'NEXT_PUBLIC_STRIPE_LINK_PRO',
   'NEXT_PUBLIC_STRIPE_LINK_EXPERT',
+  'NEXT_PUBLIC_SETUP_WHATSAPP',
   'STRIPE_PRICE_STARTER',
   'STRIPE_PRICE_PRO',
   'STRIPE_PRICE_EXPERT',

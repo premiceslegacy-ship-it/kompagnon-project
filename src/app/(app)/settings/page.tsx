@@ -16,6 +16,7 @@ import { getQuoteClauseTemplates } from '@/lib/data/queries/clause-templates'
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules'
 import SettingsClient from './SettingsClient'
 import { getOrganizationEntitlement, isSelfServiceMode } from '@/lib/data/queries/subscription-access'
+import { getOrganizationEinvoicingConfig } from '@/lib/data/queries/einvoicing'
 
 const SETTINGS_TABS = new Set([
   'profil',
@@ -30,6 +31,7 @@ const SETTINGS_TABS = new Set([
   'whatsapp',
   'securite',
   'abonnement',
+  'facturation',
 ])
 
 function getAppUrl(): string {
@@ -41,12 +43,14 @@ function getAppUrl(): string {
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams?: { tab?: string }
+  searchParams?: { tab?: string; oauth?: string; oauth_detail?: string }
 }) {
   const requestedTab = searchParams?.tab ?? 'profil'
   const initialTab = SETTINGS_TABS.has(requestedTab) ? requestedTab : 'profil'
+  const oauthResult = searchParams?.oauth === 'success' || searchParams?.oauth === 'error' ? searchParams.oauth : null
+  const oauthDetail = searchParams?.oauth_detail ?? null
 
-  const [profile, members, roles, joinCode, organization, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, membership, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialMetalPriceGrids, initialClauseTemplates, organizationModules, entitlement] = await Promise.all([
+  const [profile, members, roles, joinCode, organization, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, membership, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialMetalPriceGrids, initialClauseTemplates, organizationModules, entitlement, einvoicingConfig, canConfigureEinvoicing] = await Promise.all([
     getCurrentUserProfile(),
     getTeamMembers(),
     getOrgRoles(),
@@ -69,11 +73,16 @@ export default async function SettingsPage({
     getQuoteClauseTemplates(),
     getOrganizationModules(),
     getOrganizationEntitlement(),
+    getOrganizationEinvoicingConfig(),
+    hasPermission('einvoicing.configure'),
   ])
 
   const catalogContext = resolveCatalogContext(organization)
   const { supabaseUrl } = getPublicRuntimeConfig()
   const sharedWabaDisplayNumber = process.env.NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER ?? null
+  const effectiveInitialTab = initialTab === 'facturation' && !(canConfigureEinvoicing && einvoicingConfig.mode !== 'off')
+    ? 'profil'
+    : initialTab
 
   return (
     <SettingsClient
@@ -100,18 +109,21 @@ export default async function SettingsPage({
       canRemoveMembers={canRemoveMembers}
       canEditRoles={canEditRoles}
       canEditOrg={canEditOrg}
-      initialTab={initialTab}
+      initialTab={effectiveInitialTab}
       initialMetalPriceGrids={initialMetalPriceGrids}
       hasMetalPricing={organization?.has_metal_pricing ?? false}
       initialClauseTemplates={initialClauseTemplates}
       organizationModules={organizationModules}
-      stripeLinkStarter={process.env.NEXT_PUBLIC_STRIPE_LINK_STARTER ?? null}
       stripeLinkPro={process.env.NEXT_PUBLIC_STRIPE_LINK_PRO ?? null}
       stripeLinkExpert={process.env.NEXT_PUBLIC_STRIPE_LINK_EXPERT ?? null}
       selfService={isSelfServiceMode()}
       subscriptionTier={entitlement?.effectiveTier ?? null}
       subscriptionAccessStatus={entitlement?.accessStatus ?? null}
       subscriptionAccessEndsAt={entitlement?.accessEndsAt ?? null}
+      einvoicingConfig={einvoicingConfig}
+      canConfigureEinvoicing={canConfigureEinvoicing}
+      oauthResult={oauthResult}
+      oauthDetail={oauthDetail}
     />
   )
 }

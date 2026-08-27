@@ -31,6 +31,8 @@ import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids';
 import MetalPriceGridsSettings from '@/components/settings/MetalPriceGridsSettings';
 import ClauseTemplatesSettings from '@/components/settings/ClauseTemplatesSettings';
 import SubscriptionTab from '@/components/settings/SubscriptionTab';
+import EinvoicingTab from '@/components/settings/EinvoicingTab';
+import type { EinvoicingConfig } from '@/lib/einvoicing-config';
 import type { QuoteClauseTemplate } from '@/lib/data/queries/clause-templates';
 import type { OrganizationModules } from '@/lib/organization-modules';
 import type { CatalogLaborRate, CatalogMaterial, PrestationType } from '@/lib/data/queries/catalog';
@@ -110,13 +112,16 @@ type Props = {
     hasMetalPricing: boolean;
     initialClauseTemplates: QuoteClauseTemplate[];
     organizationModules: OrganizationModules | null;
-    stripeLinkStarter: string | null;
     stripeLinkPro: string | null;
     stripeLinkExpert: string | null;
     selfService: boolean;
     subscriptionTier: import('@/lib/quota-catalog').SubscriptionTier | null;
     subscriptionAccessStatus: import('@/lib/subscription-access').AccessStatus | null;
     subscriptionAccessEndsAt: string | null;
+    einvoicingConfig: EinvoicingConfig;
+    canConfigureEinvoicing: boolean;
+    oauthResult: 'success' | 'error' | null;
+    oauthDetail: string | null;
 };
 
 function PermissionCategoryAccordion({
@@ -210,7 +215,7 @@ function SecondaryActivitiesSelector({
     )
 }
 
-export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkStarter, stripeLinkPro, stripeLinkExpert, selfService, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt }: Props) {
+export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkPro, stripeLinkExpert, selfService, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt, einvoicingConfig, canConfigureEinvoicing, oauthResult, oauthDetail }: Props) {
     const router = useRouter()
     const webhookUrl = supabaseUrl
         ? `${supabaseUrl}/functions/v1/whatsapp-webhook`
@@ -3197,13 +3202,25 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 <div className="rounded-3xl card p-8">
                     <SubscriptionTab
                         modules={organizationModules ?? {} as OrganizationModules}
-                        stripeLinkStarter={stripeLinkStarter}
                         stripeLinkPro={stripeLinkPro}
                         stripeLinkExpert={stripeLinkExpert}
                         selfService={selfService}
                         currentTierOverride={subscriptionTier}
                         accessStatus={subscriptionAccessStatus}
                         accessEndsAt={subscriptionAccessEndsAt}
+                    />
+                </div>
+            )
+        }
+
+        if (activeTab === 'facturation' && canConfigureEinvoicing && einvoicingConfig.mode !== 'off') {
+            return (
+                <div className="rounded-3xl card p-8">
+                    <EinvoicingTab
+                        config={einvoicingConfig}
+                        canConfigure={canConfigureEinvoicing}
+                        oauthResult={oauthResult}
+                        oauthDetail={oauthDetail}
                     />
                 </div>
             )
@@ -3239,6 +3256,9 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     <button onClick={() => setActiveTab('formulaire')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'formulaire' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Inbox className="w-5 h-5" />Formulaire public</button>
                     <button onClick={() => setActiveTab('whatsapp')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'whatsapp' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><MessageSquare className="w-5 h-5 text-green-500" />Agent WhatsApp</button>
                     <button onClick={() => setActiveTab('securite')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'securite' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Lock className="w-5 h-5" />Sécurité</button>
+                    {canConfigureEinvoicing && einvoicingConfig.mode !== 'off' && (
+                        <button onClick={() => setActiveTab('facturation')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'facturation' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><FileText className="w-5 h-5" />Facturation électronique</button>
+                    )}
                     {currentRoleSlug === 'owner' && (
                         <button onClick={() => setActiveTab('abonnement')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'abonnement' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Star className="w-5 h-5" />Abonnement</button>
                     )}
