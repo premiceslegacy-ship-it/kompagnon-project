@@ -23,8 +23,11 @@ export type OperatorUsageEvent = {
   provider_cost: number | null
   currency: string
   total_tokens: number | null
+  quota_quantity: number | string | null
+  over_quota: boolean | null
   status: string
   occurred_at: string
+  metadata: Record<string, unknown> | null
 }
 
 export type OperatorClient = {
@@ -67,6 +70,8 @@ export type OperatorClientSubscription = {
   oauth_status: EinvoicingOauthStatus | null
   oauth_connected_at: string | null
   super_pdp_connection_id: string | null
+  super_pdp_emission_enabled: boolean | null
+  super_pdp_reception_enabled: boolean | null
   overflow_mode: OverflowMode
   notes: string | null
   preferred_tier: SellableTier | null
@@ -123,6 +128,7 @@ export type OperatorClientQuota = {
 export type ClientRow = {
   sourceInstance: string
   organizationId: string | null
+  isOrganizationResolved: boolean
   label: string
   tier: SubscriptionTier
   appUrl: string | null
@@ -132,6 +138,7 @@ export type ClientRow = {
   monthlyFee: number | null
   billingCurrency: 'EUR' | 'USD'
   aiBillingMode: AIBillingMode
+  isArchived: boolean
   isActive: boolean
   renewsAt: string | null
   trialEndsAt: string | null
@@ -162,6 +169,16 @@ export type ClientRow = {
   quotas: OperatorClientQuota[]
   events: OperatorClientEvent[]
   commercialEvents: OperatorCommercialEvent[]
+  usageHistory: UsageHistoryRow[]
+}
+
+export type UsageHistoryRow = {
+  month: string
+  label: string
+  events: number
+  tokens: number
+  usageCostEur: number
+  orsaynCostEur: number
 }
 
 export type UsageAggregateRow = {
@@ -176,6 +193,7 @@ export type UsageAggregateRow = {
 export type CommercialRecommendation = {
   id: string
   sourceInstance: string
+  organizationId: string | null
   clientLabel: string
   title: string
   reason: string

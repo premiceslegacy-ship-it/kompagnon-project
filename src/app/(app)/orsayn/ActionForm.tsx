@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 
 type ActionResult = { type: 'success' | 'error'; message: string } | null
@@ -11,6 +12,7 @@ type Props = {
   feedbackClassName?: string
   children: React.ReactNode
   successMessage?: string
+  successHref?: string
 }
 
 /**
@@ -20,10 +22,11 @@ type Props = {
  * base plutôt que relancé), laissant l'utilisateur sans savoir si le clic a
  * réellement fonctionné. Même pattern useTransition que EmailsTab.tsx.
  */
-export default function ActionForm({ action, className, feedbackClassName, children, successMessage = 'Enregistré.' }: Props) {
+export default function ActionForm({ action, className, feedbackClassName, children, successMessage = 'Enregistré.', successHref }: Props) {
   const [isPending, startTransition] = useTransition()
   const [result, setResult] = useState<ActionResult>(null)
   const formRef = useRef<HTMLFormElement>(null)
+  const router = useRouter()
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -33,8 +36,11 @@ export default function ActionForm({ action, className, feedbackClassName, child
       try {
         await action(fd)
         setResult({ type: 'success', message: successMessage })
+        if (successHref) router.replace(successHref)
       } catch (err) {
         setResult({ type: 'error', message: err instanceof Error ? err.message : 'Erreur inattendue' })
+      } finally {
+        router.refresh()
       }
     })
   }

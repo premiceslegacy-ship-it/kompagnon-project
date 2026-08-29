@@ -82,7 +82,7 @@ function AlertRow({ alert, clients }: { alert: CommercialEvent; clients: ClientO
   }
 
   return (
-    <div className="card px-5 py-4 space-y-3">
+    <div className="cockpit-panel px-5 py-4 space-y-3">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -102,13 +102,13 @@ function AlertRow({ alert, clients }: { alert: CommercialEvent; clients: ClientO
       </div>
 
       {open && (
-        <form ref={formRef} className="space-y-3 border-t border-border pt-3">
+        <form ref={formRef} className="space-y-3 border-t border-[var(--cockpit-line)] pt-3">
           <div>
             <label className="block text-xs font-bold text-secondary font-display uppercase tracking-wider mb-1">Sujet</label>
             <input
               name="subject"
               defaultValue={alert.subject_preview ?? ''}
-              className="w-full input-glass px-3 py-2 text-sm text-primary font-body outline-none"
+              className="w-full cockpit-input text-sm text-primary"
             />
           </div>
           <div>
@@ -117,7 +117,7 @@ function AlertRow({ alert, clients }: { alert: CommercialEvent; clients: ClientO
               name="bodyText"
               rows={6}
               defaultValue={alert.body_text ?? ''}
-              className="w-full input-glass px-3 py-2 text-sm text-primary font-body outline-none resize-y"
+              className="w-full cockpit-input resize-y text-sm text-primary"
             />
           </div>
           <div>
@@ -127,7 +127,7 @@ function AlertRow({ alert, clients }: { alert: CommercialEvent; clients: ClientO
               type="email"
               defaultValue={client?.recipientEmail ?? ''}
               placeholder="client@exemple.fr"
-              className="w-full input-glass px-3 py-2 text-sm text-primary font-body outline-none"
+              className="w-full cockpit-input text-sm text-primary"
             />
           </div>
           {error && <p className="text-xs text-red-600 font-body">{error}</p>}
@@ -136,7 +136,7 @@ function AlertRow({ alert, clients }: { alert: CommercialEvent; clients: ClientO
               type="button"
               disabled={isPending}
               onClick={() => handle('send')}
-              className="btn-primary px-4 py-2 text-xs"
+              className="cockpit-button cockpit-button-dark px-4 py-2 text-xs"
             >
               {isPending ? 'Envoi...' : 'Envoyer maintenant'}
             </button>
@@ -144,7 +144,7 @@ function AlertRow({ alert, clients }: { alert: CommercialEvent; clients: ClientO
               type="button"
               disabled={isPending}
               onClick={() => handle('ignore')}
-              className="btn-ghost px-4 py-2 text-xs"
+              className="cockpit-button cockpit-button-outline px-4 py-2 text-xs"
             >
               Ignorer
             </button>
@@ -201,6 +201,7 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
 
     fd.set('recipientEmails', emails.join('\n'))
     fd.set('sourceInstance', selected.length === 1 ? selected[0].sourceInstance : 'cockpit-broadcast')
+    fd.set('organizationId', selected.length === 1 ? selected[0].organizationId ?? '' : '')
 
     startTransition(async () => {
       try {
@@ -215,7 +216,7 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
   }
 
   return (
-    <form ref={formRef} onSubmit={submit} className="card px-6 py-5 space-y-4">
+    <form ref={formRef} onSubmit={submit} className="cockpit-panel px-6 py-5 space-y-4">
       <h3 className="text-sm font-bold text-primary font-display uppercase tracking-wider">Composer un email</h3>
 
       {/* Sélection clients */}
@@ -256,7 +257,7 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
           name="freeEmail"
           type="text"
           placeholder="autre@exemple.fr, prospect@exemple.fr"
-          className="w-full input-glass px-3 py-2 text-sm text-primary font-body outline-none"
+          className="w-full cockpit-input text-sm text-primary"
         />
         <p className="mt-1 text-xs text-secondary font-body">Séparés par virgule — s'ajoute aux clients cochés</p>
       </div>
@@ -266,7 +267,7 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
         <input
           name="subject"
           required
-          className="w-full input-glass px-3 py-2 text-sm text-primary font-body outline-none"
+          className="w-full cockpit-input text-sm text-primary"
         />
       </div>
 
@@ -277,7 +278,7 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
           rows={8}
           required
           placeholder={"Bonjour,\n\n..."}
-          className="w-full input-glass px-3 py-2 text-sm text-primary font-body outline-none resize-y"
+          className="w-full cockpit-input resize-y text-sm text-primary"
         />
         <p className="mt-1 text-xs text-secondary font-body">Chaque destinataire recoit son propre email individuel.</p>
       </div>
@@ -287,7 +288,7 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
         <input
           name="notes"
           placeholder="Contexte, campagne..."
-          className="w-full input-glass px-3 py-2 text-sm text-primary font-body outline-none"
+          className="w-full cockpit-input text-sm text-primary"
         />
       </div>
 
@@ -297,7 +298,7 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
       <button
         type="submit"
         disabled={isPending}
-        className="btn-primary px-5 py-2 text-sm"
+        className="cockpit-button cockpit-button-dark px-5 py-2 text-sm"
       >
         {isPending ? 'Envoi en cours...' : 'Envoyer'}
       </button>
@@ -310,9 +311,9 @@ export default function EmailsTab({ pendingAlerts, sentEmails, clients }: Props)
   const [activeTab, setActiveTab] = useState<'alerts' | 'sent' | 'compose'>('alerts')
 
   const tabCls = (tab: typeof activeTab) =>
-    `px-4 py-2 text-xs font-bold font-display uppercase tracking-wider rounded-lg transition-colors ${
+    `px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded transition-colors ${
       activeTab === tab
-        ? 'bg-accent text-white'
+        ? 'bg-[rgb(var(--ink))] text-white'
         : 'text-secondary hover:text-primary'
     }`
 
@@ -356,7 +357,7 @@ export default function EmailsTab({ pendingAlerts, sentEmails, clients }: Props)
             <p className="text-sm text-secondary font-body">Aucun email envoye pour le moment.</p>
           )}
           {sentEmails.map((email) => (
-            <div key={email.id} className="card px-5 py-4">
+            <div key={email.id} className="cockpit-panel px-5 py-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -373,7 +374,7 @@ export default function EmailsTab({ pendingAlerts, sentEmails, clients }: Props)
               {email.body_text && (
                 <details className="mt-2">
                   <summary className="text-xs text-accent font-body cursor-pointer hover:underline">Voir le corps</summary>
-                  <pre className="mt-2 text-xs text-secondary font-body whitespace-pre-wrap bg-surface rounded p-3">{email.body_text}</pre>
+                  <pre className="mt-2 whitespace-pre-wrap rounded border border-[var(--cockpit-line)] bg-[rgb(var(--bg-interactive))] p-3 text-xs text-secondary">{email.body_text}</pre>
                 </details>
               )}
             </div>
