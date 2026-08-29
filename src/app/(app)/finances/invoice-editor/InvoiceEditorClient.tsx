@@ -938,6 +938,14 @@ export default function InvoiceEditorClient({
     })
   }
 
+  // Facturation électronique B2B uniquement (obligation légale 2026-2027) : un
+  // client particulier (type='individual') ou sans SIRET n'est pas concerné par
+  // l'e-invoicing Super PDP, le bouton de transmission reste masqué.
+  const selectedClientForEinvoicing = getSelectedClientForSend()
+  const canTransmitEinvoicingForClient = canTransmitEinvoicing
+    && selectedClientForEinvoicing?.type === 'company'
+    && !!selectedClientForEinvoicing?.siret?.trim()
+
   // ── Totaux ───────────────────────────────────────────────────────────────────
   const clientItems = items.filter(i => !i.is_internal)
   const totalHt = clientItems.reduce((acc, i) => acc + Number(i.qty) * Number(i.pu), 0)
@@ -1214,7 +1222,7 @@ export default function InvoiceEditorClient({
             <Send className="w-4 h-4" />
             <span className="hidden sm:inline">Valider &</span> Envoyer
           </ActionButton>
-          {canTransmitEinvoicing && invoiceId && (
+          {canTransmitEinvoicingForClient && invoiceId && (
             einvoicingPaStatus === 'submitted' ? (
               <span className="px-4 py-2.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-2 whitespace-nowrap text-sm">
                 <ShieldCheck className="w-4 h-4" />
