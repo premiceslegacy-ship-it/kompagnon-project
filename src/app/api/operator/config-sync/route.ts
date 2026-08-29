@@ -114,6 +114,8 @@ export async function POST(req: NextRequest) {
       provider: einvoicingConfig.provider,
       environment: einvoicingConfig.environment,
       annuaire_status: einvoicingConfig.annuaire_status,
+      super_pdp_emission_enabled: einvoicingConfig.emission_enabled,
+      super_pdp_reception_enabled: einvoicingConfig.reception_enabled,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'organization_id' })
 

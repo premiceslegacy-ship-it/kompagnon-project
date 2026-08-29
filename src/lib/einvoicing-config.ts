@@ -18,6 +18,11 @@ export type EinvoicingConfig = {
   oauth_status: EinvoicingOauthStatus
   oauth_connected_at: string | null
   super_pdp_connection_id: string | null
+  // Granularite emission/reception : pilotees uniquement par le cockpit (config-sync),
+  // jamais activables depuis l'instance cliente elle-meme. mode/oauth_status='connected'
+  // ne suffisent plus a autoriser une operation de facturation electronique.
+  emission_enabled: boolean
+  reception_enabled: boolean
 }
 
 export const DEFAULT_EINVOICING_CONFIG: EinvoicingConfig = {
@@ -28,6 +33,8 @@ export const DEFAULT_EINVOICING_CONFIG: EinvoicingConfig = {
   oauth_status: 'not_connected',
   oauth_connected_at: null,
   super_pdp_connection_id: null,
+  emission_enabled: false,
+  reception_enabled: false,
 }
 
 function isOneOf<T extends readonly string[]>(values: T, value: unknown): value is T[number] {
@@ -68,6 +75,8 @@ export function normalizeEinvoicingConfig(input: unknown): EinvoicingConfig {
       : DEFAULT_EINVOICING_CONFIG.oauth_status,
     oauth_connected_at: mode === 'super_pdp' ? optionalString(source.oauth_connected_at) : null,
     super_pdp_connection_id: mode === 'super_pdp' ? optionalString(source.super_pdp_connection_id) : null,
+    emission_enabled: mode === 'super_pdp' && source.emission_enabled === true,
+    reception_enabled: mode === 'super_pdp' && source.reception_enabled === true,
   }
 }
 

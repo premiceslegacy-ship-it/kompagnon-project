@@ -27,6 +27,8 @@ export type TrialState = {
   trial_converted?: boolean | null
 }
 
+export const TRIAL_DURATION_DAYS = 14
+
 export function getEffectiveTier(subscription: TrialState): SubscriptionTier {
   if (
     subscription.trial_tier
@@ -249,7 +251,12 @@ export async function syncClientQuotaConfig(
 export async function getOperatorClientContext(sourceInstance: string, organizationId?: string) {
   const operator = createOperatorAdminClient()
 
-  let resolvedOrganizationId = organizationId ?? null
+  // La sentinelle sert uniquement à conserver une fiche de préconfiguration
+  // avant la résolution réelle de l'organisation. Elle ne doit jamais être
+  // utilisée pour lire ou synchroniser une instance cliente.
+  let resolvedOrganizationId = organizationId && organizationId !== UNRESOLVED_ORGANIZATION_ID
+    ? organizationId
+    : null
   if (!resolvedOrganizationId) {
     const { data: client, error: clientError } = await operator
       .from('operator_clients')
@@ -274,7 +281,7 @@ export async function getOperatorClientContext(sourceInstance: string, organizat
     resolvedOrganizationId
       ? operator
         .from('operator_client_subscriptions')
-        .select('tier, ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at')
+        .select('tier, ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, super_pdp_emission_enabled, super_pdp_reception_enabled, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at')
         .eq('source_instance', sourceInstance)
         .eq('organization_id', resolvedOrganizationId)
         .maybeSingle()
@@ -298,6 +305,8 @@ export async function getOperatorClientContext(sourceInstance: string, organizat
     oauth_status: subscription?.oauth_status ?? DEFAULT_EINVOICING_CONFIG.oauth_status,
     oauth_connected_at: subscription?.oauth_connected_at ?? null,
     super_pdp_connection_id: subscription?.super_pdp_connection_id ?? null,
+    emission_enabled: subscription?.super_pdp_emission_enabled ?? false,
+    reception_enabled: subscription?.super_pdp_reception_enabled ?? false,
   })
 
   return {

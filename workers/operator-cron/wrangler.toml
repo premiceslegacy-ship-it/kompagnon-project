@@ -2,10 +2,12 @@ name = "operator-cron"
 main = "index.ts"
 compatibility_date = "2024-01-01"
 
-# Cron : tous les jours à 7h UTC (8h Paris en hiver, 9h en été)
-# Ajuster selon le fuseau horaire cible — Workers Cron est toujours en UTC
+# Deux cadences : rappels/quotas une fois par jour à 7h UTC (8h Paris en hiver,
+# 9h en été), polling de réception Super PDP toutes les 15 min (facultatif par
+# client, voir docs/atelier-facturation-electronique.md §7.5). scheduled()
+# distingue les deux via event.cron.
 [triggers]
-crons = ["0 7 * * *"]
+crons = ["0 7 * * *", "*/15 * * * *"]
 
 # Service Binding vers le Worker cockpit : un fetch() classique vers l'URL
 # publique *.workers.dev échoue avec l'erreur Cloudflare 1042 (restriction
