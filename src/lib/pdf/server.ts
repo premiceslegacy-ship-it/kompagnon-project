@@ -101,7 +101,11 @@ export async function renderQuotePdfBufferById(quoteId: string, orgId: string): 
   return { buffer, fileName }
 }
 
-export async function renderInvoicePdfBufferById(invoiceId: string, orgId: string): Promise<{ buffer: Buffer; fileName: string } | null> {
+// Charge une facture + organisation dans la forme attendue par generateFacturXml/
+// renderInvoicePdf. Extrait de renderInvoicePdfBufferById pour être réutilisé par
+// getFacturXmlForInvoice (Phase 2 Super PDP, src/lib/data/mutations/einvoicing.ts)
+// sans dupliquer ce select.
+async function loadInvoiceRecordForFacturX(invoiceId: string, orgId: string) {
   const admin = createAdminClient()
 
   const [invoice, organization] = await Promise.all([
@@ -135,6 +139,21 @@ export async function renderInvoicePdfBufferById(invoiceId: string, orgId: strin
     client: invoiceClient ?? null,
     quote_number: quoteNumber,
   }
+
+  return { invoiceRecord, organization }
+}
+
+/** XML Factur-X seul pour une facture, sans le PDF — utilisé par la transmission Super PDP (Phase 2). */
+export async function getFacturXmlForInvoice(invoiceId: string, orgId: string): Promise<string | null> {
+  const loaded = await loadInvoiceRecordForFacturX(invoiceId, orgId)
+  if (!loaded) return null
+  return generateFacturXml(loaded.invoiceRecord as any, loaded.organization)
+}
+
+export async function renderInvoicePdfBufferById(invoiceId: string, orgId: string): Promise<{ buffer: Buffer; fileName: string } | null> {
+  const loaded = await loadInvoiceRecordForFacturX(invoiceId, orgId)
+  if (!loaded) return null
+  const { invoiceRecord, organization } = loaded
 
   const pdfBuffer = await renderInvoicePdf({ invoice: invoiceRecord, organization }, pdfOrigin())
 

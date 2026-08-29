@@ -19,6 +19,7 @@ import {
   type DimensionPricingMode,
 } from '@/lib/catalog-pricing'
 import { createInvoice, saveInvoiceItems, sendInvoice, savePaymentSchedule } from '@/lib/data/mutations/invoices'
+import { transmitInvoiceViaSuperPdp } from '@/lib/data/mutations/einvoicing'
 import SaveToCatalogModal, { type SaveToCatalogSource, type SaveToCatalogResult } from '@/components/catalog/SaveToCatalogModal'
 import { fetchClientContractsForAttachment } from '@/lib/data/mutations/contracts'
 import AttachmentPickerModal, { type AttachmentGroup } from '@/components/AttachmentPickerModal'
@@ -29,7 +30,7 @@ import { UnitSelect } from '@/components/ui/UnitSelect'
 import { NumericInput } from '@/components/ui/NumericInput'
 import { ActionButton } from '@/components/ui/ActionButton'
 import {
-  ArrowLeft, Eye, Send, Plus, Trash2, FileText, Search, X, Loader2, Save, EyeOff, Truck, ChevronDown, ChevronUp, Ruler, Package, CalendarClock, BookmarkPlus, LayoutGrid,
+  ArrowLeft, Eye, Send, Plus, Trash2, FileText, Search, X, Loader2, Save, EyeOff, Truck, ChevronDown, ChevronUp, Ruler, Package, CalendarClock, BookmarkPlus, LayoutGrid, ShieldCheck,
 } from 'lucide-react'
 import type { ResolvedCatalogContext } from '@/lib/catalog-context'
 import { getCatalogDocumentVatRate, getInternalResourceUnitCost } from '@/lib/catalog-ui'
@@ -205,6 +206,8 @@ type Props = {
   linkableChantiers?: LinkableChantier[]
   defaultChantierId?: string | null
   returnTo?: string | null
+  /** Émission Super PDP activée pour cette organisation (mode + connexion + capacité, vérifiés côté serveur). */
+  canTransmitEinvoicing?: boolean
 }
 
 export default function InvoiceEditorClient({
@@ -219,6 +222,7 @@ export default function InvoiceEditorClient({
   linkableChantiers = [],
   defaultChantierId = null,
   returnTo: rawReturnTo = null,
+  canTransmitEinvoicing = false,
 }: Props) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -569,6 +573,9 @@ export default function InvoiceEditorClient({
   const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isSending, setIsSending] = useState(false)
+  const [isTransmittingEinvoicing, setIsTransmittingEinvoicing] = useState(false)
+  const [einvoicingPaStatus, setEinvoicingPaStatus] = useState<string | null>(existingInvoice?.pa_status ?? null)
+  const [einvoicingError, setEinvoicingError] = useState<string | null>(null)
   const [sendModalOpen, setSendModalOpen] = useState(false)
   const [sendModalGroups, setSendModalGroups] = useState<AttachmentGroup[]>([])
   const [sendModalLoading, setSendModalLoading] = useState(false)
@@ -914,6 +921,23 @@ export default function InvoiceEditorClient({
     })
   }
 
+  // Action strictement volontaire, jamais déclenchée automatiquement : la facturation
+  // électronique reste optionnelle par client (voir docs/atelier-facturation-electronique.md).
+  function handleTransmitEinvoicing() {
+    if (!invoiceId) return
+    setIsTransmittingEinvoicing(true)
+    setEinvoicingError(null)
+    startTransition(async () => {
+      const result = await transmitInvoiceViaSuperPdp(invoiceId)
+      if ('error' in result) {
+        setEinvoicingError(result.error)
+      } else {
+        setEinvoicingPaStatus('submitted')
+      }
+      setIsTransmittingEinvoicing(false)
+    })
+  }
+
   // ── Totaux ───────────────────────────────────────────────────────────────────
   const clientItems = items.filter(i => !i.is_internal)
   const totalHt = clientItems.reduce((acc, i) => acc + Number(i.qty) * Number(i.pu), 0)
@@ -1190,8 +1214,26 @@ export default function InvoiceEditorClient({
             <Send className="w-4 h-4" />
             <span className="hidden sm:inline">Valider &</span> Envoyer
           </ActionButton>
+          {canTransmitEinvoicing && invoiceId && (
+            einvoicingPaStatus === 'submitted' ? (
+              <span className="px-4 py-2.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-2 whitespace-nowrap text-sm">
+                <ShieldCheck className="w-4 h-4" />
+                Transmise via Super PDP
+              </span>
+            ) : (
+              <ActionButton onClick={handleTransmitEinvoicing} loading={isTransmittingEinvoicing} disabled={isSending || isSaving}
+                className="px-4 py-2.5 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary transition-colors font-semibold flex items-center gap-2 disabled:opacity-50 whitespace-nowrap">
+                <ShieldCheck className="w-4 h-4" />
+                <span className="hidden sm:inline">Transmettre via</span> Super PDP
+              </ActionButton>
+            )
+          )}
         </div>
       </div>
+
+      {einvoicingError && (
+        <div className="p-4 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-600 text-sm font-medium">{einvoicingError}</div>
+      )}
 
       {error && (
         <div className="p-4 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-600 text-sm font-medium">{error}</div>

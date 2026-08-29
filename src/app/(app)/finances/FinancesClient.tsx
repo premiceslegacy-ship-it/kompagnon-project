@@ -5,10 +5,12 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { Quote } from '@/lib/data/queries/quotes'
 import type { Invoice } from '@/lib/data/queries/invoices'
+import type { ReceivedInvoice } from '@/lib/data/queries/received-invoices'
 import { formatCurrency, ActionMenu } from '@/components/shared'
 import { archiveQuote, markQuoteAccepted, duplicateQuote } from '@/lib/data/mutations/quotes'
 import { archiveInvoice, markInvoicePaid, generateDepositInvoice, recordScheduledPayment } from '@/lib/data/mutations/invoices'
 import { createChantierFromQuote } from '@/lib/data/mutations/chantiers'
+import { linkReceivedInvoiceToChantier } from '@/lib/data/mutations/chantier-expenses'
 import ImportDocumentsModal from './ImportDocumentsModal'
 import SituationsSection from '@/components/situations/SituationsSection'
 import { loadSituationsSummary } from './actions'
@@ -18,7 +20,7 @@ import {
   Search, Plus, FileText, Bot,
   CheckCircle2, Clock, Percent, Wallet, Receipt, AlertTriangle,
   Edit2, Trash2, FileDown, Eye, Repeat, Check, Copy, Landmark, HardHat,
-  ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Upload, Loader2, CalendarClock, X, RefreshCw,
+  ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Upload, Loader2, CalendarClock, X, RefreshCw, Inbox,
 } from 'lucide-react'
 import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 
@@ -74,6 +76,13 @@ const INVOICE_STATUS: Record<string, { label: string; cls: string }> = {
   cancelled: { label: 'Annulée',             cls: 'bg-red-500/10 text-red-500' },
 }
 
+const RECEIVED_INVOICE_STATUS: Record<string, { label: string; cls: string }> = {
+  received:  { label: 'Reçue',     cls: 'bg-accent/10 text-accent' },
+  verified:  { label: 'À payer',   cls: 'bg-blue-500/10 text-blue-500' },
+  accounted: { label: 'Payée',     cls: 'bg-accent-green/10 text-accent-green' },
+  rejected:  { label: 'Rejetée',   cls: 'bg-red-500/10 text-red-500' },
+}
+
 function StatCard({ icon, label, value, danger }: { icon: React.ReactNode; label: string; value: string; danger?: boolean }) {
   return (
     <div className="rounded-3xl card p-6 flex items-center gap-4">
@@ -126,6 +135,8 @@ export default function FinancesClient({
   canCreateQuote, canEditQuote, canSendQuote, canDeleteQuote,
   canCreateInvoice, canSendInvoice, canRecordPayment, canDeleteInvoice,
   canCreateSituation = false, canCreateSolde = false,
+  canViewReceivedInvoices = false, initialReceivedInvoices = [],
+  linkableChantiers = [], canLinkReceivedInvoice = false,
 }: {
   initialQuotes: Quote[]
   initialInvoices: Invoice[]
@@ -139,12 +150,20 @@ export default function FinancesClient({
   canDeleteInvoice: boolean
   canCreateSituation?: boolean
   canCreateSolde?: boolean
+  canViewReceivedInvoices?: boolean
+  initialReceivedInvoices?: ReceivedInvoice[]
+  linkableChantiers?: { id: string; title: string }[]
+  canLinkReceivedInvoice?: boolean
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [activeTab, setActiveTab] = useState<'quotes' | 'invoices'>(
-    searchParams.get('tab') === 'invoices' ? 'invoices' : 'quotes'
+  const [activeTab, setActiveTab] = useState<'quotes' | 'invoices' | 'received'>(
+    searchParams.get('tab') === 'invoices' ? 'invoices'
+      : searchParams.get('tab') === 'received' && canViewReceivedInvoices ? 'received'
+      : 'quotes'
   )
+  const [receivedInvoices, setReceivedInvoices] = useState(initialReceivedInvoices)
+  const [linkingReceivedInvoiceId, setLinkingReceivedInvoiceId] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [quotes, setQuotes] = useState(initialQuotes)
@@ -251,12 +270,30 @@ export default function FinancesClient({
     const matchMonth = invDate(inv).startsWith(statsMonth)
     return matchSearch && matchStatus && matchMonth
   })
-  const activeFilteredCount = activeTab === 'quotes' ? filtered.length : filteredInvoices.length
+
+  // ── Received invoice filters ─────────────────────────────────────────────────
+
+  const filteredReceivedInvoices = receivedInvoices.filter(ri => {
+    const matchSearch = !searchTerm ||
+      ri.supplier_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      ri.invoice_number.toLowerCase().includes(searchTerm.toLowerCase())
+    const matchStatus = statusFilter === 'all' || ri.status === statusFilter
+    return matchSearch && matchStatus
+  })
+
+  const receivedToPayCount = receivedInvoices.filter(ri => ri.status === 'verified').length
+  const receivedToPayTotal = receivedInvoices.filter(ri => ri.status === 'verified').reduce((s, ri) => s + ri.total_ttc, 0)
+  const receivedOverdueCount = receivedInvoices.filter(
+    ri => ri.status === 'verified' && ri.due_date != null && ri.due_date < today
+  ).length
+
+  const activeFilteredCount = activeTab === 'quotes' ? filtered.length : activeTab === 'invoices' ? filteredInvoices.length : filteredReceivedInvoices.length
   const totalPages = Math.max(1, Math.ceil(activeFilteredCount / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
   const pageStart = (currentPage - 1) * PAGE_SIZE
   const paginatedQuotes = filtered.slice(pageStart, pageStart + PAGE_SIZE)
   const paginatedInvoices = filteredInvoices.slice(pageStart, pageStart + PAGE_SIZE)
+  const paginatedReceivedInvoices = filteredReceivedInvoices.slice(pageStart, pageStart + PAGE_SIZE)
 
   // Stats globales (toutes périodes) - pour les lignes de la table
   // Stats par mois sélectionné - pour les KPI cards
@@ -357,8 +394,9 @@ export default function FinancesClient({
   useEffect(() => {
     setQuotes(initialQuotes)
     setInvoices(initialInvoices)
+    setReceivedInvoices(initialReceivedInvoices)
     setIsRefreshing(false)
-  }, [initialQuotes, initialInvoices])
+  }, [initialQuotes, initialInvoices, initialReceivedInvoices])
 
   const handleRefresh = () => {
     setIsRefreshing(true)
@@ -424,7 +462,7 @@ export default function FinancesClient({
   }
 
   // Reset status filter when switching tabs + sync URL
-  const handleTabChange = (tab: 'quotes' | 'invoices') => {
+  const handleTabChange = (tab: 'quotes' | 'invoices' | 'received') => {
     setActiveTab(tab)
     setStatusFilter('all')
     setSearchTerm('')
@@ -432,7 +470,22 @@ export default function FinancesClient({
     router.replace(`/finances?tab=${tab}`, { scroll: false })
   }
 
-  const activeStatusMap = activeTab === 'quotes' ? STATUS : INVOICE_STATUS
+  const handleLinkReceivedInvoiceChantier = async (receivedInvoiceId: string, chantierId: string | null) => {
+    setLinkingReceivedInvoiceId(receivedInvoiceId)
+    const previousReceivedInvoices = receivedInvoices
+    const chantierTitle = chantierId ? (linkableChantiers.find(c => c.id === chantierId)?.title ?? null) : null
+    setReceivedInvoices(prev => prev.map(ri =>
+      ri.id === receivedInvoiceId ? { ...ri, chantier_id: chantierId, chantier_title: chantierTitle } : ri
+    ))
+    const res = await linkReceivedInvoiceToChantier(receivedInvoiceId, chantierId)
+    setLinkingReceivedInvoiceId(null)
+    if (res.error) {
+      setReceivedInvoices(previousReceivedInvoices)
+      alert(res.error)
+    }
+  }
+
+  const activeStatusMap = activeTab === 'quotes' ? STATUS : activeTab === 'invoices' ? INVOICE_STATUS : RECEIVED_INVOICE_STATUS
 
   const depositPreview = depositModal
     ? Math.round((depositModal.quoteTtc ?? 0) * depositRate / 100 * 100) / 100
@@ -742,6 +795,9 @@ export default function FinancesClient({
       <div className="flex items-center gap-2 p-1 bg-base/50 rounded-full w-fit border border-[var(--elevation-border)] mx-auto md:mx-0">
         <button onClick={() => handleTabChange('quotes')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'quotes' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>Devis</button>
         <button onClick={() => handleTabChange('invoices')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'invoices' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>Factures</button>
+        {canViewReceivedInvoices && (
+          <button onClick={() => handleTabChange('received')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'received' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>Factures reçues</button>
+        )}
       </div>
 
       {/* Stats */}
@@ -797,8 +853,26 @@ export default function FinancesClient({
             )}
           </div>
         )}
-        <div className={`grid grid-cols-2 gap-4 ${activeTab === 'quotes' ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
-          {activeTab === 'quotes' ? (
+        <div className={`grid grid-cols-2 gap-4 ${activeTab === 'quotes' ? 'md:grid-cols-4' : activeTab === 'received' ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+          {activeTab === 'received' ? (
+            <>
+              <div className="rounded-3xl card p-6 flex items-center gap-4">
+                <Wallet className="w-6 h-6 text-blue-500 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">À payer</p>
+                  <p className="text-2xl font-bold tabular-nums text-primary">{formatCurrency(receivedToPayTotal)}</p>
+                  <p className="text-xs text-secondary mt-0.5">{receivedToPayCount} facture{receivedToPayCount > 1 ? 's' : ''}</p>
+                </div>
+              </div>
+              <div className="rounded-3xl card p-6 flex items-center gap-4">
+                <AlertTriangle className={`w-6 h-6 flex-shrink-0 ${receivedOverdueCount > 0 ? 'text-red-500' : 'text-secondary'}`} />
+                <div>
+                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">En retard</p>
+                  <p className={`text-2xl font-bold tabular-nums ${receivedOverdueCount > 0 ? 'text-red-500' : 'text-primary'}`}>{receivedOverdueCount}</p>
+                </div>
+              </div>
+            </>
+          ) : activeTab === 'quotes' ? (
             <>
               <div className="rounded-3xl card p-6 flex items-center gap-4">
                 <FileText className="w-6 h-6 text-accent flex-shrink-0" />
@@ -875,7 +949,7 @@ export default function FinancesClient({
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-secondary" />
             <input
               type="text"
-              placeholder={`Rechercher ${activeTab === 'quotes' ? 'un devis' : 'une facture'}...`}
+              placeholder={`Rechercher ${activeTab === 'quotes' ? 'un devis' : activeTab === 'received' ? 'une facture reçue' : 'une facture'}...`}
               value={searchTerm}
               onChange={e => { setSearchTerm(e.target.value); setPage(1) }}
               className="w-full pl-12 pr-4 py-3 rounded-full bg-base/50 border border-[var(--elevation-border)] focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all text-primary"
@@ -895,17 +969,98 @@ export default function FinancesClient({
         <div className="overflow-visible sm:overflow-x-auto">
           <table className="w-full text-left border-collapse table-fixed sm:table-auto">
             <thead className="hidden sm:table-header-group">
-              <tr className="bg-base/30">
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">N°</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Titre / Client</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Date</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Montant HT</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
-                <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
-              </tr>
+              {activeTab === 'received' ? (
+                <tr className="bg-base/30">
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Fournisseur</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">N° facture</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Date</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Montant TTC</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Chantier</th>
+                </tr>
+              ) : (
+                <tr className="bg-base/30">
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">N°</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Titre / Client</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Date</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Montant HT</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
+                </tr>
+              )}
             </thead>
             <tbody className="divide-y divide-[var(--elevation-border)]">
-              {activeTab === 'quotes' ? (
+              {activeTab === 'received' ? (
+                filteredReceivedInvoices.length > 0 ? paginatedReceivedInvoices.map(ri => {
+                  const st = RECEIVED_INVOICE_STATUS[ri.status] ?? RECEIVED_INVOICE_STATUS['received']
+                  const date = new Date(ri.invoice_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
+                  const isOverdue = ri.status === 'verified' && ri.due_date != null && ri.due_date < today
+                  return (
+                    <tr key={ri.id} className="hover:bg-accent/5 transition-colors">
+                      <td className="px-4 sm:px-6 py-3 sm:py-4 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <p className="font-bold text-primary truncate min-w-0" title={ri.supplier_name}>{ri.supplier_name}</p>
+                          <span className={`sm:hidden px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shrink-0 ${st.cls}`}>
+                            {st.label}
+                          </span>
+                        </div>
+                        <p className="sm:hidden text-[11px] text-secondary/70 truncate mt-0.5">
+                          {ri.invoice_number} · {date}
+                        </p>
+                        {isOverdue && ri.due_date && (
+                          <p className="text-xs text-red-500 font-semibold mt-0.5">
+                            Échue le {new Date(ri.due_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+                          </p>
+                        )}
+                      </td>
+                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm font-mono text-secondary">{ri.invoice_number}</p></td>
+                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm text-secondary">{date}</p></td>
+                      <td className="pl-2 pr-3 sm:px-6 py-3 sm:py-4 text-right w-[92px] sm:w-auto">
+                        <p className="text-sm font-semibold sm:font-medium text-primary tabular-nums whitespace-nowrap">
+                          {formatCurrency(ri.total_ttc)}
+                        </p>
+                      </td>
+                      <td className="hidden sm:table-cell px-6 py-4">
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${st.cls}`}>
+                          {st.label}
+                        </span>
+                        {ri.status === 'rejected' && ri.rejection_reason && (
+                          <p className="text-xs text-secondary mt-1 max-w-[220px] truncate" title={ri.rejection_reason}>{ri.rejection_reason}</p>
+                        )}
+                      </td>
+                      <td className="px-4 sm:px-6 py-3 sm:py-4">
+                        {canLinkReceivedInvoice ? (
+                          <select
+                            value={ri.chantier_id ?? ''}
+                            onChange={e => handleLinkReceivedInvoiceChantier(ri.id, e.target.value || null)}
+                            disabled={linkingReceivedInvoiceId === ri.id}
+                            className="w-full sm:w-auto max-w-[200px] px-3 py-2 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-sm text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all appearance-none disabled:opacity-50"
+                          >
+                            <option value="">Aucun chantier</option>
+                            {linkableChantiers.map(c => (
+                              <option key={c.id} value={c.id}>{c.title}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <p className="text-sm text-secondary">{ri.chantier_title ?? 'Aucun chantier'}</p>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                }) : (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-20 text-center">
+                      <div className="flex flex-col items-center gap-4">
+                        <Inbox className="w-10 h-10 text-secondary opacity-20" />
+                        <div>
+                          <p className="text-xl font-bold text-primary">Aucune facture reçue pour l&apos;instant</p>
+                          <p className="text-secondary mt-1">Les factures reçues par votre plateforme de facturation électronique apparaîtront ici.</p>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              ) : activeTab === 'quotes' ? (
                 filtered.length > 0 ? paginatedQuotes.map(q => {
                   const st = STATUS[q.status] ?? STATUS['draft']
                   const date = new Date(q.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
