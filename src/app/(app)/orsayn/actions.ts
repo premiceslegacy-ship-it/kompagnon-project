@@ -25,6 +25,7 @@ import {
   initializeQuotasForTier,
   recordOperatorClientEvent,
   syncClientQuotaConfig,
+  TRIAL_DURATION_DAYS,
   UNRESOLVED_ORGANIZATION_ID,
 } from '@/lib/operator/trial-lifecycle'
 
@@ -109,6 +110,8 @@ function parseEinvoicingConfig(
     oauth_status: current.oauth_status,
     oauth_connected_at: current.oauth_connected_at,
     super_pdp_connection_id: current.super_pdp_connection_id,
+    emission_enabled: formData.get('einvoicingEmissionEnabled') === 'on',
+    reception_enabled: formData.get('einvoicingReceptionEnabled') === 'on',
   })
 }
 
@@ -262,6 +265,7 @@ export async function upsertOperatorClientSettings(formData: FormData) {
       billing_currency: billingCurrency,
       is_active: formData.get('isActive') === 'on',
       app_url: appUrl,
+      contact_email: parseOptionalEmail(formData.get('contactEmail')),
       updated_at: new Date().toISOString(),
     }, {
       onConflict: 'source_instance,organization_id',
@@ -295,7 +299,8 @@ export async function upsertOperatorSubscription(formData: FormData) {
   const contactEmail = parseOptionalEmail(formData.get('contactEmail'))
 
   const operator = createOperatorAdminClient()
-  const organizationIdField = String(formData.get('organizationId') ?? '').trim()
+  const organizationIdFieldRaw = String(formData.get('organizationId') ?? '').trim()
+  const organizationIdField = organizationIdFieldRaw === UNRESOLVED_ORGANIZATION_ID ? '' : organizationIdFieldRaw
   const organizationId = organizationIdField || await resolveOrganizationId(operator, sourceInstance)
 
   if (!organizationId) {
@@ -360,6 +365,8 @@ export async function upsertOperatorSubscription(formData: FormData) {
       einvoicing_provider: einvoicingConfig.provider,
       einvoicing_environment: einvoicingConfig.environment,
       einvoicing_annuaire_status: einvoicingConfig.annuaire_status,
+      super_pdp_emission_enabled: einvoicingConfig.emission_enabled,
+      super_pdp_reception_enabled: einvoicingConfig.reception_enabled,
       overflow_mode: overflowMode,
       notes,
       updated_at: new Date().toISOString(),
@@ -407,8 +414,8 @@ export async function activateOperatorTrial(formData: FormData) {
   if (!sourceInstance) throw new Error('source_instance requis')
   const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
 
-  const daysRaw = Number.parseInt(String(formData.get('trialDays') ?? '30'), 10)
-  const trialDays = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(daysRaw, 90) : 30
+  const trialDays = TRIAL_DURATION_DAYS
+  const trialStartedAt = new Date().toISOString()
   const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString()
   const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance, requestedOrganizationId)
 
@@ -429,8 +436,10 @@ export async function activateOperatorTrial(formData: FormData) {
       einvoicing_environment: subscription.einvoicingConfig.environment,
       einvoicing_annuaire_status: subscription.einvoicingConfig.annuaire_status,
       trial_tier: 'expert',
+      trial_started_at: trialStartedAt,
       trial_ends_at: trialEndsAt,
       trial_converted: false,
+      trial_reminders_sent: [],
       is_active: true,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'source_instance,organization_id' })
@@ -535,7 +544,7 @@ export async function expireOperatorTrial(formData: FormData) {
   const targetTier = parseTier(formData.get('targetTier'))
   const organizationId = String(formData.get('organizationId') ?? '').trim() || undefined
 
-  await expireTrialForInstance({
+  const result = await expireTrialForInstance({
     sourceInstance,
     organizationId,
     targetTier,
@@ -543,7 +552,124 @@ export async function expireOperatorTrial(formData: FormData) {
     eventType: 'trial_ended',
   })
 
+  if (result.status !== 'expired') {
+    throw new Error(result.error ?? 'Aucun essai actif à terminer')
+  }
+  if (result.syncStatus !== 'synced') {
+    throw new Error(`Essai terminé côté cockpit, mais la configuration n’a pas été renvoyée (${result.error ?? result.syncStatus ?? 'erreur inconnue'}). Relance la configuration.`)
+  }
+
   revalidatePath('/orsayn')
+}
+
+export async function extendOperatorTrial(formData: FormData) {
+  const user = await getOperatorUser()
+  if (!user) throw new Error('Accès opérateur requis')
+
+  const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
+  if (!sourceInstance) throw new Error('Identifiant technique requis')
+  const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
+  const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance, requestedOrganizationId)
+  if (!organizationId) throw new Error('Organisation introuvable pour cette fiche')
+
+  const baseTime = subscription.trialEndsAt && new Date(subscription.trialEndsAt).getTime() > Date.now()
+    ? new Date(subscription.trialEndsAt).getTime()
+    : Date.now()
+  const trialEndsAt = new Date(baseTime + 7 * 24 * 60 * 60 * 1000).toISOString()
+  const selfServiceTrial = subscription.accessStatus !== null
+  const { error } = await operator.from('operator_client_subscriptions').upsert({
+    source_instance: sourceInstance,
+    organization_id: organizationId,
+    tier: subscription.tier,
+    ai_billing_mode: subscription.aiBillingMode,
+    overflow_mode: subscription.overflowMode,
+    einvoicing_mode: subscription.einvoicingConfig.mode,
+    einvoicing_provider: subscription.einvoicingConfig.provider,
+    einvoicing_environment: subscription.einvoicingConfig.environment,
+    einvoicing_annuaire_status: subscription.einvoicingConfig.annuaire_status,
+    trial_tier: subscription.trialTier ?? 'expert',
+    trial_ends_at: trialEndsAt,
+    trial_converted: false,
+    ...(selfServiceTrial ? { access_status: 'trialing', access_ends_at: trialEndsAt } : {}),
+    trial_reminders_sent: [],
+    is_active: true,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'source_instance,organization_id' })
+  if (error) throw new Error(error.message)
+
+  await initializeQuotasForTier(sourceInstance, organizationId, 'expert')
+  const syncResult = await syncClientQuotaConfig(sourceInstance, organizationId, appUrl, 'expert', subscription.overflowMode, subscription.aiBillingMode, subscription.einvoicingConfig)
+  await recordOperatorClientEvent({
+    sourceInstance,
+    organizationId,
+    eventCategory: 'trial',
+    eventType: 'trial_extended',
+    actorEmail: user.email ?? null,
+    metadata: { added_days: 7, trial_ends_at: trialEndsAt, config_sync_status: syncResult.status },
+  })
+  if (syncResult.status !== 'synced') throw new Error(`Essai prolongé, mais la configuration n’a pas été renvoyée (${syncResult.error ?? syncResult.status}).`)
+  revalidatePath('/orsayn')
+}
+
+async function updateOperatorArchiveState(formData: FormData, isArchived: boolean) {
+  const user = await getOperatorUser()
+  if (!user) throw new Error('Accès opérateur requis')
+  const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
+  const organizationId = String(formData.get('organizationId') ?? '').trim()
+  if (!sourceInstance || !organizationId) throw new Error('Fiche client incomplète')
+
+  const operator = createOperatorAdminClient()
+  const { error } = await operator.from('operator_client_settings')
+    .update({ is_active: !isArchived, updated_at: new Date().toISOString() })
+    .eq('source_instance', sourceInstance)
+    .eq('organization_id', organizationId)
+  if (error) throw new Error(error.message)
+  await recordOperatorClientEvent({
+    sourceInstance,
+    organizationId,
+    eventCategory: 'crm',
+    eventType: isArchived ? 'client_archived' : 'client_restored',
+    actorEmail: user.email ?? null,
+  })
+  revalidatePath('/orsayn')
+}
+
+export async function archiveOperatorClient(formData: FormData) {
+  return updateOperatorArchiveState(formData, true)
+}
+
+export async function restoreOperatorClient(formData: FormData) {
+  return updateOperatorArchiveState(formData, false)
+}
+
+export async function deleteOperatorClient(formData: FormData) {
+  const user = await getOperatorUser()
+  if (!user) throw new Error('Accès opérateur requis')
+  const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
+  const organizationId = String(formData.get('organizationId') ?? '').trim()
+  const confirmation = String(formData.get('confirmName') ?? '').trim()
+  const expectedName = String(formData.get('expectedName') ?? '').trim()
+  if (!sourceInstance || !organizationId) throw new Error('Fiche client incomplète')
+  if (!expectedName || confirmation !== expectedName) throw new Error('Saisis exactement le nom du client pour confirmer')
+
+  const operator = createOperatorAdminClient()
+  // La fiche correspond aux données de configuration du cockpit. Les journaux
+  // IA bruts restent conservés pour l'historique et ne sont plus rattachés à
+  // une fiche visible une fois ces lignes supprimées.
+  const deletes = [
+    operator.from('operator_client_quotas').delete().eq('source_instance', sourceInstance).eq('organization_id', organizationId),
+    operator.from('operator_client_subscriptions').delete().eq('source_instance', sourceInstance).eq('organization_id', organizationId),
+    operator.from('operator_client_settings').delete().eq('source_instance', sourceInstance).eq('organization_id', organizationId),
+  ]
+  for (const request of deletes) {
+    const { error } = await request
+    if (error) throw new Error(error.message)
+  }
+  // Suppression strictement limitée aux données du cockpit opérateur. Aucun appel
+  // n'est effectué vers le Supabase ou le Worker de l'artisan.
+  console.info('[deleteOperatorClient]', { sourceInstance, organizationId, actor: user.email })
+  revalidatePath('/orsayn')
+  revalidatePath('/orsayn/clients')
 }
 
 export async function resyncOperatorClientConfig(formData: FormData) {
@@ -724,6 +850,7 @@ export async function sendOperatorEmail(formData: FormData) {
 
     await operator.from('operator_commercial_events').insert({
       source_instance: String(formData.get('sourceInstance') ?? '').trim() || 'cockpit-broadcast',
+      organization_id: String(formData.get('organizationId') ?? '').trim() || null,
       event_type: 'manual_email',
       tier_context: String(formData.get('tierContext') ?? '').trim() || null,
       sent_by: 'operator_manual',

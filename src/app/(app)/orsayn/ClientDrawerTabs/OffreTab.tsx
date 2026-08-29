@@ -179,6 +179,33 @@ export default function OffreTab({ row }: { row: ClientRow }) {
         <p className="text-xs leading-relaxed text-secondary">
           Réception UI 2026 uniquement en mode Super PDP. Avant 2027, l&apos;envoi PDF/mail reste normal pour TPE/PME.
         </p>
+
+        {row.einvoicingConfig.mode === 'super_pdp' && row.einvoicingConfig.oauth_status === 'connected' && (
+          <div className="rounded-lg border border-[var(--elevation-border)] bg-interactive/40 px-4 py-3 space-y-3">
+            <p className={fieldLabelCls}>Activation émission / réception</p>
+            <p className="text-xs text-secondary">
+              Ce n&apos;est pas tous les clients qui passent par Atelier pour leur facturation électronique : ces deux cases restent décochées par défaut, à activer une par une selon le client.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-secondary font-body">
+              <input
+                name="einvoicingEmissionEnabled"
+                type="checkbox"
+                defaultChecked={row.einvoicingConfig.emission_enabled}
+                className="h-4 w-4 rounded border-[var(--elevation-border)] accent-accent"
+              />
+              Émission activée (transmission des factures émises via Super PDP)
+            </label>
+            <label className="flex items-center gap-2 text-sm text-secondary font-body">
+              <input
+                name="einvoicingReceptionEnabled"
+                type="checkbox"
+                defaultChecked={row.einvoicingConfig.reception_enabled}
+                className="h-4 w-4 rounded border-[var(--elevation-border)] accent-accent"
+              />
+              Réception activée (polling des factures fournisseurs reçues via Super PDP)
+            </label>
+          </div>
+        )}
       </div>
 
       <button type="submit" className="btn-pill btn-pill-primary w-full text-sm lg:col-span-2">
