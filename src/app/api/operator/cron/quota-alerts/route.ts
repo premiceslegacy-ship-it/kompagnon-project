@@ -3,7 +3,7 @@ import { Resend } from 'resend'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { QUOTA_DEFINITIONS } from '@/lib/quota-catalog'
 import { verifyCronSecret } from '@/lib/cron-auth'
-import { expireTrialForInstance } from '@/lib/operator/trial-lifecycle'
+import { expireTrialForInstance, TRIAL_DURATION_DAYS } from '@/lib/operator/trial-lifecycle'
 
 export const dynamic = 'force-dynamic'
 
@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
           .eq('organization_id', row.organization_id)
           .maybeSingle()
         if (setting?.contact_email) await sendEmail(setting.contact_email, 'Votre essai Atelier est terminé', [
-          'Vos 14 jours Expert sont terminés. Aucun prélèvement n’a été effectué.',
+          `Vos ${TRIAL_DURATION_DAYS} jours Expert sont terminés. Aucun prélèvement n’a été effectué.`,
           `Votre espace vous attend : ${setting.app_url ?? ''}/activation`,
           'Choisissez Pro ou Expert pour reprendre là où vous vous êtes arrêté.',
         ])
@@ -115,7 +115,8 @@ export async function POST(req: NextRequest) {
     trial_reminders_sent: string[] | null
   }>((from, to) => operator.from('operator_client_subscriptions')
     .select('source_instance, organization_id, trial_ends_at, trial_reminders_sent')
-    .eq('access_status', 'trialing')
+    .not('trial_tier', 'is', null)
+    .eq('trial_converted', false)
     .gt('trial_ends_at', now.toISOString())
     .range(from, to))
   let trialRemindersSent = 0

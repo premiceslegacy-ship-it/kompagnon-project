@@ -784,6 +784,7 @@ const MobileDrawer = ({
         (notifications.maintenanceDue ?? 0) +
         (notifications.maintenanceBillingPending ?? 0)
     );
+    const isCockpit = pathname?.startsWith('/orsayn') ?? false;
 
     return createPortal(
         <>
@@ -792,7 +793,7 @@ const MobileDrawer = ({
                 onClick={onClose}
             />
             <div
-                className={`fixed top-0 left-0 h-full w-[280px] z-[9991] flex flex-col transition-transform duration-300 ease-out bg-surface dark:bg-[#141414] ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
+                className={`fixed top-0 left-0 h-full w-[280px] z-[9991] flex flex-col transition-transform duration-300 ease-out ${isCockpit ? 'cockpit-topbar-drawer' : 'bg-surface dark:bg-[#141414]'} ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
             >
                 <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--elevation-border)]">
                     <div className="flex items-center gap-3">
@@ -889,6 +890,7 @@ const MobileDrawer = ({
 export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifications = { overdueInvoices: 0, expiringQuotes: 0 }, modules, permissionKeys = [], currentRoleSlug = null }: { profile: UserProfile | null; orgName?: string | null; logoUrl?: string | null; notifications?: NotificationsData; modules?: OrganizationModules; permissionKeys?: string[]; currentRoleSlug?: string | null }) => {
     const pathname = usePathname() || '/dashboard';
     const router = useRouter();
+    const isCockpit = pathname.startsWith('/orsayn');
     const showAtelierAi = (currentRoleSlug === 'owner' || currentRoleSlug === 'admin') && !!(modules?.quote_ai || modules?.document_import_ai || modules?.voice_input);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [pendingHref, setPendingHref] = useState<string | null>(null);
@@ -993,7 +995,7 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
 
     return (
         <>
-            <header className="relative flex items-center px-4 sm:px-6 py-3 header-glass sticky top-0 z-50">
+            <header className={`relative flex items-center px-4 sm:px-6 py-3 header-glass sticky top-0 z-50 ${isCockpit ? 'cockpit-topbar' : ''}`}>
                 {/* Hamburger — mobile + tablette (< lg) */}
                 <button
                     onClick={() => setDrawerOpen(true)}
@@ -1140,7 +1142,7 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
 
                 {/* Actions à droite */}
                 <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
-                    <ThemeToggle />
+                    {!isCockpit && <ThemeToggle />}
                     {canView('settings.view') && <Link
                         href="/settings"
                         prefetch

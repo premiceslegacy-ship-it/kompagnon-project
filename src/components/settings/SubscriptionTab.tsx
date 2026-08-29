@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { Check, ArrowRight, Zap, Star, Crown, ChevronDown, ChevronUp, AlertTriangle, Loader2 } from 'lucide-react'
+import { Check, ArrowRight, Star, Crown, ChevronDown, ChevronUp, AlertTriangle, Loader2 } from 'lucide-react'
 import type { OrganizationModules } from '@/lib/organization-modules'
 import type { SubscriptionTier } from '@/lib/quota-catalog'
 import { createStripePortalSession } from '@/lib/data/mutations/stripe-portal'
@@ -15,29 +15,15 @@ type TierInfo = {
   label: string
   price: string
   description: string
-  stripeEnvKey: 'NEXT_PUBLIC_STRIPE_LINK_STARTER' | 'NEXT_PUBLIC_STRIPE_LINK_PRO' | 'NEXT_PUBLIC_STRIPE_LINK_EXPERT'
+  stripeEnvKey: 'NEXT_PUBLIC_STRIPE_LINK_PRO' | 'NEXT_PUBLIC_STRIPE_LINK_EXPERT'
   features: string[]
   highlight?: string
 }
 
+// Starter n'est plus une offre commerciale active (seules setup_only / pro / expert sont
+// vendues) — retiré des tiers proposés à l'achat. CURRENT_TIER_BENEFITS et detectCurrentTier
+// gardent leur branche 'starter' pour ne pas casser l'affichage d'un client déjà sur ce tier.
 const TIER_INFO: TierInfo[] = [
-  {
-    tier: 'starter',
-    label: 'Starter',
-    price: '39',
-    description: 'L\'essentiel de l\'IA pour votre activité.',
-    stripeEnvKey: 'NEXT_PUBLIC_STRIPE_LINK_STARTER',
-    features: [
-      'Analyse et génération de devis IA',
-      'Relances automatiques rédigées par IA',
-      'Planning IA',
-      'Assistant chantier IA',
-      'OCR tickets de caisse',
-      'Import documents IA',
-      'Rapport chantier IA',
-      'Saisie vocale (20 min/mois)',
-    ],
-  },
   {
     tier: 'pro',
     label: 'Pro',
@@ -305,7 +291,6 @@ function CancellationFlow({
 
 type Props = {
   modules: OrganizationModules
-  stripeLinkStarter: string | null
   stripeLinkPro: string | null
   stripeLinkExpert: string | null
   currentTierOverride?: SubscriptionTier | null
@@ -316,7 +301,6 @@ type Props = {
 
 export default function SubscriptionTab({
   modules,
-  stripeLinkStarter,
   stripeLinkPro,
   stripeLinkExpert,
   currentTierOverride,
@@ -325,7 +309,6 @@ export default function SubscriptionTab({
   accessEndsAt,
 }: Props) {
   const stripeLinks: Record<string, string | null> = {
-    NEXT_PUBLIC_STRIPE_LINK_STARTER: stripeLinkStarter,
     NEXT_PUBLIC_STRIPE_LINK_PRO: stripeLinkPro,
     NEXT_PUBLIC_STRIPE_LINK_EXPERT: stripeLinkExpert,
   }
@@ -420,7 +403,7 @@ export default function SubscriptionTab({
           </div>
 
           <div className="space-y-3">
-            {TIER_INFO.filter(t => (!selfService || t.tier !== 'starter') && tierRank(t.tier) > tierRank(currentTier)).map((t) => {
+            {TIER_INFO.filter(t => tierRank(t.tier) > tierRank(currentTier)).map((t) => {
               const link = stripeLinks[t.stripeEnvKey]
               return (
                 <div
@@ -434,7 +417,6 @@ export default function SubscriptionTab({
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="flex items-center gap-2">
-                        {t.tier === 'starter' && <Zap className="w-4 h-4 text-blue-500" />}
                         {t.tier === 'pro' && <Star className="w-4 h-4 text-accent" />}
                         {t.tier === 'expert' && <Crown className="w-4 h-4 text-purple-500" />}
                         <span className="font-bold text-primary">{t.label}</span>
