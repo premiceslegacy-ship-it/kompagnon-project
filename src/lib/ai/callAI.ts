@@ -5,7 +5,7 @@ import { getOperatorSourceInstance, signOperatorPayload, type OperatorUsageEvent
 import { checkAIRateLimit } from '@/lib/rate-limit'
 import { AIQuotaExceededError, checkQuota, type AIBillingMode, type QuotaCheckResult } from '@/lib/quota'
 
-export type AIProvider = 'openrouter' | 'mistral'
+export type AIProvider = 'openrouter'
 export type AIInputKind = 'text' | 'image' | 'audio' | 'mixed'
 
 export type AIFeature =
@@ -64,7 +64,7 @@ export type CallAIResult<T> = {
 }
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const MISTRAL_TRANSCRIPTION_URL = 'https://api.mistral.ai/v1/audio/transcriptions'
+const OPENROUTER_TRANSCRIPTION_URL = 'https://openrouter.ai/api/v1/audio/transcriptions'
 
 const MODULE_BY_FEATURE: Record<AIFeature, OrganizationModuleKey> = {
   quote_analysis: 'quote_ai',
@@ -155,7 +155,18 @@ function getOpenRouterHeaders(extraHeaders?: Record<string, string>): HeadersIni
   }
 }
 
-function buildUsageMetrics(provider: AIProvider, rawUsage: Record<string, unknown> | null | undefined): AIUsageMetrics {
+// Pas de Content-Type ici : le body est un FormData multipart, fetch pose lui-même
+// le boundary. En fixer un manuellement casserait l'encodage de la requête.
+function getOpenRouterAudioHeaders(extraHeaders?: Record<string, string>): HeadersInit {
+  return {
+    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY ?? ''}`,
+    'HTTP-Referer': getAppUrl(),
+    'X-Title': process.env.NEXT_PUBLIC_APP_NAME ?? 'ATELIER',
+    ...extraHeaders,
+  }
+}
+
+function buildUsageMetrics(rawUsage: Record<string, unknown> | null | undefined): AIUsageMetrics {
   const usage = rawUsage ?? {}
   const promptTokens = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null
   const completionTokens = typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null
@@ -166,7 +177,7 @@ function buildUsageMetrics(provider: AIProvider, rawUsage: Record<string, unknow
     promptTokens,
     completionTokens,
     totalTokens,
-    providerCost: provider === 'openrouter' ? providerCost : providerCost,
+    providerCost,
     currency: 'USD',
   }
 }
@@ -345,75 +356,55 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
   try {
     let data: T
 
-    if (params.provider === 'openrouter') {
-      if (!process.env.OPENROUTER_API_KEY) {
-        if (quotaCheck.aiBillingMode === 'client_owned') {
-          throw new AIProviderCreditError('openrouter', quotaCheck.aiBillingMode, null, 'Clé OpenRouter client manquante.')
+    if (!process.env.OPENROUTER_API_KEY) {
+      if (quotaCheck.aiBillingMode === 'client_owned') {
+        throw new AIProviderCreditError('openrouter', quotaCheck.aiBillingMode, null, 'Clé OpenRouter client manquante.')
+      }
+      throw new Error('OPENROUTER_API_KEY manquante')
+    }
+
+    const timeout = withTimeout(params.request.timeoutMs)
+
+    try {
+      const isAudio = params.inputKind === 'audio'
+
+      if (isAudio && !(params.request.body instanceof FormData)) {
+        throw new Error('La requête de transcription attend un FormData')
+      }
+
+      const response = isAudio
+        ? await fetch(OPENROUTER_TRANSCRIPTION_URL, {
+            method: 'POST',
+            signal: timeout.signal,
+            headers: getOpenRouterAudioHeaders(params.request.headers),
+            body: params.request.body as FormData,
+          })
+        : await fetch(OPENROUTER_URL, {
+            method: 'POST',
+            signal: timeout.signal,
+            headers: getOpenRouterHeaders(params.request.headers),
+            body: JSON.stringify({
+              ...(params.request.body as Record<string, unknown>),
+              model: params.model,
+              user: params.organizationId,
+            }),
+          })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        if (quotaCheck.aiBillingMode === 'client_owned' && [401, 402, 429].includes(response.status)) {
+          throw new AIProviderCreditError('openrouter', quotaCheck.aiBillingMode, response.status, `OpenRouter ${response.status}: ${errorText}`)
         }
-        throw new Error('OPENROUTER_API_KEY manquante')
+        throw new Error(`OpenRouter ${response.status}: ${errorText}`)
       }
 
-      const body = {
-        ...(params.request.body as Record<string, unknown>),
-        model: params.model,
-        user: params.organizationId,
-      }
-      const timeout = withTimeout(params.request.timeoutMs)
-
-      try {
-        const response = await fetch(OPENROUTER_URL, {
-          method: 'POST',
-          signal: timeout.signal,
-          headers: getOpenRouterHeaders(params.request.headers),
-          body: JSON.stringify(body),
-        })
-
-        if (!response.ok) {
-          const errorText = await response.text()
-          if (quotaCheck.aiBillingMode === 'client_owned' && [401, 402, 429].includes(response.status)) {
-            throw new AIProviderCreditError('openrouter', quotaCheck.aiBillingMode, response.status, `OpenRouter ${response.status}: ${errorText}`)
-          }
-          throw new Error(`OpenRouter ${response.status}: ${errorText}`)
-        }
-
-        data = await response.json() as T
-      } finally {
-        timeout.cleanup()
-      }
-    } else {
-      if (!process.env.MISTRAL_API_KEY) {
-        throw new Error('MISTRAL_API_KEY manquante')
-      }
-
-      if (!(params.request.body instanceof FormData)) {
-        throw new Error('La requête Mistral attend un FormData')
-      }
-
-      const timeout = withTimeout(params.request.timeoutMs)
-
-      try {
-        const response = await fetch(MISTRAL_TRANSCRIPTION_URL, {
-          method: 'POST',
-          signal: timeout.signal,
-          headers: {
-            Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
-            ...(params.request.headers ?? {}),
-          },
-          body: params.request.body,
-        })
-
-        if (!response.ok) {
-          throw new Error(`Mistral ${response.status}: ${await response.text()}`)
-        }
-
-        data = await response.json() as T
-      } finally {
-        timeout.cleanup()
-      }
+      data = await response.json() as T
+    } finally {
+      timeout.cleanup()
     }
 
     const raw = data as Record<string, unknown>
-    usage = buildUsageMetrics(params.provider, raw.usage as Record<string, unknown> | undefined)
+    usage = buildUsageMetrics(raw.usage as Record<string, unknown> | undefined)
     externalRequestId = typeof raw.id === 'string' ? raw.id : null
     const latencyMs = Date.now() - startedAt
 

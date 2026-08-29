@@ -4,7 +4,7 @@ import { AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/membership'
 
-const MISTRAL_MODEL = 'voxtral-mini-latest'
+const TRANSCRIPTION_MODEL = 'mistralai/voxtral-mini-transcribe'
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Action réservée aux administrateurs.' }, { status: 403 })
   }
 
-  if (!process.env.MISTRAL_API_KEY) {
+  if (!process.env.OPENROUTER_API_KEY) {
     return NextResponse.json({ error: 'Transcription non configurée' }, { status: 500 })
   }
 
@@ -36,19 +36,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Fichier audio requis' }, { status: 400 })
   }
 
-  const mistralForm = new FormData()
-  mistralForm.append('file', audio, 'recording.webm')
-  mistralForm.append('model', MISTRAL_MODEL)
-  mistralForm.append('language', 'fr')
+  const transcriptionForm = new FormData()
+  transcriptionForm.append('file', audio, 'recording.webm')
+  transcriptionForm.append('model', TRANSCRIPTION_MODEL)
+  transcriptionForm.append('language', 'fr')
 
   try {
     const result = await callAI<{ text: string }>({
       organizationId: orgId,
-      provider: 'mistral',
+      provider: 'openrouter',
       feature: 'voice_transcription',
-      model: MISTRAL_MODEL,
+      model: TRANSCRIPTION_MODEL,
       inputKind: 'audio',
-      request: { body: mistralForm, timeoutMs: 30000 },
+      request: { body: transcriptionForm, timeoutMs: 30000 },
     })
 
     return NextResponse.json({ text: result.data.text ?? '' })
