@@ -8,6 +8,7 @@ import { signOauthState } from '@/lib/super-pdp/oauth-state'
 import { getOrganizationEinvoicingConfig } from '@/lib/data/queries/einvoicing'
 import { getFacturXmlForInvoice } from '@/lib/pdf/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { createClient } from '@/lib/supabase/server'
 
 // Construit l'URL d'autorisation Super PDP et la retourne au client, qui fait
 // lui-même la redirection (window.location.href). L'instance redirige DIRECTEMENT
@@ -83,6 +84,22 @@ export async function transmitInvoiceViaSuperPdp(invoiceId: string): Promise<Tra
 
   if (!ingestUrl || !secret) {
     return { error: 'Configuration opérateur manquante.' }
+  }
+
+  // Facturation électronique B2B uniquement (obligation légale 2026-2027) : ne
+  // fait jamais confiance au seul masquage du bouton côté UI, revérifie ici que
+  // le client de la facture est bien une entreprise avec un SIRET renseigné.
+  const supabase = await createClient()
+  const { data: invoiceRow } = await supabase
+    .from('invoices')
+    .select('client:clients(type, siret)')
+    .eq('id', invoiceId)
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+  const rawClient = invoiceRow?.client as { type: string | null; siret: string | null } | { type: string | null; siret: string | null }[] | null
+  const invoiceClient = Array.isArray(rawClient) ? rawClient[0] ?? null : rawClient
+  if (invoiceClient?.type !== 'company' || !invoiceClient.siret?.trim()) {
+    return { error: 'La transmission Super PDP est réservée aux clients professionnels (SIRET requis).' }
   }
 
   const xml = await getFacturXmlForInvoice(invoiceId, organizationId)
