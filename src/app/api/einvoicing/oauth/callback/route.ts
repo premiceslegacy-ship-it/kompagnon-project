@@ -36,6 +36,12 @@ export async function GET(req: NextRequest) {
 
   const operator = createOperatorAdminClient()
   const context = await getOperatorClientContext(state.source_instance, state.organization_id)
+  console.log('[oauth/callback DEBUG]', JSON.stringify({
+    stateSourceInstance: state.source_instance,
+    stateOrgId: state.organization_id,
+    einvoicingConfig: context.subscription.einvoicingConfig,
+    appUrl: context.appUrl,
+  }))
   if (context.subscription.einvoicingConfig.mode !== 'super_pdp') {
     return NextResponse.json({ error: 'Facturation électronique non activée pour cette organisation' }, { status: 403 })
   }
