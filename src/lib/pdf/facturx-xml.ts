@@ -57,6 +57,10 @@ function buyerSiren(client: NonNullable<InvoiceWithItems['client']>): string | n
   return sirenFrom(client.siren) ?? sirenFrom(client.siret)
 }
 
+function buyerSiret(client: NonNullable<InvoiceWithItems['client']>): string | null {
+  return siretFrom(client.siret)
+}
+
 function partyFiscalId(siret: string | null | undefined, siren: string | null | undefined): string | null {
   return siretFrom(siret) ?? sirenFrom(siren)
 }
@@ -120,7 +124,13 @@ function xmlAddress(fields: {
 function xmlSeller(org: Organization): string {
   const siren = sellerSiren(org)
   const fiscalId = partyFiscalId(org.siret, org.siren)
+  const siret = siretFrom(org.siret)
 
+  // GlobalID schemeID="0225" (SIRET, annuaire Peppol France) : voir le même
+  // ajout côté xmlBuyer pour le contexte complet.
+  const globalIdBlock = siret
+    ? `<ram:GlobalID schemeID="0225">${esc(siret)}</ram:GlobalID>`
+    : ''
   const legalOrgBlock = siren
     ? `<ram:SpecifiedLegalOrganization>
         <ram:ID schemeID="0002">${esc(siren)}</ram:ID>
@@ -140,6 +150,7 @@ function xmlSeller(org: Organization): string {
     : ''
 
   return `<ram:SellerTradeParty>
+      ${globalIdBlock}
       <ram:Name>${esc(org.name)}</ram:Name>
       ${legalOrgBlock}
       <ram:PostalTradeAddress>
@@ -157,6 +168,15 @@ function xmlBuyer(client: NonNullable<InvoiceWithItems['client']>): string {
     || 'Client'
 
   const siren = buyerSiren(client)
+  const siret = buyerSiret(client)
+  // GlobalID schemeID="0225" (SIRET, annuaire Peppol France) : identifiant B2B
+  // reconnu par Super PDP, absent jusqu'ici alors que la facture de test qu'ils
+  // génèrent eux-mêmes en contient un — sans lui, une facture avec seulement
+  // SpecifiedLegalOrganization (SIREN) a été classée B2C côté Super PDP malgré
+  // un client marqué "company" (voir docs/atelier-facturation-electronique.md §15).
+  const globalIdBlock = siret
+    ? `<ram:GlobalID schemeID="0225">${esc(siret)}</ram:GlobalID>`
+    : ''
   const legalOrgBlock = siren
     ? `<ram:SpecifiedLegalOrganization>
         <ram:ID schemeID="0002">${esc(siren)}</ram:ID>
@@ -170,6 +190,7 @@ function xmlBuyer(client: NonNullable<InvoiceWithItems['client']>): string {
     : ''
 
   return `<ram:BuyerTradeParty>
+      ${globalIdBlock}
       <ram:Name>${esc(name)}</ram:Name>
       ${legalOrgBlock}
       <ram:PostalTradeAddress>
