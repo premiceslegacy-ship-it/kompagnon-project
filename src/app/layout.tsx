@@ -10,6 +10,7 @@ import { appIconPath } from '@/lib/pwa';
 import { getPublicRuntimeConfig } from '@/lib/supabase/config';
 
 import { Plus_Jakarta_Sans, Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 
 const displayFont = Plus_Jakarta_Sans({
     subsets: ['latin'],
@@ -21,6 +22,17 @@ const bodyFont = Inter({
     subsets: ['latin'],
     weight: ['400', '500'],
     variable: '--font-inter'
+});
+
+// Cockpit /orsayn uniquement (voir .cockpit-shell dans globals.css)
+const cockpitFont = localFont({
+    src: [
+        { path: '../../public/fonts/general-sans-regular.otf', weight: '400', style: 'normal' },
+        { path: '../../public/fonts/general-sans-medium.otf', weight: '500', style: 'normal' },
+        { path: '../../public/fonts/general-sans-semibold.otf', weight: '600', style: 'normal' },
+        { path: '../../public/fonts/general-sans-bold.otf', weight: '700', style: 'normal' },
+    ],
+    variable: '--font-general-sans',
 });
 
 export const metadata: Metadata = {
@@ -55,7 +67,7 @@ export default function RootLayout({
             data-posthog-host={process.env.NEXT_PUBLIC_POSTHOG_HOST || undefined}
             suppressHydrationWarning
         >
-            <body className={`${displayFont.variable} ${bodyFont.variable} font-body bg-base min-h-screen transition-colors duration-300 ease-out`}>
+            <body className={`${displayFont.variable} ${bodyFont.variable} ${cockpitFont.variable} font-body bg-base min-h-screen transition-colors duration-300 ease-out`}>
                 <SentryInit />
                 <ThemeProvider>
                     <PostHogProvider>
