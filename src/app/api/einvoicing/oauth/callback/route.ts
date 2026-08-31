@@ -35,10 +35,10 @@ export async function GET(req: NextRequest) {
   }
 
   const operator = createOperatorAdminClient()
+  // Self-service : plus de garde sur mode==='super_pdp' ici -- le state signe
+  // HMAC (verifyOauthState) est deja la garantie d'authenticite suffisante,
+  // seule une instance legitime a pu le produire via startEinvoicingOauth.
   const context = await getOperatorClientContext(state.source_instance, state.organization_id)
-  if (context.subscription.einvoicingConfig.mode !== 'super_pdp') {
-    return NextResponse.json({ error: 'Facturation électronique non activée pour cette organisation' }, { status: 403 })
-  }
   const { appUrl } = context
 
   if (!appUrl) {
@@ -122,26 +122,32 @@ export async function GET(req: NextRequest) {
     return redirectWithStatus(appUrl, 'error', 'credentials_store_failed')
   }
 
+  // reception_enabled : activee automatiquement des la connexion (obligation
+  // legale des 01/09/2026). emission_enabled n'est jamais forcee ici -- reste
+  // un choix explicite du client, voir setEmissionEnabled cote instance.
   const updatedEinvoicingConfig = normalizeEinvoicingConfig({
     ...context.subscription.einvoicingConfig,
     mode: 'super_pdp',
     oauth_status: 'connected',
     oauth_connected_at: new Date().toISOString(),
     super_pdp_connection_id: String(company.id),
+    reception_enabled: true,
   })
 
   await operator
     .from('operator_client_subscriptions')
-    .update({
+    .upsert({
+      source_instance: state.source_instance,
+      organization_id: state.organization_id,
+      tier: context.subscription.tier,
       einvoicing_mode: updatedEinvoicingConfig.mode,
       einvoicing_provider: updatedEinvoicingConfig.provider,
       oauth_status: updatedEinvoicingConfig.oauth_status,
       oauth_connected_at: updatedEinvoicingConfig.oauth_connected_at,
       super_pdp_connection_id: updatedEinvoicingConfig.super_pdp_connection_id,
+      super_pdp_reception_enabled: updatedEinvoicingConfig.reception_enabled,
       updated_at: new Date().toISOString(),
-    })
-    .eq('source_instance', state.source_instance)
-    .eq('organization_id', state.organization_id)
+    }, { onConflict: 'source_instance,organization_id' })
 
   const syncResult = await syncClientQuotaConfig(
     state.source_instance,
@@ -153,8 +159,11 @@ export async function GET(req: NextRequest) {
     updatedEinvoicingConfig,
   )
 
+  // La connexion + reception_enabled sont deja acquises cote cockpit a ce
+  // stade : un echec de syncClientQuotaConfig (modules/quotas) ne doit plus
+  // bloquer le succes affiche au client, juste etre logue pour investigation.
   if (syncResult.status !== 'synced') {
-    return redirectWithStatus(appUrl, 'error', 'config_sync_failed')
+    console.error('[einvoicing/oauth/callback] syncClientQuotaConfig failed', syncResult.error)
   }
 
   return redirectWithStatus(appUrl, 'success')

@@ -23,28 +23,19 @@ test.describe('Facturation électronique — /settings', () => {
     await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 60_000 })
   })
 
-  test('affiche l\'onglet uniquement lorsque la facturation électronique est activée', async ({ page }) => {
+  test('affiche l\'onglet dès que l\'utilisateur a la permission de configurer la facturation électronique', async ({ page }) => {
     await page.goto('/settings?tab=facturation')
 
-    const heading = page.getByRole('heading', { name: 'Facturation électronique' })
-    if (await heading.isVisible().catch(() => false)) {
-      await expect(page.getByText(/Statut\s*:/)).toBeVisible()
-      return
-    }
-
-    await expect(heading).toHaveCount(0)
-    await expect(page.getByRole('button', { name: 'Facturation électronique', exact: true })).toHaveCount(0)
+    // Self-service : l'onglet ne dépend plus de mode !== 'off', seulement de la
+    // permission einvoicing.configure — visible même pour un compte jamais connecté.
+    await expect(page.getByRole('heading', { name: 'Facturation électronique' })).toBeVisible()
+    await expect(page.getByText(/Statut\s*:/)).toBeVisible()
   })
 
   test('le bouton Activer redirige vers une URL Super PDP avec un state signé', async ({ page }) => {
     await page.goto('/settings?tab=facturation')
 
     const activateButton = page.getByRole('button', { name: /Activer la facturation électronique/i })
-
-    if (!(await page.getByRole('heading', { name: 'Facturation électronique' }).isVisible().catch(() => false))) {
-      test.skip(true, 'Facturation électronique désactivée pour le compte de test — bouton volontairement absent')
-      return
-    }
 
     // Si le compte de test est déjà connecté à Super PDP (oauth_status = connected),
     // le bouton n'est pas rendu — ce test n'est pertinent qu'à l'état not_connected.
@@ -72,6 +63,22 @@ test.describe('Facturation électronique — /settings', () => {
     const state = requestedUrl.searchParams.get('state')
     expect(state).toBeTruthy()
     expect(state).toContain('.') // encoded.signature
+  })
+
+  test('affiche le toggle émission pour un compte déjà connecté à Super PDP', async ({ page }) => {
+    await page.goto('/settings?tab=facturation')
+
+    // Ce test suppose oauth_status='connected' pour le compte de test — s'il ne
+    // l'est pas (ou plus), il n'est pas pertinent (voir test précédent pour le
+    // parcours d'activation initiale).
+    const emissionToggle = page.locator('#emission-toggle')
+    if (!(await emissionToggle.isVisible().catch(() => false))) {
+      test.skip(true, 'Compte non connecté à Super PDP (oauth_status!=connected) — toggle émission non rendu')
+      return
+    }
+
+    await expect(page.getByText(/Réception des factures fournisseurs/i)).toBeVisible()
+    await expect(page.getByText(/Transmettre mes factures émises via Super PDP/i)).toBeVisible()
   })
 
   test('masque le bouton Activer pour un utilisateur sans la permission einvoicing.configure', async ({ page }) => {

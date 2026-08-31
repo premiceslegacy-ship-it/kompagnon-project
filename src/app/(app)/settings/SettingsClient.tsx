@@ -3213,7 +3213,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             )
         }
 
-        if (activeTab === 'facturation' && canConfigureEinvoicing && einvoicingConfig.mode !== 'off') {
+        if (activeTab === 'facturation' && canConfigureEinvoicing) {
             return (
                 <div className="rounded-3xl card p-8">
                     <EinvoicingTab
@@ -3255,7 +3255,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     <button onClick={() => setActiveTab('integration')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'integration' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Globe className="w-5 h-5" />Intégration</button>
                     <button onClick={() => setActiveTab('formulaire')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'formulaire' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Inbox className="w-5 h-5" />Formulaire public</button>
                     <button onClick={() => setActiveTab('securite')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'securite' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Lock className="w-5 h-5" />Sécurité</button>
-                    {canConfigureEinvoicing && einvoicingConfig.mode !== 'off' && (
+                    {canConfigureEinvoicing && (
                         <button onClick={() => setActiveTab('facturation')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'facturation' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><FileText className="w-5 h-5" />Facturation électronique</button>
                     )}
                     {currentRoleSlug === 'owner' && (

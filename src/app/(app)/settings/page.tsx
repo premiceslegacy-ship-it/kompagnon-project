@@ -80,7 +80,7 @@ export default async function SettingsPage({
   const catalogContext = resolveCatalogContext(organization)
   const { supabaseUrl } = getPublicRuntimeConfig()
   const sharedWabaDisplayNumber = process.env.NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER ?? null
-  const effectiveInitialTab = initialTab === 'facturation' && !(canConfigureEinvoicing && einvoicingConfig.mode !== 'off')
+  const effectiveInitialTab = initialTab === 'facturation' && !canConfigureEinvoicing
     ? 'profil'
     : initialTab
 

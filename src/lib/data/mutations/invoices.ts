@@ -24,8 +24,9 @@ import { coerceLegalVatRate } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { renderInvoicePdfBufferById, renderContractPdfBufferById } from '@/lib/pdf/server'
 import { syncInvoiceMemoryEntry } from '@/lib/data/mutations/document-memory'
+import { transmitInvoiceViaSuperPdp } from '@/lib/data/mutations/einvoicing'
 
-type Result = { error: string | null }
+type Result = { error: string | null; paTransmission?: { success: boolean; messageId?: string; error?: string } }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -663,6 +664,23 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
 
   if (error) return { error: error.message }
 
+  // Transmission Super PDP fusionnee dans l'envoi (un seul clic) : strictement
+  // best-effort, ne doit jamais faire echouer sendInvoice -- l'email est deja
+  // parti. transmitInvoiceViaSuperPdp revérifie tout le gating en interne
+  // (permission, mode/oauth_status/emission_enabled, client B2B+SIRET) ; le
+  // filtre ici n'est qu'une optimisation pour eviter un aller-retour reseau
+  // inutile quand le client n'est manifestement pas concerne.
+  let paTransmission: Result['paTransmission']
+  if (invoice.client?.type === 'company' && invoice.client.siret?.trim()) {
+    const transmitResult = await transmitInvoiceViaSuperPdp(invoiceId).catch((err) => {
+      console.error('[sendInvoice] Super PDP transmission threw', err)
+      return { error: 'Erreur interne lors de la transmission Super PDP.' } as const
+    })
+    paTransmission = 'success' in transmitResult
+      ? { success: true, messageId: transmitResult.messageId }
+      : { success: false, error: transmitResult.error }
+  }
+
   await supabase
     .from('invoice_schedules')
     .update({ status: 'sent', confirmed_at: new Date().toISOString() })
@@ -675,7 +693,7 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
   if (sendingUser) trackServerEvent(sendingUser.id, 'invoice_sent', { organization_id: orgId })
   revalidatePath('/finances')
   revalidatePath('/finances/recurring')
-  return { error: null }
+  return { error: null, paTransmission }
 }
 
 // ─── Générer une facture d'acompte depuis un devis accepté ───────────────────
