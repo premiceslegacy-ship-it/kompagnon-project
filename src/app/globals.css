@@ -60,6 +60,12 @@
     --success: 16 185 129;
     --danger: 239 68 68;
     --warning: 249 115 22;
+
+    /* Cockpit /orsayn */
+    --ink: 13 13 13;
+    --cockpit-blue: 0 12 225;
+    --cockpit-paper: 244 243 236;
+    --cockpit-line: #0d0d0d21;
   }
 
   .dark {
@@ -118,6 +124,12 @@
     /* #EF4444 */
     --warning: 255 159 28;
     /* #FF9F1C */
+
+    /* Cockpit /orsayn */
+    --ink: 255 255 255;
+    --cockpit-blue: 0 12 225;
+    --cockpit-paper: 28 28 28;
+    --cockpit-line: #ffffff24;
   }
 }
 
@@ -1167,5 +1179,163 @@
   @keyframes sarahBar {
     from { height: 3px; }
     to { height: 24px; }
+  }
+
+  /* ═══════════════════
+   * COCKPIT /orsayn
+   * ═══════════════════ */
+
+  .cockpit-shell {
+    --accent-primary: var(--cockpit-blue);
+    --accent-secondary: var(--cockpit-blue);
+    width: 100%;
+    max-width: none;
+    color: rgb(var(--text-primary));
+    font-family: var(--font-general-sans), var(--font-inter), sans-serif;
+    padding: clamp(1.25rem, 3vw, 3.5rem) clamp(1.25rem, 4vw, 5rem) 4rem;
+  }
+
+  .cockpit-header {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .cockpit-eyebrow,
+  .cockpit-kicker,
+  .cockpit-label {
+    color: rgb(var(--text-secondary));
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-size: 0.68rem;
+    font-weight: 650;
+    line-height: 1.2;
+  }
+
+  .cockpit-kicker {
+    color: rgb(var(--accent-primary));
+  }
+
+  .cockpit-label {
+    display: block;
+    margin-bottom: 0.45rem;
+  }
+
+  .cockpit-sort-label {
+    color: rgb(var(--text-secondary));
+    font-size: 0.7rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .cockpit-panel {
+    position: relative;
+    border: 1px solid var(--cockpit-line);
+    border-radius: 8px;
+    background: rgb(var(--bg-surface));
+  }
+
+  .cockpit-input {
+    background: rgb(var(--bg-surface));
+    border: 1px solid var(--cockpit-line);
+    min-height: 2.6rem;
+    color: rgb(var(--text-primary));
+    border-radius: 5px;
+    outline: none;
+    padding: 0.55rem 0.7rem;
+    transition: border-color 0.16s, box-shadow 0.16s;
+  }
+
+  .cockpit-input:focus {
+    border-color: rgb(var(--accent-secondary));
+    box-shadow: 0 0 0 2px rgb(var(--accent-secondary) / 0.14);
+  }
+
+  .cockpit-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border: 1px solid rgb(var(--ink));
+    border-radius: 5px;
+    min-height: 2.55rem;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.78rem;
+    font-weight: 650;
+    transition: transform 0.14s, background-color 0.14s, color 0.14s;
+  }
+
+  .cockpit-button:hover {
+    transform: translateY(-1px);
+  }
+
+  .cockpit-button:active {
+    transform: translateY(0);
+  }
+
+  .cockpit-button-dark {
+    background: rgb(var(--ink));
+    color: rgb(var(--text-inverse));
+  }
+
+  .cockpit-button-dark:hover {
+    background: rgb(var(--accent-secondary));
+    border-color: rgb(var(--accent-secondary));
+  }
+
+  .cockpit-button-outline {
+    color: rgb(var(--text-primary));
+    background: transparent;
+  }
+
+  .cockpit-button-outline:hover {
+    background: rgb(var(--cockpit-paper));
+  }
+
+  .cockpit-button-danger {
+    border-color: rgb(var(--danger));
+    background: rgb(var(--danger));
+    color: #fff;
+  }
+
+  .cockpit-button-danger:hover {
+    background: rgb(var(--danger) / 0.86);
+  }
+
+  .cockpit-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid var(--cockpit-line);
+    color: rgb(var(--text-secondary));
+    border-radius: 999px;
+    padding: 0.28rem 0.55rem;
+    font-size: 0.68rem;
+    font-weight: 650;
+    line-height: 1;
+  }
+
+  .cockpit-tag-danger {
+    border-color: rgb(var(--danger) / 0.35);
+    color: rgb(var(--danger));
+  }
+
+  .cockpit-th {
+    color: rgb(var(--text-secondary));
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.85rem 1.25rem;
+    font-size: 0.66rem;
+    font-weight: 650;
+  }
+
+  @media (min-width: 640px) {
+    .cockpit-header {
+      flex-direction: row;
+      align-items: flex-end;
+    }
   }
 }
