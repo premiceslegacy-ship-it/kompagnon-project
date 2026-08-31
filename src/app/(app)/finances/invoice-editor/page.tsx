@@ -7,7 +7,6 @@ import { getOrganization } from '@/lib/data/queries/organization'
 import { getChantiers } from '@/lib/data/queries/chantiers'
 import { resolveCatalogContext } from '@/lib/catalog-context'
 import { hasPermission } from '@/lib/data/queries/membership'
-import { getOrganizationEinvoicingConfig } from '@/lib/data/queries/einvoicing'
 import InvoiceEditorClient from './InvoiceEditorClient'
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +20,7 @@ export default async function InvoiceEditorPage({
   const canEdit = searchParams.id ? await hasPermission('invoices.edit') : false
   if (!canCreate && !canEdit) notFound()
 
-  const [clients, acceptedQuotes, materials, laborRates, prestationTypes, organization, chantiers, einvoicingConfig, canTransmitEinvoicing] = await Promise.all([
+  const [clients, acceptedQuotes, materials, laborRates, prestationTypes, organization, chantiers] = await Promise.all([
     getClients(),
     getAcceptedQuotesWithItems(),
     getMaterials(),
@@ -29,8 +28,6 @@ export default async function InvoiceEditorPage({
     getPrestationTypes(),
     getOrganization(),
     getChantiers(),
-    getOrganizationEinvoicingConfig(),
-    hasPermission('invoices.send'),
   ])
 
   const existingInvoice = searchParams.id
@@ -62,12 +59,6 @@ export default async function InvoiceEditorPage({
         isVatSubject: organization?.is_vat_subject ?? true,
         defaultVatRate: organization?.default_vat_rate ?? 20,
       }}
-      canTransmitEinvoicing={
-        canTransmitEinvoicing
-        && einvoicingConfig.mode === 'super_pdp'
-        && einvoicingConfig.oauth_status === 'connected'
-        && einvoicingConfig.emission_enabled
-      }
     />
   )
 }

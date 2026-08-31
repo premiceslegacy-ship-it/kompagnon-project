@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { CheckCircle2, AlertTriangle, Loader2, FileText } from 'lucide-react'
-import { startEinvoicingOauth } from '@/lib/data/mutations/einvoicing'
+import { startEinvoicingOauth, setEmissionEnabled } from '@/lib/data/mutations/einvoicing'
 import type { EinvoicingConfig } from '@/lib/einvoicing-config'
 
 type EinvoicingTabProps = {
@@ -23,6 +23,8 @@ const STATUS_LABELS: Record<EinvoicingConfig['oauth_status'], string> = {
 export default function EinvoicingTab({ config, canConfigure, oauthResult, oauthDetail }: EinvoicingTabProps) {
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [isEmissionPending, startEmissionTransition] = useTransition()
+  const [emissionError, setEmissionError] = useState<string | null>(null)
 
   const isConnected = config.oauth_status === 'connected'
   const hasIssue = config.oauth_status === 'error' || config.oauth_status === 'revoked'
@@ -36,6 +38,14 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
         return
       }
       window.location.href = result.url
+    })
+  }
+
+  function handleToggleEmission(next: boolean) {
+    setEmissionError(null)
+    startEmissionTransition(async () => {
+      const result = await setEmissionEnabled(next)
+      if (result.error) setEmissionError(result.error)
     })
   }
 
@@ -94,9 +104,30 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
         )}
 
         {canConfigure && isConnected && (
-          <p className="text-sm text-secondary">
-            Votre compte est connecté. La transmission de vos factures via Super PDP sera disponible prochainement.
-          </p>
+          <div className="space-y-4">
+            <p className="text-sm text-secondary flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
+              {config.reception_enabled
+                ? 'Réception des factures fournisseurs activée automatiquement.'
+                : 'Réception des factures fournisseurs non activée.'}
+            </p>
+            <div className="flex items-start gap-3 pt-2 border-t border-[var(--elevation-border)]">
+              <input
+                type="checkbox"
+                id="emission-toggle"
+                checked={config.emission_enabled}
+                disabled={isEmissionPending}
+                onChange={(e) => handleToggleEmission(e.target.checked)}
+                className="mt-1"
+              />
+              <label htmlFor="emission-toggle" className="text-sm text-secondary">
+                <span className="font-medium text-primary block">Transmettre mes factures émises via Super PDP</span>
+                La réception est obligatoire dès le 1er septembre 2026. L’émission reste facultative jusqu’au
+                1er septembre 2027 — activez-la dès maintenant si vous souhaitez être prêt en avance.
+              </label>
+            </div>
+            {emissionError && <p className="text-sm text-red-500">{emissionError}</p>}
+          </div>
         )}
 
         {error && <p className="text-sm text-red-500">{error}</p>}

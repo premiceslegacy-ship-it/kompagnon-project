@@ -6,9 +6,41 @@ import { hasPermission } from '@/lib/data/queries/membership'
 import { getOperatorSourceInstance, signOperatorPayload } from '@/lib/operator'
 import { signOauthState } from '@/lib/super-pdp/oauth-state'
 import { getOrganizationEinvoicingConfig } from '@/lib/data/queries/einvoicing'
+import { normalizeEinvoicingConfig } from '@/lib/einvoicing-config'
 import { getFacturXmlForInvoice } from '@/lib/pdf/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+
+// Notifie le cockpit en best-effort qu'un client a active la facturation
+// electronique en self-service (connexion OAuth ou toggle emission) --
+// l'instance a deja ecrit sa propre config avant d'appeler cette fonction,
+// donc un echec ici ne doit jamais bloquer l'action locale. Meme pattern que
+// postOperator() de src/lib/data/mutations/subscription-self-service.ts.
+async function notifyOperatorEinvoicingActivate(input: {
+  action: 'oauth_started' | 'emission_toggled'
+  organizationId: string
+  sourceInstance: string
+  emissionEnabled?: boolean
+}): Promise<void> {
+  const ingestUrl = process.env.OPERATOR_INGEST_URL?.trim()
+  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
+    || process.env.OPERATOR_INGEST_SECRET?.trim()
+  if (!ingestUrl || !secret) return
+  const cockpitBase = new URL(ingestUrl).origin
+  const body = JSON.stringify({
+    source_instance: input.sourceInstance,
+    organization_id: input.organizationId,
+    app_url: process.env.NEXT_PUBLIC_APP_URL,
+    action: input.action,
+    ...(input.emissionEnabled !== undefined ? { emission_enabled: input.emissionEnabled } : {}),
+  })
+  const signature = signOperatorPayload(body, secret)
+  await fetch(`${cockpitBase}/api/operator/self-service/einvoicing-activate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-operator-signature': signature },
+    body,
+  })
+}
 
 // Construit l'URL d'autorisation Super PDP et la retourne au client, qui fait
 // lui-même la redirection (window.location.href). L'instance redirige DIRECTEMENT
@@ -24,11 +56,6 @@ export async function startEinvoicingOauth(): Promise<{ url: string } | { error:
     return { error: 'Organisation introuvable.' }
   }
 
-  const einvoicingConfig = await getOrganizationEinvoicingConfig()
-  if (einvoicingConfig.mode !== 'super_pdp') {
-    return { error: 'La facturation électronique automatisée n’est pas activée pour cette organisation.' }
-  }
-
   const endpoint = process.env.SUPER_PDP_API_ENDPOINT?.trim()
   const clientId = process.env.SUPER_PDP_CLIENT_ID?.trim()
   const redirectUri = process.env.SUPER_PDP_REDIRECT_URL?.trim()
@@ -37,7 +64,33 @@ export async function startEinvoicingOauth(): Promise<{ url: string } | { error:
     return { error: 'Facturation électronique non configurée sur cette instance.' }
   }
 
+  // Self-service : le client active lui-même mode='super_pdp' en cliquant,
+  // sans intervention prealable du cockpit (voir docs/atelier-facturation-electronique.md).
+  const currentConfig = await getOrganizationEinvoicingConfig()
+  const updatedConfig = normalizeEinvoicingConfig({ ...currentConfig, mode: 'super_pdp' })
+  const admin = createAdminClient()
+  const { error: upsertError } = await admin
+    .from('organization_einvoicing_config')
+    .upsert({
+      organization_id: organizationId,
+      mode: updatedConfig.mode,
+      provider: updatedConfig.provider,
+      environment: updatedConfig.environment,
+      annuaire_status: updatedConfig.annuaire_status,
+      oauth_status: updatedConfig.oauth_status,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'organization_id' })
+  if (upsertError) {
+    console.error('[startEinvoicingOauth] upsert local config', upsertError)
+    return { error: 'Impossible d’activer la facturation électronique.' }
+  }
+
   const sourceInstance = getOperatorSourceInstance()
+
+  await notifyOperatorEinvoicingActivate({ action: 'oauth_started', organizationId, sourceInstance }).catch((err) => {
+    console.error('[startEinvoicingOauth] cockpit notify failed', err)
+  })
+
   const state = signOauthState(sourceInstance, organizationId)
 
   const authorizeUrl = `${endpoint}/oauth2/authorize?${new URLSearchParams({
@@ -48,15 +101,59 @@ export async function startEinvoicingOauth(): Promise<{ url: string } | { error:
     scope: '',
   }).toString()}`
 
+  revalidatePath('/settings')
+
   return { url: authorizeUrl }
+}
+
+// Emission facultative jusqu'au 01/09/2027 (obligation legale) : contrairement
+// a reception_enabled (active automatiquement des la connexion), le client
+// doit l'activer explicitement depuis ses parametres.
+export async function setEmissionEnabled(enabled: boolean): Promise<{ error: string | null }> {
+  if (!(await hasPermission('einvoicing.configure'))) {
+    return { error: 'Action non autorisée.' }
+  }
+
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) {
+    return { error: 'Organisation introuvable.' }
+  }
+
+  const currentConfig = await getOrganizationEinvoicingConfig()
+  if (currentConfig.mode !== 'super_pdp' || currentConfig.oauth_status !== 'connected') {
+    return { error: 'Connectez d’abord votre compte Super PDP avant d’activer l’émission.' }
+  }
+
+  const admin = createAdminClient()
+  const { error } = await admin
+    .from('organization_einvoicing_config')
+    .update({ super_pdp_emission_enabled: enabled, updated_at: new Date().toISOString() })
+    .eq('organization_id', organizationId)
+  if (error) {
+    console.error('[setEmissionEnabled] update', error)
+    return { error: 'Impossible de mettre à jour le réglage.' }
+  }
+
+  await notifyOperatorEinvoicingActivate({
+    action: 'emission_toggled',
+    organizationId,
+    sourceInstance: getOperatorSourceInstance(),
+    emissionEnabled: enabled,
+  }).catch((err) => console.error('[setEmissionEnabled] cockpit notify failed', err))
+
+  revalidatePath('/settings')
+  return { error: null }
 }
 
 type TransmitResult = { success: true; messageId: string } | { error: string }
 
-// Transmet une facture déjà émise/envoyée à Super PDP. Action strictement volontaire,
-// jamais déclenchée automatiquement (contrainte explicite : ce n'est pas tous les
-// clients qui doivent passer par Atelier pour leur facturation électronique). Suit le
-// pattern instance→cockpit de createStripePortalSession (src/lib/data/mutations/stripe-portal.ts) :
+// Transmet une facture déjà émise/envoyée à Super PDP. Appelée automatiquement
+// depuis sendInvoice() (best-effort, en plus du bouton "Valider & Envoyer")
+// quand emission_enabled=true et que le client est B2B+SIRET -- jamais
+// déclenchée pour un client non identifié comme professionnel (contrainte
+// produit : ce n'est pas tous les clients qui doivent passer par Atelier pour
+// leur facturation électronique). Suit le pattern instance→cockpit de
+// createStripePortalSession (src/lib/data/mutations/stripe-portal.ts) :
 // POST signé HMAC vers le même worker cockpit, dérivé de OPERATOR_INGEST_URL.
 export async function transmitInvoiceViaSuperPdp(invoiceId: string): Promise<TransmitResult> {
   if (!(await hasPermission('invoices.send'))) {
