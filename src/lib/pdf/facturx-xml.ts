@@ -336,7 +336,7 @@ export function generateFacturXml(
 
   <rsm:ExchangedDocumentContext>
     <ram:BusinessProcessSpecifiedDocumentContextParameter>
-      <ram:ID>S1</ram:ID>
+      <ram:ID>M1</ram:ID>
     </ram:BusinessProcessSpecifiedDocumentContextParameter>
     <ram:GuidelineSpecifiedDocumentContextParameter>
       <ram:ID>${guidelineId}</ram:ID>
