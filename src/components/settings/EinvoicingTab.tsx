@@ -118,10 +118,13 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
                 checked={config.emission_enabled}
                 disabled={isEmissionPending}
                 onChange={(e) => handleToggleEmission(e.target.checked)}
-                className="mt-1"
+                className="mt-1 disabled:opacity-50"
               />
-              <label htmlFor="emission-toggle" className="text-sm text-secondary">
-                <span className="font-medium text-primary block">Transmettre mes factures émises via Super PDP</span>
+              <label htmlFor="emission-toggle" className="text-sm text-secondary flex-1">
+                <span className="font-medium text-primary flex items-center gap-2">
+                  Transmettre mes factures émises via Super PDP
+                  {isEmissionPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-secondary" />}
+                </span>
                 La réception est obligatoire dès le 1er septembre 2026. L’émission reste facultative jusqu’au
                 1er septembre 2027 — activez-la dès maintenant si vous souhaitez être prêt en avance.
               </label>
