@@ -681,15 +681,20 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
       : { success: false, error: transmitResult.error }
   }
 
+  const { data: { user: sendingUser } } = await supabase.auth.getUser()
+
+  // confirmed_by distingue un envoi manuel (cet utilisateur) d'un envoi
+  // vraiment automatique par le cron recurring-invoices (confirmed_by=null) —
+  // le dashboard (UrgentTasksClient.tsx) s'appuie dessus pour son libellé
+  // "Envoyé automatiquement".
   await supabase
     .from('invoice_schedules')
-    .update({ status: 'sent', confirmed_at: new Date().toISOString() })
+    .update({ status: 'sent', confirmed_at: new Date().toISOString(), confirmed_by: sendingUser?.id ?? null })
     .eq('invoice_id', invoiceId)
     .eq('organization_id', orgId)
     .eq('status', 'pending_confirmation')
 
   await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
-  const { data: { user: sendingUser } } = await supabase.auth.getUser()
   if (sendingUser) trackServerEvent(sendingUser.id, 'invoice_sent', { organization_id: orgId })
   revalidatePath('/finances')
   revalidatePath('/finances/recurring')

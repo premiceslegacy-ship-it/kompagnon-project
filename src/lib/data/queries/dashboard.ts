@@ -192,7 +192,9 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       .order('due_date')
       .limit(5),
 
-    // Factures récurrentes envoyées en auto dans les 7 derniers jours
+    // Factures récurrentes envoyées en auto dans les 7 derniers jours —
+    // confirmed_by IS NULL distingue le cron (aucun utilisateur) d'une
+    // confirmation manuelle via sendInvoice (confirmed_by = l'utilisateur).
     supabase
       .from('invoice_schedules')
       .select(`
@@ -204,6 +206,7 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
       `)
       .eq('organization_id', orgId)
       .eq('status', 'sent')
+      .is('confirmed_by', null)
       .gte('confirmed_at', recentActivityCutoff)
       .order('confirmed_at', { ascending: false })
       .limit(5),

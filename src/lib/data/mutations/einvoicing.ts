@@ -134,6 +134,11 @@ export async function setEmissionEnabled(enabled: boolean): Promise<{ error: str
     return { error: 'Impossible de mettre à jour le réglage.' }
   }
 
+  // Attendue (pas de ctx.waitUntil disponible depuis une server action sur
+  // Cloudflare Workers -- un fetch non attendu risquerait d'etre coupe avant
+  // d'aboutir). La donnee qui compte (super_pdp_emission_enabled) est deja
+  // ecrite localement ci-dessus ; seul l'echec de CETTE notification reste
+  // absorbe (best-effort sur le resultat, pas sur l'attente).
   await notifyOperatorEinvoicingActivate({
     action: 'emission_toggled',
     organizationId,
