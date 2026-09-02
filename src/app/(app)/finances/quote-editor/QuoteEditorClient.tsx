@@ -2208,11 +2208,14 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
         </div>
       )}
 
-      {/* Choix moi-même / assisté par Chloé — devis vide, module IA actif */}
+      {/* Choix moi-même / assisté par Chloé — devis vide, module IA actif.
+          "Assisté par Chloé" ouvre la page DEVIS IA dédiée (/atelier-ia,
+          import document + pré-métré + dictée), pas le panneau intégré à
+          l'éditeur, qui reste réservé au handoff automatique depuis Sarah. */}
       {startChoice === 'pending' && (
         <QuoteStartChoice
           onSelectManual={() => setStartChoice('done')}
-          onSelectAI={() => { setStartChoice('done'); setAIPanelOpen(true) }}
+          onSelectAI={() => router.push('/atelier-ia')}
         />
       )}
 
