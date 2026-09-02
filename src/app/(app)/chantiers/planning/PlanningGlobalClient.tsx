@@ -230,6 +230,9 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   const [aiStatus, setAiStatus] = useState<'idle' | 'loading' | 'new_member' | 'preview' | 'saving' | 'done' | 'error'>('idle')
   const [noraBriefBanner, setNoraBriefBanner] = useState<string | null>(null)
   const [sarahInfoBanner, setSarahInfoBanner] = useState<string | null>(null)
+  // Fenêtre courte pendant laquelle on vérifie un brief Sarah en attente : évite
+  // que le modal Nora s'ouvre "brusquement" sans aucun signal avant coup.
+  const [checkingSarahBrief, setCheckingSarahBrief] = useState(false)
   const [aiSlots, setAiSlots] = useState<AIPlanningSlot[]>([])
   const [aiDeletions, setAiDeletions] = useState<AIPlanningDeletion[]>([])
   const [aiTours, setAiTours] = useState<AITour[]>([])
@@ -336,6 +339,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   // - brief de planification réel : ouvrir le modal Nora pré-rempli.
   useEffect(() => {
     if (!planningAiEnabled) return
+    setCheckingSarahBrief(true)
     fetch('/api/sarah/briefs?target=nora')
       .then(r => r.json())
       .then(({ brief }: { brief: { id: string; payload: { kind?: string; description?: string; chantier_title?: string } } | null }) => {
@@ -356,6 +360,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
         }).catch(() => {})
       })
       .catch(() => {})
+      .finally(() => setCheckingSarahBrief(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -909,10 +914,11 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
         {planningAiEnabled && canManage && (
           <button
             onClick={openAiModal}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-accent text-black font-semibold text-sm hover:scale-105 transition-all shadow-lg shadow-accent/20"
+            disabled={checkingSarahBrief}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-accent text-black font-semibold text-sm hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-70 disabled:cursor-wait"
           >
-            <AssistantAvatar assistant="nora" size={16} className="border-none bg-transparent shadow-none !rounded-full" />
-            Planifier avec {PLANNING_ASSISTANT.name}
+            {checkingSarahBrief ? <Loader2 className="w-4 h-4 animate-spin" /> : <AssistantAvatar assistant="nora" size={16} className="border-none bg-transparent shadow-none !rounded-full" />}
+            {checkingSarahBrief ? 'Vérification...' : `Planifier avec ${PLANNING_ASSISTANT.name}`}
           </button>
         )}
 

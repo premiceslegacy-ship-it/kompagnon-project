@@ -16,12 +16,13 @@ async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   const safeUrl = assertSafeExternalFetchUrl(url)
   if (!safeUrl) return null
   try {
-    const res = await fetch(safeUrl)
+    const res = await fetch(safeUrl, { signal: AbortSignal.timeout(5_000) })
     if (!res.ok) return null
     const buf = await res.arrayBuffer()
     const ct = res.headers.get('content-type') ?? 'image/png'
     return `data:${ct};base64,${Buffer.from(buf).toString('base64')}`
-  } catch {
+  } catch (err) {
+    console.error('[pdf/quote] fetch logo echoue', { err: err instanceof Error ? err.message : String(err) })
     return null
   }
 }

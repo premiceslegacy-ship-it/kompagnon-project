@@ -313,12 +313,12 @@ const NotificationBell = ({ notifications, onNavigate }: { notifications: Notifi
     const notificationRoutes = React.useMemo(() => {
         const routes = new Set<string>();
         if (notifications.overdueInvoices > 0) routes.add('/finances');
-        if ((notifications.invoiceFollowups ?? 0) > 0) routes.add('/reminders');
+        if ((notifications.invoiceFollowups ?? 0) > 0) routes.add('/finances');
         if ((notifications.pendingRecurring ?? 0) > 0) routes.add('/finances/recurring');
         if ((notifications.recurringReady ?? 0) > 0) routes.add('/finances/recurring');
         if ((notifications.chantierPeriodDrafts ?? 0) > 0) routes.add('/finances');
         if (notifications.expiringQuotes > 0) routes.add('/finances');
-        if ((notifications.pendingQuotes ?? 0) > 0) routes.add('/reminders');
+        if ((notifications.pendingQuotes ?? 0) > 0) routes.add('/finances');
         if ((notifications.recentAutoReminders ?? 0) > 0) routes.add('/dashboard');
         if ((notifications.dueTasks ?? 0) > 0) routes.add('/dashboard');
         if ((notifications.planningToday ?? 0) > 0) routes.add('/chantiers/planning');
@@ -431,7 +431,7 @@ const NotificationBell = ({ notifications, onNavigate }: { notifications: Notifi
                             )}
                             {(notifications.invoiceFollowups ?? 0) > 0 && (
                                 <button
-                                    onClick={() => goToNotification('/reminders')}
+                                    onClick={() => goToNotification('/finances')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <span className="w-2 h-2 rounded-full bg-orange-500 mt-1.5 flex-shrink-0" />
@@ -491,7 +491,7 @@ const NotificationBell = ({ notifications, onNavigate }: { notifications: Notifi
                             )}
                             {(notifications.pendingQuotes ?? 0) > 0 && (
                                 <button
-                                    onClick={() => goToNotification('/reminders')}
+                                    onClick={() => goToNotification('/finances')}
                                     className="w-full text-left px-4 py-3 hover:bg-base transition-colors flex items-start gap-3"
                                 >
                                     <MailWarning className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
@@ -897,7 +897,7 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
     const permissionSet = new Set(permissionKeys);
     const canView = (key: string) => permissionSet.has('*') || permissionSet.has(key);
 
-    const facturationActive = pathname.startsWith('/finances') || pathname.startsWith('/contracts') || pathname.startsWith('/reminders');
+    const facturationActive = pathname.startsWith('/finances') || pathname.startsWith('/contracts');
     const autreActive = pathname.startsWith('/requests');
     const newRequests = notifications.newRequests ?? 0;
     const pathnameKey = routeKey(pathname);
@@ -965,12 +965,6 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
             label: 'Contrats',
             icon: <ClipboardSignature className="w-4 h-4" />,
             active: pathname.startsWith('/contracts'),
-        }] : []),
-        ...(canView('reminders.view') ? [{
-            href: '/reminders',
-            label: 'Relances',
-            icon: <MailWarning className="w-4 h-4" />,
-            active: pathname.startsWith('/reminders'),
         }] : []),
         ...(canView('catalog.view') ? [{
             href: '/catalog',
@@ -1071,7 +1065,7 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                         />
                     </div>}
 
-                    {(canView('quotes.view') || canView('invoices.view') || canView('contracts.view') || canView('reminders.view')) && <NavDropdown
+                    {(canView('quotes.view') || canView('invoices.view') || canView('contracts.view')) && <NavDropdown
                         label="Facturation"
                         icon={<FileText className="w-4 h-4" />}
                         active={facturationActive}
@@ -1089,13 +1083,6 @@ export const Topbar = ({ profile, orgName: _orgName, logoUrl: _logoUrl, notifica
                             label="Contrats"
                             active={pathname.startsWith('/contracts')}
                             onClick={() => handleNavigate('/contracts')}
-                        />}
-                        {canView('reminders.view') && <NavDropdownItem
-                            href="/reminders"
-                            icon={<MailWarning className="w-4 h-4" />}
-                            label="Relances"
-                            active={pathname.startsWith('/reminders')}
-                            onClick={() => handleNavigate('/reminders')}
                         />}
                     </NavDropdown>}
 

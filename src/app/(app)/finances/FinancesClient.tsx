@@ -759,25 +759,7 @@ export default function FinancesClient({
           <h1 className="text-4xl font-bold text-primary">Devis & Factures</h1>
           <p className="text-secondary text-lg">Gérez vos documents financiers et suivez vos encaissements.</p>
         </div>
-        <div className="flex items-center justify-center md:justify-end gap-3 flex-wrap">
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            title="Actualiser"
-            className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center justify-center gap-2 hover:text-primary hover:bg-base transition-all disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            Actualiser
-          </button>
-          <button
-            onClick={() => { setImportDefaultType(activeTab === 'invoices' ? 'invoices' : 'quotes'); setImportOpen(true) }}
-            className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center justify-center gap-2 hover:text-primary hover:bg-base transition-all"
-          >
-            <Upload className="w-4 h-4" />Importer
-          </button>
-          <Link href="/finances/recurring" className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-secondary font-semibold flex items-center justify-center gap-2 hover:text-primary hover:bg-base transition-all whitespace-nowrap">
-            <Repeat className="w-4 h-4" />Récurrentes
-          </Link>
+        <div className="flex items-center justify-center md:justify-end gap-2 flex-wrap">
           {canCreateInvoice && (
             <Link href={invoiceEditorHref()} className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all whitespace-nowrap">
               <Plus className="w-4 h-4" />Nouvelle Facture
@@ -788,6 +770,11 @@ export default function FinancesClient({
               <AssistantAvatar assistant="chloe" size={16} />Nouveau Devis
             </Link>
           )}
+          <ActionMenu actions={[
+            { label: isRefreshing ? 'Actualisation...' : 'Actualiser', icon: <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />, onClick: handleRefresh },
+            { label: 'Importer', icon: <Upload className="w-4 h-4" />, onClick: () => { setImportDefaultType(activeTab === 'invoices' ? 'invoices' : 'quotes'); setImportOpen(true) } },
+            { label: 'Factures récurrentes', icon: <Repeat className="w-4 h-4" />, onClick: () => router.push('/finances/recurring') },
+          ]} />
         </div>
       </div>
 

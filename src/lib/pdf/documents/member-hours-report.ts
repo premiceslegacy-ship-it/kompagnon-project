@@ -137,7 +137,7 @@ export async function renderMemberHoursReportPdfWithFonts(data: MemberHoursRepor
   doc.addPage()
 
   doc.onFinishPage = ({ page, pageIndex, pageCount }) => {
-    const label = `Rapport genere par ${pdfText(organization.name)} - Document a conserver pour vos archives.`
+    const label = `Rapport généré par ${pdfText(organization.name)} - Document à conserver pour vos archives.`
     const w = F.regular.widthOfTextAtSize(label, SIZE.xxs)
     page.drawText(label, { x: (PAGE.width - w) / 2, y: 24, size: SIZE.xxs, font: F.regular, color: COLOR.secondary })
     void pageIndex
@@ -159,20 +159,20 @@ export async function renderMemberHoursReportPdfWithFonts(data: MemberHoursRepor
   }
   drawMemberRow('Nom', pdfText(memberFullName) || '-')
   if (member.email) drawMemberRow('Email', pdfText(member.email))
-  if (member.role_label) drawMemberRow('Role', pdfText(member.role_label))
+  if (member.role_label) drawMemberRow('Rôle', pdfText(member.role_label))
 
   doc.moveDown(SPACE.lg)
 
   // ── Tableau des pointages par chantier ──
   doc.ensureSpace(SIZE.md + SPACE.sm)
   doc.y -= SIZE.md
-  doc.page.drawText('DETAIL DES HEURES POINTEES', { x: PAGE.margin, y: doc.y, size: SIZE.md, font: F.heading, color: COLOR.black })
+  doc.page.drawText('DÉTAIL DES HEURES POINTÉES', { x: PAGE.margin, y: doc.y, size: SIZE.md, font: F.heading, color: COLOR.black })
   doc.moveDown(SPACE.sm)
 
   if (chantierRows.length === 0) {
     doc.ensureSpace(SIZE.md + SPACE.md * 2)
     doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - (SIZE.md + SPACE.md * 2), width: CONTENT_WIDTH, height: SIZE.md + SPACE.md * 2, borderColor: COLOR.divider, borderWidth: 1, color: undefined })
-    const label = 'Aucune heure pointee sur la periode.'
+    const label = 'Aucune heure pointée sur la période.'
     const w = F.regular.widthOfTextAtSize(label, SIZE.md)
     doc.page.drawText(label, { x: PAGE.margin + (CONTENT_WIDTH - w) / 2, y: doc.y - SPACE.md - SIZE.md, size: SIZE.md, font: F.regular, color: COLOR.secondary })
     doc.y -= SIZE.md + SPACE.md * 2
@@ -212,7 +212,7 @@ export async function renderMemberHoursReportPdfWithFonts(data: MemberHoursRepor
   doc.page.drawRectangle({ x: PAGE.margin, y: totalsY - totalsBoxH, width: 3, height: totalsBoxH, color: COLOR.accent })
 
   doc.y = totalsY - SPACE.md
-  drawKeyValueRow(doc, 'Total heures de la periode', fmtHours(totalHours), {
+  drawKeyValueRow(doc, 'Total heures de la période', fmtHours(totalHours), {
     x: PAGE.margin + SPACE.md, width: totalsBoxW - SPACE.md * 2,
     labelStyle: { font: F.regular, size: SIZE.md, color: COLOR.secondary },
     valueStyle: { font: F.heading, size: SIZE.lg, color: COLOR.black },

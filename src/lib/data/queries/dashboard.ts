@@ -1,8 +1,21 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { todayParis, dateParis } from '@/lib/utils'
 import { MISSING_POINTAGE_WINDOW_DAYS } from '@/lib/data/queries/notifications'
 import type { BusinessActivityId } from '@/lib/catalog-context'
+
+/**
+ * Dépendances injectables pour permettre l'appel de ces requêtes depuis un
+ * contexte sans cookies (ex: enveloppé par unstable_cache, qui interdit tout
+ * accès à cookies()/headers() dans la fonction cachée). Sans `deps`, le
+ * comportement est inchangé : client de session + org résolue depuis la
+ * session courante. Avec `deps`, le client et l'orgId sont fournis
+ * explicitement (typiquement un client admin + orgId déjà authentifié en
+ * amont) — chaque requête ci-dessous reste filtrée `organization_id`
+ * explicitement, RLS ou pas, donc aucune fuite cross-tenant possible.
+ */
+type QueryDeps = { client: SupabaseClient; orgId: string }
 
 const FOLLOW_UP_DELAY_DAYS = 2
 const RECENT_ACTIVITY_DAYS = 7
@@ -77,9 +90,9 @@ function formatClientName(client: {
     || null
 }
 
-export async function getDashboardStats(month?: string): Promise<DashboardStats> {
-  const supabase = await createClient()
-  const orgId = await getCurrentOrganizationId()
+export async function getDashboardStats(month?: string, deps?: QueryDeps): Promise<DashboardStats> {
+  const supabase = deps?.client ?? await createClient()
+  const orgId = deps?.orgId ?? await getCurrentOrganizationId()
 
   if (!orgId) {
     return { caMois: 0, encaisseMois: 0, devisEnAttente: 0, facturesEnRetard: 0, urgentItems: [] }
@@ -624,9 +637,9 @@ export async function getDashboardStats(month?: string): Promise<DashboardStats>
   }
 }
 
-export async function getDashboardSetupReadiness(): Promise<DashboardSetupReadiness | null> {
-  const supabase = await createClient()
-  const orgId = await getCurrentOrganizationId()
+export async function getDashboardSetupReadiness(deps?: QueryDeps): Promise<DashboardSetupReadiness | null> {
+  const supabase = deps?.client ?? await createClient()
+  const orgId = deps?.orgId ?? await getCurrentOrganizationId()
   if (!orgId) return null
 
   const [
@@ -717,9 +730,9 @@ export async function getDashboardSetupReadiness(): Promise<DashboardSetupReadin
   }
 }
 
-export async function getPrevMonthKPIs(month?: string): Promise<Pick<DashboardStats, 'caMois' | 'encaisseMois'>> {
-  const supabase = await createClient()
-  const orgId = await getCurrentOrganizationId()
+export async function getPrevMonthKPIs(month?: string, deps?: QueryDeps): Promise<Pick<DashboardStats, 'caMois' | 'encaisseMois'>> {
+  const supabase = deps?.client ?? await createClient()
+  const orgId = deps?.orgId ?? await getCurrentOrganizationId()
 
   if (!orgId) return { caMois: 0, encaisseMois: 0 }
 

@@ -16,12 +16,13 @@ async function fetchAsDataUrl(url: string | null): Promise<string | null> {
   const safeUrl = assertSafeExternalFetchUrl(url)
   if (!safeUrl) return null
   try {
-    const res = await fetch(safeUrl)
+    const res = await fetch(safeUrl, { signal: AbortSignal.timeout(5_000) })
     if (!res.ok) return null
     const buffer = await res.arrayBuffer()
     const mime = res.headers.get('content-type') ?? 'image/jpeg'
     return `data:${mime};base64,${Buffer.from(buffer).toString('base64')}`
-  } catch {
+  } catch (err) {
+    console.error('[pdf/maintenance] fetch echoue', { err: err instanceof Error ? err.message : String(err) })
     return null
   }
 }

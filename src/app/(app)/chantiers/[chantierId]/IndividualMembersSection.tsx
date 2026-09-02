@@ -298,7 +298,7 @@ export default function IndividualMembersSection({
 
   return (
     <section className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-bold text-primary flex items-center gap-2">
             <UserPlus className="w-4 h-4 text-accent" /> Membres individuels
@@ -307,7 +307,7 @@ export default function IndividualMembersSection({
             Personnes assignées sans équipe. Idéal pour intervenants ponctuels ou petites entreprises.
           </p>
         </div>
-        <button onClick={() => { setShowCreate(true); reset() }} className="btn-primary text-sm flex items-center gap-2">
+        <button onClick={() => { setShowCreate(true); reset() }} className="btn-primary text-sm flex items-center gap-2 whitespace-nowrap shrink-0 self-start sm:self-auto">
           <Plus className="w-4 h-4" /> Ajouter un membre
         </button>
       </div>

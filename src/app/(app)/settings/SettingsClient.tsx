@@ -377,6 +377,12 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     );
     const [autoMemberReportsSaveStatus, setAutoMemberReportsSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
+    // ─── Autonomie limitée de Sarah sur les actions low risk (migration 177) ──
+    const [sarahAutoLowRisk, setSarahAutoLowRisk] = useState<boolean>(
+        organization?.sarah_auto_low_risk ?? false,
+    );
+    const [sarahAutoLowRiskSaveStatus, setSarahAutoLowRiskSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
     const [publicFormSettings, setPublicFormSettings] = useState({
         enabled: organization?.public_form_enabled ?? false,
         welcomeMessage: organization?.public_form_welcome_message ?? '',
@@ -707,6 +713,22 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         });
     }
 
+    function handleSaveSarahAutoLowRisk(nextValue: boolean) {
+        setSarahAutoLowRisk(nextValue);
+        setSarahAutoLowRiskSaveStatus('saving');
+        startTransition(async () => {
+            const result = await updateOrganization({ sarah_auto_low_risk: nextValue });
+            if (result.error) {
+                setSarahAutoLowRiskSaveStatus('error');
+                setSarahAutoLowRisk(prev => !prev);
+                setTimeout(() => setSarahAutoLowRiskSaveStatus('idle'), 3000);
+            } else {
+                setSarahAutoLowRiskSaveStatus('saved');
+                setTimeout(() => setSarahAutoLowRiskSaveStatus('idle'), 2000);
+            }
+        });
+    }
+
     function handleSaveAutoMemberReports(nextValue: boolean) {
         setAutoMemberReports(nextValue);
         setAutoMemberReportsSaveStatus('saving');
@@ -1013,6 +1035,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 )
             }
             return (
+                <div className="space-y-6">
                 <div id="identite" className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
@@ -1425,6 +1448,34 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         {orgIsDirty && <span className="text-sm font-semibold text-secondary">Des modifications sont en attente.</span>}
                         {renderOrganizationSaveButton('w-full sm:w-auto justify-center')}
                     </div>
+                </div>
+
+                {isOwner && (
+                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-4">
+                        <div>
+                            <h2 className="text-xl font-bold text-primary mb-1">Assistant Sarah</h2>
+                            <p className="text-sm text-secondary">Réglage de l&apos;autonomie de Sarah, réservé aux propriétaires du compte.</p>
+                        </div>
+                        <div className="flex items-center justify-between gap-4 pt-2 border-t border-[var(--elevation-border)]">
+                            <div>
+                                <p className="text-sm font-semibold text-primary">Actions simples en autonomie</p>
+                                <p className="text-xs text-secondary max-w-xl">Sarah peut effectuer seule les actions simples et réversibles (créer une tâche, une fiche client, transmettre un brief à Chloé...). Les actions sensibles (envoi de facture, encaissement, email client) resteront toujours soumises à votre confirmation.</p>
+                                {sarahAutoLowRiskSaveStatus === 'saved' && <p className="text-xs text-green-500 font-medium mt-1">Préférence enregistrée.</p>}
+                                {sarahAutoLowRiskSaveStatus === 'error' && <p className="text-xs text-red-500 font-medium mt-1">Erreur lors de l&apos;enregistrement.</p>}
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={sarahAutoLowRisk}
+                                onClick={() => handleSaveSarahAutoLowRisk(!sarahAutoLowRisk)}
+                                disabled={isPending || sarahAutoLowRiskSaveStatus === 'saving'}
+                                className={`relative flex-shrink-0 w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 ${sarahAutoLowRisk ? 'bg-accent' : 'bg-[var(--elevation-border)]'}`}
+                            >
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${sarahAutoLowRisk ? 'translate-x-6' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+                    </div>
+                )}
                 </div>
             );
         }

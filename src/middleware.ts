@@ -168,22 +168,20 @@ export async function middleware(request: NextRequest) {
     && !isPublicRoute
     && !lockedAccessPrefixes.some((prefix) => isPathOrChild(pathname, prefix))
   ) {
+    // Une seule requête (jointure via organizations comme pivot) au lieu de deux
+    // appels séquentiels : évite un aller-retour réseau supplémentaire sur
+    // chaque navigation en mode self-service.
     const { data: membership } = await supabase
       .from('memberships')
-      .select('organization_id')
+      .select('organization_id, organizations(organization_entitlements(organization_id, access_status, effective_tier, preferred_tier, trial_started_at, trial_ends_at, access_ends_at, updated_at))')
       .eq('user_id', user.id)
       .eq('is_active', true)
       .single()
 
-    const { data: entitlementRow } = membership?.organization_id
-      ? await supabase
-        .from('organization_entitlements')
-        .select('organization_id, access_status, effective_tier, preferred_tier, trial_started_at, trial_ends_at, access_ends_at, updated_at')
-        .eq('organization_id', membership.organization_id)
-        .maybeSingle()
-      : { data: null }
+    const entitlementRow = (membership?.organizations as unknown as { organization_entitlements: Record<string, unknown> | null } | null)
+      ?.organization_entitlements ?? null
     const entitlement = entitlementRow
-      ? entitlementFromDb(entitlementRow as Record<string, unknown>)
+      ? entitlementFromDb(entitlementRow)
       : null
 
     if (!hasActiveAccess(entitlement)) {

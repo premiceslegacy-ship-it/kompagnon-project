@@ -12,6 +12,17 @@ const nextConfig = {
     experimental: {
         serverComponentsExternalPackages: ['@react-pdf/renderer', 'pdf-lib'],
     },
+    async redirects() {
+        return [
+            {
+                // Centre des relances supprimé (dashboard fait déjà le suivi) —
+                // conserve les liens déjà émis (notifications push, favoris).
+                source: '/reminders',
+                destination: '/finances',
+                permanent: false,
+            },
+        ];
+    },
     async headers() {
         return [
             {

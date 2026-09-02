@@ -134,9 +134,9 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
     if (isVatSubject && organization.vat_number) drawRight(`TVA : ${pdfText(organization.vat_number)}`, { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
     if (!isVatSubject) drawRight('TVA non applicable, art. 293B CGI', { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
 
-    y = Math.min(headerTop - 45, ry) - SPACE.md
+    y = Math.min(headerTop - 45, ry) - SPACE.sm
     page.drawLine({ start: { x: PAGE.margin, y }, end: { x: PAGE.width - PAGE.margin, y }, thickness: 1, color: COLOR.divider })
-    y -= SPACE.md
+    y -= SPACE.sm
     return y
   }
 
@@ -163,7 +163,7 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
     ? null // rendu en 2 lignes ci-dessous
     : `${invoiceTypeLabel}${invoice.number ? ` N° ${invoice.number}` : ''}`
 
-  doc.ensureSpace(SIZE.xxxl * (titleText ? 1 : 2) + 30)
+  doc.ensureSpace(SIZE.xxxl * (titleText ? 1 : 2) + 20)
   if (isSituation && invoice.number) {
     doc.y -= SIZE.xl
     doc.page.drawText(invoiceTypeLabel, { x: PAGE.margin, y: doc.y, size: SIZE.xl, font: F.headingXBold, color: COLOR.black })
@@ -174,7 +174,7 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
     doc.y -= SIZE.xxxl
     doc.page.drawText(titleText!, { x: PAGE.margin, y: doc.y, size: SIZE.xxxl, font: F.headingXBold, color: COLOR.black })
   }
-  doc.y -= 6
+  doc.y -= 4
   doc.y -= SIZE.xs
   if (invoice.issue_date) {
     doc.page.drawText(`Date : ${fmtDate(invoice.issue_date)}`, { x: PAGE.margin, y: doc.y, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
@@ -182,25 +182,25 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
   if (invoice.due_date) {
     doc.page.drawText(`Échéance : ${fmtDate(invoice.due_date)}`, { x: PAGE.margin + 150, y: doc.y, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
   }
-  doc.y -= SPACE.sm
+  doc.y -= SPACE.xs
   doc.page.drawRectangle({ x: PAGE.margin, y: doc.y, width: 40, height: 3, color: COLOR.accent })
-  doc.y -= SPACE.sm
+  doc.y -= SPACE.xs
   doc.page.drawLine({ start: { x: PAGE.margin, y: doc.y }, end: { x: PAGE.width - PAGE.margin, y: doc.y }, thickness: 1, color: COLOR.black })
-  doc.y -= SPACE.md
+  doc.y -= SPACE.sm
 
   // ── Address blocks ──
   const addrBoxW = (CONTENT_WIDTH - SPACE.md) / 2
   function measureAddressBlock(lines: string[]): number {
-    return SPACE.md * 2 + SIZE.xxs + SPACE.sm + SIZE.md + 4 + lines.length * (SIZE.xs + 2)
+    return SPACE.sm * 2 + SIZE.xxs + SPACE.xs + SIZE.md + 3 + lines.length * (SIZE.xs + 2)
   }
   function drawAddressBlock(x: number, label: string, name: string, lines: string[]): void {
     const h = measureAddressBlock(lines)
     doc.page.drawRectangle({ x, y: doc.y - h, width: addrBoxW, height: h, color: COLOR.surface })
-    let cy = doc.y - SPACE.md - SIZE.xxs
+    let cy = doc.y - SPACE.sm - SIZE.xxs
     doc.page.drawText(label.toUpperCase(), { x: x + SPACE.md, y: cy, size: SIZE.xxs, font: F.headingXBold, color: COLOR.secondary })
-    cy -= SPACE.sm + SIZE.md
+    cy -= SPACE.xs + SIZE.md
     doc.page.drawText(name, { x: x + SPACE.md, y: cy, size: SIZE.md, font: F.heading, color: COLOR.black })
-    cy -= 4
+    cy -= 3
     for (const line of lines) {
       cy -= SIZE.xs
       doc.page.drawText(line, { x: x + SPACE.md, y: cy, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
@@ -229,7 +229,7 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
   doc.y = addrY
   drawAddressBlock(PAGE.margin + addrBoxW + SPACE.md, 'Facturé à', invClient ? pdfText(clientDisplayName(invClient)) : '—', clientLines)
   doc.y = addrY - addrBlockH
-  doc.moveDown(SPACE.md)
+  doc.moveDown(SPACE.sm)
 
   // ── Garantie décennale ──
   if (organization.decennale_enabled && organization.decennale_assureur) {
@@ -323,10 +323,10 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
     repeatHeader: true,
   })
 
-  doc.moveDown(SPACE.sm)
+  doc.moveDown(SPACE.xs)
   doc.ensureSpace(2)
   doc.page.drawLine({ start: { x: PAGE.margin, y: doc.y }, end: { x: PAGE.width - PAGE.margin, y: doc.y }, thickness: 1, color: COLOR.black })
-  doc.moveDown(SPACE.md)
+  doc.moveDown(SPACE.sm)
 
   // ── Totaux ──
   const totalsBoxW = 250
@@ -436,46 +436,46 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
 // ─── Helpers de blocs ────────────────────────────────────────────────────────
 
 function drawBoxedText(doc: PdfDoc, label: string, text: string, F: PdfDoc['fonts'], multiline = false): void {
-  const labelStyle: TextStyle = { font: F.heading, size: SIZE.xxs, color: COLOR.secondary, maxWidth: CONTENT_WIDTH - SPACE.md * 2 }
-  const textStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body, maxWidth: CONTENT_WIDTH - SPACE.md * 2, lineHeight: 1.5 }
+  const labelStyle: TextStyle = { font: F.heading, size: SIZE.xxs, color: COLOR.secondary, maxWidth: CONTENT_WIDTH - SPACE.sm * 2 }
+  const textStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body, maxWidth: CONTENT_WIDTH - SPACE.sm * 2, lineHeight: 1.4 }
   const labelH = textLineHeight(labelStyle)
 
   const paragraphs = multiline ? text.split('\n').filter(Boolean) : [text]
   const allLines: string[] = []
   for (const p of paragraphs) allLines.push(...wrapText(pdfText(p), textStyle.font, textStyle.size, textStyle.maxWidth!))
   const textH = allLines.length * textLineHeight(textStyle)
-  const boxH = SPACE.md * 2 + labelH + SPACE.sm + textH
+  const boxH = SPACE.sm * 2 + labelH + SPACE.xs + textH
 
   doc.ensureSpace(boxH)
   doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - boxH, width: CONTENT_WIDTH, height: boxH, color: COLOR.surface })
-  let cy = doc.y - SPACE.md - labelStyle.size
-  doc.page.drawText(label.toUpperCase(), { x: PAGE.margin + SPACE.md, y: cy, size: labelStyle.size, font: labelStyle.font, color: labelStyle.color })
-  cy -= (labelH - labelStyle.size) + SPACE.sm
+  let cy = doc.y - SPACE.sm - labelStyle.size
+  doc.page.drawText(label.toUpperCase(), { x: PAGE.margin + SPACE.sm, y: cy, size: labelStyle.size, font: labelStyle.font, color: labelStyle.color })
+  cy -= (labelH - labelStyle.size) + SPACE.xs
   for (const line of allLines) {
     cy -= textStyle.size
-    doc.page.drawText(line, { x: PAGE.margin + SPACE.md, y: cy, size: textStyle.size, font: textStyle.font, color: textStyle.color })
+    doc.page.drawText(line, { x: PAGE.margin + SPACE.sm, y: cy, size: textStyle.size, font: textStyle.font, color: textStyle.color })
     cy -= textLineHeight(textStyle) - textStyle.size
   }
   doc.y -= boxH
-  doc.moveDown(SPACE.lg)
+  doc.moveDown(SPACE.sm)
 }
 
 function drawIntroBox(doc: PdfDoc, text: string, F: PdfDoc['fonts']): void {
-  const textStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body, maxWidth: CONTENT_WIDTH - SPACE.md * 2 - 2, lineHeight: 1.6 }
+  const textStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body, maxWidth: CONTENT_WIDTH - SPACE.sm * 2 - 2, lineHeight: 1.5 }
   const lines = wrapText(pdfText(text), textStyle.font, textStyle.size, textStyle.maxWidth!)
   const textH = lines.length * textLineHeight(textStyle)
-  const boxH = SPACE.md * 2 + textH
+  const boxH = SPACE.sm * 2 + textH
 
   doc.ensureSpace(boxH)
   doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - boxH, width: CONTENT_WIDTH, height: boxH, color: COLOR.surface })
   doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - boxH, width: 2, height: boxH, color: COLOR.accent })
-  let cy = doc.y - SPACE.md - textStyle.size
+  let cy = doc.y - SPACE.sm - textStyle.size
   for (const line of lines) {
-    doc.page.drawText(line, { x: PAGE.margin + SPACE.md, y: cy, size: textStyle.size, font: textStyle.font, color: textStyle.color })
+    doc.page.drawText(line, { x: PAGE.margin + SPACE.sm, y: cy, size: textStyle.size, font: textStyle.font, color: textStyle.color })
     cy -= textLineHeight(textStyle)
   }
   doc.y -= boxH
-  doc.moveDown(SPACE.lg)
+  doc.moveDown(SPACE.sm)
 }
 
 function drawConditionsBlock(doc: PdfDoc, title: string, lines: string[], F: PdfDoc['fonts']): void {

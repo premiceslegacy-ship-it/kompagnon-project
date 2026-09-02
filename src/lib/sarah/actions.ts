@@ -4,15 +4,18 @@ import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/m
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { createPlanningSlot, deletePlanningSlot, updatePlanningSlot } from '@/lib/data/mutations/planning'
 import { declareMemberAbsence } from '@/lib/data/mutations/absences'
-import { createQuote, upsertQuoteItem, upsertQuoteSection, markQuoteAccepted, sendQuote } from '@/lib/data/mutations/quotes'
-import { createInvoice, saveInvoiceItems, markInvoicePaid, sendInvoice } from '@/lib/data/mutations/invoices'
-import { createClientInline } from '@/lib/data/mutations/clients'
-import { createChantier, createTache, createChantierNote } from '@/lib/data/mutations/chantiers'
+import { createQuote, upsertQuoteItem, upsertQuoteSection, markQuoteAccepted, sendQuote, duplicateQuote, archiveQuote } from '@/lib/data/mutations/quotes'
+import { createInvoice, saveInvoiceItems, markInvoicePaid, sendInvoice, archiveInvoice } from '@/lib/data/mutations/invoices'
+import { createClientInline, updateClient } from '@/lib/data/mutations/clients'
+import { getClientById } from '@/lib/data/queries/clients'
+import { createChantier, createTache, createChantierNote, updateChantier, createMemberPointageAdmin } from '@/lib/data/mutations/chantiers'
 import { createChantierExpense } from '@/lib/data/mutations/chantier-expenses'
 import { sendQuoteFollowup, markQuoteRefused } from '@/lib/data/mutations/reminders'
 import { getPlanningRecipientUserIds, sendPushToPlanningRecipients } from '@/lib/push'
 import { getMaterials, getLaborRates, getPrestationTypes, type CatalogLaborRate, type CatalogMaterial, type PrestationType } from '@/lib/data/queries/catalog'
+import { createMaterialQuick, createLaborRateQuick } from '@/lib/data/mutations/catalog'
 import { getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
+import { createIndividualMember } from '@/lib/data/mutations/members'
 import { dateParis, todayParis } from '@/lib/utils'
 import { Resend } from 'resend'
 import { APP_SIGNATURE, defaultBrandedSenderName } from '@/lib/brand'
@@ -108,7 +111,7 @@ export function deepLinkForSarahAction(type: string, payload: Record<string, unk
   if (type === 'task_create' || type === 'chantier_note_add' || type === 'expense_record') return chantierId ? `/chantiers/${chantierId}` : '/chantiers'
   if (type === 'invoice_mark_paid' || type === 'invoice_send') return '/finances'
   if (type === 'quote_mark_accepted' || type === 'quote_mark_refused' || type === 'quote_send') return '/finances'
-  if (type === 'quote_followup') return '/reminders'
+  if (type === 'quote_followup') return '/finances'
   if (type === 'brief_nora') return '/chantiers/planning'
   if (type === 'draft_email' || type === 'email_broadcast') return '/clients'
   if (type === 'absence_declare') return '/chantiers/planning'
@@ -1118,7 +1121,127 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
       const body = typeof p.draft_text === 'string' ? p.draft_text.trim() : typeof p.body === 'string' ? p.body.trim() : ''
       const result = await sendQuoteFollowup(quoteId, subject && body ? { subject, body } : undefined)
       if (result.error) throw new Error(result.error)
-      return { message: 'La relance du devis a bien été envoyée au client.', deepLink: '/reminders' }
+      return { message: 'La relance du devis a bien été envoyée au client.', deepLink: '/finances' }
+    }
+
+    case 'chantier_status_update': {
+      const chantierId = typeof p.chantier_id === 'string' ? p.chantier_id : typeof p.chantierId === 'string' ? p.chantierId : null
+      const status = typeof p.status === 'string' ? p.status : null
+      if (!chantierId) throw new Error('Chantier manquant.')
+      const validStatuses = ['planifie', 'en_cours', 'suspendu', 'termine', 'annule']
+      if (!status || !validStatuses.includes(status)) throw new Error('Statut de chantier invalide.')
+      const result = await updateChantier(chantierId, { status })
+      if (result.error) throw new Error(result.error)
+      return { message: 'Le statut du chantier a bien été mis à jour.', deepLink: `/chantiers/${chantierId}` }
+    }
+
+    case 'quote_duplicate': {
+      const quoteId = typeof p.quote_id === 'string' ? p.quote_id : typeof p.quoteId === 'string' ? p.quoteId : null
+      if (!quoteId) throw new Error('Identifiant de devis manquant.')
+      const result = await duplicateQuote(quoteId)
+      if (result.error || !result.quoteId) throw new Error(result.error ?? 'Duplication du devis impossible.')
+      return { message: 'Le devis a bien été dupliqué.', deepLink: `/finances/quote-editor?id=${result.quoteId}` }
+    }
+
+    case 'client_update': {
+      const clientId = typeof p.client_id === 'string' ? p.client_id : typeof p.clientId === 'string' ? p.clientId : null
+      if (!clientId) throw new Error('Client manquant.')
+      const existing = await getClientById(clientId)
+      if (!existing) throw new Error('Client introuvable.')
+      // Merge : seuls les champs présents dans le payload écrasent la fiche existante,
+      // updateClient réécrit tous les champs à chaque appel (pas de patch partiel côté DB).
+      const merged = {
+        type: existing.type,
+        company_name: existing.company_name,
+        contact_name: existing.contact_name,
+        first_name: existing.first_name,
+        last_name: existing.last_name,
+        email: typeof p.email === 'string' ? p.email : existing.email,
+        phone: typeof p.phone === 'string' ? p.phone : existing.phone,
+        siret: existing.siret,
+        address_line1: typeof p.address_line1 === 'string' ? p.address_line1 : existing.address_line1,
+        payment_terms_days: existing.payment_terms_days,
+        status: existing.status,
+        source: existing.source,
+        internal_notes: typeof p.internal_notes === 'string' ? p.internal_notes : existing.internal_notes,
+      }
+      const formData = new FormData()
+      formData.set('client_id', clientId)
+      for (const [key, value] of Object.entries(merged)) {
+        if (value != null) formData.set(key, String(value))
+      }
+      const result = await updateClient({ error: null, success: false }, formData)
+      if (result.error) throw new Error(result.error)
+      return { message: 'La fiche client a bien été mise à jour.', deepLink: `/clients/${clientId}` }
+    }
+
+    case 'pointage_record': {
+      const chantierId = typeof p.chantier_id === 'string' ? p.chantier_id : typeof p.chantierId === 'string' ? p.chantierId : null
+      const memberId = typeof p.member_id === 'string' ? p.member_id : typeof p.memberId === 'string' ? p.memberId : null
+      const date = typeof p.date === 'string' ? p.date : null
+      const hours = typeof p.hours === 'number' ? p.hours : null
+      if (!chantierId) throw new Error('Chantier manquant.')
+      if (!memberId) throw new Error('Membre manquant.')
+      if (!date) throw new Error('Date manquante.')
+      if (!hours || hours <= 0) throw new Error('Nombre d\'heures manquant ou invalide.')
+      const result = await createMemberPointageAdmin(chantierId, memberId, {
+        date,
+        hours,
+        description: typeof p.description === 'string' ? p.description : null,
+      })
+      if (result.error) throw new Error(result.error)
+      return { message: 'Le pointage a bien été enregistré.', deepLink: `/chantiers/${chantierId}` }
+    }
+
+    case 'catalog_item_create': {
+      const kind = p.kind === 'labor' ? 'labor' : 'material'
+      const name = typeof p.name === 'string' ? p.name.trim() : typeof p.designation === 'string' ? p.designation.trim() : ''
+      if (!name) throw new Error('Le nom de l\'article est requis.')
+      if (kind === 'labor') {
+        const rate = typeof p.rate === 'number' ? p.rate : typeof p.sale_price === 'number' ? p.sale_price : null
+        if (rate == null) throw new Error('Le tarif est requis.')
+        const result = await createLaborRateQuick({
+          designation: name,
+          rate,
+          unit: typeof p.unit === 'string' ? p.unit : 'h',
+        })
+        if (result.error || !result.laborRate) throw new Error(result.error ?? 'Création du tarif impossible.')
+        return { message: `Le tarif "${result.laborRate.designation}" a bien été ajouté au catalogue.`, deepLink: '/catalog' }
+      }
+      const result = await createMaterialQuick({
+        name,
+        item_kind: 'article',
+        unit: typeof p.unit === 'string' ? p.unit : null,
+        sale_price: typeof p.sale_price === 'number' ? p.sale_price : null,
+        purchase_price: typeof p.purchase_price === 'number' ? p.purchase_price : null,
+        category: typeof p.category === 'string' ? p.category : null,
+      })
+      if (result.error || !result.material) throw new Error(result.error ?? 'Création de la matière impossible.')
+      return { message: `"${result.material.name}" a bien été ajouté au catalogue.`, deepLink: '/catalog' }
+    }
+
+    case 'member_create': {
+      const name = typeof p.name === 'string' ? p.name.trim() : ''
+      if (!name) throw new Error('Le nom du membre est requis.')
+      const chantierId = typeof p.chantier_id === 'string' ? p.chantier_id : typeof p.chantierId === 'string' ? p.chantierId : null
+      const result = await createIndividualMember({
+        name,
+        prenom: typeof p.prenom === 'string' ? p.prenom : null,
+        email: typeof p.email === 'string' ? p.email : null,
+        roleLabel: typeof p.role_label === 'string' ? p.role_label : null,
+        attachToChantierId: chantierId,
+      })
+      if (result.error) throw new Error(result.error)
+      return { message: `${name} a bien été ajouté à l'équipe.`, deepLink: chantierId ? `/chantiers/${chantierId}` : '/chantiers/equipes' }
+    }
+
+    case 'document_archive': {
+      const kind = p.kind === 'invoice' ? 'invoice' : 'quote'
+      const id = typeof p.document_id === 'string' ? p.document_id : typeof p.id === 'string' ? p.id : null
+      if (!id) throw new Error('Document manquant.')
+      const result = kind === 'invoice' ? await archiveInvoice(id) : await archiveQuote(id)
+      if (result.error) throw new Error(result.error)
+      return { message: kind === 'invoice' ? 'La facture a bien été archivée.' : 'Le devis a bien été archivé.', deepLink: '/finances' }
     }
 
     case 'open_url':
@@ -1231,6 +1354,28 @@ export async function confirmSarahAction(proposalId: string): Promise<{ ok: bool
       .eq('organization_id', orgId)
     return { ok: false, message, error: 'execution_failed' }
   }
+}
+
+// Auto-exécution des actions "low risk" quand l'organisation a activé
+// sarah_auto_low_risk. Réutilise exactement le chemin de confirmSarahAction
+// (réservation atomique pending -> executed, dedupe, permission ai.sarah) :
+// aucune nouvelle surface d'écriture, seul le déclencheur change (Sarah au
+// lieu d'un clic humain). Marque le payload pour que l'UI affiche "exécuté
+// automatiquement" sur la carte.
+export async function confirmSarahActionAuto(proposalId: string): Promise<{ ok: boolean; message: string; deepLink?: string | null; error?: string }> {
+  const admin = createAdminClient()
+  const { data: current } = await admin
+    .from('sarah_action_proposals')
+    .select('payload')
+    .eq('id', proposalId)
+    .maybeSingle()
+  if (current) {
+    await admin
+      .from('sarah_action_proposals')
+      .update({ payload: { ...(current.payload as Record<string, unknown> ?? {}), _auto_executed: true } })
+      .eq('id', proposalId)
+  }
+  return confirmSarahAction(proposalId)
 }
 
 export async function dismissSarahAction(proposalId: string): Promise<{ ok: boolean }> {

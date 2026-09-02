@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Topbar } from '@/components/layout/Topbar'
+import { BottomNav } from '@/components/layout/BottomNav'
 import { SarahWidget } from '@/components/sarah/SarahWidget'
 import type { UserProfile } from '@/lib/data/queries/user'
 import type { OrganizationModules } from '@/lib/organization-modules'
@@ -85,7 +86,8 @@ export function AppShell({
             : `⚠ Votre garantie décennale expire dans ${decennaleExpiringDays} jour${decennaleExpiringDays > 1 ? 's' : ''} - pensez au renouvellement (Réglages).`}
         </div>
       )}
-      <div className="grow">{children}</div>
+      <div className="grow pb-[calc(72px+env(safe-area-inset-bottom))] lg:pb-0">{children}</div>
+      <BottomNav permissionKeys={permissionKeys} />
       {modules.sarah_assistant && (
         <SarahWidget
           userName={profile?.full_name ?? null}

@@ -61,7 +61,10 @@ export function measureTextHeight(text: string, style: TextStyle): number {
   return lines.length * textLineHeight(style)
 }
 
-function drawLine(doc: PdfDoc, line: string, x: number, y: number, style: TextStyle): void {
+function drawLine(doc: PdfDoc, rawLine: string, x: number, y: number, style: TextStyle): void {
+  // Filet de sécurité : les polices custom embarquées n'ont pas toutes le glyphe
+  // des espaces insécables produites par Intl.NumberFormat('fr-FR', ...).
+  const line = rawLine.replace(/[   ]/g, ' ')
   const maxWidth = style.maxWidth ?? CONTENT_WIDTH
   let drawX = x
   if (style.align === 'right') {

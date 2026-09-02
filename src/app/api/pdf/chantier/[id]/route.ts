@@ -77,19 +77,26 @@ export async function GET(
     const urlMap = new Map<string, string>()
     signedUrls?.forEach(item => { if (item.signedUrl && item.path) urlMap.set(item.path, item.signedUrl) })
 
-    // react-pdf ne peut pas fetcher des URLs signées Supabase directement - on convertit en base64
+    // pdf-lib ne peut pas fetcher des URLs signées Supabase directement - on convertit en base64
     const withBase64 = await Promise.all(
       photoRows.map(async p => {
         const signedUrl = urlMap.get(p.storage_path)
-        if (!signedUrl) return null
+        if (!signedUrl) {
+          console.error('[pdf/chantier] pas d\'URL signée', { photoId: p.id, path: p.storage_path })
+          return null
+        }
         try {
-          const res = await fetch(signedUrl)
-          if (!res.ok) return null
+          const res = await fetch(signedUrl, { signal: AbortSignal.timeout(10_000) })
+          if (!res.ok) {
+            console.error('[pdf/chantier] fetch photo echoue', { photoId: p.id, status: res.status })
+            return null
+          }
           const buffer = await res.arrayBuffer()
           const mime = res.headers.get('content-type') ?? 'image/jpeg'
           const b64 = Buffer.from(buffer).toString('base64')
           return { id: p.id, url: `data:${mime};base64,${b64}`, title: p.title ?? null, caption: p.caption ?? null }
-        } catch {
+        } catch (err) {
+          console.error('[pdf/chantier] fetch photo exception', { photoId: p.id, err: err instanceof Error ? err.message : String(err) })
           return null
         }
       })

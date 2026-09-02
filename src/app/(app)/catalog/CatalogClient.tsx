@@ -1993,33 +1993,18 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
           }}
         />
       )}
-      {/* Bouton flottant IA + panneau */}
-      {catalogAIEnabled && (
-        <>
-          {isAIPanelOpen && (
-            <CatalogAIPanel
-              open={isAIPanelOpen}
-              onClose={() => setIsAIPanelOpen(false)}
-              onCreated={() => { router.refresh(); setIsAIPanelOpen(false) }}
-              bundleTemplateLabel={catalogContext.labelSet.bundleTemplate.singular}
-              bundleTemplatePluralLabel={catalogContext.labelSet.bundleTemplate.plural}
-              activityLabel={businessActivity?.label ?? catalogContext.sectorFallback}
-              activityDescription={businessActivity?.description ?? catalogContext.onboardingDescription}
-            />
-          )}
-          {!isAIPanelOpen && (
-            <button
-              onClick={() => setIsAIPanelOpen(true)}
-              aria-label="Ouvrir Léa, assistante catalogue"
-              className="fixed bottom-[84px] left-4 sm:hidden z-[9997] w-[52px] h-[52px] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
-              style={{
-                boxShadow: 'inset 0 1.5px 0 rgba(255,255,255,0.25), 0 4px 0 0 rgba(0,0,0,0.3), 0 4px 0 1px rgba(0,0,0,0.1), 0 8px 20px rgba(0,0,0,0.25), 0 0 0 2px rgb(var(--accent-primary) / 0.45)',
-              }}
-            >
-              <AssistantAvatar assistant="lea" size={52} className="border-none bg-transparent shadow-none !rounded-full" />
-            </button>
-          )}
-        </>
+      {/* Panneau Léa, ouvert depuis le bouton du header (plus de FAB flottant : il
+          recouvrait la première colonne des tableaux pendant le scroll mobile) */}
+      {catalogAIEnabled && isAIPanelOpen && (
+        <CatalogAIPanel
+          open={isAIPanelOpen}
+          onClose={() => setIsAIPanelOpen(false)}
+          onCreated={() => { router.refresh(); setIsAIPanelOpen(false) }}
+          bundleTemplateLabel={catalogContext.labelSet.bundleTemplate.singular}
+          bundleTemplatePluralLabel={catalogContext.labelSet.bundleTemplate.plural}
+          activityLabel={businessActivity?.label ?? catalogContext.sectorFallback}
+          activityDescription={businessActivity?.description ?? catalogContext.onboardingDescription}
+        />
       )}
 
       {/* Confirmation mise à jour prix de vente */}
@@ -2064,22 +2049,6 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {catalogAIEnabled && (
-              <button
-                onClick={() => setIsAIPanelOpen(true)}
-                title="Léa — assistante catalogue IA"
-                className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-full font-semibold text-sm whitespace-nowrap hover:scale-105 transition-all"
-                style={{
-                  background: 'var(--sarah-panel-bg)',
-                  border: '1px solid var(--sarah-panel-border)',
-                  boxShadow: 'inset 0 1.5px 0 rgba(255,255,255,0.18), 0 2px 0 0 rgba(0,0,0,0.18), 0 3px 8px rgba(0,0,0,0.1)',
-                  color: 'rgb(var(--text-primary))',
-                }}
-              >
-                <AssistantAvatar assistant="lea" size={20} className="border-none bg-transparent shadow-none !rounded-full" />
-                Léa
-              </button>
-            )}
             <div className="relative flex-1 sm:flex-none">
               <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-secondary" />
               <input
@@ -2090,18 +2059,23 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                 className="w-full sm:w-56 md:w-72 pl-10 pr-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all text-sm"
               />
             </div>
-            <button
-              onClick={() => {
-                if (activeTab === 'materials' || activeTab === 'services') setIsImportMaterialsOpen(true)
-                else if (activeTab === 'labor') setIsImportLaborOpen(true)
-                else if (activeTab === 'prestations') setIsImportPrestationsOpen(true)
-                else if (activeTab === 'suppliers') setIsImportSuppliersOpen(true)
-              }}
-              className="px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:scale-105 transition-all whitespace-nowrap text-sm"
-            >
-              <FileUp className="w-4 h-4" />
-              Importer
-            </button>
+            <ActionMenu actions={[
+              ...(catalogAIEnabled ? [{
+                label: 'Léa — assistante catalogue',
+                icon: <AssistantAvatar assistant="lea" size={16} className="border-none bg-transparent shadow-none !rounded-full" />,
+                onClick: () => setIsAIPanelOpen(true),
+              }] : []),
+              {
+                label: 'Importer',
+                icon: <FileUp className="w-4 h-4" />,
+                onClick: () => {
+                  if (activeTab === 'materials' || activeTab === 'services') setIsImportMaterialsOpen(true)
+                  else if (activeTab === 'labor') setIsImportLaborOpen(true)
+                  else if (activeTab === 'prestations') setIsImportPrestationsOpen(true)
+                  else if (activeTab === 'suppliers') setIsImportSuppliersOpen(true)
+                },
+              },
+            ]} />
             <button
               onClick={() => {
                 if (activeTab === 'materials' || activeTab === 'services') setIsNewMaterialOpen(true)

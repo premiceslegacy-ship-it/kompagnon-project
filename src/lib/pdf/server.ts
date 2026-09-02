@@ -23,13 +23,18 @@ async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   const safeUrl = assertSafeExternalFetchUrl(url)
   if (!safeUrl) return null
   try {
-    const res = await fetch(safeUrl)
+    // Sans timeout, un logo lent ou injoignable bloque l'isolate indéfiniment
+    // (observé : hangs de plusieurs minutes en charge, jusqu'au kill runtime
+    // Workers). Le PDF reste utilisable sans logo — mieux vaut le placeholder
+    // que bloquer toute la génération.
+    const res = await fetch(safeUrl, { signal: AbortSignal.timeout(5_000) })
     if (!res.ok) return null
     const buf = await res.arrayBuffer()
     const contentType = res.headers.get('content-type') ?? 'image/png'
     if (contentType.includes('svg')) return null
     return `data:${contentType};base64,${Buffer.from(buf).toString('base64')}`
-  } catch {
+  } catch (err) {
+    console.error('[pdf/server] fetch logo echoue', { err: err instanceof Error ? err.message : String(err) })
     return null
   }
 }

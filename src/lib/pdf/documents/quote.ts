@@ -137,9 +137,9 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
     if (isVatSubject && organization.vat_number) drawRight(`TVA : ${pdfText(organization.vat_number)}`, { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
     if (!isVatSubject) drawRight('TVA non applicable, art. 293B CGI', { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
 
-    y = Math.min(headerTop - 45, ry) - SPACE.md
+    y = Math.min(headerTop - 45, ry) - SPACE.sm
     page.drawLine({ start: { x: PAGE.margin, y }, end: { x: PAGE.width - PAGE.margin, y }, thickness: 1, color: COLOR.divider })
-    y -= SPACE.md
+    y -= SPACE.sm
     return y
   }
 
@@ -164,18 +164,18 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
 
   // ── Title block ──
   const titleText = `DEVIS${quote.number ? ` N° ${quote.number}` : ''}`
-  doc.ensureSpace(SIZE.xxxl + 20)
+  doc.ensureSpace(SIZE.xxxl + 14)
   doc.y -= SIZE.xxxl
   doc.page.drawText(titleText, { x: PAGE.margin, y: doc.y, size: SIZE.xxxl, font: F.headingXBold, color: COLOR.black })
-  doc.y -= 6
+  doc.y -= 4
   doc.y -= SIZE.xs
   doc.page.drawText(`Date : ${fmtDate(quote.created_at)}`, { x: PAGE.margin, y: doc.y, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
   doc.page.drawText(`Valable jusqu'au : ${fmtDate(validUntil)}`, { x: PAGE.margin + 150, y: doc.y, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
-  doc.y -= SPACE.sm
+  doc.y -= SPACE.xs
   doc.page.drawRectangle({ x: PAGE.margin, y: doc.y, width: 40, height: 3, color: COLOR.accent })
-  doc.y -= SPACE.sm
+  doc.y -= SPACE.xs
   doc.page.drawLine({ start: { x: PAGE.margin, y: doc.y }, end: { x: PAGE.width - PAGE.margin, y: doc.y }, thickness: 1, color: COLOR.black })
-  doc.y -= SPACE.md
+  doc.y -= SPACE.sm
 
   // ── Address blocks (émetteur / client) ──
   const addrBoxW = (CONTENT_WIDTH - SPACE.md) / 2
@@ -184,16 +184,16 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
   const addrLineStyle: TextStyle = { font: F.regular, size: SIZE.xs, color: COLOR.secondary }
 
   function measureAddressBlock(lines: string[]): number {
-    return SPACE.md * 2 + SIZE.xxs + SPACE.sm + SIZE.md + 4 + lines.length * (SIZE.xs + 2)
+    return SPACE.sm * 2 + SIZE.xxs + SPACE.xs + SIZE.md + 3 + lines.length * (SIZE.xs + 2)
   }
 
   function drawAddressBlock(x: number, label: string, name: string, lines: string[]): void {
     doc.page.drawRectangle({ x, y: doc.y - measureAddressBlock(lines), width: addrBoxW, height: measureAddressBlock(lines), color: COLOR.surface })
-    let cy = doc.y - SPACE.md - SIZE.xxs
+    let cy = doc.y - SPACE.sm - SIZE.xxs
     doc.page.drawText(label.toUpperCase(), { x: x + SPACE.md, y: cy, size: SIZE.xxs, font: addrLabelStyle.font, color: addrLabelStyle.color })
-    cy -= SPACE.sm + SIZE.md
+    cy -= SPACE.xs + SIZE.md
     doc.page.drawText(name, { x: x + SPACE.md, y: cy, size: SIZE.md, font: addrNameStyle.font, color: addrNameStyle.color })
-    cy -= 4
+    cy -= 3
     for (const line of lines) {
       cy -= SIZE.xs
       doc.page.drawText(line, { x: x + SPACE.md, y: cy, size: SIZE.xs, font: addrLineStyle.font, color: addrLineStyle.color })
@@ -219,7 +219,7 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
   doc.y = addrY
   drawAddressBlock(PAGE.margin + addrBoxW + SPACE.md, 'Client', client ? pdfText(clientDisplayName(client)) : '—', clientLines)
   doc.y = addrY - addrBlockH
-  doc.moveDown(SPACE.md)
+  doc.moveDown(SPACE.sm)
 
   // ── Demande du client (formulaire public) ──
   if (quote.client_request_description && quote.client_request_visible_on_pdf) {
@@ -317,7 +317,7 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
     repeatHeader: true,
   })
 
-  doc.moveDown(SPACE.md)
+  doc.moveDown(SPACE.sm)
 
   // ── Totaux ──
   const totalsBoxW = 250
@@ -360,7 +360,7 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
     doc.y -= 4
   }
 
-  doc.moveDown(SPACE.md)
+  doc.moveDown(SPACE.sm)
 
   // ── Conditions + Signature ──
   const bottomColW = (CONTENT_WIDTH - SPACE.lg - 190) // conditionsBox flex, signatureBox 190 fixe
@@ -382,13 +382,13 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
     if (organization.court_competent) conditionsLines.push({ text: `En cas de litige : ${organization.court_competent}.` })
   }
 
-  const condTextStyle: TextStyle = { font: F.regular, size: SIZE.xs, color: COLOR.secondary, maxWidth: bottomColW }
+  const condTextStyle: TextStyle = { font: F.regular, size: SIZE.xs, color: COLOR.secondary, maxWidth: bottomColW, lineHeight: 1.2 }
   const condLh = textLineHeight(condTextStyle)
   const sigBoxH = hasClientSignature ? 118 : 70
   const bottomBlockH = Math.max(
     conditionsLines.reduce((s, l) => {
       const wrapped = wrapText(pdfText(l.text), condTextStyle.font, condTextStyle.size, bottomColW)
-      return s + (l.title ? SIZE.xs + 6 : 0) + wrapped.length * condLh + 2
+      return s + (l.title ? SIZE.xs + 4 : 0) + wrapped.length * condLh + 1
     }, 0),
     sigBoxH,
   )
@@ -398,7 +398,7 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
   let condY = bottomY
   for (const line of conditionsLines) {
     if (line.title) {
-      condY -= SIZE.xs + 6
+      condY -= SIZE.xs + 4
       doc.page.drawText(line.title.toUpperCase(), { x: PAGE.margin, y: condY, size: SIZE.xs, font: F.heading, color: COLOR.black })
     }
     const wrapped = wrapText(pdfText(line.text), condTextStyle.font, condTextStyle.size, bottomColW)
@@ -407,7 +407,7 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
       doc.page.drawText(wline, { x: PAGE.margin, y: condY, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
       condY -= condLh - SIZE.xs
     }
-    condY -= 2
+    condY -= 1
   }
 
   const sigX = PAGE.width - PAGE.margin - 190
@@ -443,41 +443,41 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
 // ─── Helpers de blocs encadrés ──────────────────────────────────────────────
 
 function drawBoxedText(doc: PdfDoc, label: string, text: string, F: PdfDoc['fonts']): void {
-  const labelStyle: TextStyle = { font: F.heading, size: SIZE.xxs, color: COLOR.secondary, maxWidth: CONTENT_WIDTH - SPACE.md * 2 }
-  const textStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body, maxWidth: CONTENT_WIDTH - SPACE.md * 2, lineHeight: 1.5 }
+  const labelStyle: TextStyle = { font: F.heading, size: SIZE.xxs, color: COLOR.secondary, maxWidth: CONTENT_WIDTH - SPACE.sm * 2 }
+  const textStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body, maxWidth: CONTENT_WIDTH - SPACE.sm * 2, lineHeight: 1.4 }
   const labelH = textLineHeight(labelStyle)
   const textLines = wrapText(pdfText(text), textStyle.font, textStyle.size, textStyle.maxWidth!)
   const textH = textLines.length * textLineHeight(textStyle)
-  const boxH = SPACE.md * 2 + labelH + SPACE.sm + textH
+  const boxH = SPACE.sm * 2 + labelH + SPACE.xs + textH
 
   doc.ensureSpace(boxH)
   doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - boxH, width: CONTENT_WIDTH, height: boxH, color: COLOR.surface })
-  let cy = doc.y - SPACE.md - labelStyle.size
-  doc.page.drawText(label.toUpperCase(), { x: PAGE.margin + SPACE.md, y: cy, size: labelStyle.size, font: labelStyle.font, color: labelStyle.color })
-  cy -= (labelH - labelStyle.size) + SPACE.sm
+  let cy = doc.y - SPACE.sm - labelStyle.size
+  doc.page.drawText(label.toUpperCase(), { x: PAGE.margin + SPACE.sm, y: cy, size: labelStyle.size, font: labelStyle.font, color: labelStyle.color })
+  cy -= (labelH - labelStyle.size) + SPACE.xs
   for (const line of textLines as string[]) {
     cy -= textStyle.size
-    doc.page.drawText(line, { x: PAGE.margin + SPACE.md, y: cy, size: textStyle.size, font: textStyle.font, color: textStyle.color })
+    doc.page.drawText(line, { x: PAGE.margin + SPACE.sm, y: cy, size: textStyle.size, font: textStyle.font, color: textStyle.color })
     cy -= textLineHeight(textStyle) - textStyle.size
   }
   doc.y -= boxH
-  doc.moveDown(SPACE.lg)
+  doc.moveDown(SPACE.sm)
 }
 
 function drawIntroBox(doc: PdfDoc, text: string, F: PdfDoc['fonts']): void {
-  const textStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body, maxWidth: CONTENT_WIDTH - SPACE.md * 2 - 2, lineHeight: 1.6 }
+  const textStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body, maxWidth: CONTENT_WIDTH - SPACE.sm * 2 - 2, lineHeight: 1.5 }
   const lines = wrapText(pdfText(text), textStyle.font, textStyle.size, textStyle.maxWidth!)
   const textH = lines.length * textLineHeight(textStyle)
-  const boxH = SPACE.md * 2 + textH
+  const boxH = SPACE.sm * 2 + textH
 
   doc.ensureSpace(boxH)
   doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - boxH, width: CONTENT_WIDTH, height: boxH, color: COLOR.surface })
   doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - boxH, width: 2, height: boxH, color: COLOR.accent })
-  let cy = doc.y - SPACE.md - textStyle.size
+  let cy = doc.y - SPACE.sm - textStyle.size
   for (const line of lines as string[]) {
-    doc.page.drawText(line, { x: PAGE.margin + SPACE.md, y: cy, size: textStyle.size, font: textStyle.font, color: textStyle.color })
+    doc.page.drawText(line, { x: PAGE.margin + SPACE.sm, y: cy, size: textStyle.size, font: textStyle.font, color: textStyle.color })
     cy -= textLineHeight(textStyle)
   }
   doc.y -= boxH
-  doc.moveDown(SPACE.lg)
+  doc.moveDown(SPACE.sm)
 }

@@ -20,19 +20,19 @@
     /* #64748B */
     --text-inverse: 255 255 255;
 
-    /* Élévation — Light : Design tactile 3D, ombres dures */
-    --hard-edge: #cbd5e1;
-    --hard-edge-strong: #94a3b8;
-    --hard-edge-danger: #991b1b;
-    --shadow-drop: rgba(15, 23, 42, 0.12);
-    --shadow-drop-strong: rgba(15, 23, 42, 0.18);
-    --shadow-ring: rgba(15, 23, 42, 0.08);
-    --inner-highlight: rgba(255, 255, 255, 0.78);
-    --icon-depth-filter: drop-shadow(0px 1px 0px rgba(148, 163, 184, 0.55)) drop-shadow(0px 2px 4px rgba(15, 23, 42, 0.1));
-    --icon-on-accent-filter: drop-shadow(0px 1px 0px rgba(255, 255, 255, 0.24));
-    --icon-on-danger-filter: drop-shadow(0px 1px 0px rgba(127, 29, 29, 0.55)) drop-shadow(0px 2px 4px rgba(127, 29, 29, 0.24));
-    --elevation-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px var(--shadow-drop);
-    --elevation-border: rgba(0, 0, 0, 0.08);
+    /* Élévation — Light : douce, un seul plan d'ombre discret */
+    --hard-edge: #e2e8f0;
+    --hard-edge-strong: #cbd5e1;
+    --hard-edge-danger: #dc2626;
+    --shadow-drop: rgba(15, 23, 42, 0.06);
+    --shadow-drop-strong: rgba(15, 23, 42, 0.1);
+    --shadow-ring: rgba(15, 23, 42, 0.04);
+    --inner-highlight: rgba(255, 255, 255, 0.6);
+    --icon-depth-filter: none;
+    --icon-on-accent-filter: none;
+    --icon-on-danger-filter: none;
+    --elevation-shadow: 0 1px 2px var(--shadow-ring), 0 2px 8px var(--shadow-drop);
+    --elevation-border: rgba(0, 0, 0, 0.07);
     /* Teintes d'élévation pour hovers, chips et fonds de lignes.
        Translucides : réservées aux surfaces posées sur un fond existant.
        Pour un panneau flottant (dropdown, popover), utiliser .menu-panel qui
@@ -85,18 +85,18 @@
     /* #A1A1AA */
     --text-inverse: 5 5 5;
 
-    /* Élévation — Dark : Design tactile 3D, ombres dures */
-    --hard-edge: #000;
-    --hard-edge-strong: #000;
+    /* Élévation — Dark : douce, un seul plan d'ombre discret */
+    --hard-edge: #1a1a1a;
+    --hard-edge-strong: #262626;
     --hard-edge-danger: #7f1d1d;
-    --shadow-drop: rgba(0, 0, 0, 0.6);
-    --shadow-drop-strong: rgba(0, 0, 0, 0.72);
-    --shadow-ring: rgba(255, 255, 255, 0.05);
-    --inner-highlight: rgba(255, 255, 255, 0.15);
-    --icon-depth-filter: drop-shadow(0px 1px 0px rgba(0, 0, 0, 0.75)) drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.38));
-    --icon-on-accent-filter: drop-shadow(0px 1px 0px rgba(255, 255, 255, 0.2));
-    --icon-on-danger-filter: drop-shadow(0px 1px 0px rgba(127, 29, 29, 0.75)) drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.28));
-    --elevation-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px var(--shadow-drop);
+    --shadow-drop: rgba(0, 0, 0, 0.35);
+    --shadow-drop-strong: rgba(0, 0, 0, 0.45);
+    --shadow-ring: rgba(255, 255, 255, 0.04);
+    --inner-highlight: rgba(255, 255, 255, 0.08);
+    --icon-depth-filter: none;
+    --icon-on-accent-filter: none;
+    --icon-on-danger-filter: none;
+    --elevation-shadow: 0 1px 2px var(--shadow-ring), 0 2px 10px var(--shadow-drop);
     --elevation-border: rgba(255, 255, 255, 0.08);
     --elevation-1: rgba(255, 255, 255, 0.05);
     --elevation-2: rgba(255, 255, 255, 0.09);
@@ -173,40 +173,39 @@
    * DROPDOWN MENUS
    * ═══════════════════ */
   .menu-panel {
-    background: linear-gradient(to bottom, rgb(var(--bg-surface)), rgb(var(--bg-surface) / 0.98));
+    background: rgb(var(--bg-surface));
     border-radius: 1rem;
     border: 1px solid rgba(0, 0, 0, 0.08);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 8px 24px var(--shadow-drop-strong);
     overflow: hidden;
   }
 
   .dark .menu-panel {
-    background: linear-gradient(to bottom, rgba(18, 18, 18, 0.98), rgba(12, 12, 12, 0.98));
+    background: rgba(20, 20, 20, 0.98);
     border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px var(--shadow-drop);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 8px 24px var(--shadow-drop-strong);
   }
 
   /* ═══════════════════
    * CONTENT CARDS
    * ═══════════════════ */
   .card {
-    background: linear-gradient(to bottom, rgb(var(--bg-surface)), rgb(var(--bg-surface) / 0.97));
-    border-radius: 1.5rem;
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: rgb(var(--bg-surface));
+    border-radius: 1.25rem;
+    border: 1px solid rgba(0, 0, 0, 0.07);
     box-shadow: var(--elevation-shadow);
-    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 160ms ease;
     position: relative;
     isolation: isolate;
-    transform: translateZ(0);
   }
 
   .dark .card {
-    background: linear-gradient(to bottom, rgba(30, 30, 34, 0.98), rgba(14, 14, 16, 0.98));
+    background: rgba(255, 255, 255, 0.03);
     border-color: rgba(255, 255, 255, 0.08);
     box-shadow: var(--elevation-shadow);
   }
 
-  /* Interactive cards (hover & click mechanical feeling) */
+  /* Interactive cards (hover & click) */
   .card-interactive,
   .card[onclick],
   .card.cursor-pointer {
@@ -215,25 +214,25 @@
   .card-interactive:hover,
   .card[onclick]:hover,
   .card.cursor-pointer:hover {
-    transform: translateY(-2px);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 5px 0 0 var(--hard-edge), 0 5px 0 1px var(--shadow-ring), 0 10px 18px var(--shadow-drop-strong);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 8px 20px var(--shadow-drop-strong);
     z-index: 1;
   }
   .dark .card-interactive:hover,
   .dark .card[onclick]:hover,
   .dark .card.cursor-pointer:hover {
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 5px 0 0 var(--hard-edge), 0 5px 0 1px var(--shadow-ring), 0 10px 18px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 8px 20px var(--shadow-drop-strong);
   }
   .card-interactive:active,
   .card[onclick]:active,
   .card.cursor-pointer:active {
-    transform: translateY(3px);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge-strong), 0 1px 0 1px var(--shadow-ring), 0 2px 4px var(--shadow-drop);
+    transform: translateY(0.5px);
+    box-shadow: 0 1px 2px var(--shadow-ring);
   }
   .dark .card-interactive:active,
   .dark .card[onclick]:active,
   .dark .card.cursor-pointer:active {
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge), 0 1px 0 1px var(--shadow-ring), 0 2px 4px var(--shadow-drop-strong);
+    box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
   /* ═══════════════════
@@ -303,30 +302,30 @@
 
   .btn-pill:hover {
     transform: translateY(-1px);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 5px 0 0 var(--hard-edge), 0 5px 0 1px var(--shadow-ring), 0 10px 20px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 16px var(--shadow-drop-strong);
   }
 
   .btn-pill:active {
-    transform: translateY(3px) !important;
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge-strong), 0 1px 0 1px var(--shadow-ring), 0 2px 4px var(--shadow-drop) !important;
+    transform: translateY(1px);
+    box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
   .btn-pill-primary {
-    background: linear-gradient(to bottom, #ffb84d, rgb(var(--accent-primary)));
+    background: rgb(var(--accent-primary));
     color: #050505;
   }
 
   .dark .btn-pill-primary {
-    border-color: rgba(255, 255, 255, 0.15);
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.25), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px rgba(0, 0, 0, 0.6);
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   }
 
   .dark .btn-pill-primary:hover {
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.25), 0 5px 0 0 var(--hard-edge), 0 5px 0 1px var(--shadow-ring), 0 10px 20px rgba(0, 0, 0, 0.7);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
   }
 
   .dark .btn-pill-primary:active {
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.15), 0 1px 0 0 var(--hard-edge), 0 1px 0 1px var(--shadow-ring), 0 2px 4px rgba(0, 0, 0, 0.8) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   }
 
   /* ═══════════════════
@@ -335,22 +334,23 @@
   .btn-primary {
     border-radius: 9999px;
     padding: 0.65rem 1rem;
-    background: linear-gradient(to bottom, #ffb84d, rgb(var(--accent-primary)));
+    background: rgb(var(--accent-primary));
     color: #050505;
-    font-weight: 800;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.45), 0 4px 0 0 #b45309, 0 4px 0 1px rgba(120, 53, 15, 0.12), 0 8px 16px rgba(180, 83, 9, 0.22);
-    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    font-weight: 700;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 1px 2px rgba(120, 53, 15, 0.12), 0 2px 8px rgba(180, 83, 9, 0.16);
+    transition: all 160ms ease;
   }
 
   .btn-primary:hover:not(:disabled) {
     transform: translateY(-1px);
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.48), 0 5px 0 0 #92400e, 0 5px 0 1px rgba(120, 53, 15, 0.14), 0 10px 20px rgba(180, 83, 9, 0.28);
+    background: #ffb84d;
+    box-shadow: 0 2px 4px rgba(120, 53, 15, 0.14), 0 6px 16px rgba(180, 83, 9, 0.22);
   }
 
   .btn-primary:active:not(:disabled) {
-    transform: translateY(3px) !important;
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.25), 0 1px 0 0 #92400e, 0 1px 0 1px rgba(120, 53, 15, 0.12), 0 2px 4px rgba(180, 83, 9, 0.22) !important;
+    transform: translateY(1px);
+    box-shadow: 0 1px 2px rgba(120, 53, 15, 0.12);
   }
 
   .btn-primary:disabled {
@@ -363,38 +363,38 @@
   .btn-secondary {
     border-radius: 9999px;
     padding: 0.65rem 1rem;
-    background: linear-gradient(to bottom, #ffffff, #f1f5f9);
+    background: rgb(var(--bg-surface));
     color: rgb(var(--text-primary));
-    font-weight: 800;
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    font-weight: 700;
+    border: 1px solid rgba(0, 0, 0, 0.09);
     box-shadow: var(--elevation-shadow);
-    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 160ms ease;
   }
 
   .dark .btn-secondary {
-    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
-    border-color: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.09);
     box-shadow: var(--elevation-shadow);
   }
 
   .btn-secondary:hover:not(:disabled) {
-    background: linear-gradient(to bottom, #f8fafc, #e2e8f0);
+    background: #f8fafc;
     transform: translateY(-1px);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 5px 0 0 var(--hard-edge), 0 5px 0 1px var(--shadow-ring), 0 10px 20px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 16px var(--shadow-drop-strong);
   }
 
   .dark .btn-secondary:hover:not(:disabled) {
-    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06));
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 5px 0 0 var(--hard-edge), 0 5px 0 1px var(--shadow-ring), 0 10px 20px var(--shadow-drop-strong);
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 16px var(--shadow-drop-strong);
   }
 
   .btn-secondary:active:not(:disabled) {
-    transform: translateY(3px) !important;
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge-strong), 0 1px 0 1px var(--shadow-ring), 0 2px 4px var(--shadow-drop) !important;
+    transform: translateY(1px);
+    box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
   .dark .btn-secondary:active:not(:disabled) {
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge), 0 1px 0 1px var(--shadow-ring), 0 2px 4px var(--shadow-drop) !important;
+    box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
   .btn-secondary:disabled {
@@ -415,71 +415,70 @@
     align-items: center;
     justify-content: center;
     border-radius: 9999px;
-    background: linear-gradient(to bottom, #ffffff, #f1f5f9);
+    background: rgb(var(--bg-surface));
     border: 1px solid rgba(0, 0, 0, 0.08);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 3px 0 0 var(--hard-edge), 0 3px 0 1px var(--shadow-ring), 0 6px 12px var(--shadow-drop);
-    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--elevation-shadow);
+    transition: all 160ms ease;
     flex-shrink: 0;
   }
 
   .dark .btn-icon {
-    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
-    border-color: rgba(255, 255, 255, 0.1);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 3px 0 0 var(--hard-edge), 0 3px 0 1px var(--shadow-ring), 0 6px 12px var(--shadow-drop);
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.09);
+    box-shadow: var(--elevation-shadow);
   }
 
   .btn-icon:hover {
     transform: translateY(-1px);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 14px var(--shadow-drop-strong);
   }
 
   .dark .btn-icon:hover {
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 14px var(--shadow-drop-strong);
   }
 
   .btn-icon:active {
-    transform: translateY(2px) !important;
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge-strong), 0 1px 0 1px var(--shadow-ring), 0 1px 3px var(--shadow-drop) !important;
+    transform: translateY(1px);
+    box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
   .dark .btn-icon:active {
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge), 0 1px 0 1px var(--shadow-ring), 0 1px 3px var(--shadow-drop) !important;
+    box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
   /* ═══════════════════
    * AVATAR BUTTON
-   * Bouton avatar avec profondeur 3D
    * ═══════════════════ */
   .btn-avatar {
     border-radius: 9999px;
     border: 1.5px solid rgba(255, 159, 28, 0.3);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 3px 0 0 var(--hard-edge), 0 3px 0 1px var(--shadow-ring), 0 6px 12px var(--shadow-drop);
-    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--elevation-shadow);
+    transition: all 160ms ease;
     overflow: hidden;
     flex-shrink: 0;
   }
 
   .dark .btn-avatar {
     border-color: rgba(255, 159, 28, 0.35);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 3px 0 0 var(--hard-edge), 0 3px 0 1px var(--shadow-ring), 0 6px 12px var(--shadow-drop);
+    box-shadow: var(--elevation-shadow);
   }
 
   .btn-avatar:hover {
     transform: translateY(-1px);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 14px var(--shadow-drop-strong);
   }
 
   .dark .btn-avatar:hover {
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 4px 0 0 var(--hard-edge), 0 4px 0 1px var(--shadow-ring), 0 8px 16px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 14px var(--shadow-drop-strong);
   }
 
   .btn-avatar:active {
-    transform: translateY(2px) !important;
-    box-shadow: inset 0 1px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge-strong), 0 1px 3px var(--shadow-drop) !important;
+    transform: translateY(1px);
+    box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
   .dark .btn-avatar:active {
-    box-shadow: inset 0 1px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge), 0 1px 3px var(--shadow-drop) !important;
+    box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
   /* ═══════════════════
@@ -488,22 +487,23 @@
   .btn-danger {
     border-radius: 9999px;
     padding: 0.65rem 1rem;
-    background: linear-gradient(to bottom, #f87171, #ef4444);
+    background: #ef4444;
     color: #ffffff;
-    font-weight: 800;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.3), 0 4px 0 0 var(--hard-edge-danger), 0 4px 0 1px rgba(127, 29, 29, 0.14), 0 8px 16px rgba(239, 68, 68, 0.28);
-    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    font-weight: 700;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 1px 2px rgba(127, 29, 29, 0.14), 0 2px 8px rgba(239, 68, 68, 0.2);
+    transition: all 160ms ease;
   }
 
   .btn-danger:hover:not(:disabled) {
     transform: translateY(-1px);
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.3), 0 5px 0 0 var(--hard-edge-danger), 0 5px 0 1px rgba(127, 29, 29, 0.16), 0 10px 20px rgba(239, 68, 68, 0.34);
+    background: #f87171;
+    box-shadow: 0 2px 4px rgba(127, 29, 29, 0.16), 0 6px 16px rgba(239, 68, 68, 0.26);
   }
 
   .btn-danger:active:not(:disabled) {
-    transform: translateY(3px) !important;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 0 0 var(--hard-edge-danger), 0 1px 4px rgba(239, 68, 68, 0.28) !important;
+    transform: translateY(1px);
+    box-shadow: 0 1px 2px rgba(127, 29, 29, 0.14);
   }
 
   .btn-danger:disabled {
@@ -519,11 +519,11 @@
   a[class*="bg-accent"][class*="text-black"],
   a[class*="bg-accent"][class*="text-white"],
   label[class*="bg-accent"][class*="text-black"] {
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    background: linear-gradient(to bottom, #ffb84d, rgb(var(--accent-primary))) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgb(var(--accent-primary)) !important;
     color: #050505 !important;
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.45), 0 4px 0 0 #b45309, 0 4px 0 1px rgba(120, 53, 15, 0.12), 0 8px 16px rgba(180, 83, 9, 0.22) !important;
-    transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease !important;
+    box-shadow: 0 1px 2px rgba(120, 53, 15, 0.12), 0 2px 8px rgba(180, 83, 9, 0.16) !important;
+    transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease !important;
   }
 
   button[class*="bg-accent"][class*="text-black"]:hover:not(:disabled),
@@ -532,7 +532,7 @@
   a[class*="bg-accent"][class*="text-white"]:hover,
   label[class*="bg-accent"][class*="text-black"]:hover {
     transform: translateY(-1px) !important;
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.48), 0 5px 0 0 #92400e, 0 5px 0 1px rgba(120, 53, 15, 0.14), 0 10px 20px rgba(180, 83, 9, 0.28) !important;
+    box-shadow: 0 2px 4px rgba(120, 53, 15, 0.14), 0 6px 16px rgba(180, 83, 9, 0.22) !important;
   }
 
   button[class*="bg-accent"][class*="text-black"]:active:not(:disabled),
@@ -540,8 +540,8 @@
   a[class*="bg-accent"][class*="text-black"]:active,
   a[class*="bg-accent"][class*="text-white"]:active,
   label[class*="bg-accent"][class*="text-black"]:active {
-    transform: translateY(3px) !important;
-    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.25), 0 1px 0 0 #92400e, 0 1px 0 1px rgba(120, 53, 15, 0.12), 0 2px 4px rgba(180, 83, 9, 0.22) !important;
+    transform: translateY(1px) !important;
+    box-shadow: 0 1px 2px rgba(120, 53, 15, 0.12) !important;
   }
 
   button[class*="bg-accent"][class*="text-black"] svg,
@@ -549,26 +549,26 @@
   a[class*="bg-accent"][class*="text-black"] svg,
   a[class*="bg-accent"][class*="text-white"] svg,
   label[class*="bg-accent"][class*="text-black"] svg {
-    stroke-width: 2.5px !important;
-    filter: var(--icon-on-accent-filter) !important;
+    stroke-width: 1.75px !important;
+    filter: none !important;
   }
 
   button[class*="rounded-full"][class*="bg-surface"][class*="border"],
   a[class*="rounded-full"][class*="bg-surface"][class*="border"] {
     box-shadow: var(--elevation-shadow);
-    transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1), background 200ms ease, color 200ms ease !important;
+    transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, color 160ms ease !important;
   }
 
   button[class*="rounded-full"][class*="bg-surface"][class*="border"]:hover:not(:disabled),
   a[class*="rounded-full"][class*="bg-surface"][class*="border"]:hover {
     transform: translateY(-1px);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 5px 0 0 var(--hard-edge), 0 5px 0 1px var(--shadow-ring), 0 10px 20px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 16px var(--shadow-drop-strong);
   }
 
   button[class*="rounded-full"][class*="bg-surface"][class*="border"]:active:not(:disabled),
   a[class*="rounded-full"][class*="bg-surface"][class*="border"]:active {
-    transform: translateY(3px);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge-strong), 0 1px 0 1px var(--shadow-ring), 0 2px 4px var(--shadow-drop) !important;
+    transform: translateY(1px);
+    box-shadow: 0 1px 2px var(--shadow-ring) !important;
   }
 
   /* ═══════════════════
@@ -581,17 +581,17 @@
     gap: 0.25rem;
     border-radius: 9999px;
     border: 1px solid var(--status-border, var(--elevation-border));
-    background: linear-gradient(to bottom, var(--status-bg-top, #ffffff), var(--status-bg-bottom, #f1f5f9));
+    background: var(--status-bg-top, #ffffff);
     color: var(--status-text, rgb(var(--text-primary)));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58), 0 2px 0 0 var(--status-edge, var(--hard-edge)), 0 2px 0 1px var(--shadow-ring), 0 4px 8px var(--shadow-drop);
+    box-shadow: none;
   }
 
   .dark .status-pill {
-    box-shadow: inset 0 1px 0 var(--inner-highlight), 0 2px 0 0 var(--status-edge, var(--hard-edge)), 0 2px 0 1px var(--shadow-ring), 0 4px 8px rgba(0, 0, 0, 0.45);
+    box-shadow: none;
   }
 
   .status-pill svg {
-    stroke-width: 2.5px !important;
+    stroke-width: 1.75px !important;
     filter: none !important;
   }
 
@@ -712,25 +712,25 @@
   .state-card {
     border-radius: 1rem;
     border: 1px solid var(--state-border, var(--elevation-border));
-    background: linear-gradient(to bottom, var(--state-bg-top, rgb(var(--bg-surface))), var(--state-bg-bottom, rgb(var(--bg-interactive))));
-    box-shadow: inset 0 1.25px 0 var(--inner-highlight), 0 3px 0 0 var(--state-edge, var(--hard-edge)), 0 3px 0 1px var(--shadow-ring), 0 6px 12px var(--shadow-drop);
-    transition: transform 180ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 180ms cubic-bezier(0.4, 0, 0.2, 1);
+    background: var(--state-bg-top, rgb(var(--bg-surface)));
+    box-shadow: var(--elevation-shadow);
+    transition: transform 160ms ease, box-shadow 160ms ease;
     position: relative;
     isolation: isolate;
   }
 
   .state-card:hover {
     transform: translateY(-1px);
-    box-shadow: inset 0 1.25px 0 var(--inner-highlight), 0 4px 0 0 var(--state-edge, var(--hard-edge)), 0 4px 0 1px var(--shadow-ring), 0 8px 14px var(--shadow-drop);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 14px var(--shadow-drop-strong);
   }
 
   .state-card:active {
-    transform: translateY(2px);
-    box-shadow: inset 0 1px 0 var(--inner-highlight), 0 1px 0 0 var(--state-edge, var(--hard-edge)), 0 1px 0 1px var(--shadow-ring), 0 2px 4px var(--shadow-drop);
+    transform: translateY(0.5px);
+    box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
   .state-card svg {
-    stroke-width: 2.5px !important;
+    stroke-width: 1.75px !important;
     filter: none !important;
   }
 
@@ -838,14 +838,14 @@
     justify-content: center;
     border-radius: 0.625rem;
     border: 1px solid var(--state-border, var(--elevation-border));
-    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.32));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58), 0 2px 0 0 var(--state-edge, var(--hard-edge)), 0 3px 6px var(--shadow-drop);
-    transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 160ms cubic-bezier(0.4, 0, 0.2, 1);
+    background: rgba(255, 255, 255, 0.5);
+    box-shadow: none;
+    transition: transform 160ms ease, box-shadow 160ms ease;
   }
 
   .dark .state-action {
-    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035));
-    box-shadow: inset 0 1px 0 var(--inner-highlight), 0 2px 0 0 var(--state-edge, var(--hard-edge)), 0 3px 6px rgba(0, 0, 0, 0.38);
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: none;
   }
 
   .state-action:hover {
@@ -853,8 +853,7 @@
   }
 
   .state-action:active {
-    transform: translateY(1px);
-    box-shadow: inset 0 1px 0 var(--inner-highlight), 0 1px 0 0 var(--state-edge, var(--hard-edge)), 0 2px 4px var(--shadow-drop);
+    transform: translateY(0.5px);
   }
 
   /* ═══════════════════
@@ -868,22 +867,22 @@
     background: transparent;
     color: rgb(var(--text-secondary));
     box-shadow: none;
-    transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 160ms cubic-bezier(0.4, 0, 0.2, 1), background 160ms ease, color 160ms ease, border-color 160ms ease;
+    transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, color 160ms ease, border-color 160ms ease;
   }
 
   .nav-chip:hover,
   .nav-chip-active,
   .nav-chip-pending {
     color: rgb(var(--text-primary));
-    background: linear-gradient(to bottom, rgb(var(--bg-surface)), rgb(var(--bg-interactive) / 0.96));
+    background: rgb(var(--bg-interactive));
     border-color: var(--elevation-border);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 3px 0 0 var(--hard-edge), 0 3px 0 1px var(--shadow-ring), 0 6px 12px var(--shadow-drop);
+    box-shadow: none;
   }
 
   .dark .nav-chip:hover,
   .dark .nav-chip-active,
   .dark .nav-chip-pending {
-    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.035));
+    background: rgba(255, 255, 255, 0.07);
   }
 
   .nav-chip:hover {
@@ -892,13 +891,12 @@
 
   .nav-chip:active,
   .nav-chip-pending {
-    transform: translateY(2px);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 1px 0 0 var(--hard-edge-strong), 0 1px 0 1px var(--shadow-ring), 0 2px 4px var(--shadow-drop) !important;
+    transform: translateY(0.5px);
   }
 
   .nav-chip svg {
-    stroke-width: 2.6px !important;
-    filter: var(--icon-depth-filter) !important;
+    stroke-width: 1.75px !important;
+    filter: none !important;
   }
 
   .nav-pending-bar {
@@ -932,7 +930,8 @@
   }
 
   /* ═══════════════════
-   * SCULPTED 3D ICONS
+   * ICONS
+   * Trait fin, sans relief — cohérent avec le set AtelierIcons.
    * ═══════════════════ */
   .icon-3d,
   .btn-icon svg,
@@ -943,17 +942,17 @@
   .card-interactive svg,
   .card[onclick] svg,
   .card.cursor-pointer svg {
-    stroke-width: 2.5px !important;
-    filter: var(--icon-depth-filter) !important;
+    stroke-width: 1.75px !important;
+    filter: none !important;
   }
 
   .btn-primary svg,
   .btn-danger svg {
-    filter: var(--icon-on-accent-filter) !important;
+    filter: none !important;
   }
 
   .btn-danger svg {
-    filter: var(--icon-on-danger-filter) !important;
+    filter: none !important;
   }
 
   /* ═══════════════════
@@ -1006,7 +1005,7 @@
     font-size: 0.68rem;
     font-weight: 900;
     line-height: 1;
-    box-shadow: inset 0 1px 0 var(--inner-highlight), 0 2px 0 0 var(--hard-edge), 0 2px 0 1px var(--shadow-ring), 0 4px 8px var(--shadow-drop);
+    box-shadow: var(--elevation-shadow);
   }
 
   .dark .report-chart-legend-item {
@@ -1083,10 +1082,10 @@
   }
 
   .modal-panel {
-    background: linear-gradient(to bottom, rgb(var(--bg-surface)), rgb(var(--bg-surface) / 0.98));
-    border-radius: 1.5rem 1.5rem 0 0;
+    background: rgb(var(--bg-surface));
+    border-radius: 1.25rem 1.25rem 0 0;
     border: 1px solid rgba(0, 0, 0, 0.08);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 8px 0 0 var(--hard-edge), 0 8px 0 1px var(--shadow-ring), 0 16px 32px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 16px 40px var(--shadow-drop-strong);
     width: 100%;
     max-height: 92dvh;
     overflow-y: auto;
@@ -1106,9 +1105,9 @@
   }
 
   .dark .modal-panel {
-    background: linear-gradient(to bottom, rgba(18, 18, 18, 0.98), rgba(10, 10, 10, 0.98));
+    background: rgba(18, 18, 18, 0.98);
     border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: inset 0 1.5px 0 var(--inner-highlight), 0 8px 0 0 var(--hard-edge), 0 8px 0 1px var(--shadow-ring), 0 16px 32px var(--shadow-drop-strong);
+    box-shadow: 0 2px 4px var(--shadow-ring), 0 16px 40px var(--shadow-drop-strong);
   }
 
   /* ═══════════════════
@@ -1123,47 +1122,47 @@
    * SARAH WIDGET — CSS Variables & Animations
    * ═══════════════════ */
   :root {
-    --sarah-panel-bg: linear-gradient(to bottom, #ffffff, #f8fafc);
+    --sarah-panel-bg: rgb(var(--bg-surface));
     --sarah-panel-border: rgba(0, 0, 0, 0.08);
-    --sarah-panel-shadow: inset 0 1.5px 0 rgba(255,255,255,0.78), 0 4px 0 0 #cbd5e1, 0 4px 0 1px rgba(15,23,42,0.08), 0 16px 40px rgba(15,23,42,0.14);
+    --sarah-panel-shadow: 0 2px 4px rgba(15,23,42,0.05), 0 12px 32px rgba(15,23,42,0.12);
     --sarah-panel-blur: 0px;
     --sarah-divider: rgba(0, 0, 0, 0.06);
     --sarah-input-bg: rgb(248 250 252);
     --sarah-input-border: rgba(0, 0, 0, 0.08);
-    --sarah-input-shadow: inset 0 2px 4px rgba(0,0,0,0.06), 0 1px 0 0 #cbd5e1;
+    --sarah-input-shadow: inset 0 1px 2px rgba(0,0,0,0.04);
     --sarah-header-top: #ffffff;
     --sarah-header-bot: #f8fafc;
     --sarah-header-title: #b45309;
-    --bubble-sarah-bg: linear-gradient(to bottom, #ffffff, #f1f5f9);
+    --bubble-sarah-bg: rgb(var(--bg-interactive));
     --bubble-sarah-border: rgba(0, 0, 0, 0.07);
-    --bubble-sarah-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 2px 0 0 #cbd5e1, 0 2px 0 1px rgba(15,23,42,0.06), 0 4px 10px rgba(15,23,42,0.07);
+    --bubble-sarah-shadow: 0 1px 2px rgba(15,23,42,0.05), 0 2px 8px rgba(15,23,42,0.05);
     --bubble-sarah-color: rgb(30, 41, 59);
-    --sarah-icon-filter: drop-shadow(0px 1px 0px rgba(148,163,184,0.55)) drop-shadow(0px 2px 4px rgba(15,23,42,0.1));
-    --sarah-util-btn-bg: linear-gradient(to bottom, #ffffff, #f1f5f9);
+    --sarah-icon-filter: none;
+    --sarah-util-btn-bg: rgb(var(--bg-surface));
     --sarah-util-btn-border: rgba(0,0,0,0.08);
-    --sarah-util-btn-shadow: inset 0 1px 0 rgba(255,255,255,0.78), 0 2px 0 0 #cbd5e1, 0 2px 0 1px rgba(15,23,42,0.06), 0 3px 6px rgba(15,23,42,0.1);
+    --sarah-util-btn-shadow: 0 1px 2px rgba(15,23,42,0.05), 0 2px 6px rgba(15,23,42,0.06);
   }
 
   .dark {
-    --sarah-panel-bg: linear-gradient(to bottom, rgba(26, 26, 32, 0.96), rgba(14, 14, 18, 0.96));
+    --sarah-panel-bg: rgba(20, 20, 24, 0.98);
     --sarah-panel-border: rgba(255, 255, 255, 0.08);
-    --sarah-panel-shadow: inset 0 1.5px 0 rgba(255,255,255,0.1), 0 4px 0 0 #000, 0 4px 0 1px rgba(255,255,255,0.05), 0 24px 64px rgba(0,0,0,0.55);
+    --sarah-panel-shadow: 0 2px 4px rgba(0,0,0,0.3), 0 16px 48px rgba(0,0,0,0.5);
     --sarah-panel-blur: 40px;
     --sarah-divider: rgba(255, 255, 255, 0.06);
     --sarah-input-bg: rgba(255, 255, 255, 0.04);
     --sarah-input-border: rgba(255, 255, 255, 0.08);
-    --sarah-input-shadow: inset 0 2px 4px rgba(0,0,0,0.4);
+    --sarah-input-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
     --sarah-header-top: rgba(24, 24, 32, 0.98);
     --sarah-header-bot: rgba(16, 16, 22, 0.98);
     --sarah-header-title: rgb(255 159 28);
-    --bubble-sarah-bg: linear-gradient(to bottom, rgba(255,255,255,0.07), rgba(255,255,255,0.03));
+    --bubble-sarah-bg: rgba(255,255,255,0.05);
     --bubble-sarah-border: rgba(255, 255, 255, 0.07);
-    --bubble-sarah-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 0 0 #000, 0 4px 10px rgba(0,0,0,0.35);
+    --bubble-sarah-shadow: 0 1px 2px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.25);
     --bubble-sarah-color: rgba(255, 255, 255, 0.9);
-    --sarah-icon-filter: drop-shadow(0px 1px 0px rgba(0,0,0,0.75)) drop-shadow(0px 2px 4px rgba(0,0,0,0.38));
-    --sarah-util-btn-bg: linear-gradient(to bottom, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+    --sarah-icon-filter: none;
+    --sarah-util-btn-bg: rgba(255,255,255,0.06);
     --sarah-util-btn-border: rgba(255,255,255,0.1);
-    --sarah-util-btn-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 2px 0 0 #000, 0 2px 0 1px rgba(255,255,255,0.04), 0 3px 6px rgba(0,0,0,0.35);
+    --sarah-util-btn-shadow: 0 1px 2px rgba(0,0,0,0.25), 0 2px 6px rgba(0,0,0,0.25);
   }
 
   .sarah-hide-btn { opacity: 0; transition: opacity 0.15s; }
