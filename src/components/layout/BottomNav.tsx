@@ -101,7 +101,7 @@ export function BottomNav({ permissionKeys = [] }: { permissionKeys?: string[] }
                   key={href}
                   href={href}
                   onClick={() => setMenuOpen(false)}
-                  className="flex flex-col items-center justify-center gap-2 py-3 rounded-xl text-secondary hover:bg-interactive"
+                  className="flex flex-col items-center justify-center gap-2 py-3 rounded-xl text-secondary hover:bg-black/5 dark:hover:bg-white/8 hover:text-primary transition-colors"
                 >
                   <Icon className="w-7 h-7" />
                   <span className="text-xs text-center">{label}</span>
