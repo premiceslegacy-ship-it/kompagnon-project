@@ -255,7 +255,7 @@ export async function renderDgdPdfWithFonts(data: DgdPdfData, fontBytes: FontByt
   drawRecapRow('Marche initial + avenants HT', fmt(totalMarcheHt), { font: F.regular, size: SIZE.sm, color: COLOR.muted })
   drawRecapRow('Total facture HT', fmt(totalSituationsHt), { font: F.regular, size: SIZE.sm, color: COLOR.body })
   if (totalRetentionHt > 0) {
-    drawRecapRow('Retenues de garantie prelevees', `-${fmt(totalRetentionHt)}`, { font: F.regular, size: SIZE.sm, color: rgb(0xea / 255, 0x58 / 255, 0x0c / 255) })
+    drawRecapRow('Retenues de garantie prélevées', `-${fmt(totalRetentionHt)}`, { font: F.regular, size: SIZE.sm, color: rgb(0xea / 255, 0x58 / 255, 0x0c / 255) })
   }
   doc.page.drawLine({ start: { x: recapX, y: doc.y }, end: { x: recapX + recapW, y: doc.y }, thickness: 1, color: COLOR.black })
   doc.y -= 4

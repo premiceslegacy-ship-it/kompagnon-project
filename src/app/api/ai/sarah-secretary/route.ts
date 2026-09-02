@@ -9,7 +9,7 @@ import { dateParis, todayParis } from '@/lib/utils'
 import { fetchRAGContext } from '@/lib/ai/rag'
 import { generateEmbedding } from '@/lib/ai/embeddings'
 import { hasPermission } from '@/lib/data/queries/membership'
-import { deepLinkForSarahAction, proposeSarahAction, findClientIdForSarahDraft } from '@/lib/sarah/actions'
+import { deepLinkForSarahAction, proposeSarahAction, findClientIdForSarahDraft, confirmSarahActionAuto } from '@/lib/sarah/actions'
 import { findReplacementCandidates, findPlanningConflicts, findMissingPointages } from '@/lib/data/mutations/planning-agent'
 import { getMemberAbsences } from '@/lib/data/mutations/absences'
 import { getDashboardStats } from '@/lib/data/queries/dashboard'
@@ -272,7 +272,7 @@ async function executeSarahTool(
       return 'Cette information est déjà dans ma mémoire.'
     }
 
-    const { error } = await admin.from('company_memory').insert({
+    const { data: insertedRow, error } = await admin.from('company_memory').insert({
       organization_id: orgId,
       type: 'sarah_memory',
       content,
@@ -284,26 +284,15 @@ async function executeSarahTool(
         sarah_conversation_id: conversationId,
       },
       embedding: null, // Le cron embeddings vectorisera
-    })
+    }).select('id').single()
 
     if (error) return 'Impossible de sauvegarder ce souvenir pour le moment.'
 
     // Tenter de générer l'embedding inline si la ligne est courte (< 500 chars)
-    if (content.length <= 500) {
+    if (content.length <= 500 && insertedRow?.id) {
       const embedding = await generateEmbedding(content)
       if (embedding) {
-        const { data: inserted } = await admin
-          .from('company_memory')
-          .select('id')
-          .eq('organization_id', orgId)
-          .eq('type', 'sarah_memory')
-          .eq('source', 'ai_extracted')
-          .ilike('content', `%${content.slice(0, 40)}%`)
-          .order('created_at', { ascending: false })
-          .limit(1)
-        if (inserted?.[0]?.id) {
-          await admin.from('company_memory').update({ embedding }).eq('id', inserted[0].id)
-        }
+        await admin.from('company_memory').update({ embedding }).eq('id', insertedRow.id)
       }
     }
 
@@ -802,6 +791,7 @@ const SARAH_ACTION_TYPES = new Set([
   'absence_declare', 'planning_replacement_suggest', 'pointage_reminder_prepare',
   'client_create', 'chantier_create', 'task_create', 'chantier_note_add', 'expense_record',
   'invoice_mark_paid', 'invoice_send', 'quote_send', 'quote_mark_accepted', 'quote_mark_refused', 'quote_followup',
+  'chantier_status_update', 'quote_duplicate', 'client_update', 'pointage_record', 'catalog_item_create', 'member_create', 'document_archive',
 ])
 
 // Libellés et niveaux de risque par défaut quand la carte est reconstruite
@@ -834,6 +824,13 @@ const SARAH_ACTION_DEFAULTS: Record<string, { label: string; risk: 'low' | 'medi
   quote_mark_accepted: { label: 'Marquer le devis accepté', risk: 'medium' },
   quote_mark_refused: { label: 'Marquer le devis refusé', risk: 'medium' },
   quote_followup: { label: 'Relancer le devis', risk: 'high' },
+  chantier_status_update: { label: 'Mettre à jour le statut du chantier', risk: 'medium' },
+  quote_duplicate: { label: 'Dupliquer le devis', risk: 'low' },
+  client_update: { label: 'Mettre à jour la fiche client', risk: 'low' },
+  pointage_record: { label: 'Enregistrer le pointage', risk: 'medium' },
+  catalog_item_create: { label: 'Ajouter au catalogue', risk: 'low' },
+  member_create: { label: 'Ajouter le membre', risk: 'low' },
+  document_archive: { label: 'Archiver le document', risk: 'low' },
 }
 
 // ─── Écriture d'un brief inter-assistant en base ──────────────────────────────
@@ -914,8 +911,9 @@ async function resolveActionOrAskForClient(
   userId: string | null,
   conversationId: string | null,
   parsed: { reply: string; action?: unknown },
+  autoLowRisk: boolean,
 ): Promise<void> {
-  const attached = await attachPersistentProposal(orgId, userId, conversationId, parsed.action)
+  const attached = await attachPersistentProposal(orgId, userId, conversationId, parsed.action, autoLowRisk)
   if (attached && typeof attached === 'object' && '__clientNotFound' in attached) {
     const clientName = (attached as { __clientNotFound: string }).__clientNotFound
     parsed.action = undefined
@@ -930,6 +928,7 @@ async function attachPersistentProposal(
   userId: string | null,
   conversationId: string | null,
   action: unknown,
+  autoLowRisk: boolean,
 ): Promise<unknown> {
   if (!action || typeof action !== 'object') return action
   const act = action as Record<string, unknown>
@@ -978,6 +977,25 @@ async function attachPersistentProposal(
   })
 
   if (!proposal) return action
+
+  // Autonomie limitée : les actions "low risk" peuvent être exécutées sans
+  // attendre le clic humain si l'organisation l'a activé. Jamais medium/high,
+  // quel que soit le réglage — la garde est sur `risk`, pas sur le type.
+  if (autoLowRisk && risk === 'low') {
+    const result = await confirmSarahActionAuto(proposal.id)
+    return {
+      ...act,
+      proposalId: proposal.id,
+      deepLink: result.deepLink ?? proposal.deep_link,
+      confirmed: result.ok,
+      autoExecuted: result.ok,
+      description: result.ok ? result.message : description,
+      payload: {
+        ...payload,
+        deep_link: result.deepLink ?? proposal.deep_link,
+      },
+    }
+  }
 
   return {
     ...act,
@@ -1093,6 +1111,13 @@ Types d'actions disponibles :
 - "quote_mark_accepted" : marquer un devis comme accepté, risque moyen (payload: { quote_id })
 - "quote_mark_refused" : marquer un devis comme refusé, risque moyen (payload: { quote_id })
 - "quote_followup" : envoyer une relance pour un devis envoyé sans réponse, risque fort (payload: { quote_id, subject?, draft_text? })
+- "chantier_status_update" : changer le statut d'un chantier, risque moyen (payload: { chantier_id, status: "planifie" | "en_cours" | "suspendu" | "termine" | "annule" })
+- "quote_duplicate" : dupliquer un devis existant en nouveau brouillon, risque faible (payload: { quote_id })
+- "client_update" : corriger un ou plusieurs champs d'une fiche client existante (email, téléphone, adresse, notes internes), risque faible (payload: { client_id, email?, phone?, address_line1?, internal_notes? }). Seuls les champs fournis sont modifiés, le reste de la fiche est conservé tel quel.
+- "pointage_record" : saisir un pointage d'heures pour un membre sur un chantier, risque moyen (payload: { chantier_id, member_id, date, hours, description? })
+- "catalog_item_create" : ajouter rapidement une matière ou un tarif de main-d'œuvre au catalogue, risque faible (payload: { kind: "material" | "labor", name, unit?, sale_price?, rate?, category? }). "rate" pour un tarif MO, "sale_price" pour une matière.
+- "member_create" : ajouter un membre individuel à l'équipe (compagnon sans compte utilisateur), risque faible (payload: { name, prenom?, email?, role_label?, chantier_id? })
+- "document_archive" : archiver un devis ou une facture, risque faible (payload: { kind: "quote" | "invoice", document_id })
 
 Pages de l'app accessibles via "open_url" (utilise l'URL exacte) :
 - Planning global : /chantiers/planning
@@ -1914,7 +1939,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed2)
+      await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed2, businessCtx.sarahAutoLowRisk)
       return NextResponse.json(parsed2)
     }
 
@@ -1927,7 +1952,7 @@ export async function POST(req: NextRequest) {
       parsed.reply = safeReplyFromRaw(raw, parsed.action)
     }
 
-    await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed)
+    await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed, businessCtx.sarahAutoLowRisk)
     return NextResponse.json(parsed)
   } catch (err) {
     if (err instanceof AIModuleDisabledError) {

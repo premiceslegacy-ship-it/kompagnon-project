@@ -97,6 +97,8 @@ export type UpdateOrganizationInput = {
   departure_longitude?: number | null
   // Sous-totaux par lot (migration 126)
   default_show_section_subtotals?: boolean
+  // Autonomie limitée de Sarah sur les actions low risk (migration 177)
+  sarah_auto_low_risk?: boolean
 }
 
 /**

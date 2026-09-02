@@ -143,7 +143,6 @@ export async function sendInvoiceReminder(
     email_body: bodyText,
   })
 
-  revalidatePath('/reminders')
   revalidatePath('/dashboard')
   return { error: null }
 }
@@ -269,7 +268,6 @@ export async function sendQuoteFollowup(
     email_body: bodyText,
   })
 
-  revalidatePath('/reminders')
   revalidatePath('/dashboard')
   return { error: null }
 }
@@ -288,7 +286,6 @@ export async function markQuoteAccepted(quoteId: string): Promise<Result> {
     .eq('organization_id', orgId)
 
   if (error) return { error: error.message }
-  revalidatePath('/reminders')
   revalidatePath('/finances')
   revalidatePath('/dashboard')
   return { error: null }
@@ -326,7 +323,6 @@ export async function markQuoteRefused(quoteId: string): Promise<Result> {
     url: '/finances',
   }, user?.id).catch(() => {})
 
-  revalidatePath('/reminders')
   revalidatePath('/finances')
   return { error: null }
 }

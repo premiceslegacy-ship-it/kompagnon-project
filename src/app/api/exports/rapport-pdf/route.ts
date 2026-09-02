@@ -25,7 +25,7 @@ async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   const safeUrl = assertSafeExternalFetchUrl(url)
   if (!safeUrl) return null
   try {
-    const res = await fetch(safeUrl)
+    const res = await fetch(safeUrl, { signal: AbortSignal.timeout(5_000) })
     if (!res.ok) return null
     const buf = await res.arrayBuffer()
     const ct = res.headers.get('content-type') ?? 'image/png'
@@ -39,17 +39,17 @@ async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
 function monthLabelForFileName(month: number): string | null {
   switch (month) {
     case 1: return 'Janvier'
-    case 2: return 'Fevrier'
+    case 2: return 'Février'
     case 3: return 'Mars'
     case 4: return 'Avril'
     case 5: return 'Mai'
     case 6: return 'Juin'
     case 7: return 'Juillet'
-    case 8: return 'Aout'
+    case 8: return 'Août'
     case 9: return 'Septembre'
     case 10: return 'Octobre'
     case 11: return 'Novembre'
-    case 12: return 'Decembre'
+    case 12: return 'Décembre'
     default: return null
   }
 }
@@ -57,9 +57,9 @@ function monthLabelForFileName(month: number): string | null {
 export async function GET(req: Request) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return new NextResponse('Non authentifie', { status: 401 })
+  if (!user) return new NextResponse('Non authentifié', { status: 401 })
 
-  // Recuperer l'org directement sans React cache() (incompatible avec Route Handlers)
+  // Récupérer l'org directement sans React cache() (incompatible avec Route Handlers)
   const { data: membership } = await supabase
     .from('memberships')
     .select('organization_id')
@@ -70,7 +70,7 @@ export async function GET(req: Request) {
   const orgId = membership?.organization_id
   if (!orgId) return new NextResponse('Organisation introuvable', { status: 403 })
 
-  // Verifier les permissions directement
+  // Vérifier les permissions directement
   const { data: permRows } = await supabase
     .from('role_permissions')
     .select('permission_key, roles!inner(memberships!inner(user_id, is_active))')
@@ -79,7 +79,7 @@ export async function GET(req: Request) {
 
   const permSet = new Set((permRows ?? []).map((r: any) => r.permission_key as string))
 
-  // L'owner a acces a tout — verifier le role slug
+  // L'owner a accès à tout — vérifier le role slug
   const { data: membershipRole } = await supabase
     .from('memberships')
     .select('roles(slug)')
@@ -91,7 +91,7 @@ export async function GET(req: Request) {
   const isOwner = roleSlug === 'owner'
 
   if (!isOwner && !permSet.has('*') && !permSet.has('dashboard.view_ca')) {
-    return new NextResponse('Acces refuse', { status: 403 })
+    return new NextResponse('Accès refusé', { status: 403 })
   }
 
   const url = new URL(req.url)

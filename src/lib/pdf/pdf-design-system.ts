@@ -69,8 +69,8 @@ export function formatDimDetail(item: DimItem): string | null {
 }
 
 // Toujours passer par fmtCurrency pour normaliser les séparateurs de milliers.
-export function fmtCurrency(amount: number, currency = 'EUR'): string {
-  return pdfText(new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: 2 })
+export function fmtCurrency(amount: number, currency = 'EUR', fractionDigits = 2): string {
+  return pdfText(new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: fractionDigits })
     .format(amount))
 }
 

@@ -32,6 +32,7 @@ type ActionProposal = {
   description: string
   risk: 'low' | 'medium' | 'high'
   confirmed?: boolean
+  autoExecuted?: boolean
   deepLink?: string | null
   payload?: Record<string, unknown>
 }
@@ -513,7 +514,9 @@ function ActionCard({ action, onConfirm, onReject }: {
   if (action.confirmed !== undefined) {
     return (
       <div className="flex items-center gap-1.5 text-xs mt-2 opacity-50">
-        {action.confirmed ? <><CheckCircle2 size={11} /><span>Effectué</span></> : <><X size={11} /><span>Annulé</span></>}
+        {action.confirmed
+          ? <><CheckCircle2 size={11} /><span>{action.autoExecuted ? 'Exécuté automatiquement' : 'Effectué'}</span></>
+          : <><X size={11} /><span>Annulé</span></>}
       </div>
     )
   }
@@ -841,12 +844,18 @@ function useDrawerLogic({
       if (!res.ok) { setErrorCode((data.code ?? 'server_error') as SarahErrorCode); return }
       push({ role: 'sarah', content: data.reply, action: data.action ?? undefined })
       historyRef.current = [...historyRef.current, { role: 'sarah', content: data.reply }]
+      // Action low-risk exécutée seule (autonomie activée) : même navigation
+      // douce qu'après un clic Confirmer manuel.
+      const autoDeepLink = data.action?.autoExecuted ? data.action?.deepLink : null
+      if (autoDeepLink && typeof autoDeepLink === 'string' && autoDeepLink.startsWith('/')) {
+        setTimeout(() => router.push(autoDeepLink), 900)
+      }
     } catch {
       setErrorCode('network')
     } finally {
       setLoading(false)
     }
-  }, [loading, pathname, pageCtx, push])
+  }, [loading, pathname, pageCtx, push, router])
 
   const send = useCallback((override?: string) => {
     const text = (override ?? input).trim()
@@ -1443,8 +1452,9 @@ export function SarahWidget({ userName, alertCount = 0, alerts = null }: {
   const btnOffset = peekOut ? 0 : -(BTN - PEEK)
   // z-index sous les modals de l'app (.modal-overlay = 9980) : la bulle fermée
   // ne doit jamais recouvrir les boutons d'action d'un modal, surtout sur mobile.
+  // bottom: 84 sur mobile pour flotter au-dessus de la BottomNav (64px + safe-area).
   const btnStyle: React.CSSProperties = isMobile ? {
-    position: 'fixed', bottom: 20, right: 16, zIndex: 9970, width: BTN, height: BTN,
+    position: 'fixed', bottom: 84, right: 16, zIndex: 9970, width: BTN, height: BTN,
   } : {
     position: 'fixed',
     zIndex: 9970,

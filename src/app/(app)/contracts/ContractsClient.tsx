@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Archive, CheckCircle, ChevronLeft, ChevronRight, CopyPlus, Download, Edit3, FileText, LayoutTemplate, Plus, RefreshCw, Save, Search, Send, ShieldAlert, Trash2, X } from 'lucide-react'
 import { ActionButton as SubmitActionButton } from '@/components/ui/ActionButton'
+import { ActionMenu } from '@/components/shared'
 import type { Chantier } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
 import type { ContractListItem, ContractTemplateOption } from '@/lib/data/queries/contracts'
@@ -833,28 +834,17 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
           <p className="text-sm font-semibold text-accent uppercase tracking-wider mb-1">Contrats</p>
           <h1 className="text-3xl font-extrabold text-primary">Contrats métier</h1>
         </div>
-        <div className="flex flex-wrap gap-3">
-          <button
-            onClick={refresh}
-            disabled={isRefreshing}
-            title="Actualiser"
-            className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            Actualiser
-          </button>
-          {canCreate && (
-            <button onClick={() => setShowTemplate(true)} className="btn-secondary inline-flex items-center gap-2">
-              <Save className="w-4 h-4" />
-              Nouveau template
-            </button>
-          )}
+        <div className="flex flex-wrap items-center gap-2">
           {canCreate && (
             <button onClick={() => setShowCreate(true)} className="btn-primary inline-flex items-center gap-2">
               <Plus className="w-4 h-4" />
               Nouveau contrat
             </button>
           )}
+          <ActionMenu actions={[
+            { label: isRefreshing ? 'Actualisation...' : 'Actualiser', icon: <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />, onClick: refresh },
+            ...(canCreate ? [{ label: 'Nouveau template', icon: <Save className="w-4 h-4" />, onClick: () => setShowTemplate(true) }] : []),
+          ]} />
         </div>
       </div>
 
@@ -897,10 +887,10 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
             <thead className="border-b border-[var(--elevation-border)]">
               <tr className="text-left text-xs uppercase tracking-wider text-secondary">
                 <th className="px-4 py-3 font-semibold">Contrat</th>
-                <th className="px-4 py-3 font-semibold">Partie</th>
-                <th className="px-4 py-3 font-semibold">Type</th>
+                <th className="px-4 py-3 font-semibold hidden sm:table-cell">Partie</th>
+                <th className="px-4 py-3 font-semibold hidden lg:table-cell">Type</th>
                 <th className="px-4 py-3 font-semibold">Statut</th>
-                <th className="px-4 py-3 font-semibold">PDF</th>
+                <th className="px-4 py-3 font-semibold hidden lg:table-cell">PDF</th>
                 <th className="px-4 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
@@ -911,18 +901,19 @@ export default function ContractsClient({ initialContracts, clients, chantiers, 
                 </tr>
               ) : paginatedContracts.map(contract => (
                 <tr key={contract.id} className="border-b border-[var(--elevation-border)] last:border-b-0 hover:bg-base/60">
-                  <td className="px-4 py-4 min-w-64">
+                  <td className="px-4 py-4 sm:min-w-64">
                     <p className="font-bold text-primary">{contract.title}</p>
                     <p className="text-xs text-secondary mt-0.5">{contract.template_title}</p>
                     {contract.chantier && <p className="text-xs text-secondary mt-0.5">Chantier : {contract.chantier.title}</p>}
+                    <p className="text-xs text-secondary mt-0.5 sm:hidden">{contract.counterparty_name}</p>
                   </td>
-                  <td className="px-4 py-4 min-w-44">
+                  <td className="px-4 py-4 min-w-44 hidden sm:table-cell">
                     <p className="font-semibold text-primary">{contract.counterparty_name}</p>
                     <p className="text-xs text-secondary">{getRoleLabel(contract.role, contract.contract_type)}</p>
                   </td>
-                  <td className="px-4 py-4 whitespace-nowrap">{CONTRACT_TYPE_LABELS[contract.contract_type]}</td>
+                  <td className="px-4 py-4 whitespace-nowrap hidden lg:table-cell">{CONTRACT_TYPE_LABELS[contract.contract_type]}</td>
                   <td className="px-4 py-4 whitespace-nowrap"><StatusBadge status={contract.status} /></td>
-                  <td className="px-4 py-4 min-w-40">
+                  <td className="px-4 py-4 min-w-40 hidden lg:table-cell">
                     {contract.pdf_reference ? (
                       <div>
                         <p className="font-semibold text-primary">{contract.pdf_reference}</p>

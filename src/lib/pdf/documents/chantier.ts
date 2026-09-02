@@ -1,6 +1,6 @@
 import type { Organization } from '@/lib/data/queries/organization'
 import type { ChantierDetail, Tache, ChantierNote } from '@/lib/data/queries/chantiers'
-import { pdfText } from '@/lib/pdf/pdf-design-system'
+import { fmtCurrency, pdfText } from '@/lib/pdf/pdf-design-system'
 import { PdfDoc } from '../engine/doc'
 import type { FontBytes } from '../engine/fonts'
 import { loadFontBytes } from '../engine/fonts'
@@ -17,15 +17,14 @@ const fmtDate = (iso: string | null | undefined): string => {
   return `${(d ?? '').padStart(2, '0')}/${(m ?? '').padStart(2, '0')}/${y ?? ''}`
 }
 
-const fmtMoney = (n: number) =>
-  new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n)
+const fmtMoney = (n: number) => fmtCurrency(n, 'EUR', 0)
 
 const STATUS_LABELS: Record<string, string> = {
-  planifie: 'Planifie',
+  planifie: 'Planifié',
   en_cours: 'En cours',
   suspendu: 'Suspendu',
-  termine: 'Termine',
-  annule: 'Annule',
+  termine: 'Terminé',
+  annule: 'Annulé',
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -97,7 +96,7 @@ export async function renderChantierPdfWithFonts(data: ChantierPdfData, fontByte
       page.drawText(text, { x: rightX + 210 - w, y: ry, size: style.size, font: style.font, color: style.color })
       ry -= textLineHeight(style) - style.size
     }
-    drawRight(`Rapport genere le ${today}`, { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
+    drawRight(`Rapport généré le ${today}`, { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
     if (organization.phone) drawRight(pdfText(organization.phone), { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
     if (organization.email) drawRight(pdfText(organization.email), { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
 
@@ -130,7 +129,7 @@ export async function renderChantierPdfWithFonts(data: ChantierPdfData, fontByte
   const metaParts = [
     STATUS_LABELS[chantier.status] ?? chantier.status,
     chantier.client?.company_name ?? null,
-    periodLabel ? `Periode : ${periodLabel}` : null,
+    periodLabel ? `Période : ${periodLabel}` : null,
   ].filter((p): p is string => !!p)
   doc.page.drawText(pdfText(metaParts.join('    ')), { x: PAGE.margin, y: doc.y, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
   doc.y -= SPACE.sm
@@ -153,7 +152,7 @@ export async function renderChantierPdfWithFonts(data: ChantierPdfData, fontByte
     draw(cy)
   }
 
-  drawInfoBox(PAGE.margin, 'Periode des travaux', (cy) => {
+  drawInfoBox(PAGE.margin, 'Période des travaux', (cy) => {
     const label = `${fmtDate(chantier.start_date)} - ${fmtDate(chantier.estimated_end_date)}`
     doc.page.drawText(pdfText(label), { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.sm, font: F.regular, color: COLOR.body })
   })
@@ -164,7 +163,7 @@ export async function renderChantierPdfWithFonts(data: ChantierPdfData, fontByte
     const x = PAGE.margin + (infoBoxW + SPACE.sm) * 2 + SPACE.md
     doc.page.drawText(`${donePct}%`, { x, y: cy, size: SIZE.lg, font: F.headingXBold, color: COLOR.black })
     cy -= SIZE.xs + 4
-    doc.page.drawText(`${chantier.taches_done}/${chantier.taches_count} taches`, { x, y: cy, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
+    doc.page.drawText(`${chantier.taches_done}/${chantier.taches_count} tâches`, { x, y: cy, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
     cy -= SPACE.sm
     const barW = infoBoxW - SPACE.md * 2
     doc.page.drawRectangle({ x, y: cy - 4, width: barW, height: 4, color: COLOR.divider })
@@ -204,7 +203,7 @@ export async function renderChantierPdfWithFonts(data: ChantierPdfData, fontByte
       const cx = PAGE.margin + twoBoxW + SPACE.sm
       doc.page.drawRectangle({ x: cx, y: rowY - boxH, width: twoBoxW, height: boxH, color: COLOR.surface })
       let cy = rowY - SPACE.md - SIZE.xxs
-      doc.page.drawText('CONTACT REFERENT', { x: cx + SPACE.md, y: cy, size: SIZE.xxs, font: F.headingXBold, color: COLOR.secondary })
+      doc.page.drawText('CONTACT RÉFÉRENT', { x: cx + SPACE.md, y: cy, size: SIZE.xxs, font: F.headingXBold, color: COLOR.secondary })
       cy -= SPACE.sm + SIZE.sm
       for (const line of contactLines) {
         doc.page.drawText(pdfText(line), { x: cx + SPACE.md, y: cy, size: SIZE.sm, font: F.regular, color: COLOR.body })
@@ -215,19 +214,19 @@ export async function renderChantierPdfWithFonts(data: ChantierPdfData, fontByte
     doc.moveDown(SPACE.md)
   }
 
-  // ── Section Taches ──
-  drawSectionTitle(doc, taches.length > 0 ? `Taches (${taches.length})` : 'Taches', F)
+  // ── Section Tâches ──
+  drawSectionTitle(doc, taches.length > 0 ? `Tâches (${taches.length})` : 'Tâches', F)
 
   if (taches.length === 0) {
     doc.ensureSpace(SIZE.xs + SPACE.sm)
     doc.y -= SPACE.sm
     doc.y -= SIZE.xs
-    doc.page.drawText('Aucune tache enregistree.', { x: PAGE.margin, y: doc.y, size: SIZE.xs, font: F.regular, color: COLOR.muted })
+    doc.page.drawText('Aucune tâche enregistrée.', { x: PAGE.margin, y: doc.y, size: SIZE.xs, font: F.regular, color: COLOR.muted })
   }
 
   drawTacheGroup(doc, `En cours (${tachesEnCours.length})`, tachesEnCours, F)
-  drawTacheGroup(doc, `A faire (${tachesAFaire.length})`, tachesAFaire, F)
-  drawTacheGroup(doc, `Terminees (${tachesTerminees.length})`, tachesTerminees, F)
+  drawTacheGroup(doc, `À faire (${tachesAFaire.length})`, tachesAFaire, F)
+  drawTacheGroup(doc, `Terminées (${tachesTerminees.length})`, tachesTerminees, F)
 
   // ── Section Journal ──
   if (notes.length > 0) {
@@ -354,7 +353,7 @@ function drawTacheGroup(doc: PdfDoc, label: string, taches: Tache[], F: PdfDoc['
       cy -= textLineHeight(titleStyle) - titleStyle.size
     }
     if (t.due_date) {
-      const label2 = `Echeance : ${fmtDate(t.due_date)}`
+      const label2 = `Échéance : ${fmtDate(t.due_date)}`
       const w = F.regular.widthOfTextAtSize(label2, SIZE.xs)
       doc.page.drawText(label2, { x: PAGE.width - PAGE.margin - w, y: doc.y - titleStyle.size, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
     }

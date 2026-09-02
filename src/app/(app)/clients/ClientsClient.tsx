@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useTransition, useRef, useCallback } from 'react'
+import React, { useState, useTransition, useRef, useCallback, useEffect } from 'react'
 import { useFormState, useFormStatus } from 'react-dom'
 import { type Client } from '@/lib/data/queries/clients'
 import {
@@ -12,7 +12,7 @@ import { formatCurrency, ActionMenu } from '@/components/shared'
 import { getClientDisplayName } from '@/lib/client'
 import { todayParis } from '@/lib/utils'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   Search, Upload, Download, Users, Euro, Filter,
   FileText, Eye, Edit2, X, Loader2, CheckCircle2, AlertCircle, Building2, Trash2,
@@ -738,15 +738,24 @@ function EmptyState({ filtered }: { filtered: boolean }) {
 export default function ClientsClient({ initialClients, canCreate, canEdit, canDelete, canImport, canEmail, orgEmail, orgName, orgSignature, hasAI }: Props) {
   const router = useRouter()
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [sortBy, setSortBy] = useState('created_at')
   const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false)
+
+  // "Nouveau Client" du dashboard (?new=1) ouvre directement le modal,
+  // sans forcer l'artisan à re-cliquer une fois sur la liste.
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setIsNewClientModalOpen(true)
+      router.replace(pathname, { scroll: false })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [isNewLeadModalOpen, setIsNewLeadModalOpen] = useState(false)
   const [isImportCSVModalOpen, setIsImportCSVModalOpen] = useState(false)
   const [importIsLeads, setImportIsLeads] = useState(false)
-  const [isImportDropdownOpen, setIsImportDropdownOpen] = useState(false)
-  const importDropdownRef = useRef<HTMLDivElement>(null)
   const [editingClient, setEditingClient] = useState<Client | null>(null)
   const [isPending, startTransition] = useTransition()
   const [page, setPage] = useState(1)
@@ -878,42 +887,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
             <h1 className="text-4xl font-bold text-primary">Clients & Leads</h1>
             <p className="text-secondary text-lg">Gérez votre base de contacts, de la prospection à la fidélisation.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-            {/* Import dropdown */}
-            {canImport && (
-              <div className="relative flex-1 md:flex-none" ref={importDropdownRef}>
-                <button
-                  onClick={() => setIsImportDropdownOpen(v => !v)}
-                  className="w-full px-4 py-2.5 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all text-sm whitespace-nowrap"
-                >
-                  <Upload className="w-4 h-4" />Importer
-                </button>
-                {isImportDropdownOpen && (
-                  <>
-                    <div className="fixed inset-0 z-10" onClick={() => setIsImportDropdownOpen(false)} />
-                    <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1.5 w-52 rounded-2xl bg-surface dark:bg-[#1a1a1a] border border-[var(--elevation-border)] shadow-xl overflow-hidden z-20 animate-in fade-in slide-in-from-top-2 duration-150">
-                      <button onClick={() => { openImport(false); setIsImportDropdownOpen(false) }} className="w-full text-left px-4 py-3 text-sm font-semibold text-primary hover:bg-accent/5 transition-colors">
-                        Importer des clients
-                      </button>
-                      <button onClick={() => { openImport(true); setIsImportDropdownOpen(false) }} className="w-full text-left px-4 py-3 text-sm font-semibold text-primary hover:bg-accent/5 transition-colors border-t border-[var(--elevation-border)]">
-                        Importer des leads
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-            <ActionButton onClick={handleExportCSV} className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
-              <Download className="w-4 h-4" />Exporter
-            </ActionButton>
-            {canEmail && (
-              <button
-                onClick={() => setIsEmailModalOpen(true)}
-                className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap"
-              >
-                <Mail className="w-4 h-4" />Envoyer un email
-              </button>
-            )}
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
             {canCreate && (
               <button onClick={() => setIsNewLeadModalOpen(true)} className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
                 <Target className="w-4 h-4" />Nouveau Lead
@@ -924,6 +898,14 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
                 <UserCheck className="w-4 h-4" />Nouveau Client
               </button>
             )}
+            <ActionMenu actions={[
+              ...(canImport ? [
+                { label: 'Importer des clients', icon: <Upload className="w-4 h-4" />, onClick: () => openImport(false) },
+                { label: 'Importer des leads', icon: <Upload className="w-4 h-4" />, onClick: () => openImport(true) },
+              ] : []),
+              { label: 'Exporter', icon: <Download className="w-4 h-4" />, onClick: handleExportCSV },
+              ...(canEmail ? [{ label: 'Envoyer un email', icon: <Mail className="w-4 h-4" />, onClick: () => setIsEmailModalOpen(true) }] : []),
+            ]} />
           </div>
         </div>
 
@@ -1004,15 +986,15 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
           )}
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[480px]">
+          <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-[var(--elevation-border)] bg-base/30">
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Contact</th>
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Email / Tél.</th>
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden lg:table-cell">Source</th>
-                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Suivi</th>
-                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">CA Total</th>
+                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden sm:table-cell">Suivi</th>
+                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap hidden sm:table-cell">CA Total</th>
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden lg:table-cell">Paiement</th>
                 <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
               </tr>
@@ -1047,7 +1029,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
                     <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
                       <p className="text-xs text-secondary">{sourceLabel(client.source)}</p>
                     </td>
-                    <td className="px-4 md:px-6 py-4">
+                    <td className="px-4 md:px-6 py-4 hidden sm:table-cell">
                       {(() => {
                         const followup = followupState(client)
                         return followup.kind === 'ok' ? (
@@ -1059,7 +1041,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
                         )
                       })()}
                     </td>
-                    <td className="px-4 md:px-6 py-4 text-right">
+                    <td className="px-4 md:px-6 py-4 text-right hidden sm:table-cell">
                       <p className="text-sm font-bold text-primary tabular-nums">
                         {isLead ? '/' : formatCurrency(client.total_revenue ?? 0)}
                       </p>

@@ -38,6 +38,7 @@ import {
   Loader2, CheckCircle2, Package, Wrench, FileDown, Bot, Ruler, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Sparkles, Eye, EyeOff, Layers, Truck, MessageSquare, BookmarkPlus, LayoutGrid, Clock, FileText, Copy,
 } from 'lucide-react'
 import AtelierAIPanel from '@/components/ai/AtelierAIPanel'
+import { QuoteStartChoice } from './QuoteStartChoice'
 import LaborEstimatePanel, { type MOInsertItem } from '@/components/ai/LaborEstimatePanel'
 import type { AIQuoteResult } from '@/app/api/ai/analyze-quote/route'
 import type { ResolvedCatalogContext } from '@/lib/catalog-context'
@@ -469,6 +470,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         setTitle(brief.description.trim().slice(0, 120))
         setChloeBriefBanner(bannerText)
         setChloeAutoAnalyze(buildAnalyzeText(brief))
+        setStartChoice('done')
         setAIPanelOpen(true)
       }
     }
@@ -480,6 +482,7 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
         sessionStorage.removeItem('sarah_brief_chloe')
         const brief = JSON.parse(raw) as ChloeBrief
         applyBrief(brief, `Brief transmis par Sarah${brief.client_name ? ` pour ${brief.client_name}` : ''}.`)
+        setStartChoice(prev => prev === 'checking' ? 'pending' : prev)
         return
       }
     } catch { /* sessionStorage inaccessible */ }
@@ -488,11 +491,14 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
     fetch('/api/sarah/briefs?target=chloe')
       .then(r => r.json())
       .then(({ brief }: { brief: { id: string; payload: ChloeBrief } | null }) => {
-        if (!brief?.payload?.description?.trim()) return
+        if (!brief?.payload?.description?.trim()) {
+          setStartChoice(prev => prev === 'checking' ? 'pending' : prev)
+          return
+        }
         applyBrief(brief.payload, `Brief transmis par Sarah${brief.payload.client_name ? ` pour ${brief.payload.client_name}` : ''}.`)
         fetch('/api/sarah/briefs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ briefId: brief.id }) }).catch(() => {})
       })
-      .catch(() => {})
+      .catch(() => setStartChoice(prev => prev === 'checking' ? 'pending' : prev))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -624,6 +630,13 @@ export default function QuoteEditorClient({ clients: initialClients, initialQuot
   const [aiPanelOpen, setAIPanelOpen] = useState(false)
   const [chloeBriefBanner, setChloeBriefBanner] = useState<string | null>(null)
   const [chloeAutoAnalyze, setChloeAutoAnalyze] = useState<string | null>(null)
+
+  // Écran de choix "moi-même" / "assisté par Chloé" à la création d'un devis
+  // vide. 'checking' le temps de savoir si un brief Sarah pré-sélectionne
+  // Chloé (évite l'affichage puis la fermeture immédiate du choix).
+  const [startChoice, setStartChoice] = useState<'checking' | 'pending' | 'done'>(
+    !initialQuote && modules.quote_ai ? 'checking' : 'done'
+  )
 
   // Labour estimate panel
   const [moaPanelOpen, setMoaPanelOpen] = useState(false)
@@ -2182,6 +2195,27 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   return (
     <main className="page-container pb-28 space-y-6 md:space-y-8 relative z-10" style={{ maxWidth: '1600px' }}>
 
+      {/* Vérification d'un brief Sarah en cours (fetch /api/sarah/briefs) : état de
+          chargement explicite pour ne jamais laisser l'éditeur vide sans retour
+          visuel, le temps que le choix moi-même/Chloé (ou l'ouverture directe de
+          Chloé si un brief arrive) se décide. */}
+      {startChoice === 'checking' && (
+        <div className="fixed inset-0 z-[9995] flex items-center justify-center bg-base/70 backdrop-blur-sm">
+          <div className="card px-6 py-5 flex items-center gap-3">
+            <Loader2 className="w-5 h-5 animate-spin text-accent" />
+            <span className="text-sm font-medium text-primary">Préparation du devis...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Choix moi-même / assisté par Chloé — devis vide, module IA actif */}
+      {startChoice === 'pending' && (
+        <QuoteStartChoice
+          onSelectManual={() => setStartChoice('done')}
+          onSelectAI={() => { setStartChoice('done'); setAIPanelOpen(true) }}
+        />
+      )}
+
       {/* ATELIER IA Panel */}
       {aiPanelOpen && (
         <AtelierAIPanel
@@ -2513,13 +2547,14 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
               <span className="lg:hidden">Ressources</span>
             </button>
           )}
-          {modules.quote_ai && (
+          {modules.quote_ai && !initialQuote?.id && visibleItems.length === 0 && (
             <button
               onClick={() => setAIPanelOpen(true)}
-              className="btn-primary flex items-center gap-2 whitespace-nowrap text-sm px-3 py-2"
+              className="btn-secondary flex items-center gap-2 whitespace-nowrap text-sm px-3 py-2"
+              title={`Confier ce devis à ${AI_NAME}`}
             >
               <AssistantAvatar assistant="chloe" size={16} />
-              {AI_NAME}
+              <span className="hidden lg:inline">Assistance {AI_NAME}</span>
             </button>
           )}
           {quoteId ? (

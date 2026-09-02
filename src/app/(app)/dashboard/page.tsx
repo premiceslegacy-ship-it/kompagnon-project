@@ -1,8 +1,9 @@
 import React from 'react';
 import Link from 'next/link';
 import { getCurrentUserProfile } from '@/lib/data/queries/user';
-import { getDashboardSetupReadiness, getDashboardStats, getPrevMonthKPIs } from '@/lib/data/queries/dashboard';
 import type { DashboardStats } from '@/lib/data/queries/dashboard';
+import { getDashboardStatsCached, getPrevMonthKPIsCached, getDashboardSetupReadinessCached } from '@/lib/data/queries/dashboard-cached';
+import { getCurrentOrganizationId } from '@/lib/data/queries/clients';
 import {
   FileText, UserPlus,
   Wallet, Receipt, TrendingUp, HardHat,
@@ -116,7 +117,7 @@ const QuickActions = () => (
         Nouveau Devis
       </Link>
       <Link
-        href="/clients"
+        href="/clients?new=1"
         className="btn-secondary w-full py-4 text-lg flex items-center justify-center gap-2"
       >
         <UserPlus className="w-5 h-5" />
@@ -193,13 +194,17 @@ export default async function DashboardPage({
   }
 
   // ─── Dashboard owner / admin / manager / commercial ────────────────────────
+  // orgId résolu ici (hors cache) puis injecté dans les variantes cache-compatibles
+  // (client admin + TTL 60s sur le KV OpenNext déjà provisionné) : endpoint le
+  // plus lourd du dashboard (confirmé par test de charge, p95 ~10s sans cache).
+  const orgId = await getCurrentOrganizationId();
   const [stats, prevStats, chantierStats, modules, todaySlots, setupReadiness] = await Promise.all([
-    getDashboardStats(selectedMonth),
-    getPrevMonthKPIs(previousMonth),
+    orgId ? getDashboardStatsCached(orgId, selectedMonth) : Promise.resolve({ caMois: 0, encaisseMois: 0, devisEnAttente: 0, facturesEnRetard: 0, urgentItems: [] }),
+    orgId ? getPrevMonthKPIsCached(orgId, previousMonth) : Promise.resolve({ caMois: 0, encaisseMois: 0 }),
     getChantierStats(),
     getOrganizationModules(),
     getTodayPlanningDigest(),
-    roleSlug === 'owner' ? getDashboardSetupReadiness() : Promise.resolve(null),
+    roleSlug === 'owner' && orgId ? getDashboardSetupReadinessCached(orgId) : Promise.resolve(null),
   ])
 
   return (

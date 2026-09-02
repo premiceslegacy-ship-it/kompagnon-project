@@ -1118,6 +1118,15 @@ export async function uploadChantierPhoto(
   const file = formData.get('file') as File | null
   if (!file) return { error: 'Aucun fichier fourni.' }
 
+  const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+  if (!ALLOWED_TYPES.has(file.type)) {
+    return { error: 'Format de photo non pris en charge (JPEG, PNG ou WebP uniquement).' }
+  }
+  const MAX_SIZE_BYTES = 8 * 1024 * 1024
+  if (file.size > MAX_SIZE_BYTES) {
+    return { error: 'Photo trop volumineuse (8 Mo maximum).' }
+  }
+
   const caption = (formData.get('caption') as string | null) ?? null
   const tacheId = (formData.get('tacheId') as string | null) || null
 

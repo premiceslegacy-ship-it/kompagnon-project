@@ -39,6 +39,7 @@ import {
 } from '@/lib/data/mutations/chantiers'
 import { sendChantierReportEmail } from '@/lib/data/mutations/chantier-report-email'
 import { sendChantierPhotosEmail } from '@/lib/data/mutations/chantier-photos-email'
+import { compressImageToJpeg } from '@/lib/images/compress'
 import { todayParis } from '@/lib/utils'
 import RentabiliteTab, { type DeletedPointageInfo } from './RentabiliteTab'
 import IndividualMembersSection from './IndividualMembersSection'
@@ -1974,6 +1975,7 @@ export default function ChantierDetailClient({
   // Photos
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [photoLoading, setPhotoLoading] = useState(false)
+  const [photoError, setPhotoError] = useState<string | null>(null)
   // Lightbox
   const [lightboxPhoto, setLightboxPhoto] = useState<ChantierPhoto | null>(null)
   const [lightboxTitle, setLightboxTitle] = useState('')
@@ -2679,8 +2681,20 @@ export default function ChantierDetailClient({
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!canEditChantier) return
-    const file = e.target.files?.[0]
-    if (!file) return
+    const rawFile = e.target.files?.[0]
+    if (!rawFile) return
+    if (fileInputRef.current) fileInputRef.current.value = ''
+
+    setPhotoError(null)
+    setPhotoLoading(true)
+    let file: File
+    try {
+      file = await compressImageToJpeg(rawFile)
+    } catch (err) {
+      setPhotoLoading(false)
+      setPhotoError(err instanceof Error ? err.message : 'Photo illisible, réessayez avec un autre format.')
+      return
+    }
 
     // Prévisualisation immédiate
     const localUrl = URL.createObjectURL(file)
@@ -2691,9 +2705,7 @@ export default function ChantierDetailClient({
       created_at: new Date().toISOString(), uploaded_by_name: 'Moi', url: localUrl,
       include_in_report: false, shared_with_client_at: null, title: null,
     }, ...prev])
-    if (fileInputRef.current) fileInputRef.current.value = ''
 
-    setPhotoLoading(true)
     const fd = new FormData()
     fd.append('file', file)
     const result = await uploadChantierPhoto(chantier.id, 'org', fd)
@@ -2706,6 +2718,7 @@ export default function ChantierDetailClient({
     } else {
       setPhotos(prev => prev.filter(p => p.id !== tempId))
       URL.revokeObjectURL(localUrl)
+      setPhotoError(result.error ?? 'Envoi de la photo échoué.')
     }
   }
 
@@ -2973,28 +2986,30 @@ export default function ChantierDetailClient({
               <span className="font-semibold text-primary">{fmtMoney(chantier.budget_ht)} HT</span>
             </div>
             {/* Facturation périodique */}
+            {!editBilling && !(billingPeriod !== 'none' && Number(billingAmount) > 0) ? (
+              canEditChantier && (
+                <button
+                  onClick={() => { setEditBilling(true); setBillingError(null) }}
+                  className="flex items-center gap-1.5 text-xs text-secondary hover:text-primary transition-colors"
+                >
+                  <Pencil className="w-3 h-3" /> Configurer une facturation périodique
+                </button>
+              )
+            ) : (
             <div className="rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)] p-3 space-y-2">
               {!editBilling ? (
                 <>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-secondary">Facturation périodique</p>
-                      {billingPeriod !== 'none' && Number(billingAmount) > 0 ? (
-                        <p className="text-sm text-primary">
-                          <span className="font-semibold">{fmtMoney(Number(billingAmount))} HT</span>
-                          <span className="text-secondary"> · {BILLING_PERIOD_OPTIONS.find(o => o.value === billingPeriod)?.label.toLowerCase()}</span>
-                        </p>
-                      ) : (
-                        <p className="text-sm text-secondary">Non configurée</p>
-                      )}
-                      {billingPeriod !== 'none' && Number(billingAmount) > 0 && (
-                        <>
-                          {billingLabel && <p className="text-xs text-secondary truncate">Libellé : {billingLabel}</p>}
-                          <p className="text-xs text-secondary">
-                            Prochaine facture : {fmtDate(selectedBillingDate)}
-                          </p>
-                        </>
-                      )}
+                      <p className="text-sm text-primary">
+                        <span className="font-semibold">{fmtMoney(Number(billingAmount))} HT</span>
+                        <span className="text-secondary"> · {BILLING_PERIOD_OPTIONS.find(o => o.value === billingPeriod)?.label.toLowerCase()}</span>
+                      </p>
+                      {billingLabel && <p className="text-xs text-secondary truncate">Libellé : {billingLabel}</p>}
+                      <p className="text-xs text-secondary">
+                        Prochaine facture : {fmtDate(selectedBillingDate)}
+                      </p>
                     </div>
                     {canEditChantier && (
                       <button
@@ -3082,20 +3097,25 @@ export default function ChantierDetailClient({
                 </div>
               )}
             </div>
+            )}
             {/* Retenue de garantie par défaut */}
+            {!editRetention && !((chantier.default_retention_pct ?? 0) > 0) ? (
+              canEditChantier && (
+                <button
+                  onClick={() => { setEditRetention(true); setRetentionError(null) }}
+                  className="flex items-center gap-1.5 text-xs text-secondary hover:text-primary transition-colors"
+                >
+                  <Pencil className="w-3 h-3" /> Configurer une retenue de garantie
+                </button>
+              )
+            ) : (
             <div className="rounded-xl border border-[var(--elevation-border)] bg-[var(--elevation-1)] p-3 space-y-2">
               {!editRetention ? (
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-xs font-semibold text-secondary">Retenue de garantie par défaut</p>
-                    {(chantier.default_retention_pct ?? 0) > 0 ? (
-                      <p className="text-sm text-primary font-semibold">{retentionPct} %</p>
-                    ) : (
-                      <p className="text-sm text-secondary">Non configurée</p>
-                    )}
-                    {(chantier.default_retention_pct ?? 0) > 0 && (
-                      <p className="text-xs text-secondary">Pré-remplie automatiquement sur les nouvelles factures</p>
-                    )}
+                    <p className="text-sm text-primary font-semibold">{retentionPct} %</p>
+                    <p className="text-xs text-secondary">Pré-remplie automatiquement sur les nouvelles factures</p>
                   </div>
                   {canEditChantier && (
                     <button
@@ -3132,6 +3152,7 @@ export default function ChantierDetailClient({
                 </div>
               )}
             </div>
+            )}
 
             {/* Progression */}
             <div className="space-y-1">
@@ -3782,6 +3803,9 @@ export default function ChantierDetailClient({
               </label>
             </div>
           </div>
+          {photoError && (
+            <p className="text-xs text-danger mt-2">{photoError}</p>
+          )}
 
           {/* Panel envoi email */}
           {showSendPhotosPanel && (

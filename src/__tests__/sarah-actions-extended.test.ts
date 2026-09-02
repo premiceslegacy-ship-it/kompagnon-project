@@ -30,7 +30,14 @@ describe('Sarah extended actions', () => {
     { type: 'quote_send', mutation: /sendQuote\(/, deepLink: /\/finances/ },
     { type: 'quote_mark_accepted', mutation: /markQuoteAccepted\(/, deepLink: /\/finances/ },
     { type: 'quote_mark_refused', mutation: /markQuoteRefused\(/, deepLink: /\/finances/ },
-    { type: 'quote_followup', mutation: /sendQuoteFollowup\(/, deepLink: /\/reminders/ },
+    { type: 'quote_followup', mutation: /sendQuoteFollowup\(/, deepLink: /\/finances/ },
+    { type: 'chantier_status_update', mutation: /updateChantier\(/, deepLink: /\/chantiers\/\$\{chantierId\}/ },
+    { type: 'quote_duplicate', mutation: /duplicateQuote\(/, deepLink: /\/finances\/quote-editor/ },
+    { type: 'client_update', mutation: /updateClient\(/, deepLink: /\/clients\/\$\{clientId\}/ },
+    { type: 'pointage_record', mutation: /createMemberPointageAdmin\(/, deepLink: /\/chantiers\/\$\{chantierId\}/ },
+    { type: 'catalog_item_create', mutation: /createMaterialQuick\(|createLaborRateQuick\(/, deepLink: /\/catalog/ },
+    { type: 'member_create', mutation: /createIndividualMember\(/, deepLink: /\/chantiers/ },
+    { type: 'document_archive', mutation: /archiveQuote\(|archiveInvoice\(/, deepLink: /\/finances/ },
   ]
 
   it.each(expectations)('handles $type via a permission-gated mutation with a precise deep link', ({ type, mutation, deepLink }) => {
