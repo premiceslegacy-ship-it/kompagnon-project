@@ -15,6 +15,7 @@ import {
 } from '@/lib/data/mutations/members'
 import { declareMyAbsenceFromSpace, type ConflictingSlot } from '@/lib/data/mutations/absences'
 import { useMemberPushNotifications } from '@/lib/hooks/use-member-push-notifications'
+import { compressImageToJpeg } from '@/lib/images/compress'
 
 const MAX_MEMBER_PHOTO_SIZE = 10 * 1024 * 1024 // 10 Mo
 
@@ -269,8 +270,16 @@ export default function MonEspaceDashboardClient({
     if (phFile.size > MAX_MEMBER_PHOTO_SIZE) { setPhError('Photo trop volumineuse (10 Mo maximum).'); return }
 
     setPhSaving(true)
+    let file: File
+    try {
+      file = await compressImageToJpeg(phFile)
+    } catch (err) {
+      setPhSaving(false)
+      setPhError(err instanceof Error ? err.message : 'Photo illisible, réessayez avec un autre format.')
+      return
+    }
     const fd = new FormData()
-    fd.append('file', phFile)
+    fd.append('file', file)
     fd.append('chantierId', phChantier)
     if (phCaption.trim()) fd.append('caption', phCaption.trim())
 

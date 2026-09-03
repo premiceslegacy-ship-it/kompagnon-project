@@ -96,6 +96,16 @@ export async function POST(req: NextRequest) {
       .eq('type', 'daily_brief')
       .lt('created_at', daysAgo(21)))
 
+  // Souvenirs extraits par l'IA, jamais revus ni confirmés depuis 6 mois : désactivés
+  // (pas supprimés directement) pour laisser une chance de rattrapage avant la purge
+  // définitive ci-dessous. Les souvenirs saisis manuellement ne sont jamais concernés.
+  await purge('ai_memories_deactivated', () =>
+    admin.from('company_memory')
+      .update({ is_active: false }, { count: 'exact' })
+      .eq('source', 'ai_extracted')
+      .eq('is_active', true)
+      .lt('updated_at', daysAgo(180)))
+
   // Souvenirs désactivés : purge définitive après 90 jours.
   await purge('inactive_memories', () =>
     admin.from('company_memory')

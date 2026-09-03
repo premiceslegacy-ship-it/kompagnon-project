@@ -7,7 +7,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   Send, Mic, MicOff, X, Eye, ChevronDown,
   AlertCircle, CheckCircle2, ExternalLink, Zap, ChevronRight, PhoneOff,
-  Paperclip, FileText, ImageIcon,
+  Paperclip, FileText, ImageIcon, AudioLines, Loader2,
 } from 'lucide-react'
 import type { NotificationsSummary } from '@/lib/data/queries/notifications'
 import { useSarahVoice } from './useSarahVoice'
@@ -609,6 +609,60 @@ function TypingDots() {
   )
 }
 
+// ─── Dictée transcrite ──────────────────────────────────────────────────────────
+// Alternative au vocal live (ElevenLabs, réservé Pro/Expert) : disponible pour tous
+// les membres ayant accès à Sarah, y compris les setups sans abonnement mensuel.
+
+function useDictation(onTranscribed: (text: string) => void) {
+  const [isRecording, setIsRecording] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+
+  const start = useCallback(async () => {
+    setError(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      chunksRef.current = []
+
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        setIsTranscribing(true)
+        try {
+          const fd = new FormData()
+          fd.append('audio', blob, 'recording.webm')
+          const res = await fetch('/api/ai/transcribe-audio', { method: 'POST', body: fd })
+          const data = await res.json()
+          if (!res.ok) setError(data.error ?? 'Erreur de transcription.')
+          else if (data.text) onTranscribed(data.text)
+        } catch {
+          setError('Impossible de transcrire l\'audio.')
+        } finally {
+          setIsTranscribing(false)
+        }
+      }
+
+      recorderRef.current = recorder
+      recorder.start()
+      setIsRecording(true)
+    } catch {
+      setError('Accès micro refusé ou non disponible.')
+    }
+  }, [onTranscribed])
+
+  const stop = useCallback(() => {
+    recorderRef.current?.stop()
+    setIsRecording(false)
+  }, [])
+
+  return { isRecording, isTranscribing, error, start, stop }
+}
+
 // ─── Mode vocal ───────────────────────────────────────────────────────────────
 
 function formatTimer(seconds: number): string {
@@ -626,7 +680,7 @@ function voiceErrorLabel(err: VoiceLiveError): { title: string; body: string; up
     case 'permission_denied':
       return { title: 'Accès non autorisé', body: 'Votre rôle n\'a pas accès à Sarah vocale.', upgrade: false }
     case 'module_disabled':
-      return { title: 'Fonctionnalité non incluse', body: 'Sarah vocale est disponible à partir de l\'abonnement Pro.', upgrade: true }
+      return { title: 'Conversation en direct non incluse', body: 'Cette formule n\'inclut pas la voix en direct. Vous pouvez dicter votre message à la place.', upgrade: false }
     case 'configuration':
       return { title: 'Configuration ElevenLabs', body: 'Vérifiez que l\'agent autorise le prompt en remplacement et que la voix est configurée directement dans ElevenLabs.', upgrade: false }
     case 'network':
@@ -636,11 +690,12 @@ function voiceErrorLabel(err: VoiceLiveError): { title: string; body: string; up
   }
 }
 
-function VoiceScreen({ onBack, pageCtx, pathname, userName }: {
+function VoiceScreen({ onBack, pageCtx, pathname, userName, send }: {
   onBack: () => void
   pageCtx: PageContext
   pathname: string
   userName: string | null
+  send: (override?: string) => void
 }) {
   const { voiceState, error, isMuted, elapsedSeconds, remainingMinutes, startSession, stopSession, toggleMute } = useSarahVoice({
     pageLabel: pageCtx.label,
@@ -653,13 +708,67 @@ function VoiceScreen({ onBack, pageCtx, pathname, userName }: {
   const isConnecting = voiceState === 'connecting' || voiceState === 'disconnecting'
   const isSpeaking = voiceState === 'speaking'
 
-  const errInfo = error ? voiceErrorLabel(error) : null
+  // Conversation en direct non incluse dans la formule (setup, ou Pro/Expert sans le
+  // module) : au lieu d'un message d'upgrade dans le vide, l'écran vocal bascule sur
+  // la dictée — on parle, Sarah répond en texte au lieu de répondre à voix haute.
+  const {
+    isRecording: isDictationRecording,
+    isTranscribing: isDictationTranscribing,
+    start: startDictation,
+    stop: stopDictation,
+  } = useDictation(useCallback((text: string) => {
+    send(text)
+    onBack()
+  }, [send, onBack]))
+  const useDictationFallback = error === 'module_disabled'
+
+  const errInfo = error && !useDictationFallback ? voiceErrorLabel(error) : null
 
   useEffect(() => {
     if (autoStartedRef.current) return
     autoStartedRef.current = true
     startSession()
   }, [startSession])
+
+  if (useDictationFallback) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-5 px-8 py-6">
+        <div className="relative">
+          <SarahAvatar size={88} pulse={isDictationRecording} />
+        </div>
+
+        <div className="text-center">
+          <p className="text-sm font-medium">
+            {isDictationTranscribing ? 'Transcription en cours...' : isDictationRecording ? 'Je vous écoute' : 'Appuyez pour parler'}
+          </p>
+          <p className="text-xs opacity-40 mt-1">Sarah vous répond en texte</p>
+        </div>
+
+        <button
+          onClick={isDictationRecording ? stopDictation : startDictation}
+          disabled={isDictationTranscribing}
+          className="w-[72px] h-[72px] rounded-full flex items-center justify-center transition-all active:scale-90 hover:scale-105 disabled:opacity-60 disabled:cursor-wait"
+          style={isDictationRecording ? {
+            background: 'linear-gradient(to bottom, #f87171, #ef4444)',
+            border: '1px solid rgba(255,255,255,0.15)',
+            boxShadow: 'inset 0 1.5px 0 rgba(255,255,255,0.3), 0 4px 0 0 #991b1b, 0 4px 0 1px rgba(127,29,29,0.14), 0 0 0 12px rgba(239,68,68,0.1), 0 8px 24px rgba(0,0,0,0.25)',
+          } : {
+            background: 'linear-gradient(to bottom, #ffb84d, rgb(255,159,28))',
+            border: '1px solid rgba(255,255,255,0.15)',
+            boxShadow: 'inset 0 1.5px 0 rgba(255,255,255,0.45), 0 4px 0 0 #b45309, 0 4px 0 1px rgba(120,53,15,0.12), 0 0 0 10px rgba(255,159,28,0.1), 0 8px 24px rgba(0,0,0,0.2)',
+          }}>
+          {isDictationRecording
+            ? <MicOff size={26} color="#fff" style={{ filter: 'drop-shadow(0px 1px 0px rgba(127,29,29,0.55))' }} />
+            : <Mic size={26} color="#000" style={{ filter: 'drop-shadow(0px 1px 0px rgba(255,255,255,0.24))' }} />
+          }
+        </button>
+
+        <button onClick={onBack} className="text-xs opacity-35 hover:opacity-60 transition-opacity underline underline-offset-2">
+          Passer en mode texte
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-5 px-8 py-6">
@@ -1056,6 +1165,19 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
     reader.readAsDataURL(file)
   }, [setAttachment])
 
+  // Dictée transcrite dans la zone de saisie : le texte s'ajoute à ce qui est déjà
+  // tapé, à relire avant l'envoi (contrairement au mode vocal, où l'envoi est auto).
+  const handleDictationText = useCallback((text: string) => {
+    setInput((input ? `${input} ` : '') + text)
+  }, [input, setInput])
+  const {
+    isRecording: isRecordingDictation,
+    isTranscribing: isTranscribingDictation,
+    error: dictationError,
+    start: startDictation,
+    stop: stopDictation,
+  } = useDictation(handleDictationText)
+
   // Auto-resize de la zone de saisie : la hauteur suit le contenu (jusqu'au
   // plafond CSS), pour qu'aucune ligne ne soit masquée en haut quand on tape.
   useEffect(() => {
@@ -1095,7 +1217,7 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
       </div>
 
       {voiceMode ? (
-        <VoiceScreen onBack={() => setVoiceMode(false)} pageCtx={pageCtx} pathname={pathname} userName={userName} />
+        <VoiceScreen onBack={() => setVoiceMode(false)} pageCtx={pageCtx} pathname={pathname} userName={userName} send={send} />
       ) : (
         <>
           {/* Messages */}
@@ -1140,6 +1262,9 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
             {attachmentError && (
               <p className="text-[11px] px-1 pb-1.5" style={{ color: 'rgb(var(--danger))' }}>{attachmentError}</p>
             )}
+            {dictationError && (
+              <p className="text-[11px] px-1 pb-1.5" style={{ color: 'rgb(var(--danger))' }}>{dictationError}</p>
+            )}
             {attachment && (
               <div className="flex items-center gap-2 mb-1.5 px-2.5 py-1.5 rounded-xl"
                 style={{
@@ -1183,7 +1308,18 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
                   title="Joindre une image ou un PDF">
                   <Paperclip size={14} style={{ filter: 'var(--sarah-icon-filter)' }} />
                 </button>
-                <button onClick={() => setVoiceMode(true)} className="p-1.5 rounded-lg opacity-35 hover:opacity-70 transition-opacity" title="Vocal">
+                <button
+                  onClick={isRecordingDictation ? stopDictation : startDictation}
+                  disabled={loading || isTranscribingDictation}
+                  className="p-1.5 rounded-lg transition-opacity disabled:opacity-20"
+                  style={isRecordingDictation ? { color: 'rgb(var(--danger))', opacity: 1 } : { opacity: 0.35 }}
+                  title={isRecordingDictation ? 'Arrêter la dictée' : 'Dicter un message'}
+                >
+                  {isTranscribingDictation
+                    ? <Loader2 size={14} className="animate-spin" style={{ filter: 'var(--sarah-icon-filter)' }} />
+                    : <AudioLines size={14} style={{ filter: 'var(--sarah-icon-filter)' }} />}
+                </button>
+                <button onClick={() => setVoiceMode(true)} className="p-1.5 rounded-lg opacity-35 hover:opacity-70 transition-opacity" title="Vocal en direct">
                   <Mic size={14} style={{ filter: 'var(--sarah-icon-filter)' }} />
                 </button>
                 <button onClick={() => send()} disabled={(!input.trim() && !attachment) || loading}

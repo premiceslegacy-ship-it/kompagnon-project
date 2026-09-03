@@ -24,17 +24,12 @@ const nextConfig = {
         ];
     },
     async headers() {
+        // Next applique toutes les règles qui matchent une URL, dans l'ordre de ce
+        // tableau ; pour un header répété, la dernière valeur déclarée l'emporte.
+        // Permissions-Policy est donc sorti de la règle générale et placé en dernier,
+        // pour que la restriction par défaut (tout bloqué) ne vienne jamais écraser
+        // l'autorisation micro accordée juste avant aux pages app authentifiées.
         return [
-            {
-                // Pages app authentifiées : micro autorisé pour Sarah vocale
-                source: '/(app)/(.*)',
-                headers: [
-                    {
-                        key: 'Permissions-Policy',
-                        value: 'camera=(), microphone=self, geolocation=()',
-                    },
-                ],
-            },
             {
                 source: '/(.*)',
                 headers: [
@@ -55,10 +50,6 @@ const nextConfig = {
                         value: 'strict-origin-when-cross-origin',
                     },
                     {
-                        key: 'Permissions-Policy',
-                        value: 'camera=(), microphone=(), geolocation=()',
-                    },
-                    {
                         key: 'Content-Security-Policy',
                         // nonce-based inline scripts handled via _document; unsafe-inline kept for
                         // next/script and react-pdf until a nonce solution is wired up.
@@ -77,6 +68,31 @@ const nextConfig = {
                             "form-action 'self'",
                             "base-uri 'self'",
                         ].join('; '),
+                    },
+                ],
+            },
+            {
+                // Défaut : micro/caméra/géoloc bloqués partout, y compris les pages
+                // publiques et l'auth. Doit rester déclaré avant la règle app ci-dessous
+                // pour que celle-ci l'emporte sur les pages authentifiées.
+                source: '/(.*)',
+                headers: [
+                    {
+                        key: 'Permissions-Policy',
+                        value: 'camera=(), microphone=(), geolocation=()',
+                    },
+                ],
+            },
+            {
+                // Pages app authentifiées : micro autorisé pour Sarah (dictée et vocal live).
+                // Le groupe de routes (app) n'apparaît pas dans l'URL réelle : on liste donc
+                // ses segments explicitement plutôt qu'un pattern '/(app)/(.*)' qui ne matche
+                // jamais rien et laissait silencieusement microphone=() bloquer tout accès.
+                source: '/:section(dashboard|clients|chantiers|finances|devis|catalog|contracts|rapports|requests|settings|atelier-ia|kompagnon-ia|orsayn)/:rest*',
+                headers: [
+                    {
+                        key: 'Permissions-Policy',
+                        value: 'camera=(), microphone=self, geolocation=()',
                     },
                 ],
             },
