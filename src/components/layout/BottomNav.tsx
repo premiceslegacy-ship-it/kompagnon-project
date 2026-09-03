@@ -53,7 +53,7 @@ export function BottomNav({ permissionKeys = [] }: { permissionKeys?: string[] }
   return (
     <>
       <nav
-        className="fixed bottom-0 inset-x-0 lg:hidden z-[9950] bg-surface border-t border-black/8 dark:border-white/8"
+        className="fixed bottom-0 inset-x-0 lg:hidden z-[9950] bg-surface dark:bg-[#0d0d0d] border-t border-black/8 dark:border-white/8"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         <div className="grid grid-cols-5 h-16">

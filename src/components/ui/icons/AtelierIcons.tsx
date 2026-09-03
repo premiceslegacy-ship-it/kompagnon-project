@@ -84,9 +84,12 @@ export function IconConformite({ className }: AtelierIconProps) {
 export function IconChantier({ className }: AtelierIconProps) {
   return (
     <svg className={className} viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <path d="M8 34 L18 13 L25 27 L30 17 L40 34" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M6 34 h36" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M18 13 l2.6 4.6" stroke={ACCENT} strokeWidth="2.1" strokeLinecap="round" />
+      {/* Casque de chantier, vue de face */}
+      <path d="M9 32 C9 19.5 15.7 10 24 10 C32.3 10 39 19.5 39 32" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M6.5 32 h35" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M24 12 v20" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M13 32 c0 -9.5 4.9 -17.3 11 -19.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M17 32.5 h14" stroke={ACCENT} strokeWidth="2.2" strokeLinecap="round" />
     </svg>
   )
 }
@@ -185,9 +188,13 @@ export function IconCatalogue({ className }: AtelierIconProps) {
 export function IconReglages({ className }: AtelierIconProps) {
   return (
     <svg className={className} viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <circle cx="24" cy="24" r="6.5" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M24 6.5 v5.5 M24 36 v5.5 M41.5 24 h-5.5 M12 24 h-5.5 M35.6 12.4 l-3.9 3.9 M16.3 31.7 l-3.9 3.9 M35.6 35.6 l-3.9-3.9 M16.3 16.3 l-3.9-3.9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <circle cx="24" cy="24" r="2.2" fill={ACCENT} />
+      {/* Curseurs de réglage, trois glissières à hauteurs différentes */}
+      <path d="M7 13 h34" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M7 24 h34" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M7 35 h34" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="17" cy="13" r="3.4" fill="currentColor" fillOpacity="0.12" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="31" cy="24" r="3.4" fill={ACCENT} stroke={ACCENT} strokeWidth="1.6" />
+      <circle cx="20" cy="35" r="3.4" fill="currentColor" fillOpacity="0.12" stroke="currentColor" strokeWidth="1.6" />
     </svg>
   )
 }
