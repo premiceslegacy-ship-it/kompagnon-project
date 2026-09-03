@@ -11,20 +11,24 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
-  if (!await hasPermission('ai.terrain')) {
+  // Utilisée à la fois par la dictée du générateur de devis (ai.terrain) et par le
+  // micro du chat Sarah (ai.sarah) : accepter l'une ou l'autre plutôt que de restreindre
+  // à owner/admin, qui excluait les employés ayant pourtant accès à ces fonctionnalités.
+  const [terrainAllowed, sarahAllowed] = await Promise.all([
+    hasPermission('ai.terrain'),
+    hasPermission('ai.sarah'),
+  ])
+  if (!terrainAllowed && !sarahAllowed) {
     return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
   }
 
   const currentMembership = await getCurrentMembershipContext()
-  if (currentMembership?.roleSlug !== 'owner' && currentMembership?.roleSlug !== 'admin') {
-    return NextResponse.json({ error: 'Action réservée aux administrateurs.' }, { status: 403 })
-  }
 
   if (!process.env.OPENROUTER_API_KEY) {
     return NextResponse.json({ error: 'Transcription non configurée' }, { status: 500 })
   }
 
-  const orgId = currentMembership.organizationId
+  const orgId = currentMembership?.organizationId
   if (!orgId) {
     return NextResponse.json({ error: 'Organisation introuvable.' }, { status: 403 })
   }
