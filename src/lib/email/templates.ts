@@ -2,7 +2,7 @@
  * Templates HTML pour les emails applicatifs produit.
  * Emails envoyés via Resend avec le compte du client.
  * Tous basés sur renderEmailShell (src/lib/email/layout.ts).
- * Design system : Dark Liquid Glass
+ * Design system : Atelier LP — gomme dure sur papier crème
  */
 
 import {
@@ -16,10 +16,10 @@ import {
 } from './layout'
 import { APP_NAME, APP_SIGNATURE, absoluteBrandAssetUrl, wordmarkForTheme } from '@/lib/brand'
 
-const H1 = `margin:0 0 12px;font-size:22px;font-weight:800;color:#FFFFFF;line-height:1.3;letter-spacing:-0.04em;font-family:'Plus Jakarta Sans',sans-serif;`
-const BODY_P = `margin:0 0 28px;font-size:15px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;`
-const SMALL_P = `margin:0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;`
-const LABEL_P = `margin:0 0 8px;font-size:12px;font-weight:700;color:#A1A1AA;text-transform:uppercase;letter-spacing:0.8px;font-family:'Inter',sans-serif;`
+const H1 = `margin:0 0 12px;font-size:22px;font-weight:750;color:#080807;line-height:1.3;letter-spacing:-0.04em;font-family:'Geist','Inter',Arial,sans-serif;`
+const BODY_P = `margin:0 0 28px;font-size:15px;color:#6E6A62;line-height:1.6;font-family:'Geist','Inter',Arial,sans-serif;`
+const SMALL_P = `margin:0;font-size:13px;color:#6E6A62;line-height:1.5;font-family:'Geist','Inter',Arial,sans-serif;`
+const LABEL_P = `margin:0 0 8px;font-size:11px;font-weight:800;color:#8F4600;text-transform:uppercase;letter-spacing:0.14em;font-family:'Geist','Inter',Arial,sans-serif;`
 
 // ─── Invitation membre d'équipe ───────────────────────────────────────────────
 
@@ -43,19 +43,18 @@ export function buildInviteEmail({
 </p>
 ${renderCTA(`Rejoindre ${escHtml(orgName)} →`, inviteUrl)}
 <p style="${SMALL_P}">
-  Ce lien est valable <strong style="color:#FFFFFF;">7 jours</strong>. Si vous n'attendiez pas cette invitation, ignorez simplement cet email.
+  Ce lien est valable <strong style="color:#080807;">7 jours</strong>. Si vous n'attendiez pas cette invitation, ignorez simplement cet email.
 </p>`
 
   const fallback = `
-<p style="margin:0;font-size:12px;color:#444444;font-family:'Inter',sans-serif;">
+<p style="margin:0;font-size:12px;color:#6E6A62;font-family:'Inter',sans-serif;">
   Lien alternatif :<br/>
-  <a href="${inviteUrl}" style="color:#555555;word-break:break-all;">${inviteUrl}</a>
+  <a href="${inviteUrl}" style="color:#6E6A62;word-break:break-all;">${inviteUrl}</a>
 </p>`
 
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
-    headerLogoUrl: absoluteBrandAssetUrl(wordmarkForTheme('dark')),
     bodyHtml: body,
     fallbackLinkHtml: fallback,
   })
@@ -83,7 +82,7 @@ export function buildSignupOtpEmail({
 </p>
 ${renderCodeBlock(otp)}
 <p style="${SMALL_P}">
-  Ce code est valable <strong style="color:#FFFFFF;">1 heure</strong>. Si vous n'avez pas créé de compte, ignorez simplement cet email.
+  Ce code est valable <strong style="color:#080807;">1 heure</strong>. Si vous n'avez pas créé de compte, ignorez simplement cet email.
 </p>`
 
   const html = renderEmailShell({
@@ -116,7 +115,7 @@ export function buildPasswordResetOtpEmail({
 </p>
 ${renderCodeBlock(otp)}
 <p style="${SMALL_P}">
-  Ce code est valable <strong style="color:#FFFFFF;">1 heure</strong>. Si vous n'avez pas demandé cette réinitialisation, ignorez cet email : votre mot de passe reste inchangé.
+  Ce code est valable <strong style="color:#080807;">1 heure</strong>. Si vous n'avez pas demandé cette réinitialisation, ignorez cet email : votre mot de passe reste inchangé.
 </p>`
 
   const html = renderEmailShell({
@@ -176,7 +175,7 @@ export function buildQuoteSentEmail({
   Bonjour${clientName ? ' ' + escHtml(clientName) : ''} !
 </h1>
 <p style="${BODY_P}">
-  ${escHtml(orgName)} vous a transmis un devis${quoteTitle ? ' pour : <strong style="color:#FFFFFF;">' + escHtml(quoteTitle) + '</strong>' : ''}.
+  ${escHtml(orgName)} vous a transmis un devis${quoteTitle ? ' pour : <strong style="color:#080807;">' + escHtml(quoteTitle) + '</strong>' : ''}.
   Vous pouvez le consulter et l'accepter directement en cliquant sur le bouton ci-dessous.
 </p>
 ${infoRows.length > 0 ? renderInfoBox(infoRows) : ''}
@@ -185,15 +184,15 @@ ${renderCTA('Consulter &amp; signer le devis →', signUrl)}
   Une question ? Répondez simplement à cet email ou contactez-nous à
   <a href="mailto:${escHtml(orgEmail)}" style="color:#FF9F1C;">${escHtml(orgEmail)}</a>.
 </p>
-<p style="margin:14px 0 0;font-size:13px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;">
+<p style="margin:14px 0 0;font-size:13px;color:#6E6A62;line-height:1.6;font-family:'Inter',sans-serif;">
   Au plaisir de poursuivre ce projet avec vous.
 </p>
-${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#A1A1AA;line-height:1.6;white-space:pre-line;font-family:'Inter',sans-serif;">${escHtml(emailSignature)}</p>` : ''}`
+${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#6E6A62;line-height:1.6;white-space:pre-line;font-family:'Inter',sans-serif;">${escHtml(emailSignature)}</p>` : ''}`
 
   const fallback = `
-<p style="margin:0;font-size:11px;color:#444444;font-family:'Inter',sans-serif;">
+<p style="margin:0;font-size:11px;color:#6E6A62;font-family:'Inter',sans-serif;">
   Lien alternatif :<br/>
-  <a href="${signUrl}" style="color:#555555;word-break:break-all;">${signUrl}</a>
+  <a href="${signUrl}" style="color:#6E6A62;word-break:break-all;">${signUrl}</a>
 </p>`
 
   const html = renderEmailShell({
@@ -255,15 +254,15 @@ export function buildQuoteAcceptedClientEmail({
 </h1>
 <p style="${BODY_P}">
   Bonjour ${escHtml(clientName)},<br/><br/>
-  Nous confirmons que vous avez accepté le devis${numHtml}${quoteTitle ? ' : <strong style="color:#FFFFFF;">' + escHtml(quoteTitle) + '</strong>' : ''}
-  le <strong style="color:#FFFFFF;">${fmtDateTime} (heure de Paris)</strong>.
+  Nous confirmons que vous avez accepté le devis${numHtml}${quoteTitle ? ' : <strong style="color:#080807;">' + escHtml(quoteTitle) + '</strong>' : ''}
+  le <strong style="color:#080807;">${fmtDateTime} (heure de Paris)</strong>.
 </p>
 ${renderInfoBox(infoRows, 'success')}
 <p style="${SMALL_P}">
   Cet email vaut confirmation de votre accord. Conservez-le comme preuve d'acceptation.
   Merci encore pour votre confiance, ${escHtml(orgName)} reste à votre écoute pour la suite.
 </p>
-${orgEmail ? `<p style="margin:14px 0 0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;">
+${orgEmail ? `<p style="margin:14px 0 0;font-size:13px;color:#6E6A62;line-height:1.5;font-family:'Inter',sans-serif;">
   Pour toute question, n'hésitez pas à nous contacter à
   <a href="mailto:${escHtml(orgEmail)}" style="color:#FF9F1C;">${escHtml(orgEmail)}</a>.
 </p>` : ''}`
@@ -323,7 +322,7 @@ export function buildOrganizationExportReadyEmail({
   Votre export complet est prêt
 </h1>
 <p style="${BODY_P}">
-  L'export de réversibilité de <strong style="color:#FFFFFF;">${escHtml(orgName)}</strong> vient d'être généré.
+  L'export de réversibilité de <strong style="color:#080807;">${escHtml(orgName)}</strong> vient d'être généré.
   Le lien ci-dessous permet de télécharger l'archive ZIP sécurisée.
 </p>
 ${renderInfoBox(infoRows)}
@@ -332,14 +331,14 @@ ${renderCTA("Télécharger l'export sécurisé →", downloadUrl)}
 ${renderTextBox(
   "Cet export automatisé ne déclenche aucune suppression. La clôture et la suppression restent gérées séparément, avec vérification des obligations de conservation.",
 )}
-<p style="margin:18px 0 0;font-size:12px;color:#555555;line-height:1.6;font-family:'Inter',sans-serif;">
+<p style="margin:18px 0 0;font-size:12px;color:#6E6A62;line-height:1.6;font-family:'Inter',sans-serif;">
   Si le lien expire, reconnectez-vous à l'application puis ouvrez Paramètres &gt; Données &amp; confidentialité pour en régénérer un nouveau.
 </p>`
 
   const fallback = `
-<p style="margin:0;font-size:12px;color:#444444;font-family:'Inter',sans-serif;">
+<p style="margin:0;font-size:12px;color:#6E6A62;font-family:'Inter',sans-serif;">
   Lien alternatif :<br/>
-  <a href="${downloadUrl}" style="color:#555555;word-break:break-all;">${downloadUrl}</a>
+  <a href="${downloadUrl}" style="color:#6E6A62;word-break:break-all;">${downloadUrl}</a>
 </p>`
 
   const html = renderEmailShell({
@@ -401,7 +400,7 @@ export function buildQuoteAcceptedProfessionalEmail({
 
   const body = `
 <p style="${BODY_P}">
-  Bonne nouvelle ! Votre client a signé le devis le <strong style="color:#FFFFFF;">${fmtDateTime} (heure de Paris)</strong>.
+  Bonne nouvelle ! Votre client a signé le devis le <strong style="color:#080807;">${fmtDateTime} (heure de Paris)</strong>.
   Vous pouvez maintenant préparer la suite de la mission.
 </p>
 ${renderInfoBox(infoRows)}
@@ -461,7 +460,7 @@ export function buildInvoicePaidEmail({
   ]
 
   const body = `
-<h1 style="margin:0 0 16px;font-size:26px;font-weight:800;color:#FFFFFF;line-height:1.3;letter-spacing:-0.04em;font-family:'Plus Jakarta Sans',sans-serif;">
+<h1 style="margin:0 0 16px;font-size:26px;font-weight:750;color:#080807;line-height:1.3;letter-spacing:-0.04em;font-family:'Geist','Inter',Arial,sans-serif;">
   Merci pour votre confiance
 </h1>
 <p style="${BODY_P}">
@@ -475,10 +474,10 @@ ${renderInfoBox(infoRows)}
   Pour toute question, n'hésitez pas à nous contacter à
   <a href="mailto:${escHtml(orgEmail)}" style="color:#FF9F1C;">${escHtml(orgEmail)}</a>.
 </p>
-<p style="margin:14px 0 0;font-size:13px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;">
+<p style="margin:14px 0 0;font-size:13px;color:#6E6A62;line-height:1.6;font-family:'Inter',sans-serif;">
   Au plaisir de continuer à travailler ensemble.
 </p>
-${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#A1A1AA;line-height:1.6;white-space:pre-line;font-family:'Inter',sans-serif;">${escHtml(emailSignature)}</p>` : ''}`
+${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#6E6A62;line-height:1.6;white-space:pre-line;font-family:'Inter',sans-serif;">${escHtml(emailSignature)}</p>` : ''}`
 
   const html = renderEmailShell({
     title: subject,
@@ -530,13 +529,13 @@ export function buildDepositInvoiceEmail({
   const depositLabel = depositRate ? `Acompte de ${depositRate}%` : 'Acompte'
   const quoteRef = quoteNumber
     ? ` sur votre devis N° ${escHtml(quoteNumber)}${quoteTitle ? ' (« ' + escHtml(quoteTitle) + ' »)' : ''}`
-    : quoteTitle ? ` pour : <strong style="color:#FFFFFF;">${escHtml(quoteTitle)}</strong>` : ''
+    : quoteTitle ? ` pour : <strong style="color:#080807;">${escHtml(quoteTitle)}</strong>` : ''
 
   const infoRows = [
     { label: 'Nature', value: depositLabel },
     ...(quoteNumber ? [{ label: 'Devis de référence', value: escHtml(quoteNumber) }] : []),
     ...(fmtAmt ? [{ label: 'Montant TTC', value: fmtAmt, large: true }] : []),
-    ...(fmtDue ? [{ label: 'À régler avant le', value: `<strong style="color:#FFFFFF;">${fmtDue}</strong>` }] : []),
+    ...(fmtDue ? [{ label: 'À régler avant le', value: `<strong style="color:#080807;">${fmtDue}</strong>` }] : []),
   ]
 
   const body = `
@@ -553,10 +552,10 @@ ${renderInfoBox(infoRows)}
   Pour toute question, répondez simplement à cet email ou contactez-nous à
   <a href="mailto:${escHtml(orgEmail)}" style="color:#FF9F1C;">${escHtml(orgEmail)}</a>.
 </p>
-<p style="margin:14px 0 0;font-size:13px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;">
+<p style="margin:14px 0 0;font-size:13px;color:#6E6A62;line-height:1.6;font-family:'Inter',sans-serif;">
   Merci pour votre confiance.
 </p>
-${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#A1A1AA;line-height:1.6;white-space:pre-line;font-family:'Inter',sans-serif;">${escHtml(emailSignature)}</p>` : ''}`
+${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#6E6A62;line-height:1.6;white-space:pre-line;font-family:'Inter',sans-serif;">${escHtml(emailSignature)}</p>` : ''}`
 
   const html = renderEmailShell({
     title: subject,
@@ -635,7 +634,7 @@ export function buildMemberSpaceInviteEmail({
 <h1 style="${H1}">
   Votre espace personnel est prêt
 </h1>
-<p style="margin:0 0 16px;font-size:15px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;">
+<p style="margin:0 0 16px;font-size:15px;color:#6E6A62;line-height:1.6;font-family:'Inter',sans-serif;">
   ${greeting}
 </p>
 <p style="${BODY_P}">
@@ -643,13 +642,13 @@ export function buildMemberSpaceInviteEmail({
 </p>
 ${renderCTA('Ouvrir mon espace →', spaceUrl)}
 <p style="${SMALL_P}">
-  Ce lien est valable <strong style="color:#FFFFFF;">30 jours</strong>. Vous pourrez en redemander un nouveau à tout moment depuis la page d'accès.
+  Ce lien est valable <strong style="color:#080807;">30 jours</strong>. Vous pourrez en redemander un nouveau à tout moment depuis la page d'accès.
 </p>`
 
   const fallback = `
-<p style="margin:0;font-size:12px;color:#444444;font-family:'Inter',sans-serif;">
+<p style="margin:0;font-size:12px;color:#6E6A62;font-family:'Inter',sans-serif;">
   Lien alternatif :<br/>
-  <a href="${spaceUrl}" style="color:#555555;word-break:break-all;">${spaceUrl}</a>
+  <a href="${spaceUrl}" style="color:#6E6A62;word-break:break-all;">${spaceUrl}</a>
 </p>`
 
   const html = renderEmailShell({
@@ -681,11 +680,11 @@ export function buildMemberSpaceInviteReminderEmail({
 <h1 style="${H1}">
   Votre lien d'accès expire bientôt
 </h1>
-<p style="margin:0 0 16px;font-size:15px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;">
+<p style="margin:0 0 16px;font-size:15px;color:#6E6A62;line-height:1.6;font-family:'Inter',sans-serif;">
   ${greeting}
 </p>
 <p style="${BODY_P}">
-  Le lien vous donnant accès à votre espace ${escHtml(orgName)} (créneaux, pointage d'heures, rapports) expire dans <strong style="color:#FFFFFF;">3 jours</strong>. Cliquez ci-dessous pour continuer à y accéder.
+  Le lien vous donnant accès à votre espace ${escHtml(orgName)} (créneaux, pointage d'heures, rapports) expire dans <strong style="color:#080807;">3 jours</strong>. Cliquez ci-dessous pour continuer à y accéder.
 </p>
 ${renderCTA('Ouvrir mon espace →', spaceUrl)}
 <p style="${SMALL_P}">
@@ -693,9 +692,9 @@ ${renderCTA('Ouvrir mon espace →', spaceUrl)}
 </p>`
 
   const fallback = `
-<p style="margin:0;font-size:12px;color:#444444;font-family:'Inter',sans-serif;">
+<p style="margin:0;font-size:12px;color:#6E6A62;font-family:'Inter',sans-serif;">
   Lien alternatif :<br/>
-  <a href="${spaceUrl}" style="color:#555555;word-break:break-all;">${spaceUrl}</a>
+  <a href="${spaceUrl}" style="color:#6E6A62;word-break:break-all;">${spaceUrl}</a>
 </p>`
 
   const html = renderEmailShell({
@@ -733,11 +732,11 @@ export function buildMemberMonthlyReportEmail({
 <h1 style="${H1}">
   Votre rapport d'heures de ${escHtml(periodLabel)}
 </h1>
-<p style="margin:0 0 16px;font-size:15px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;">
+<p style="margin:0 0 16px;font-size:15px;color:#6E6A62;line-height:1.6;font-family:'Inter',sans-serif;">
   ${greeting}
 </p>
 <p style="${BODY_P}">
-  Veuillez trouver ci-joint le récapitulatif de vos heures pointées sur la période, soit <strong style="color:#FFFFFF;">${totalHours.toFixed(1)} h</strong> au total. Le détail par chantier et par jour est disponible dans le PDF joint.
+  Veuillez trouver ci-joint le récapitulatif de vos heures pointées sur la période, soit <strong style="color:#080807;">${totalHours.toFixed(1)} h</strong> au total. Le détail par chantier et par jour est disponible dans le PDF joint.
 </p>
 ${spaceUrl ? renderCTA('Voir mon espace →', spaceUrl) : ''}
 <p style="${SMALL_P}">

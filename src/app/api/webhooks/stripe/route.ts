@@ -11,6 +11,7 @@ import { DEFAULT_EINVOICING_CONFIG, normalizeEinvoicingConfigFromDb } from '@/li
 import { isOverflowMode, isSubscriptionTier, type SubscriptionTier } from '@/lib/quota-catalog'
 import { isSellableTier, type AccessStatus, type EntitlementSyncPayload } from '@/lib/subscription-access'
 import { sendAuthEmail } from '@/lib/email'
+import { buildAtelierLifecycleEmail, buildAtelierNotificationEmail } from '@/lib/email/commercial'
 
 export const dynamic = 'force-dynamic'
 
@@ -118,7 +119,7 @@ function isoFromUnix(value: unknown): string | null {
   return typeof value === 'number' && Number.isFinite(value) ? new Date(value * 1000).toISOString() : null
 }
 
-async function notifyLifecycle(to: string | null, eventType: string, tier: SubscriptionTier) {
+async function notifyLifecycle(to: string | null, eventType: string, tier: SubscriptionTier, appUrl: string) {
   const messages: Record<string, { subject: string; body: string }> = {
     payment_succeeded: { subject: 'Votre accès Atelier est activé', body: `Votre formule ${tier === 'expert' ? 'Expert' : 'Pro'} est active. Toute votre équipe peut reprendre le travail.` },
     payment_failed: { subject: 'Votre paiement Atelier doit être régularisé', body: 'Stripe va retenter le paiement. Votre accès reste ouvert pendant cette phase ; mettez votre moyen de paiement à jour pour éviter une interruption.' },
@@ -127,17 +128,33 @@ async function notifyLifecycle(to: string | null, eventType: string, tier: Subsc
   }
   const message = messages[eventType]
   if (!message) return
+  const customerEmail = buildAtelierLifecycleEmail({
+    subject: message.subject,
+    title: message.subject,
+    body: message.body,
+    appUrl,
+    ctaLabel: eventType === 'subscription_cancelled' ? 'Ouvrir le hall d’activation' : undefined,
+    ctaPath: eventType === 'subscription_cancelled' ? '/activation' : '/dashboard',
+    notice: eventType === 'payment_succeeded' || eventType === 'payment_recovered'
+      ? { text: 'Votre accès est prêt à être utilisé.', theme: 'success' }
+      : undefined,
+  })
+  const operatorMessage = buildAtelierNotificationEmail({
+    subject: `[Cockpit Atelier] ${message.subject}`,
+    title: message.subject,
+    body: `${message.body} Formule : ${tier}. Événement : ${eventType}.`,
+  })
   const deliveries = []
   if (to) deliveries.push(sendAuthEmail({
     to,
-    subject: message.subject,
-    html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto"><h1 style="font-size:22px">${message.subject}</h1><p style="line-height:1.6">${message.body}</p><p style="color:#666;font-size:13px">L’équipe Atelier by Orsayn</p></div>`,
+    subject: customerEmail.subject,
+    html: customerEmail.html,
   }))
-  const operatorEmail = process.env.OPERATOR_ALERT_EMAIL?.trim()
-  if (operatorEmail && operatorEmail !== to) deliveries.push(sendAuthEmail({
-    to: operatorEmail,
-    subject: `[Cockpit Atelier] ${message.subject}`,
-    html: `<p>${message.body}</p><p>Formule : <strong>${tier}</strong>. Événement : <strong>${eventType}</strong>.</p>`,
+  const operatorRecipient = process.env.OPERATOR_ALERT_EMAIL?.trim()
+  if (operatorRecipient && operatorRecipient !== to) deliveries.push(sendAuthEmail({
+    to: operatorRecipient,
+    subject: operatorMessage.subject,
+    html: operatorMessage.html,
   }))
   await Promise.allSettled(deliveries)
 }
@@ -246,7 +263,7 @@ async function applySubscriptionState(input: {
     actorEmail: 'stripe@webhook',
     metadata: { tier: syncedTier, access_status: accessStatus, stripe_status: stripeStatus, subscription_id: stripeSubscriptionId },
   })
-  await notifyLifecycle(settings.contact_email, effectiveEventType, syncedTier)
+  await notifyLifecycle(settings.contact_email, effectiveEventType, syncedTier, settings.app_url)
 }
 
 async function subscriptionForObject(object: StripeObject): Promise<StripeObject | null> {

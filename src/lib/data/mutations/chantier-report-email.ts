@@ -13,7 +13,7 @@ import {
 import { getOrganization } from '@/lib/data/queries/organization'
 import { renderChantierPdf, type ChantierPDFPhoto } from '@/lib/pdf/documents/chantier'
 import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
-import { renderEmailShell, renderInfoBox, escHtml } from '@/lib/email/layout'
+import { renderEmailShell, renderInfoBox, escHtml, organizationEmailBrand } from '@/lib/email/layout'
 
 function pdfOrigin(): string {
   const origin = process.env.NEXT_PUBLIC_APP_URL
@@ -124,6 +124,9 @@ export async function sendChantierReportEmail(
     chantierTitle: chantier.title,
     orgName: organization.name,
     orgEmail: organization.email ?? null,
+    logoUrl: organization.logo_url ?? null,
+    primaryColor: organization.primary_color ?? null,
+    signature: organization.email_signature ?? null,
   })
 
   const { error } = await sendEmail({
@@ -204,24 +207,29 @@ function buildEmailHtml(ctx: {
   chantierTitle: string
   orgName: string
   orgEmail: string | null
+  logoUrl: string | null
+  primaryColor: string | null
+  signature: string | null
 }): string {
   const introHtml = escHtml(ctx.intro).replace(/\n/g, '<br>')
   const contactLine = ctx.orgEmail
-    ? `<p style="margin:14px 0 0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;">Pour toute question, n'hésitez pas à nous contacter à <a href="mailto:${escHtml(ctx.orgEmail)}" style="color:#FF9F1C;">${escHtml(ctx.orgEmail)}</a>.</p>`
+    ? `<p style="margin:14px 0 0;font-size:13px;color:#6E6A62;line-height:1.5;font-family:'Geist','Inter',Arial,sans-serif;">Pour toute question, n'hésitez pas à nous contacter à <a href="mailto:${escHtml(ctx.orgEmail)}" style="color:#A95800;">${escHtml(ctx.orgEmail)}</a>.</p>`
     : ''
   const body = `
-<p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#A1A1AA;text-transform:uppercase;letter-spacing:0.8px;font-family:'Inter',sans-serif;">Rapport de chantier</p>
-<h1 style="margin:0 0 12px;font-size:22px;font-weight:800;color:#FFFFFF;line-height:1.3;letter-spacing:-0.04em;font-family:'Plus Jakarta Sans',sans-serif;">
+<p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#8F4600;text-transform:uppercase;letter-spacing:0.8px;font-family:'Geist','Inter',Arial,sans-serif;">Rapport de chantier</p>
+<h1 style="margin:0 0 12px;font-size:22px;font-weight:800;color:#080807;line-height:1.3;letter-spacing:-0.04em;font-family:'Geist','Inter',Arial,sans-serif;">
   Bonjour${ctx.recipientName ? ' ' + escHtml(ctx.recipientName) : ''} !
 </h1>
-<p style="margin:0 0 24px;font-size:15px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;">${introHtml}</p>
+<p style="margin:0 0 24px;font-size:15px;color:#6E6A62;line-height:1.6;font-family:'Geist','Inter',Arial,sans-serif;">${introHtml}</p>
 ${renderInfoBox([{ label: 'Chantier', value: escHtml(ctx.chantierTitle), large: true }])}
-<p style="margin:0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;">Le rapport complet est joint en pièce attachée (PDF).</p>
+<p style="margin:0;font-size:13px;color:#6E6A62;line-height:1.5;font-family:'Geist','Inter',Arial,sans-serif;">Le rapport complet est joint en pièce attachée (PDF).</p>
 ${contactLine}`
 
   return renderEmailShell({
     title: `Rapport de chantier : ${ctx.chantierTitle}`,
     headerName: ctx.orgName,
     bodyHtml: body,
+    brand: organizationEmailBrand({ name: ctx.orgName, logoUrl: ctx.logoUrl, primaryColor: ctx.primaryColor, signature: ctx.signature, replyTo: ctx.orgEmail }),
+    includeSignature: Boolean(ctx.signature),
   })
 }

@@ -10,7 +10,7 @@ async function _getOrganizationEinvoicingConfig(): Promise<EinvoicingConfig> {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('organization_einvoicing_config')
-    .select('mode, provider, environment, annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, super_pdp_emission_enabled, super_pdp_reception_enabled')
+    .select('mode, provider, environment, annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, super_pdp_emission_enabled, super_pdp_reception_enabled, emission_consent_at, reception_consent_at, onboarding_intent')
     .eq('organization_id', orgId)
     .maybeSingle()
 

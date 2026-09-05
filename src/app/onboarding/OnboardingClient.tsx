@@ -4,11 +4,14 @@ import { useState, useRef } from 'react'
 import { useFormStatus } from 'react-dom'
 import { useSearchParams } from 'next/navigation'
 import {
-  Building2, Users, ArrowRight, Loader2,
-  CheckCircle2, AlertCircle, Plus, Trash2, Copy, Check, KeyRound, Upload, ImageIcon,
-  ChevronDown, MapPin, Landmark, CreditCard,
+  Building2, ArrowRight, Loader2,
+  AlertCircle, Plus, Trash2, Copy, Check, KeyRound, Upload, ImageIcon,
+  ChevronDown, ShieldAlert,
 } from 'lucide-react'
 import { completeOnboarding, skipInvites, joinViaCode } from './actions'
+import { Switch } from '@/components/ui/Switch'
+import { Modal } from '@/components/ui/Modal'
+import { IconFrame, IconBienvenue, IconEntreprise, IconCoordonnees, IconConformite, IconEquipe, IconCode } from './OnboardingIcons'
 import type { OrgRole } from '@/lib/data/queries/roles'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -23,15 +26,10 @@ import {
 import { LegalFooter } from '@/components/legal/LegalFooter'
 import { APP_NAME } from '@/lib/brand'
 import {
-  formatBicInput,
-  formatIbanInput,
   formatPostalCodeInput,
-  formatSirenInput,
   formatSiretInput,
   formatVatNumberInput,
-  normalizeBic,
   normalizeEmail,
-  normalizeFrenchIban,
   normalizeFrenchVatNumber,
   normalizePostalCode,
   normalizeSiret,
@@ -41,6 +39,17 @@ import { LEGAL_VAT_RATES } from '@/lib/utils'
 
 const inputCls =
   'w-full px-4 py-3 bg-white/[0.06] border border-white/[0.08] focus:border-accent/50 focus:ring-1 focus:ring-accent/20 rounded-xl text-white text-sm outline-none transition-all placeholder:text-white/20'
+
+// Relief physique (transposition sombre de .state-card / .bento-card, repo LP
+// atelierbyorsayn) plutôt qu'un simple aplat translucide bg-white/[0.04].
+const ONBOARDING_STAT_CARD_STYLE: React.CSSProperties = {
+  borderRadius: 14,
+  background: 'linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015))',
+  borderWidth: 1,
+  borderStyle: 'solid',
+  borderColor: 'rgba(255,255,255,0.09)',
+  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06), 0 1px 0 rgba(0,0,0,0.3), 0 8px 20px rgba(0,0,0,0.25)',
+}
 
 // Recommandation onboarding (docs/scope-verticales-prioritaires.md) : mettre en avant
 // 5 familles commerciales prioritaires plutôt que les 21 activités à plat. Le code
@@ -79,9 +88,13 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 type InviteRow = { email: string; roleId: string }
 
-// Étapes owner : 0=welcome, 1=company, 2=contact, 3=legal, 4=payment, 5=team
+// Étapes owner : 0=welcome, 1=company, 2=contact+légal minimal, 3=facturation électronique, 4=team
+// Téléphone, forme juridique, capital social, RCS, IBAN/BIC, délais de paiement et
+// tribunal compétent sont différés dans les Settings (bandeau de rappel post-onboarding)
+// — aucun n'est bloquant techniquement (colonnes nullable, gérées en conditionnel dans
+// les PDF/Factur-X), seul le SIRET reste requis pour démarrer l'essai self-service.
 // Étape joiner : 0=welcome, 'join'=code
-type Step = 0 | 1 | 2 | 3 | 4 | 5 | 'join'
+type Step = 0 | 1 | 2 | 3 | 4 | 'join'
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus()
@@ -140,6 +153,12 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
   const [paymentTermsDays, setPaymentTermsDays] = useState(30)
   const [latePenaltyRate, setLatePenaltyRate] = useState(3)
   const [courtCompetent, setCourtCompetent] = useState('')
+  // Intention exprimée avant toute connexion (celle-ci se fait plus tard depuis les
+  // Réglages — voir docs, le retour OAuth externe redirige toujours vers /settings,
+  // jamais vers l'onboarding). N'active rien : sert juste à afficher un rappel ciblé.
+  const [einvoicingWantsReception, setEinvoicingWantsReception] = useState(true)
+  const [einvoicingWantsEmission, setEinvoicingWantsEmission] = useState(false)
+  const [showReceptionInfo, setShowReceptionInfo] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<OrganizationFieldErrors>({})
   const defaultRoleId = roles[0]?.id ?? ''
   const [invites, setInvites] = useState<InviteRow[]>([{ email: '', roleId: defaultRoleId }])
@@ -224,42 +243,23 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
     return Object.keys(nextErrors).length === 0
   }
 
+// Fusionne coordonnées + légal minimal : téléphone, forme juridique, capital social,
+// RCS, IBAN/BIC, délais de paiement et tribunal compétent sont différés (Settings),
+// seul le SIRET reste requis (démarrage de l'essai self-service).
   function validateContactStep() {
     const nextErrors: OrganizationFieldErrors = {}
     const normalizedEmail = normalizeEmail(email)
     const normalizedPostalCode = normalizePostalCode(postalCode)
+    const normalizedSiret = normalizeSiret(siret)
+    const normalizedVat = normalizeFrenchVatNumber(vatNumber)
     if (!email.trim()) nextErrors.email = "L'email de contact est obligatoire."
     else if (normalizedEmail.error) nextErrors.email = normalizedEmail.error
     if (normalizedPostalCode.error) nextErrors.postal_code = normalizedPostalCode.error
-    setFieldErrors(nextErrors)
-    return Object.keys(nextErrors).length === 0
-  }
-
-  function validateLegalStep() {
-    const nextErrors: OrganizationFieldErrors = {}
-    const normalizedSiret = normalizeSiret(siret)
-    const normalizedVat = normalizeFrenchVatNumber(vatNumber)
     if (selfService && !siret.trim()) nextErrors.siret = 'Le SIRET est obligatoire pour activer votre essai.'
     else if (normalizedSiret.error) nextErrors.siret = normalizedSiret.error
     if (isVatSubject && normalizedVat.error) nextErrors.vat_number = normalizedVat.error
     if (!LEGAL_VAT_RATES.includes(defaultVatRate as typeof LEGAL_VAT_RATES[number])) {
       nextErrors.default_vat_rate = 'Choisissez un taux de TVA légal.'
-    }
-    setFieldErrors(nextErrors)
-    return Object.keys(nextErrors).length === 0
-  }
-
-  function validatePaymentStep() {
-    const nextErrors: OrganizationFieldErrors = {}
-    const normalizedIban = normalizeFrenchIban(iban)
-    const normalizedBic = normalizeBic(bic)
-    if (normalizedIban.error) nextErrors.iban = normalizedIban.error
-    if (normalizedBic.error) nextErrors.bic = normalizedBic.error
-    if (!Number.isFinite(paymentTermsDays) || paymentTermsDays < 0 || paymentTermsDays > 90) {
-      nextErrors.payment_terms_days = 'Le délai doit être compris entre 0 et 90 jours.'
-    }
-    if (!Number.isFinite(latePenaltyRate) || latePenaltyRate < 0 || latePenaltyRate > 100) {
-      nextErrors.late_penalty_rate = 'Le taux doit être compris entre 0 et 100 %.'
     }
     setFieldErrors(nextErrors)
     return Object.keys(nextErrors).length === 0
@@ -283,7 +283,13 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
           const isSingleChoice = family.activityIds.length === 1
           const isSelectedFamily = family.activityIds.includes(selectedActivity as BusinessActivityId)
           return (
-            <div key={family.label} className="rounded-xl border border-white/[0.08] bg-white/[0.035] overflow-hidden">
+            <div
+              key={family.label}
+              className="rounded-xl overflow-hidden"
+              style={isSelectedFamily
+                ? { ...ONBOARDING_STAT_CARD_STYLE, borderColor: 'rgba(255,159,28,0.4)' }
+                : ONBOARDING_STAT_CARD_STYLE}
+            >
               <button
                 type="button"
                 onClick={() => { if (isSingleChoice) selectActivity(family.activityIds[0]) }}
@@ -348,7 +354,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
           const selectedIsSecondary = tier2.some((a) => a.id === selectedActivity)
           const visibleActivities = showSecondary || selectedIsSecondary ? activities : tier1
           return (
-            <div key={profileKey} className="rounded-xl border border-white/[0.08] bg-white/[0.035] overflow-hidden">
+            <div key={profileKey} className="rounded-xl overflow-hidden" style={ONBOARDING_STAT_CARD_STYLE}>
               <button
                 type="button"
                 onClick={() => setOpenActivityProfile(profileKey)}
@@ -475,7 +481,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
 
       {/* Step dots */}
       <div className="relative z-10 flex items-center gap-2 mb-8">
-        {(step === 'join' ? [0, 1] : [0, 1, 2, 3, 4, 5]).map((_, i) => {
+        {(step === 'join' ? [0, 1] : [0, 1, 2, 3, 4]).map((_, i) => {
           const currentIdx = step === 'join' ? 1 : (step as number)
           return (
             <div
@@ -490,7 +496,14 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
 
       {/* Card */}
       <div className="relative z-10 w-full max-w-lg">
-        <div className="bg-white/[0.04] backdrop-blur-[40px] border border-white/[0.08] rounded-2xl sm:rounded-3xl p-5 sm:p-8 lg:p-10">
+        <div
+          className="rounded-2xl sm:rounded-3xl p-5 sm:p-8 lg:p-10"
+          style={{
+            background: 'linear-gradient(165deg, #17140f, #0c0a08)',
+            border: '1px solid rgba(255,255,255,0.09)',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06), 0 1px 0 rgba(0,0,0,0.4), 0 30px 80px rgba(0,0,0,0.55)',
+          }}
+        >
 
           {/* Erreur URL */}
           {errorMsg && step !== 0 && (
@@ -503,9 +516,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
           {/* ── STEP 0 : Bienvenue ── */}
           {step === 0 && (
             <div className="flex flex-col items-center text-center gap-6">
-              <div className="w-16 h-16 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
-                <CheckCircle2 className="w-8 h-8 text-accent" />
-              </div>
+              <IconFrame size="lg"><IconBienvenue /></IconFrame>
               <div>
                 <h1 className="text-2xl font-bold font-display">Bienvenue, {name}&nbsp;!</h1>
                 <p className="mt-2 text-sm text-white/45 leading-relaxed max-w-xs mx-auto">
@@ -538,9 +549,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
           {step === 1 && (
             <div>
               <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
-                  <Building2 className="w-5 h-5 text-accent" />
-                </div>
+                <IconFrame><IconEntreprise /></IconFrame>
                 <div>
                   <h2 className="text-xl font-bold font-display">Votre entreprise</h2>
                   <p className="text-xs text-white/40">Ces infos apparaîtront sur vos documents.</p>
@@ -643,9 +652,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
           {step === 2 && (
             <div>
               <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
-                  <MapPin className="w-5 h-5 text-accent" />
-                </div>
+                <IconFrame><IconCoordonnees /></IconFrame>
                 <div>
                   <h2 className="text-xl font-bold font-display">Coordonnées</h2>
                   <p className="text-xs text-white/40">Ces infos seront reprises sur vos devis et factures.</p>
@@ -669,10 +676,6 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                     className={inputCls}
                   />
                   <FieldError field="email" />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Téléphone</label>
-                  <input type="tel" autoComplete="tel" placeholder="06 12 34 56 78" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Adresse</label>
@@ -700,36 +703,6 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                     <input type="text" autoComplete="address-level2" placeholder="Lyon" value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} />
                   </div>
                 </div>
-                <div className="pt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (validateContactStep()) setStep(3)
-                    }}
-                    className="w-full py-3.5 rounded-pill bg-accent text-black font-bold text-sm hover:opacity-90 active:scale-[0.99] transition-all shadow-glow-accent flex items-center justify-center gap-2"
-                  >
-                    Continuer
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-              <button onClick={() => setStep(1)} className="mt-4 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors">Retour</button>
-            </div>
-          )}
-
-          {/* ── STEP 3 : Légal & TVA (owner) ── */}
-          {step === 3 && (
-            <div>
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
-                  <Landmark className="w-5 h-5 text-accent" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold font-display">Légal &amp; TVA</h2>
-                  <p className="text-xs text-white/40">Renseignez maintenant ce que vous avez sous la main.</p>
-                </div>
-              </div>
-              <div className="space-y-5">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">SIRET{selfService ? ' *' : ''}</label>
@@ -764,26 +737,6 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                     <FieldError field="vat_number" />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Forme juridique</label>
-                    <input type="text" placeholder="SAS, SARL, EI..." value={formeJuridique} onChange={(e) => setFormeJuridique(e.target.value)} className={inputCls} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Capital social</label>
-                    <input type="text" placeholder="10 000 €" value={capitalSocial} onChange={(e) => setCapitalSocial(e.target.value)} className={inputCls} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">N° RCS</label>
-                    <input type="text" placeholder="123 456 789" value={rcs} onChange={(e) => setRcs(formatSirenInput(e.target.value))} className={`${inputCls} tabular-nums`} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Ville RCS</label>
-                    <input type="text" placeholder="Paris" value={rcsVille} onChange={(e) => setRcsVille(e.target.value)} className={inputCls} />
-                  </div>
-                </div>
                 <div className="space-y-3">
                   <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Régime TVA</label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -798,81 +751,125 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                     </select>
                   )}
                 </div>
-                <button type="button" onClick={() => { if (validateLegalStep()) setStep(4) }} className="w-full py-3.5 rounded-pill bg-accent text-black font-bold text-sm hover:opacity-90 active:scale-[0.99] transition-all shadow-glow-accent flex items-center justify-center gap-2">Continuer<ArrowRight className="w-4 h-4" /></button>
+                <p className="text-xs text-white/30">
+                  Téléphone, RIB, mentions légales détaillées : vous pourrez les compléter dans vos réglages, quand vous aurez ces infos sous la main.
+                </p>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (validateContactStep()) setStep(3)
+                    }}
+                    className="w-full py-3.5 rounded-pill bg-accent text-black font-bold text-sm hover:opacity-90 active:scale-[0.99] transition-all shadow-glow-accent flex items-center justify-center gap-2"
+                  >
+                    Continuer
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              <button onClick={() => setStep(2)} className="mt-4 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors">Retour</button>
+              <button onClick={() => setStep(1)} className="mt-4 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors">Retour</button>
             </div>
           )}
 
-          {/* ── STEP 4 : Paiement (owner) ── */}
+          {/* ── STEP 3 : Facturation électronique (owner) ── */}
+          {step === 3 && (
+            <div>
+              <div className="flex items-center gap-3 mb-6">
+                <IconFrame><IconConformite /></IconFrame>
+                <div>
+                  <h2 className="text-xl font-bold font-display">Factures électroniques</h2>
+                  <p className="text-xs text-white/40">La loi impose ce nouveau format à toutes les entreprises françaises, progressivement.</p>
+                </div>
+              </div>
+
+              <div className="space-y-5">
+                <div className="flex items-start gap-3 p-4" style={ONBOARDING_STAT_CARD_STYLE}>
+                  <Switch
+                    checked={einvoicingWantsReception}
+                    onChange={(next) => {
+                      if (!next) { setShowReceptionInfo(true); return }
+                      setEinvoicingWantsReception(true)
+                    }}
+                    label="Recevoir les factures de mes fournisseurs par ce nouveau format"
+                  />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-white/85">Recevoir les factures de mes fournisseurs</p>
+                    <p className="mt-1 text-xs text-white/40 leading-relaxed">
+                      Obligatoire par la loi depuis le 1er septembre 2026, pour toutes les entreprises. Vous restez libre
+                      de ce réglage, mais la loi s'applique à vous quoi que vous choisissiez ici.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3 p-4" style={ONBOARDING_STAT_CARD_STYLE}>
+                  <Switch
+                    checked={einvoicingWantsEmission}
+                    onChange={setEinvoicingWantsEmission}
+                    label="Envoyer mes propres factures dans ce nouveau format"
+                  />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-white/85">Envoyer mes propres factures</p>
+                    <p className="mt-1 text-xs text-white/40 leading-relaxed">
+                      Facultatif jusqu'au 1er septembre 2027. Activez dès maintenant si vous voulez être prêt en avance.
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-white/30">
+                  Rien à faire tout de suite : vous connecterez votre compte pour de vrai depuis vos réglages, quand vous
+                  serez prêt.
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => setStep(4)}
+                  className="w-full py-3.5 rounded-pill bg-accent text-black font-bold text-sm hover:opacity-90 active:scale-[0.99] transition-all shadow-glow-accent flex items-center justify-center gap-2"
+                >
+                  Continuer
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+              <button onClick={() => setStep(2)} className="mt-4 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors">Retour</button>
+
+              <Modal
+                open={showReceptionInfo}
+                onClose={() => setShowReceptionInfo(false)}
+                title="Vous restez libre, mais la loi s'applique"
+                size="sm"
+                footer={
+                  <>
+                    <button
+                      onClick={() => setShowReceptionInfo(false)}
+                      className="inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold text-primary hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      Garder activé
+                    </button>
+                    <button
+                      onClick={() => { setEinvoicingWantsReception(false); setShowReceptionInfo(false) }}
+                      className="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700"
+                    >
+                      Je confirme, désactiver quand même
+                    </button>
+                  </>
+                }
+              >
+                <div className="flex items-start gap-3">
+                  <ShieldAlert className="h-5 w-5 flex-shrink-0 text-red-500 mt-0.5" />
+                  <p className="text-sm text-secondary leading-relaxed">
+                    Recevoir les factures de vos fournisseurs dans ce format est une obligation légale depuis le 1er
+                    septembre 2026, pour toutes les entreprises, sans exception. Ne pas l'activer ici ne vous dispense
+                    pas de cette obligation : vous pourrez toujours changer d'avis plus tard dans vos réglages.
+                  </p>
+                </div>
+              </Modal>
+            </div>
+          )}
+
+          {/* ── STEP 4 : Invitations (owner) ── */}
           {step === 4 && (
             <div>
               <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
-                  <CreditCard className="w-5 h-5 text-accent" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold font-display">Paiement &amp; RIB</h2>
-                  <p className="text-xs text-white/40">Formatage automatique, correction immédiate.</p>
-                </div>
-              </div>
-              <div className="space-y-5">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">IBAN</label>
-                  <input
-                    type="text"
-                    autoComplete="off"
-                    placeholder="FR76 3000 6000 0112 3456 7890 189"
-                    value={iban}
-                    onChange={(e) => {
-                      setIban(formatIbanInput(e.target.value))
-                      setFieldError('iban')
-                    }}
-                    className={`${inputCls} font-mono tracking-wider`}
-                  />
-                  <FieldError field="iban" />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">BIC / SWIFT</label>
-                    <input type="text" placeholder="BNPAFRPPXXX" value={bic} onChange={(e) => { setBic(formatBicInput(e.target.value)); setFieldError('bic') }} className={`${inputCls} font-mono tracking-wider`} />
-                    <FieldError field="bic" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Banque</label>
-                    <input type="text" placeholder="BNP Paribas" value={bankName} onChange={(e) => setBankName(e.target.value)} className={inputCls} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Délai paiement</label>
-                    <input type="number" min={0} max={90} value={paymentTermsDays} onChange={(e) => { setPaymentTermsDays(Number(e.target.value)); setFieldError('payment_terms_days') }} className={`${inputCls} tabular-nums`} />
-                    <FieldError field="payment_terms_days" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Pénalités (%)</label>
-                    <input type="number" min={0} max={100} step={0.01} value={latePenaltyRate} onChange={(e) => { setLatePenaltyRate(Number(e.target.value)); setFieldError('late_penalty_rate') }} className={`${inputCls} tabular-nums`} />
-                    <FieldError field="late_penalty_rate" />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Tribunal compétent</label>
-                  <input type="text" placeholder="Paris" value={courtCompetent} onChange={(e) => setCourtCompetent(e.target.value)} className={inputCls} />
-                  <p className="text-xs text-white/35">Tapez juste la ville, Atelier complètera la mention.</p>
-                </div>
-                <button type="button" onClick={() => { if (validatePaymentStep()) setStep(5) }} className="w-full py-3.5 rounded-pill bg-accent text-black font-bold text-sm hover:opacity-90 active:scale-[0.99] transition-all shadow-glow-accent flex items-center justify-center gap-2">Continuer<ArrowRight className="w-4 h-4" /></button>
-              </div>
-              <button onClick={() => setStep(3)} className="mt-4 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors">Retour</button>
-            </div>
-          )}
-
-          {/* ── STEP 5 : Invitations (owner) ── */}
-          {step === 5 && (
-            <div>
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
-                  <Users className="w-5 h-5 text-accent" />
-                </div>
+                <IconFrame><IconEquipe /></IconFrame>
                 <div>
                   <h2 className="text-xl font-bold font-display">Inviter votre équipe</h2>
                   <p className="text-xs text-white/40">Optionnel, vous pourrez le faire plus tard.</p>
@@ -881,7 +878,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
 
               {/* Code entreprise */}
               {joinCode && (
-                <div className="mb-6 p-4 rounded-2xl bg-white/[0.04] border border-white/[0.08]">
+                <div className="mb-6 p-4 rounded-2xl" style={ONBOARDING_STAT_CARD_STYLE}>
                   <p className="text-[11px] font-semibold tracking-widest uppercase text-white/35 mb-2">
                     Code entreprise
                   </p>
@@ -934,6 +931,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                 <input type="hidden" name="late_penalty_rate" value={latePenaltyRate} />
                 <input type="hidden" name="court_competent" value={courtCompetent} />
                 <input type="hidden" name="logo_url" value={logoUrl} />
+                <input type="hidden" name="einvoicing_intent" value={einvoicingWantsReception || einvoicingWantsEmission ? 'activate' : 'later'} />
 
                 {roles.length > 0 && (
                   <div className="space-y-3">
@@ -1001,7 +999,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
               </form>
 
               <button
-                onClick={() => setStep(4)}
+                onClick={() => setStep(3)}
                 className="mt-2 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors"
               >
                 Retour
@@ -1013,9 +1011,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
           {step === 'join' && (
             <div>
               <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
-                  <KeyRound className="w-5 h-5 text-accent" />
-                </div>
+                <IconFrame><IconCode /></IconFrame>
                 <div>
                   <h2 className="text-xl font-bold font-display">Rejoindre une entreprise</h2>
                   <p className="text-xs text-white/40">Saisissez le code fourni par votre responsable.</p>

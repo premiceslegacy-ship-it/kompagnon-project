@@ -14,8 +14,9 @@ type Payload = {
   source_instance: string
   organization_id: string
   app_url: string
-  action: 'oauth_started' | 'emission_toggled'
+  action: 'oauth_started' | 'emission_toggled' | 'reception_toggled'
   emission_enabled?: boolean
+  reception_enabled?: boolean
 }
 
 function isValidPayload(value: unknown): value is Payload {
@@ -25,8 +26,9 @@ function isValidPayload(value: unknown): value is Payload {
     typeof row.source_instance === 'string'
     && typeof row.organization_id === 'string'
     && typeof row.app_url === 'string'
-    && (row.action === 'oauth_started' || row.action === 'emission_toggled')
+    && (row.action === 'oauth_started' || row.action === 'emission_toggled' || row.action === 'reception_toggled')
     && (row.emission_enabled === undefined || typeof row.emission_enabled === 'boolean')
+    && (row.reception_enabled === undefined || typeof row.reception_enabled === 'boolean')
   )
 }
 
@@ -92,22 +94,47 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  // action === 'emission_toggled'
+  if (payload.action === 'emission_toggled') {
+    const { error: updateError } = await operator
+      .from('operator_client_subscriptions')
+      .update({ super_pdp_emission_enabled: payload.emission_enabled === true, updated_at: now })
+      .eq('source_instance', payload.source_instance)
+      .eq('organization_id', payload.organization_id)
+    if (updateError) {
+      console.error('[self-service/einvoicing-activate.emission]', updateError)
+      return NextResponse.json({ error: 'Unable to update emission setting' }, { status: 500 })
+    }
+
+    await recordOperatorClientEvent({
+      sourceInstance: payload.source_instance,
+      organizationId: payload.organization_id,
+      eventCategory: 'einvoicing',
+      eventType: payload.emission_enabled ? 'emission_enabled' : 'emission_disabled',
+      actorEmail: null,
+    })
+
+    return NextResponse.json({ ok: true })
+  }
+
+  // action === 'reception_toggled' -- desactivable par le client lui-meme (choix
+  // produit assume malgre l'obligation legale de reception), le cockpit reste tenu
+  // a jour en lecture pour que le polling (cron einvoicing-poll) et le suivi
+  // commercial reagissent au bon etat.
   const { error: updateError } = await operator
     .from('operator_client_subscriptions')
-    .update({ super_pdp_emission_enabled: payload.emission_enabled === true, updated_at: now })
+    .update({ super_pdp_reception_enabled: payload.reception_enabled === true, updated_at: now })
     .eq('source_instance', payload.source_instance)
     .eq('organization_id', payload.organization_id)
   if (updateError) {
-    console.error('[self-service/einvoicing-activate.emission]', updateError)
-    return NextResponse.json({ error: 'Unable to update emission setting' }, { status: 500 })
+    console.error('[self-service/einvoicing-activate.reception]', updateError)
+    return NextResponse.json({ error: 'Unable to update reception setting' }, { status: 500 })
   }
 
   await recordOperatorClientEvent({
     sourceInstance: payload.source_instance,
     organizationId: payload.organization_id,
     eventCategory: 'einvoicing',
-    eventType: payload.emission_enabled ? 'emission_enabled' : 'emission_disabled',
+    eventType: payload.reception_enabled ? 'reception_enabled' : 'reception_disabled',
     actorEmail: null,
   })
 

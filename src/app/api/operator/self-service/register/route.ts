@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyOperatorSignature } from '@/lib/operator'
 import { recordOperatorClientEvent } from '@/lib/operator/trial-lifecycle'
 import { sendAuthEmail } from '@/lib/email'
+import { buildAtelierNotificationEmail } from '@/lib/email/commercial'
 import { createOperatorAdminClient, isOperatorModeEnabled } from '@/lib/supabase/operator'
 import { isSellableTier, type SellableTier } from '@/lib/subscription-access'
 
@@ -115,11 +116,14 @@ export async function POST(req: NextRequest) {
       metadata: { signup_source: payload.signup_source ?? 'direct', preferred_tier: payload.preferred_tier },
     })
     const operatorEmail = process.env.OPERATOR_ALERT_EMAIL?.trim()
-    if (operatorEmail) await sendAuthEmail({
-      to: operatorEmail,
-      subject: `[Atelier] Nouvelle inscription — ${payload.company_name}`,
-      html: `<p><strong>${payload.company_name}</strong> vient de terminer son inscription.</p><p>Préférence : ${payload.preferred_tier}. Source : ${payload.signup_source ?? 'direct'}.</p>`,
-    })
+    if (operatorEmail) {
+      const notification = buildAtelierNotificationEmail({
+        subject: `[Atelier] Nouvelle inscription — ${payload.company_name}`,
+        title: 'Nouvelle inscription',
+        body: `${payload.company_name} vient de terminer son inscription. Préférence : ${payload.preferred_tier}. Source : ${payload.signup_source ?? 'direct'}.`,
+      })
+      await sendAuthEmail({ to: operatorEmail, subject: notification.subject, html: notification.html })
+    }
   }
 
   return NextResponse.json({ ok: true, idempotent: Boolean(existing) })

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { Resend } from 'resend'
+import { buildAtelierCommercialEmail } from '@/lib/email/commercial'
 import { getOperatorUser } from '@/lib/operator-auth'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -122,15 +123,6 @@ function monthStartDate(): string {
   return periodStart.toISOString().split('T')[0]
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-}
-
 function parseOptionalEmail(value: FormDataEntryValue | null): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim().toLowerCase()
@@ -168,25 +160,25 @@ async function sendOperatorCommercialEmail(input: {
 }) {
   const apiKey = process.env.RESEND_API_KEY?.trim()
   const fromAddress = process.env.RESEND_FROM_ADDRESS?.trim()
-  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Orsayn'
+  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Atelier BTP'
 
   if (!apiKey || !fromAddress) {
     return { status: 'skipped' as const, error: 'RESEND_API_KEY/RESEND_FROM_ADDRESS manquant' }
   }
 
   const resend = new Resend(apiKey)
-  const html = `
-    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
-      ${input.bodyLines.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}
-      <p style="margin-top:24px;color:#6b7280;font-size:13px">Orsayn</p>
-    </div>
-  `
+  const html = buildAtelierCommercialEmail({
+    subject: input.subject,
+    title: input.subject,
+    paragraphs: input.bodyLines,
+  }).html
 
   const { error } = await resend.emails.send({
     from: `${fromName} <${fromAddress}>`,
     to: input.to,
     subject: input.subject,
     html,
+    replyTo: process.env.RESEND_REPLY_TO_ADDRESS?.trim() || 'contact@orsayn.fr',
   })
 
   if (error) {
@@ -418,6 +410,7 @@ export async function activateOperatorTrial(formData: FormData) {
   const trialStartedAt = new Date().toISOString()
   const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString()
   const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance, requestedOrganizationId)
+  const trialTier = sourceInstance === 'atelier-app' ? 'pro' : 'expert'
 
   if (!organizationId) {
     throw new Error('organization_id introuvable pour cette instance — le client doit d\'abord avoir un appel IA synchronisé (ingest) ou être préconfiguré.')
@@ -435,7 +428,7 @@ export async function activateOperatorTrial(formData: FormData) {
       einvoicing_provider: subscription.einvoicingConfig.provider,
       einvoicing_environment: subscription.einvoicingConfig.environment,
       einvoicing_annuaire_status: subscription.einvoicingConfig.annuaire_status,
-      trial_tier: 'expert',
+      trial_tier: trialTier,
       trial_started_at: trialStartedAt,
       trial_ends_at: trialEndsAt,
       trial_converted: false,
@@ -446,12 +439,12 @@ export async function activateOperatorTrial(formData: FormData) {
 
   if (error) throw new Error(error.message)
 
-  await initializeQuotasForTier(sourceInstance, organizationId, 'expert')
+  await initializeQuotasForTier(sourceInstance, organizationId, trialTier)
   const syncResult = await syncClientQuotaConfig(
     sourceInstance,
     organizationId,
     appUrl,
-    'expert',
+    trialTier,
     subscription.overflowMode,
     subscription.aiBillingMode,
     subscription.einvoicingConfig,
@@ -463,7 +456,7 @@ export async function activateOperatorTrial(formData: FormData) {
     eventType: 'trial_started',
     actorEmail: user.email ?? null,
     metadata: {
-      trial_tier: 'expert',
+      trial_tier: trialTier,
       trial_days: trialDays,
       trial_ends_at: trialEndsAt,
       config_sync_status: syncResult.status,
@@ -577,6 +570,7 @@ export async function extendOperatorTrial(formData: FormData) {
     : Date.now()
   const trialEndsAt = new Date(baseTime + 7 * 24 * 60 * 60 * 1000).toISOString()
   const selfServiceTrial = subscription.accessStatus !== null
+  const trialTier = subscription.trialTier ?? (sourceInstance === 'atelier-app' ? 'pro' : 'expert')
   const { error } = await operator.from('operator_client_subscriptions').upsert({
     source_instance: sourceInstance,
     organization_id: organizationId,
@@ -587,7 +581,7 @@ export async function extendOperatorTrial(formData: FormData) {
     einvoicing_provider: subscription.einvoicingConfig.provider,
     einvoicing_environment: subscription.einvoicingConfig.environment,
     einvoicing_annuaire_status: subscription.einvoicingConfig.annuaire_status,
-    trial_tier: subscription.trialTier ?? 'expert',
+    trial_tier: trialTier,
     trial_ends_at: trialEndsAt,
     trial_converted: false,
     ...(selfServiceTrial ? { access_status: 'trialing', access_ends_at: trialEndsAt } : {}),
@@ -597,8 +591,8 @@ export async function extendOperatorTrial(formData: FormData) {
   }, { onConflict: 'source_instance,organization_id' })
   if (error) throw new Error(error.message)
 
-  await initializeQuotasForTier(sourceInstance, organizationId, 'expert')
-  const syncResult = await syncClientQuotaConfig(sourceInstance, organizationId, appUrl, 'expert', subscription.overflowMode, subscription.aiBillingMode, subscription.einvoicingConfig)
+  await initializeQuotasForTier(sourceInstance, organizationId, trialTier)
+  const syncResult = await syncClientQuotaConfig(sourceInstance, organizationId, appUrl, trialTier, subscription.overflowMode, subscription.aiBillingMode, subscription.einvoicingConfig)
   await recordOperatorClientEvent({
     sourceInstance,
     organizationId,
@@ -827,15 +821,12 @@ export async function sendOperatorEmail(formData: FormData) {
 
   const apiKey = process.env.RESEND_API_KEY?.trim()
   const fromAddress = process.env.RESEND_FROM_ADDRESS?.trim()
-  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Orsayn'
+  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Atelier BTP'
   if (!apiKey || !fromAddress) throw new Error('RESEND non configuré dans le cockpit')
 
   const resend = new Resend(apiKey)
   const bodyLines = bodyText.split('\n').filter(Boolean)
-  const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
-    ${bodyLines.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}
-    <p style="margin-top:24px;color:#6b7280;font-size:13px">Orsayn</p>
-  </div>`
+  const html = buildAtelierCommercialEmail({ subject, title: subject, paragraphs: bodyLines }).html
 
   const operator = createOperatorAdminClient()
   let sent = 0
@@ -843,7 +834,13 @@ export async function sendOperatorEmail(formData: FormData) {
 
   // Un envoi individuel par destinataire — chaque mail est "personnel"
   for (const to of recipientEmails) {
-    const { error } = await resend.emails.send({ from: `${fromName} <${fromAddress}>`, to, subject, html })
+    const { error } = await resend.emails.send({
+      from: `${fromName} <${fromAddress}>`,
+      to,
+      subject,
+      html,
+      replyTo: process.env.RESEND_REPLY_TO_ADDRESS?.trim() || 'contact@orsayn.fr',
+    })
     const deliveryStatus = error ? 'failed' : 'sent'
     if (error) failed++
     else sent++
@@ -923,18 +920,21 @@ export async function validateQuotaAlert(formData: FormData) {
   const bodyLines = (alert.body_text ?? '').split('\n').filter(Boolean)
   const apiKey = process.env.RESEND_API_KEY?.trim()
   const fromAddress = process.env.RESEND_FROM_ADDRESS?.trim()
-  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Orsayn'
+  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Atelier BTP'
 
   let deliveryStatus: 'sent' | 'failed' | 'skipped' = 'skipped'
   let deliveryError: string | null = null
 
   if (apiKey && fromAddress) {
     const resend = new Resend(apiKey)
-    const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
-      ${bodyLines.map((line: string) => `<p>${escapeHtml(line)}</p>`).join('')}
-      <p style="margin-top:24px;color:#6b7280;font-size:13px">Orsayn</p>
-    </div>`
-    const { error } = await resend.emails.send({ from: `${fromName} <${fromAddress}>`, to: recipientEmail, subject, html })
+    const html = buildAtelierCommercialEmail({ subject, title: subject, paragraphs: bodyLines }).html
+    const { error } = await resend.emails.send({
+      from: `${fromName} <${fromAddress}>`,
+      to: recipientEmail,
+      subject,
+      html,
+      replyTo: process.env.RESEND_REPLY_TO_ADDRESS?.trim() || 'contact@orsayn.fr',
+    })
     deliveryStatus = error ? 'failed' : 'sent'
     deliveryError = error?.message ?? null
   }

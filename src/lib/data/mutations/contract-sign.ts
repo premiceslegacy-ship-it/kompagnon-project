@@ -3,6 +3,8 @@
 import { headers } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email'
+import { renderOrganizationEmail } from '@/lib/email/organization'
+import { escHtml } from '@/lib/email/layout'
 import {
   CLAUSE_LABELS,
   CONTRACT_DISCLAIMER,
@@ -392,7 +394,7 @@ export async function sendQuoteDeclineMessage(input: SendQuoteDeclineMessageInpu
 
   const { data: org } = await admin
     .from('organizations')
-    .select('id, name, email')
+    .select('id, name, email, logo_url, primary_color, email_signature')
     .eq('id', contract.organization_id)
     .single()
 
@@ -403,19 +405,19 @@ export async function sendQuoteDeclineMessage(input: SendQuoteDeclineMessageInpu
   if (!message) return { error: 'Veuillez rédiger votre message.' }
 
   const subject = `Réponse de ${senderName} - contrat ${contract.title}`
-  const html = `
-    <div style="max-width:560px;margin:0 auto;font-family:sans-serif;color:#333">
-      <div style="background:#0a0a0a;padding:20px 28px;border-radius:10px 10px 0 0">
-        <p style="color:white;font-weight:bold;margin:0">Message reçu via le portail de signature</p>
-      </div>
-      <div style="background:white;padding:28px;border-radius:0 0 10px 10px;border:1px solid #eee;border-top:none;line-height:1.7;font-size:14px">
-        <p><strong>De :</strong> ${senderName}</p>
-        <p><strong>Contrat concerné :</strong> ${contract.title}</p>
-        <p style="margin-top:16px;padding:16px;background:#f5f5f5;border-radius:8px;white-space:pre-line">${message}</p>
-        <p style="font-size:12px;color:#888;margin-top:24px">Ce message a été envoyé depuis la page de signature du contrat.</p>
-      </div>
-    </div>
-  `
+  const html = renderOrganizationEmail({
+    subject,
+    orgName: org.name,
+    logoUrl: org.logo_url,
+    primaryColor: org.primary_color,
+    replyTo: org.email,
+    signature: org.email_signature,
+    bodyHtml: `<p style="font-size:12px;color:#6E6A62">Message reçu via le portail de signature</p>
+      <p><strong>De :</strong> ${escHtml(senderName)}</p>
+      <p><strong>Contrat concerné :</strong> ${escHtml(contract.title)}</p>
+      <p style="margin-top:16px;padding:16px;background:#F7F4EE;border:1px solid #D9D2C7;border-radius:8px;white-space:pre-line">${escHtml(message)}</p>`,
+    includeSignature: Boolean(org.email_signature),
+  })
 
   const mail = await sendEmail({
     organizationId: org.id,

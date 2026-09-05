@@ -9,18 +9,17 @@ import { APP_NAME } from '@/lib/brand';
 import { appIconPath } from '@/lib/pwa';
 import { getPublicRuntimeConfig } from '@/lib/supabase/config';
 
-import { Plus_Jakarta_Sans, Inter } from 'next/font/google';
 import localFont from 'next/font/local';
 
-const displayFont = Plus_Jakarta_Sans({
-    subsets: ['latin'],
-    weight: ['600', '700', '800'],
+const displayFont = localFont({
+    src: '../../public/fonts/geist-variable.woff2',
+    weight: '100 900',
     variable: '--font-jakarta'
 });
 
-const bodyFont = Inter({
-    subsets: ['latin'],
-    weight: ['400', '500'],
+const bodyFont = localFont({
+    src: '../../public/fonts/geist-variable.woff2',
+    weight: '100 900',
     variable: '--font-inter'
 });
 

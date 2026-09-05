@@ -11,6 +11,7 @@ import { getModulesForTier, getQuotaConfigForTier } from '@/lib/quota-catalog'
 import { DEFAULT_EINVOICING_CONFIG } from '@/lib/einvoicing-config'
 import { isSellableTier, type EntitlementSyncPayload, type SellableTier } from '@/lib/subscription-access'
 import { sendAuthEmail } from '@/lib/email'
+import { buildAtelierNotificationEmail, buildAtelierTrialStartedEmail } from '@/lib/email/commercial'
 
 type TrialRequest = {
   source_instance: string
@@ -45,9 +46,10 @@ function isValidRequest(value: unknown): value is TrialRequest {
 function entitlementFromSubscription(row: Record<string, unknown>): EntitlementSyncPayload {
   const status = typeof row.access_status === 'string' ? row.access_status : 'locked'
   const preferred = isSellableTier(row.preferred_tier) ? row.preferred_tier : 'pro'
+  const trialTier = isSellableTier(row.trial_tier) ? row.trial_tier : 'pro'
   return {
     access_status: status as EntitlementSyncPayload['access_status'],
-    effective_tier: status === 'trialing' ? 'expert' : (isSellableTier(row.tier) ? row.tier : 'setup_only'),
+    effective_tier: status === 'trialing' ? trialTier : (isSellableTier(row.tier) ? row.tier : 'setup_only'),
     preferred_tier: preferred,
     trial_started_at: typeof row.trial_started_at === 'string' ? row.trial_started_at : null,
     trial_ends_at: typeof row.trial_ends_at === 'string' ? row.trial_ends_at : null,
@@ -125,7 +127,7 @@ export async function POST(req: NextRequest) {
   if (existingClaim) {
     const { data: existingSubscription } = await operator
       .from('operator_client_subscriptions')
-      .select('tier, preferred_tier, access_status, trial_started_at, trial_ends_at, access_ends_at')
+      .select('tier, preferred_tier, access_status, trial_tier, trial_started_at, trial_ends_at, access_ends_at')
       .eq('source_instance', payload.source_instance)
       .eq('organization_id', payload.organization_id)
       .maybeSingle()
@@ -159,7 +161,7 @@ export async function POST(req: NextRequest) {
 
   const entitlement: EntitlementSyncPayload = {
     access_status: 'trialing',
-    effective_tier: 'expert',
+    effective_tier: 'pro',
     preferred_tier: payload.preferred_tier,
     trial_started_at: now.toISOString(),
     trial_ends_at: trialEnd.toISOString(),
@@ -173,7 +175,7 @@ export async function POST(req: NextRequest) {
       tier: 'setup_only',
       preferred_tier: payload.preferred_tier,
       access_status: 'trialing',
-      trial_tier: 'expert',
+      trial_tier: 'pro',
       trial_started_at: now.toISOString(),
       trial_ends_at: trialEnd.toISOString(),
       access_ends_at: trialEnd.toISOString(),
@@ -198,12 +200,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unable to start trial' }, { status: 500 })
   }
 
-  await initializeQuotasForTier(payload.source_instance, payload.organization_id, 'expert')
+  await initializeQuotasForTier(payload.source_instance, payload.organization_id, 'pro')
   const sync = await syncClientQuotaConfig(
     payload.source_instance,
     payload.organization_id,
     payload.app_url,
-    'expert',
+    'pro',
     'block',
     'orsayn_shared',
     DEFAULT_EINVOICING_CONFIG,
@@ -218,23 +220,29 @@ export async function POST(req: NextRequest) {
     metadata: { preferred_tier: payload.preferred_tier, trial_ends_at: trialEnd.toISOString(), sync_status: sync.status },
   })
   const appUrl = payload.app_url.replace(/\/$/, '')
+  const customerEmail = buildAtelierTrialStartedEmail({ appUrl, companyName: payload.company_name })
+  const operatorEmail = buildAtelierNotificationEmail({
+    subject: `[Atelier] Nouvel essai — ${payload.company_name}`,
+    title: 'Nouvel essai démarré',
+    body: `${payload.company_name} vient de démarrer un essai Pro de 14 jours. Préférence de conversion : ${payload.preferred_tier}. Source : ${payload.signup_source ?? 'direct'}.`,
+  })
   await Promise.allSettled([
     sendAuthEmail({
       to: email,
-      subject: 'Bienvenue dans Atelier — vos 14 jours Expert commencent maintenant',
-      html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto"><h1>Votre Atelier est prêt.</h1><p style="line-height:1.6">Pendant 14 jours, vous avez accès à la formule Expert : devis, factures, chantiers, marge et assistants métier.</p><p><a href="${appUrl}/dashboard" style="display:inline-block;background:#ff9f1c;color:#111;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:bold">Ouvrir Atelier</a></p><p style="color:#666;font-size:13px">Aucune carte n’a été demandée et aucun prélèvement ne sera lancé automatiquement à la fin.</p></div>`,
+      subject: customerEmail.subject,
+      html: customerEmail.html,
     }),
     ...(process.env.OPERATOR_ALERT_EMAIL ? [sendAuthEmail({
       to: process.env.OPERATOR_ALERT_EMAIL,
-      subject: `[Atelier] Nouvel essai — ${payload.company_name}`,
-      html: `<p><strong>${payload.company_name}</strong> vient de démarrer un essai Expert de 14 jours.</p><p>Préférence de conversion : ${payload.preferred_tier}. Source : ${payload.signup_source ?? 'direct'}.</p>`,
+      subject: operatorEmail.subject,
+      html: operatorEmail.html,
     })] : []),
   ])
 
   return NextResponse.json({
     ok: true,
     entitlement,
-    modules: getModulesForTier('expert'),
-    quota_config: getQuotaConfigForTier('expert'),
+    modules: getModulesForTier('pro'),
+    quota_config: getQuotaConfigForTier('pro'),
   })
 }

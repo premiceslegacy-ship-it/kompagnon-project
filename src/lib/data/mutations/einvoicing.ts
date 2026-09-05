@@ -17,10 +17,11 @@ import { createClient } from '@/lib/supabase/server'
 // donc un echec ici ne doit jamais bloquer l'action locale. Meme pattern que
 // postOperator() de src/lib/data/mutations/subscription-self-service.ts.
 async function notifyOperatorEinvoicingActivate(input: {
-  action: 'oauth_started' | 'emission_toggled'
+  action: 'oauth_started' | 'emission_toggled' | 'reception_toggled'
   organizationId: string
   sourceInstance: string
   emissionEnabled?: boolean
+  receptionEnabled?: boolean
 }): Promise<void> {
   const ingestUrl = process.env.OPERATOR_INGEST_URL?.trim()
   const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
@@ -33,6 +34,7 @@ async function notifyOperatorEinvoicingActivate(input: {
     app_url: process.env.NEXT_PUBLIC_APP_URL,
     action: input.action,
     ...(input.emissionEnabled !== undefined ? { emission_enabled: input.emissionEnabled } : {}),
+    ...(input.receptionEnabled !== undefined ? { reception_enabled: input.receptionEnabled } : {}),
   })
   const signature = signOperatorPayload(body, secret)
   await fetch(`${cockpitBase}/api/operator/self-service/einvoicing-activate`, {
@@ -106,9 +108,8 @@ export async function startEinvoicingOauth(): Promise<{ url: string } | { error:
   return { url: authorizeUrl }
 }
 
-// Emission facultative jusqu'au 01/09/2027 (obligation legale) : contrairement
-// a reception_enabled (active automatiquement des la connexion), le client
-// doit l'activer explicitement depuis ses parametres.
+// Emission facultative jusqu'au 01/09/2027 (obligation legale) : le client
+// l'active explicitement depuis ses parametres ou l'onboarding.
 export async function setEmissionEnabled(enabled: boolean): Promise<{ error: string | null }> {
   if (!(await hasPermission('einvoicing.configure'))) {
     return { error: 'Action non autorisée.' }
@@ -125,9 +126,10 @@ export async function setEmissionEnabled(enabled: boolean): Promise<{ error: str
   }
 
   const admin = createAdminClient()
+  const nowIso = new Date().toISOString()
   const { error } = await admin
     .from('organization_einvoicing_config')
-    .update({ super_pdp_emission_enabled: enabled, updated_at: new Date().toISOString() })
+    .update({ super_pdp_emission_enabled: enabled, emission_consent_at: nowIso, updated_at: nowIso })
     .eq('organization_id', organizationId)
   if (error) {
     console.error('[setEmissionEnabled] update', error)
@@ -145,6 +147,49 @@ export async function setEmissionEnabled(enabled: boolean): Promise<{ error: str
     sourceInstance: getOperatorSourceInstance(),
     emissionEnabled: enabled,
   }).catch((err) => console.error('[setEmissionEnabled] cockpit notify failed', err))
+
+  revalidatePath('/settings')
+  return { error: null }
+}
+
+// Reception obligatoire par la loi depuis le 01/09/2026, sans derogation possible --
+// le client garde neanmoins le controle total de ce reglage (choix produit assume face
+// a la mefiance actuelle envers les plateformes administratives). L'UI (EinvoicingTab)
+// doit faire confirmer explicitement toute desactivation, mais cette action ne bloque
+// jamais elle-meme la desactivation : le consentement est trace via reception_consent_at,
+// pas empeche techniquement. Voir docs/atelier-facturation-electronique.md.
+export async function setReceptionEnabled(enabled: boolean): Promise<{ error: string | null }> {
+  if (!(await hasPermission('einvoicing.configure'))) {
+    return { error: 'Action non autorisée.' }
+  }
+
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) {
+    return { error: 'Organisation introuvable.' }
+  }
+
+  const currentConfig = await getOrganizationEinvoicingConfig()
+  if (currentConfig.mode !== 'super_pdp' || currentConfig.oauth_status !== 'connected') {
+    return { error: 'Connectez d’abord votre compte Super PDP avant de configurer la réception.' }
+  }
+
+  const admin = createAdminClient()
+  const nowIso = new Date().toISOString()
+  const { error } = await admin
+    .from('organization_einvoicing_config')
+    .update({ super_pdp_reception_enabled: enabled, reception_consent_at: nowIso, updated_at: nowIso })
+    .eq('organization_id', organizationId)
+  if (error) {
+    console.error('[setReceptionEnabled] update', error)
+    return { error: 'Impossible de mettre à jour le réglage.' }
+  }
+
+  await notifyOperatorEinvoicingActivate({
+    action: 'reception_toggled',
+    organizationId,
+    sourceInstance: getOperatorSourceInstance(),
+    receptionEnabled: enabled,
+  }).catch((err) => console.error('[setReceptionEnabled] cockpit notify failed', err))
 
   revalidatePath('/settings')
   return { error: null }

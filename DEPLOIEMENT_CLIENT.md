@@ -46,8 +46,9 @@ Deux points à trancher explicitement avant d'ouvrir une instance à plusieurs o
 Ce document décrit le modèle **1 Supabase + 1 Worker + 1 domaine par client**. `atelier-app` (Worker Cloudflare, domaine `app.atelier-btp.fr`) déroge à ce modèle : c'est une instance **unique et partagée** portant potentiellement N organisations self-service, avec le même Supabase `pyxnmohknxmbpbcuvudg` que les autres environnements de test.
 
 Différences clés par rapport au protocole per-client ci-dessous :
-- `.env.client-atelier-app` (non versionné) suit le template `pro`, avec `SHARED_EMAIL_DOMAIN="orsayn.fr"` en plus — domaine de repli pour les emails métier (relances, factures) des organisations qui n'ont pas configuré leur propre `email_from_address`. Voir `src/lib/email/index.ts` (`sendEmail`) pour le mécanisme de fallback : le "From Name" reste toujours celui de l'organisation cliente, seule l'adresse technique est partagée.
-- KV namespaces dédiés (ne jamais réutiliser ceux du cockpit) : `NEXT_INC_CACHE_KV` et `NEXT_TAG_CACHE_KV_ATELIER_APP` — ids à reporter manuellement dans `wrangler.jsonc` avant `deploy-client.sh atelier-app`, puis restaurer les ids du cockpit juste après (le script ne swap que le `name`, pas les `kv_namespaces`).
+- `.env.client-atelier-app` (non versionné) suit le template `pro`, avec `SHARED_EMAIL_DOMAIN="atelier-btp.fr"` et `RESEND_REPLY_TO_ADDRESS="contact@orsayn.fr"` — domaine de repli pour les emails métier (relances, factures) des organisations qui n'ont pas configuré leur propre `email_from_address`. Voir `src/lib/email/index.ts` (`sendEmail`) pour le mécanisme de fallback : le nom affiché reste celui de l'organisation cliente, seule l'adresse technique est partagée.
+- Pour le support public, créer l'alias OVH `support@atelier-btp.fr → contact@orsayn.fr`. Le DNS peut rester géré dans Cloudflare, mais les MX racine actuels pointent vers OVH : ne pas activer Resend Inbound sur `atelier-btp.fr`.
+- KV namespaces dédiés (ne jamais réutiliser ceux du cockpit) : `NEXT_INC_CACHE_KV` et `NEXT_TAG_CACHE_KV_ATELIER_APP` — `deploy-client.sh atelier-app` swappe temporairement les ids dédiés puis restaure la configuration du cockpit.
 - Déploiement : `./scripts/deploy-client.sh atelier-app`, crons via `./scripts/deploy-cron-workers.sh atelier-app --env-file=.env.client-atelier-app`, Custom Domain `app.atelier-btp.fr` ajouté manuellement (Workers → atelier-app → Settings → Domains & Routes).
 - Suivi détaillé de la construction de cette instance : `docs/roadmap-saas-mutualise-2026-08.md` (étapes B0 à B5).
 
@@ -170,7 +171,7 @@ SERVICE_ROLE_KEY : eyJ...
 RESEND_API_KEY : re_...        ← laisser vide = clé Atelier partagée depuis .env.local
 Domaine : [ex: weber-tolerie.fr ou "aucun" → URL workers.dev]
 Nom affiché email : [ex: Weber Tôlerie]
-Adresse email expéditeur : [ex: contact@weber-tolerie.fr ou "noreply@atelier.orsayn.fr"]
+Adresse email expéditeur : [ex: contact@weber-tolerie.fr ou "slug@atelier-btp.fr"]
 CRON_SECRET : [laisser vide = Claude génère]
 Clé OpenRouter : Atelier (défaut) / Client (fournir sk-or-xxx)
   → Atelier : clé partagée depuis .env.local, Atelier porte le coût IA
@@ -1111,7 +1112,8 @@ cp .env.client-template .env.client-nomclient
 Remplir les `TODO` dans `.env.client-nomclient` :
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` — Supabase → Settings → API
 - `NEXT_PUBLIC_APP_URL` — URL du Worker (connue après T3, étape déploiement)
-- `RESEND_FROM_ADDRESS`, `RESEND_FROM_NAME` — email expéditeur du client
+- `RESEND_FROM_ADDRESS`, `RESEND_FROM_NAME` — email expéditeur du client (domaine vérifié pour une instance setup ; fallback `slug@atelier-btp.fr` en SaaS)
+- `RESEND_REPLY_TO_ADDRESS`, `SHARED_EMAIL_DOMAIN` — valeurs Atelier du template (`contact@orsayn.fr`, `atelier-btp.fr`)
 - `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET` — `openssl rand -hex 32` (même valeur pour les 3 ou valeurs distinctes)
 - Variables partagées (`OPERATOR_INGEST_SECRET`, `VAPID_*`, `OPENROUTER_API_KEY`, etc.) — déjà pré-remplies avec les valeurs Orsayn dans le template
 
@@ -1635,7 +1637,8 @@ OPERATOR_SUPABASE_URL=https://<operateur-ref>.supabase.co
 OPERATOR_SUPABASE_SERVICE_ROLE_KEY=eyJ...    ← service role du Supabase opérateur
 OPERATOR_USD_TO_EUR_RATE=0.92                ← taux fixe V1 pour marge et synthèse globale
 RESEND_API_KEY=re_...                        ← clé Resend Orsayn pour les emails commerciaux (relances, upgrades, essais)
-RESEND_FROM_ADDRESS=no-reply@orsayn.fr       ← expéditeur des emails cockpit
+RESEND_FROM_ADDRESS=support@atelier-btp.fr   ← expéditeur des emails cockpit
+RESEND_REPLY_TO_ADDRESS=contact@orsayn.fr    ← adresse de réponse Atelier
 
 # Variables Supabase standard (pour l'auth de la page /orsayn)
 SUPABASE_URL=https://<operateur-ref>.supabase.co
@@ -1973,7 +1976,7 @@ Déploiement Edge Function :
 
 Déploiement Worker Cloudflare : injecter la clé client à la place de la clé Atelier dans `OPENROUTER_API_KEY` du Worker — couvre aussi la transcription vocale de l'app. Pas de `MISTRAL_API_KEY` à poser sur le Worker.
 
-**Cas sans domaine custom :** le client utilise l'URL `atelier-nomclient.workers.dev`. T2 (Resend + domaine) disparaît. Les emails sortants (devis, factures, invitations) partent depuis `noreply@atelier.orsayn.fr` (Resend Atelier mutualisé) — à configurer en injectant les variables Resend Atelier dans le Worker du client.
+**Cas sans domaine custom :** le client utilise l'URL `atelier-nomclient.workers.dev`. T2 (Resend + domaine) disparaît. Les emails sortants (devis, factures, invitations) partent depuis `slug@atelier-btp.fr` (Resend Atelier mutualisé) — à configurer en injectant les variables Resend Atelier dans le Worker du client.
 
 **Suivi de consommation par client (mode A) :** chaque appel IA logge dans `usage_logs` avec `organization_id`. Tu peux requêter via le cockpit Orsayn ou directement :
 ```sql
@@ -2089,6 +2092,8 @@ n'a besoin d'une cohérence à la seconde près après une écriture.
 | `RESEND_API_KEY` | Compte Resend client | Non |
 | `RESEND_FROM_ADDRESS` | Email vérifié Resend (injecté en Edge Function sous `RESEND_FROM_EMAIL`) | Non |
 | `RESEND_FROM_NAME` | Nom affiché expéditeur | Non |
+| `RESEND_REPLY_TO_ADDRESS` | Adresse de réponse Atelier (`contact@orsayn.fr`) | Oui, Atelier |
+| `SHARED_EMAIL_DOMAIN` | Domaine fallback (`atelier-btp.fr`) pour l'offre SaaS mutualisée | Oui, SaaS |
 | `NEXT_PUBLIC_LEGAL_PUBLISHER_NAME` | Marque / éditeur public | Non |
 | `NEXT_PUBLIC_LEGAL_COMPANY_NAME` | Dénomination légale publique | Non |
 | `NEXT_PUBLIC_LEGAL_ADDRESS` | Adresse publique éditeur | Non |

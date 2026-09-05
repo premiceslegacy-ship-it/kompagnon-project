@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { CheckCircle2, AlertTriangle, Loader2, FileText } from 'lucide-react'
-import { startEinvoicingOauth, setEmissionEnabled } from '@/lib/data/mutations/einvoicing'
+import { CheckCircle2, AlertTriangle, Loader2, FileText, ShieldAlert } from 'lucide-react'
+import { startEinvoicingOauth, setEmissionEnabled, setReceptionEnabled } from '@/lib/data/mutations/einvoicing'
 import type { EinvoicingConfig } from '@/lib/einvoicing-config'
+import { Switch } from '@/components/ui/Switch'
+import { Modal } from '@/components/ui/Modal'
 
 type EinvoicingTabProps = {
   config: EinvoicingConfig
@@ -25,6 +27,9 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
   const [error, setError] = useState<string | null>(null)
   const [isEmissionPending, startEmissionTransition] = useTransition()
   const [emissionError, setEmissionError] = useState<string | null>(null)
+  const [isReceptionPending, startReceptionTransition] = useTransition()
+  const [receptionError, setReceptionError] = useState<string | null>(null)
+  const [showReceptionWarning, setShowReceptionWarning] = useState(false)
 
   const isConnected = config.oauth_status === 'connected'
   const hasIssue = config.oauth_status === 'error' || config.oauth_status === 'revoked'
@@ -47,6 +52,29 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
       const result = await setEmissionEnabled(next)
       if (result.error) setEmissionError(result.error)
     })
+  }
+
+  function applyReceptionChange(next: boolean) {
+    setReceptionError(null)
+    startReceptionTransition(async () => {
+      const result = await setReceptionEnabled(next)
+      if (result.error) setReceptionError(result.error)
+    })
+  }
+
+  function handleToggleReception(next: boolean) {
+    // La désactivation demande une confirmation explicite : la réception est
+    // obligatoire par la loi depuis le 01/09/2026, sans dérogation possible.
+    if (!next) {
+      setShowReceptionWarning(true)
+      return
+    }
+    applyReceptionChange(true)
+  }
+
+  function confirmDisableReception() {
+    setShowReceptionWarning(false)
+    applyReceptionChange(false)
   }
 
   return (
@@ -93,41 +121,62 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
         )}
 
         {canConfigure && !isConnected && (
-          <button
-            onClick={handleActivate}
-            disabled={isPending}
-            className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-black hover:opacity-90 disabled:opacity-50"
-          >
-            {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            Activer la facturation électronique
-          </button>
+          <div className="space-y-3">
+            {config.onboarding_intent === 'activate' && (
+              <p className="text-sm text-secondary">
+                Lors de votre inscription, vous aviez indiqué vouloir activer la facturation électronique dès que
+                possible — c'est le moment.
+              </p>
+            )}
+            <button
+              onClick={handleActivate}
+              disabled={isPending}
+              className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-black hover:opacity-90 disabled:opacity-50"
+            >
+              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Activer la facturation électronique
+            </button>
+          </div>
         )}
 
         {canConfigure && isConnected && (
           <div className="space-y-4">
-            <p className="text-sm text-secondary flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
-              {config.reception_enabled
-                ? 'Réception des factures fournisseurs activée automatiquement.'
-                : 'Réception des factures fournisseurs non activée.'}
-            </p>
             <div className="flex items-start gap-3 pt-2 border-t border-[var(--elevation-border)]">
-              <input
-                type="checkbox"
-                id="emission-toggle"
-                checked={config.emission_enabled}
-                disabled={isEmissionPending}
-                onChange={(e) => handleToggleEmission(e.target.checked)}
-                className="mt-1 disabled:opacity-50"
+              <Switch
+                checked={config.reception_enabled}
+                onChange={handleToggleReception}
+                disabled={isReceptionPending}
+                label="Recevoir mes factures fournisseurs via Super PDP"
               />
-              <label htmlFor="emission-toggle" className="text-sm text-secondary flex-1">
+              <div className="flex-1">
                 <span className="font-medium text-primary flex items-center gap-2">
-                  Transmettre mes factures émises via Super PDP
+                  Recevoir mes factures fournisseurs
+                  {isReceptionPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-secondary" />}
+                </span>
+                <p className="text-sm text-secondary mt-0.5">
+                  Obligatoire par la loi depuis le 1er septembre 2026, sans dérogation possible. Vous restez libre de
+                  désactiver ce réglage, mais cela ne vous dispense pas de l’obligation légale.
+                </p>
+              </div>
+            </div>
+            {receptionError && <p className="text-sm text-red-500">{receptionError}</p>}
+
+            <div className="flex items-start gap-3 pt-2 border-t border-[var(--elevation-border)]">
+              <Switch
+                checked={config.emission_enabled}
+                onChange={handleToggleEmission}
+                disabled={isEmissionPending}
+                label="Transmettre mes factures émises via Super PDP"
+              />
+              <div className="flex-1">
+                <span className="font-medium text-primary flex items-center gap-2">
+                  Transmettre mes factures émises
                   {isEmissionPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-secondary" />}
                 </span>
-                La réception est obligatoire dès le 1er septembre 2026. L’émission reste facultative jusqu’au
-                1er septembre 2027 — activez-la dès maintenant si vous souhaitez être prêt en avance.
-              </label>
+                <p className="text-sm text-secondary mt-0.5">
+                  Facultatif jusqu’au 1er septembre 2027 — activez-la dès maintenant si vous souhaitez être prêt en avance.
+                </p>
+              </div>
             </div>
             {emissionError && <p className="text-sm text-red-500">{emissionError}</p>}
           </div>
@@ -135,6 +184,39 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
 
         {error && <p className="text-sm text-red-500">{error}</p>}
       </section>
+
+      <Modal
+        open={showReceptionWarning}
+        onClose={() => setShowReceptionWarning(false)}
+        title="Désactiver la réception des factures ?"
+        size="sm"
+        footer={
+          <>
+            <button
+              onClick={() => setShowReceptionWarning(false)}
+              className="inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold text-primary hover:bg-black/5 dark:hover:bg-white/5"
+            >
+              Annuler
+            </button>
+            <button
+              onClick={confirmDisableReception}
+              className="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700"
+            >
+              Je confirme, désactiver quand même
+            </button>
+          </>
+        }
+      >
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="h-5 w-5 flex-shrink-0 text-red-600 dark:text-red-400 mt-0.5" />
+          <p className="text-sm text-secondary leading-relaxed">
+            La réception de factures électroniques est une obligation légale depuis le 1er septembre 2026, pour toutes
+            les entreprises, sans dérogation possible. La désactiver dans Atelier ne vous dispense pas de cette
+            obligation : en cas de manquement constaté, vous vous exposez à une mise en demeure puis à une amende de
+            500 €. Vous restez libre de ce choix, mais nous devons vous en informer avant de continuer.
+          </p>
+        </div>
+      </Modal>
     </div>
   )
 }

@@ -18,11 +18,21 @@ export type EinvoicingConfig = {
   oauth_status: EinvoicingOauthStatus
   oauth_connected_at: string | null
   super_pdp_connection_id: string | null
-  // Granularite emission/reception : pilotees uniquement par le cockpit (config-sync),
-  // jamais activables depuis l'instance cliente elle-meme. mode/oauth_status='connected'
-  // ne suffisent plus a autoriser une operation de facturation electronique.
+  // Granularite emission/reception : self-service cote client (Settings et onboarding),
+  // le cockpit garde la capacite d'ecrire ces flags directement pour intervenir sur un
+  // compte precis, mais n'est plus le chemin principal. mode/oauth_status='connected'
+  // ne suffisent pas a eux seuls a autoriser une operation de facturation electronique.
   emission_enabled: boolean
   reception_enabled: boolean
+  // Horodatage du dernier choix explicite du client sur chaque flag -- preuve de
+  // consentement eclaire, notamment pour la desactivation de la reception (obligatoire
+  // par la loi depuis le 01/09/2026, sans derogation possible).
+  emission_consent_at: string | null
+  reception_consent_at: string | null
+  // Intention exprimee a l'onboarding, avant toute connexion Super PDP (voir
+  // src/app/onboarding/actions.ts, saveEinvoicingOnboardingIntent). N'active rien par
+  // elle-meme -- sert uniquement a afficher un rappel cible dans les Settings.
+  onboarding_intent: 'activate' | 'later' | null
 }
 
 export const DEFAULT_EINVOICING_CONFIG: EinvoicingConfig = {
@@ -35,6 +45,9 @@ export const DEFAULT_EINVOICING_CONFIG: EinvoicingConfig = {
   super_pdp_connection_id: null,
   emission_enabled: false,
   reception_enabled: false,
+  emission_consent_at: null,
+  reception_consent_at: null,
+  onboarding_intent: null,
 }
 
 function isOneOf<T extends readonly string[]>(values: T, value: unknown): value is T[number] {
@@ -77,6 +90,13 @@ export function normalizeEinvoicingConfig(input: unknown): EinvoicingConfig {
     super_pdp_connection_id: mode === 'super_pdp' ? optionalString(source.super_pdp_connection_id) : null,
     emission_enabled: mode === 'super_pdp' && source.emission_enabled === true,
     reception_enabled: mode === 'super_pdp' && source.reception_enabled === true,
+    emission_consent_at: mode === 'super_pdp' ? optionalString(source.emission_consent_at) : null,
+    reception_consent_at: mode === 'super_pdp' ? optionalString(source.reception_consent_at) : null,
+    // Contrairement aux champs ci-dessus, reste lisible même hors mode 'super_pdp' :
+    // c'est une intention exprimée avant toute connexion.
+    onboarding_intent: source.onboarding_intent === 'activate' || source.onboarding_intent === 'later'
+      ? source.onboarding_intent
+      : null,
   }
 }
 

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
+import { isSelfServiceMode } from '@/lib/data/queries/subscription-access'
 
 /**
  * Sauvegarde les paramètres email de l'organisation.
@@ -19,10 +20,11 @@ export async function updateEmailSettings(formData: FormData): Promise<{ error: 
 
   const fromName = (formData.get('email_from_name') as string)?.trim() || null
   const fromAddress = (formData.get('email_from_address') as string)?.trim().toLowerCase() || null
+  const sharedSelfService = isSelfServiceMode()
 
   const { error } = await supabase
     .from('organizations')
-    .update({ email_from_name: fromName, email_from_address: fromAddress })
+    .update({ email_from_name: fromName, email_from_address: sharedSelfService ? null : fromAddress })
     .eq('id', organizationId)
 
   if (error) {

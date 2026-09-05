@@ -5,6 +5,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { defaultBrandedSenderName } from '@/lib/brand'
+import { organizationEmailBrand, renderEmailShell } from '@/lib/email/layout'
+import { resolveOrganizationFromAddress } from '@/lib/email/resolver'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,16 +37,15 @@ function resolveGreeting(client: {
 }
 
 function buildEmailHtml(opts: {
+  subject: string
   orgName: string
   contactEmail: string
   bodyHtml: string
   orgSignature: string | null
   greeting: string
+  logoUrl?: string | null
+  primaryColor?: string | null
 }): string {
-  const signatureHtml = opts.orgSignature
-    ? opts.orgSignature.replace(/\n/g, '<br>')
-    : `${opts.orgName}<br><a href="mailto:${opts.contactEmail}" style="color:#666">${opts.contactEmail}</a>`
-
   // Remplace la première ligne si c'est une formule de salutation générique ou un placeholder
   // Reconnaît : "Bonjour [Prénom]," / "Bonjour," / "Madame, Monsieur," et variantes
   const lines = opts.bodyHtml.split('\n')
@@ -54,24 +55,19 @@ function buildEmailHtml(opts: {
   }
   const bodyResolved = lines.join('\n').replace(/\n/g, '<br>')
 
-  return `<!DOCTYPE html>
-<html lang="fr">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:24px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;max-width:600px">
-        <tr><td style="padding:32px 40px 24px">
-          <div style="font-size:15px;color:#111;line-height:1.6">${bodyResolved}</div>
-        </td></tr>
-        <tr><td style="padding:24px 40px 32px;border-top:1px solid #eee">
-          <p style="margin:0;font-size:13px;color:#555;line-height:1.6">${signatureHtml}</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`
+  return renderEmailShell({
+    title: opts.subject,
+    headerName: opts.orgName,
+    bodyHtml: `<div style="color:#36332E;font-family:'Geist','Inter',Arial,sans-serif;font-size:15px;line-height:1.7;">${bodyResolved}</div>`,
+    brand: organizationEmailBrand({
+      name: opts.orgName,
+      logoUrl: opts.logoUrl,
+      primaryColor: opts.primaryColor,
+      signature: opts.orgSignature || `${opts.orgName}\n${opts.contactEmail}`,
+      replyTo: opts.contactEmail,
+    }),
+    includeSignature: true,
+  })
 }
 
 export async function POST(req: NextRequest) {
@@ -107,15 +103,19 @@ export async function POST(req: NextRequest) {
     // Récupérer l'organisation (nom + email expéditeur Resend + vrai email de contact + signature)
     const { data: org } = await admin
       .from('organizations')
-      .select('name, slug, email, email_from_name, email_from_address, email_signature')
+      .select('name, slug, email, logo_url, primary_color, email_from_name, email_from_address, email_signature')
       .eq('id', orgId)
       .single()
 
     // Instance mutualisée (SHARED_EMAIL_DOMAIN défini) : adresse technique générée
     // depuis le domaine partagé si l'organisation n'a pas configuré la sienne.
     const sharedDomain = process.env.SHARED_EMAIL_DOMAIN
-    const orgFromAddress =
-      org?.email_from_address || (org?.slug && sharedDomain ? `${org.slug}@${sharedDomain}` : null)
+    const orgFromAddress = resolveOrganizationFromAddress({
+      organizationAddress: org?.email_from_address,
+      slug: org?.slug,
+      sharedDomain,
+      deploymentAddress: process.env.RESEND_FROM_ADDRESS,
+    })
 
     if (!org || !orgFromAddress) {
       return NextResponse.json({
@@ -199,11 +199,14 @@ export async function POST(req: NextRequest) {
       const greeting = resolveGreeting(client)
 
       const html = buildEmailHtml({
+        subject: subject.trim(),
         orgName: org.name,
         contactEmail,
         bodyHtml,
         orgSignature: org.email_signature ?? null,
         greeting,
+        logoUrl: org.logo_url ?? null,
+        primaryColor: org.primary_color ?? null,
       })
 
       const { error: sendError } = await resend.emails.send({

@@ -19,6 +19,7 @@ import { createIndividualMember } from '@/lib/data/mutations/members'
 import { dateParis, todayParis } from '@/lib/utils'
 import { Resend } from 'resend'
 import { APP_SIGNATURE, defaultBrandedSenderName } from '@/lib/brand'
+import { renderOrganizationEmail } from '@/lib/email/organization'
 
 export type SarahActionRisk = 'low' | 'medium' | 'high'
 export type SarahActionStatus = 'pending' | 'executed' | 'dismissed' | 'expired' | 'failed'
@@ -309,28 +310,14 @@ function buildSarahEmailHtml(opts: {
   }
 
   const bodyHtml = textToHtml(lines.join('\n'))
-  const signatureHtml = opts.orgSignature
-    ? textToHtml(opts.orgSignature)
-    : `${textToHtml(opts.orgName)}<br><a href="mailto:${opts.contactEmail}" style="color:#666">${textToHtml(opts.contactEmail)}</a>`
-
-  return `<!DOCTYPE html>
-<html lang="fr">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:24px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;max-width:600px">
-        <tr><td style="padding:32px 40px 24px">
-          <div style="font-size:15px;color:#111;line-height:1.6">${bodyHtml}</div>
-        </td></tr>
-        <tr><td style="padding:24px 40px 32px;border-top:1px solid #eee">
-          <p style="margin:0;font-size:13px;color:#555;line-height:1.6">${signatureHtml}</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`
+  return renderOrganizationEmail({
+    subject: opts.orgName,
+    orgName: opts.orgName,
+    bodyHtml: `<p style="font-size:15px;line-height:1.7">${bodyHtml}</p>`,
+    replyTo: opts.contactEmail,
+    signature: opts.orgSignature || `${opts.orgName}\n${opts.contactEmail}`,
+    includeSignature: true,
+  })
 }
 
 function stringArray(value: unknown): string[] {

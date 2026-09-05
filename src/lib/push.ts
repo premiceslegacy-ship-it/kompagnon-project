@@ -19,7 +19,7 @@ function ensureVapidConfigured(): boolean {
   }
 
   webpush.setVapidDetails(
-    'mailto:' + (process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? 'contact@atelierbyorsayn.fr'),
+    'mailto:' + (process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? 'support@atelier-btp.fr'),
     publicKey,
     privateKey
   )

@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email'
+import { resolveOrganizationFromAddress } from '@/lib/email/resolver'
 import { buildPasswordResetOtpEmail } from '@/lib/email/templates'
 import { APP_SIGNATURE } from '@/lib/brand'
 
@@ -46,8 +47,12 @@ export async function forgotPassword(
 
   const org = membership?.organizations as { name?: string; slug?: string; email_from_address?: string } | null
   const sharedEmailDomain = process.env.SHARED_EMAIL_DOMAIN
-  const orgFromAddress =
-    org?.email_from_address || (org?.slug && sharedEmailDomain ? `${org.slug}@${sharedEmailDomain}` : null)
+  const orgFromAddress = resolveOrganizationFromAddress({
+    organizationAddress: org?.email_from_address,
+    slug: org?.slug,
+    sharedDomain: sharedEmailDomain,
+    deploymentAddress: process.env.RESEND_FROM_ADDRESS,
+  })
 
   // Si Resend configuré → générer OTP et envoyer via Resend
   if (orgFromAddress) {
