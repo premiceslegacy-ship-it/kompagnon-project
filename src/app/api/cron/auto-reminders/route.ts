@@ -9,6 +9,9 @@ import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
 import { getSupabaseRuntimeConfig } from '@/lib/supabase/config'
 import { verifyCronSecret } from '@/lib/cron-auth'
 import { renderInvoicePdfBufferById, renderQuotePdfBufferById } from '@/lib/pdf/server'
+import { renderOrganizationEmail } from '@/lib/email/organization'
+import { renderCTA, escHtml } from '@/lib/email/layout'
+import { resolveOrganizationFromAddress } from '@/lib/email/resolver'
 
 // ─── Sécurité ─────────────────────────────────────────────────────────────────
 // Appelé par Cloudflare Worker (ou cron-job.org) avec le header X-Cron-Secret
@@ -85,8 +88,12 @@ export async function POST(req: NextRequest) {
   const errors: string[] = []
 
   for (const org of orgs as Org[]) {
-    const fromAddress =
-      org.email_from_address || (org.slug && sharedEmailDomain ? `${org.slug}@${sharedEmailDomain}` : null)
+    const fromAddress = resolveOrganizationFromAddress({
+      organizationAddress: org.email_from_address,
+      slug: org.slug,
+      sharedDomain: sharedEmailDomain,
+      deploymentAddress: process.env.RESEND_FROM_ADDRESS,
+    })
     if (!fromAddress) continue
     const baseInvoiceDays = org.invoice_reminder_days ?? [3, 7]
     const invoiceDays = org.reminder_first_delay_days != null
@@ -136,7 +143,8 @@ export async function POST(req: NextRequest) {
             from: `${fromName} <${fromAddress}>`,
             to: item.clientEmail,
             subject,
-            html: wrapHtml(org.name, body.replace(/\n/g, '<br>'), signUrl),
+            html: wrapHtml(org.name, escHtml(body).replace(/\n/g, '<br>'), signUrl),
+            replyTo: org.email || process.env.RESEND_REPLY_TO_ADDRESS?.trim() || 'contact@orsayn.fr',
             ...(attachments?.length ? { attachments } : {}),
           })
           if (emailError) throw new Error(`Resend: ${emailError.message}`)
@@ -380,8 +388,8 @@ Objet: [sujet]
 
 function wrapHtml(orgName: string, bodyHtml: string, signUrl: string | null = null): string {
   const signatureCallToAction = signUrl
-    ? `<div style="margin-top:24px"><a href="${signUrl}" style="display:inline-block;background:#0a0a0a;color:white;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:600">Consulter et signer le devis</a><p style="margin:12px 0 0;color:#777;font-size:12px;word-break:break-all">Si le bouton ne fonctionne pas : <a href="${signUrl}" style="color:#555">${signUrl}</a></p></div>`
+    ? `${renderCTA('Consulter et signer le devis', signUrl)}<p style="margin:12px 0 0;color:#6E6A62;font-size:12px;word-break:break-all">Si le bouton ne fonctionne pas : <a href="${escHtml(signUrl)}" style="color:#080807">${escHtml(signUrl)}</a></p>`
     : ''
 
-  return `<div style="max-width:560px;margin:0 auto;font-family:sans-serif"><div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0"><p style="color:white;font-weight:bold;margin:0;font-size:16px">${orgName}</p></div><div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">${bodyHtml}${signatureCallToAction}</div></div>`
+  return renderOrganizationEmail({ subject: orgName, orgName, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}${signatureCallToAction}</div>` })
 }

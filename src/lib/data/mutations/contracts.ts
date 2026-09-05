@@ -6,6 +6,8 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { sendEmail } from '@/lib/email'
+import { renderOrganizationEmail } from '@/lib/email/organization'
+import { renderCTA } from '@/lib/email/layout'
 import { renderContractPdfBufferById, renderInvoicePdfBufferById, renderQuotePdfBufferById } from '@/lib/pdf/server'
 import {
   CLAUSE_LABELS,
@@ -584,30 +586,22 @@ export async function sendContract(
   const extrasParagraph = extraDocLabels.length > 0
     ? `<p>Vous trouverez également en pièce jointe : ${escHtml(extraDocLabels.join(', '))}.</p>`
     : ''
-  const signCta = signUrl
-    ? `
-        <div style="margin:24px 0;text-align:center">
-          <a href="${signUrl}" style="display:inline-block;background:#0a0a0a;color:#fff;padding:14px 28px;border-radius:10px;font-weight:bold;text-decoration:none;font-size:14px">Signer le contrat en ligne</a>
-        </div>
-        <p style="font-size:12px;color:#888">Vous pouvez aussi signer manuellement et nous renvoyer le PDF.</p>
-      `
-    : ''
-
-  const html = `
-    <div style="max-width:560px;margin:0 auto;font-family:sans-serif">
-      <div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0">
-        <p style="color:white;font-weight:bold;margin:0;font-size:16px">${escHtml(organization.name)}</p>
-      </div>
-      <div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">
-        <p>Bonjour ${escHtml(contract.counterparty_name)},</p>
-        <p>Veuillez trouver ci-joint : <strong>${escHtml(contract.title)}</strong>.</p>
-        ${extrasParagraph}
-        ${signCta}
-        <p>Pour toute question, vous pouvez répondre directement à cet e-mail.</p>
-        ${organization.email_signature ? `<p style="margin-top:24px;color:#555;white-space:pre-line">${escHtml(organization.email_signature)}</p>` : ''}
-      </div>
-    </div>
-  `
+  const signCta = signUrl ? renderCTA('Signer le contrat en ligne', signUrl) : ''
+  const html = renderOrganizationEmail({
+    subject,
+    orgName: organization.name,
+    logoUrl: organization.logo_url,
+    primaryColor: organization.primary_color,
+    replyTo: organization.email,
+    signature: organization.email_signature,
+    includeSignature: Boolean(organization.email_signature),
+    bodyHtml: `<p>Bonjour ${escHtml(contract.counterparty_name)},</p>
+      <p>Veuillez trouver ci-joint : <strong>${escHtml(contract.title)}</strong>.</p>
+      ${extrasParagraph}
+      ${signCta}
+      <p>Pour toute question, vous pouvez répondre directement à cet e-mail.</p>
+      <p style="font-size:12px;color:#6E6A62">Vous pouvez aussi signer manuellement et nous renvoyer le PDF.</p>`,
+  })
 
   const mail = await sendEmail({
     organizationId: orgId,

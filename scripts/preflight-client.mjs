@@ -28,6 +28,7 @@ const requiredWorkerEnv = [
   'NEXT_PUBLIC_APP_URL',
   'RESEND_API_KEY',
   'RESEND_FROM_ADDRESS',
+  'RESEND_REPLY_TO_ADDRESS',
   'CRON_SECRET',
   'MEMBER_SESSION_SECRET',
   'RATE_LIMIT_SECRET',
@@ -114,6 +115,12 @@ check(missingInDoc.length === 0, 'DEPLOIEMENT_CLIENT.md liste toutes les migrati
 
 for (const key of requiredWorkerEnv) {
   check(Boolean(env[key]), `${key} disponible localement`, `${key} absent localement (à vérifier dans Cloudflare Worker)`, failures, warnings, !strictEnv)
+}
+
+if (env.SELF_SERVICE_MODE === 'true' || env.OPERATOR_MODE === 'true') {
+  for (const key of ['STRIPE_SECRET_KEY', 'STRIPE_PRICE_PRO', 'STRIPE_PRICE_EXPERT']) {
+    check(Boolean(env[key]), `${key} disponible pour le self-service Stripe`, `${key} absent: checkout /activation incomplet`, failures, warnings, !strictEnv)
+  }
 }
 
 check(

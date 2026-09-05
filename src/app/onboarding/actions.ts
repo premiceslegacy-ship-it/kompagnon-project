@@ -79,6 +79,19 @@ function formString(formData: FormData, key: string): string {
   return ((formData.get(key) as string | null) ?? '').trim()
 }
 
+// N'active rien : sert juste à retenir si le client a exprimé le souhait d'activer
+// la facturation électronique dès que possible, pour lui en afficher le rappel dans
+// ses réglages. La vraie connexion Super PDP se fait uniquement depuis /settings — le
+// callback OAuth externe n'a pas de retour possible vers l'onboarding.
+async function saveEinvoicingOnboardingIntent(admin: ReturnType<typeof createAdminClient>, organizationId: string, formData: FormData) {
+  const intent = formString(formData, 'einvoicing_intent')
+  if (intent !== 'activate' && intent !== 'later') return
+  const { error } = await admin
+    .from('organization_einvoicing_config')
+    .upsert({ organization_id: organizationId, onboarding_intent: intent }, { onConflict: 'organization_id' })
+  if (error) console.error('[saveEinvoicingOnboardingIntent]', error)
+}
+
 function buildOrganizationUpdateFromForm(formData: FormData) {
   const companyName = formString(formData, 'company_name')
   const selection = resolveBusinessSelection({
@@ -221,6 +234,7 @@ export async function completeOnboarding(formData: FormData) {
 
   // Traiter les invitations (champs invite_email_0, invite_role_0, invite_email_1, …)
   const admin = createAdminClient()
+  await saveEinvoicingOnboardingIntent(admin, organizationId, formData)
   const eligiblePack = getEligibleVerticalPack(orgForm.selection.activity.id)
   await seedStarterPresetsIfNeeded({
     admin,
@@ -354,9 +368,11 @@ export async function skipInvites(formData: FormData) {
     redirect('/onboarding?error=org_update_failed')
   }
 
+  const skipAdmin = createAdminClient()
+  await saveEinvoicingOnboardingIntent(skipAdmin, organizationId, formData)
   const eligiblePack = getEligibleVerticalPack(orgForm.selection.activity.id)
   await seedStarterPresetsIfNeeded({
-    admin: createAdminClient(),
+    admin: skipAdmin,
     organizationId,
     createdBy: user.id,
     starterPresets: [...orgForm.selection.profileConfig.starterPresets, ...(eligiblePack?.starterPresets ?? [])],

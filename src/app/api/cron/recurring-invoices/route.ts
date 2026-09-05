@@ -10,6 +10,8 @@ import { APP_SIGNATURE } from '@/lib/brand'
 import { dateParis } from '@/lib/utils'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { renderInvoicePdf } from '@/lib/pdf/documents/invoice'
+import { renderOrganizationEmail } from '@/lib/email/organization'
+import { escHtml } from '@/lib/email/layout'
 
 // ─── POST /api/cron/recurring-invoices ────────────────────────────────────────
 // Appelé chaque matin par le Cloudflare Worker cron (x-cron-secret).
@@ -320,8 +322,8 @@ async function autoSendInvoice(
       return Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), template)
     }
     function wrapHtml(orgName: string, bodyText: string): string {
-      const bodyHtml = bodyText.replace(/\n/g, '<br>')
-      return `<div style="max-width:560px;margin:0 auto;font-family:sans-serif"><div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0"><p style="color:white;font-weight:bold;margin:0;font-size:16px">${orgName}</p></div><div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">${bodyHtml}</div></div>`
+      const bodyHtml = escHtml(bodyText).replace(/\n/g, '<br>')
+      return renderOrganizationEmail({ subject: orgName, orgName, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
     }
 
     const vars: Record<string, string> = {
@@ -404,8 +406,8 @@ async function notifyArtisan(
 
     const subject = `Facture récurrente à valider : ${data.invoiceTitle}`
     const bodyText = `Bonjour,\n\nUne facture récurrente a été préparée automatiquement et attend votre validation avant envoi.\n\nFacture : ${data.invoiceTitle}\nDate d'envoi prévue : ${fmtDate}\nMontant HT : ${fmtAmount}${autoSendNote}\n\nVous pouvez la vérifier ici :\n${appUrl}/finances/invoice-editor?id=${data.invoiceId}\n\nAu plaisir de vous simplifier le suivi,\n${APP_SIGNATURE}`
-    const bodyHtml = bodyText.replace(/\n/g, '<br>')
-    const html = `<div style="max-width:560px;margin:0 auto;font-family:sans-serif"><div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0"><p style="color:white;font-weight:bold;margin:0;font-size:16px">${org.name}</p></div><div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">${bodyHtml}</div></div>`
+    const bodyHtml = escHtml(bodyText).replace(/\n/g, '<br>')
+    const html = renderOrganizationEmail({ subject, orgName: org.name, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
 
     await sendEmail({
       organizationId: orgId,

@@ -6,6 +6,8 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { getQuoteById } from '@/lib/data/queries/quotes'
 import { sendEmail } from '@/lib/email'
+import { renderOrganizationEmail } from '@/lib/email/organization'
+import { escHtml } from '@/lib/email/layout'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { sendPushToOrg } from '@/lib/push'
 import { renderQuotePdf } from '@/lib/pdf/documents/quote'
@@ -22,8 +24,8 @@ function interpolate(template: string, vars: Record<string, string>): string {
 }
 
 function wrapHtml(orgName: string, bodyText: string): string {
-  const bodyHtml = bodyText.replace(/\n/g, '<br>')
-  return `<div style="max-width:560px;margin:0 auto;font-family:sans-serif"><div style="background:#0a0a0a;padding:24px 32px;border-radius:12px 12px 0 0"><p style="color:white;font-weight:bold;margin:0;font-size:16px">${orgName}</p></div><div style="background:white;padding:32px;border-radius:0 0 12px 12px;border:1px solid #eee;border-top:none;line-height:1.7;color:#333;font-size:14px">${bodyHtml}</div></div>`
+  const bodyHtml = escHtml(bodyText).replace(/\n/g, '<br>')
+  return renderOrganizationEmail({ subject: orgName, orgName, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
 }
 
 // ─── Envoyer une relance facture ───────────────────────────────────────────────

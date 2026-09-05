@@ -1,6 +1,7 @@
 import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { APP_SIGNATURE, defaultBrandedSenderName } from '@/lib/brand'
+import { resolveOrganizationFromAddress, resolveOrganizationReplyTo } from './resolver'
 
 /**
  * Envoie un email d'authentification (signup OTP, etc.) via Resend
@@ -8,17 +9,21 @@ import { APP_SIGNATURE, defaultBrandedSenderName } from '@/lib/brand'
  *
  * Prérequis :
  * - RESEND_API_KEY dans .env.local
- * - RESEND_FROM_ADDRESS dans .env.local (ex: noreply@entreprise.fr)
- * - RESEND_FROM_NAME dans .env.local (ex: Bâti Pro)
+ * - RESEND_FROM_ADDRESS dans .env.local (ex: support@atelier-btp.fr)
+ * - RESEND_FROM_NAME dans .env.local (ex: Atelier BTP)
  */
 export async function sendAuthEmail({
   to,
   subject,
   html,
+  text,
+  replyTo,
 }: {
   to: string
   subject: string
   html: string
+  text?: string
+  replyTo?: string | null
 }): Promise<{ error: string | null }> {
   const apiKey = process.env.RESEND_API_KEY
   const fromAddress = process.env.RESEND_FROM_ADDRESS
@@ -35,6 +40,10 @@ export async function sendAuthEmail({
     to,
     subject,
     html,
+    ...(text ? { text } : {}),
+    ...(replyTo || process.env.RESEND_REPLY_TO_ADDRESS
+      ? { replyTo: replyTo || process.env.RESEND_REPLY_TO_ADDRESS }
+      : {}),
   })
 
   if (error) {
@@ -57,12 +66,16 @@ export async function sendEmail({
   to,
   subject,
   html,
+  text,
+  replyTo,
   attachments,
 }: {
   organizationId: string
   to: string
   subject: string
   html: string
+  text?: string
+  replyTo?: string | null
   attachments?: Array<{ filename: string; content: Buffer }>
 }): Promise<{ error: string | null }> {
   const apiKey = process.env.RESEND_API_KEY
@@ -75,7 +88,7 @@ export async function sendEmail({
   const admin = createAdminClient()
   const { data: org } = await admin
     .from('organizations')
-    .select('name, slug, email_from_name, email_from_address')
+    .select('name, slug, email, email_from_name, email_from_address')
     .eq('id', organizationId)
     .single()
 
@@ -83,8 +96,12 @@ export async function sendEmail({
   // depuis le domaine partagé si l'organisation n'a pas configuré la sienne.
   // Absente sur les instances per-client, où l'adresse reste obligatoire.
   const sharedDomain = process.env.SHARED_EMAIL_DOMAIN
-  const fromAddress =
-    org?.email_from_address || (org?.slug && sharedDomain ? `${org.slug}@${sharedDomain}` : null)
+  const fromAddress = resolveOrganizationFromAddress({
+    organizationAddress: org?.email_from_address,
+    slug: org?.slug,
+    sharedDomain,
+    deploymentAddress: process.env.RESEND_FROM_ADDRESS,
+  })
 
   if (!org || !fromAddress) {
     return {
@@ -95,6 +112,11 @@ export async function sendEmail({
 
   const fromName = defaultBrandedSenderName(org.email_from_name || org.name || APP_SIGNATURE)
   const from = `${fromName} <${fromAddress}>`
+  const resolvedReplyTo = resolveOrganizationReplyTo({
+    explicitReplyTo: replyTo,
+    organizationEmail: org.email,
+    atelierReplyTo: process.env.RESEND_REPLY_TO_ADDRESS,
+  })
 
   const resend = new Resend(apiKey)
   const { error } = await resend.emails.send({
@@ -102,6 +124,8 @@ export async function sendEmail({
     to,
     subject,
     html,
+    ...(text ? { text } : {}),
+    ...(resolvedReplyTo ? { replyTo: resolvedReplyTo } : {}),
     ...(attachments?.length ? { attachments } : {}),
   })
 

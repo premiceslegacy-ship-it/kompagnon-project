@@ -4,6 +4,7 @@ import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { QUOTA_DEFINITIONS } from '@/lib/quota-catalog'
 import { verifyCronSecret } from '@/lib/cron-auth'
 import { expireTrialForInstance, TRIAL_DURATION_DAYS } from '@/lib/operator/trial-lifecycle'
+import { buildAtelierCommercialEmail } from '@/lib/email/commercial'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,22 +31,26 @@ async function collectPages<T>(fetchPage: (from: number, to: number) => PromiseL
   }
 }
 
-function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
 async function sendEmail(to: string, subject: string, bodyLines: string[]): Promise<{ status: 'sent' | 'failed' | 'skipped'; error: string | null }> {
   const apiKey = process.env.RESEND_API_KEY?.trim()
   const fromAddress = process.env.RESEND_FROM_ADDRESS?.trim()
-  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Orsayn'
+  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Atelier BTP'
   if (!apiKey || !fromAddress) return { status: 'skipped', error: 'RESEND non configuré' }
 
   const resend = new Resend(apiKey)
-  const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
-    ${bodyLines.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}
-    <p style="margin-top:24px;color:#6b7280;font-size:13px">Orsayn</p>
-  </div>`
-  const { error } = await resend.emails.send({ from: `${fromName} <${fromAddress}>`, to, subject, html })
+  const built = buildAtelierCommercialEmail({
+    subject,
+    eyebrow: 'Atelier BTP',
+    title: subject,
+    paragraphs: bodyLines,
+  })
+  const { error } = await resend.emails.send({
+    from: `${fromName} <${fromAddress}>`,
+    to,
+    subject,
+    html: built.html,
+    replyTo: process.env.RESEND_REPLY_TO_ADDRESS?.trim() || 'contact@orsayn.fr',
+  })
   if (error) return { status: 'failed', error: error.message }
   return { status: 'sent', error: null }
 }
@@ -63,12 +68,12 @@ export async function POST(req: NextRequest) {
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
 
   // ── 0. Expirer automatiquement les essais dépassés ────────────────────────────
-  // Un essai non converti garde ses droits Expert indéfiniment si personne ne clique
+  // Un essai non converti garde ses droits indéfiniment si personne ne clique
   // manuellement sur "Terminer essai" dans le cockpit — cette section ferme ce trou.
 
-  const expiredTrials = await collectPages<{ source_instance: string; organization_id: string }>((from, to) => operator
+  const expiredTrials = await collectPages<{ source_instance: string; organization_id: string; trial_tier: string | null }>((from, to) => operator
     .from('operator_client_subscriptions')
-    .select('source_instance, organization_id')
+    .select('source_instance, organization_id, trial_tier')
     .not('trial_tier', 'is', null)
     .not('trial_ends_at', 'is', null)
     .eq('trial_converted', false)
@@ -94,8 +99,9 @@ export async function POST(req: NextRequest) {
           .eq('source_instance', row.source_instance)
           .eq('organization_id', row.organization_id)
           .maybeSingle()
+        const trialLabel = row.trial_tier === 'expert' ? 'Expert' : 'Pro'
         if (setting?.contact_email) await sendEmail(setting.contact_email, 'Votre essai Atelier est terminé', [
-          `Vos ${TRIAL_DURATION_DAYS} jours Expert sont terminés. Aucun prélèvement n’a été effectué.`,
+          `Vos ${TRIAL_DURATION_DAYS} jours ${trialLabel} sont terminés. Aucun prélèvement n’a été effectué.`,
           `Votre espace vous attend : ${setting.app_url ?? ''}/activation`,
           'Choisissez Pro ou Expert pour reprendre là où vous vous êtes arrêté.',
         ])
@@ -112,9 +118,10 @@ export async function POST(req: NextRequest) {
     source_instance: string
     organization_id: string
     trial_ends_at: string
+    trial_tier: string | null
     trial_reminders_sent: string[] | null
   }>((from, to) => operator.from('operator_client_subscriptions')
-    .select('source_instance, organization_id, trial_ends_at, trial_reminders_sent')
+    .select('source_instance, organization_id, trial_ends_at, trial_tier, trial_reminders_sent')
     .not('trial_tier', 'is', null)
     .eq('trial_converted', false)
     .gt('trial_ends_at', now.toISOString())
@@ -130,8 +137,10 @@ export async function POST(req: NextRequest) {
       .eq('organization_id', trial.organization_id)
       .maybeSingle()
     if (!setting?.contact_email) continue
-    const sent = await sendEmail(setting.contact_email, `Plus que ${daysLeft} jour${daysLeft > 1 ? 's' : ''} d’Expert offert`, [
-      `Votre essai Expert se termine dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}.`,
+    const trialLabel = trial.trial_tier === 'expert' ? 'Expert' : 'Pro'
+    const trialOfferLabel = trialLabel === 'Expert' ? 'd’Expert' : 'de Pro'
+    const sent = await sendEmail(setting.contact_email, `Plus que ${daysLeft} jour${daysLeft > 1 ? 's' : ''} ${trialOfferLabel} offert`, [
+      `Votre essai ${trialLabel} se termine dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}.`,
       'Vos devis, vos chantiers et votre suivi de marge restent en place.',
       `Choisissez votre formule ici : ${setting.app_url ?? ''}/settings?tab=abonnement`,
     ])

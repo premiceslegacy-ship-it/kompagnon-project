@@ -12,7 +12,7 @@ function envValue(name: string): string | null {
 }
 
 export const LEGAL_CONTACT = {
-  supportEmail: envValue('NEXT_PUBLIC_SUPPORT_EMAIL') ?? 'contact@orsayn.fr',
+  supportEmail: envValue('NEXT_PUBLIC_SUPPORT_EMAIL') ?? 'support@atelier-btp.fr',
   privacyEmail:
     envValue('NEXT_PUBLIC_PRIVACY_EMAIL') ??
     envValue('NEXT_PUBLIC_SUPPORT_EMAIL') ??

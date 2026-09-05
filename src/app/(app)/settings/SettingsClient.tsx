@@ -241,7 +241,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     const [emailSaveStatus, setEmailSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [emailSettings, setEmailSettings] = useState({
         from_name: organization?.email_from_name ?? '',
-        from_address: organization?.email_from_address ?? '',
+        from_address: organization?.email_from_address ?? (selfService && organization?.slug ? `${organization.slug}@atelier-btp.fr` : ''),
     });
 
     // Logo upload
@@ -2001,6 +2001,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     <div>
                         <h2 className="text-2xl font-bold text-primary mb-1">Configuration email</h2>
                         <p className="text-sm text-secondary">Adresse utilisée pour l&apos;envoi des invitations et des emails métier (devis, factures, relances).</p>
+                        {selfService && <p className="mt-2 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-secondary">Votre espace SaaS utilise l&apos;adresse mutualisée affichée ci-dessous. Pour connecter un domaine personnalisé, contactez le support à <a className="text-accent underline" href="mailto:contact@orsayn.fr">contact@orsayn.fr</a>.</p>}
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="space-y-2">
@@ -2021,9 +2022,10 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 placeholder="contact@dupont-btp.fr"
                                 value={emailSettings.from_address}
                                 onChange={e => setEmailSettings({ ...emailSettings, from_address: e.target.value })}
+                                disabled={selfService}
                                 className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
                             />
-                            <p className="text-xs text-secondary">Doit être vérifiée sur votre compte <strong>Resend</strong>.</p>
+                            <p className="text-xs text-secondary">{selfService ? 'Adresse gérée par Atelier BTP, lecture seule.' : 'Doit être vérifiée sur votre compte Resend.'}</p>
                         </div>
                     </div>
                     <div className="p-4 rounded-2xl bg-accent/5 border border-accent/20 text-sm text-secondary leading-relaxed">

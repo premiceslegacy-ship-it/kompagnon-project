@@ -6,6 +6,7 @@ import { isOverflowMode } from '@/lib/quota-catalog'
 import { recordOperatorClientEvent, syncClientQuotaConfig } from '@/lib/operator/trial-lifecycle'
 import { isSellableTier, type EntitlementSyncPayload } from '@/lib/subscription-access'
 import { sendAuthEmail } from '@/lib/email'
+import { buildAtelierLifecycleEmail, buildAtelierNotificationEmail } from '@/lib/email/commercial'
 
 export const dynamic = 'force-dynamic'
 
@@ -112,16 +113,29 @@ export async function POST(req: NextRequest) {
     metadata: { reason, cancel_at: cancelAt.toISOString(), proration_behavior: 'create_prorations' },
   })
   const displayDate = cancelAt.toLocaleDateString('fr-FR')
+  const customerEmail = buildAtelierLifecycleEmail({
+    subject: 'Résiliation Atelier confirmée',
+    title: 'Votre résiliation est programmée.',
+    body: `Votre accès reste actif jusqu’au ${displayDate}. Stripe calculera la dernière période au prorata.`,
+    appUrl: settings.app_url,
+    ctaLabel: 'Gérer mon abonnement',
+    ctaPath: '/settings?tab=abonnement',
+  })
+  const operatorEmail = buildAtelierNotificationEmail({
+    subject: `[Cockpit Atelier] Résiliation programmée au ${displayDate}`,
+    title: 'Résiliation programmée',
+    body: `${sourceInstance} / ${organizationId}. Le motif est enregistré dans le cockpit.`,
+  })
   await Promise.allSettled([
     ...(settings.contact_email ? [sendAuthEmail({
       to: settings.contact_email,
-      subject: 'Résiliation Atelier confirmée',
-      html: `<p>Votre résiliation est programmée au <strong>${displayDate}</strong>.</p><p>Votre accès reste actif jusque-là. Stripe calculera la dernière période au prorata.</p>`,
+      subject: customerEmail.subject,
+      html: customerEmail.html,
     })] : []),
     ...(process.env.OPERATOR_ALERT_EMAIL ? [sendAuthEmail({
       to: process.env.OPERATOR_ALERT_EMAIL,
-      subject: `[Cockpit Atelier] Résiliation programmée au ${displayDate}`,
-      html: `<p>${sourceInstance} / ${organizationId}</p><p>Le motif est enregistré dans le cockpit.</p>`,
+      subject: operatorEmail.subject,
+      html: operatorEmail.html,
     })] : []),
   ])
   return NextResponse.json({ ok: true, cancel_at: cancelAt.toISOString() })

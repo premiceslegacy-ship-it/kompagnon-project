@@ -41,9 +41,9 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-2xl font-bold">Essai Expert de 14 jours</h2>
+        <h2 className="text-2xl font-bold">Essai Pro de 14 jours</h2>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
-          Une organisation éligible peut bénéficier une seule fois de 14 jours d&apos;accès Expert gratuit,
+          Une organisation éligible peut bénéficier une seule fois de 14 jours d&apos;accès Pro gratuit,
           après vérification de l&apos;email et renseignement du SIRET. Aucune carte bancaire n&apos;est demandée.
           À l&apos;expiration, aucun abonnement ni prélèvement n&apos;est déclenché automatiquement : l&apos;accès
           opérationnel est verrouillé jusqu&apos;au choix volontaire d&apos;une formule. L&apos;email et le SIRET

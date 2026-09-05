@@ -5,7 +5,7 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { sendEmail } from '@/lib/email'
-import { renderEmailShell, renderInfoBox, escHtml } from '@/lib/email/layout'
+import { renderEmailShell, renderInfoBox, escHtml, organizationEmailBrand } from '@/lib/email/layout'
 import { assertSafeExternalFetchUrl } from '@/lib/security'
 import { renderMaintenanceInterventionPdf, type MaintenanceReportPhoto } from '@/lib/pdf/documents/maintenance-intervention'
 
@@ -77,6 +77,9 @@ export async function sendMaintenanceInterventionReportEmail(
     date: formatDate(intervention.date_intervention),
     orgName: organization.name,
     orgEmail: organization.email ?? null,
+    logoUrl: organization.logo_url ?? null,
+    primaryColor: organization.primary_color ?? null,
+    signature: organization.email_signature ?? null,
   })
 
   const { error } = await sendEmail({
@@ -160,25 +163,30 @@ function buildEmailHtml(ctx: {
   date: string
   orgName: string
   orgEmail: string | null
+  logoUrl: string | null
+  primaryColor: string | null
+  signature: string | null
 }) {
   const contactLine = ctx.orgEmail
-    ? `<p style="margin:14px 0 0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;">Pour toute question, n'hésitez pas à nous contacter à <a href="mailto:${escHtml(ctx.orgEmail)}" style="color:#FF9F1C;">${escHtml(ctx.orgEmail)}</a>.</p>`
+    ? `<p style="margin:14px 0 0;font-size:13px;color:#6E6A62;line-height:1.5;font-family:'Geist','Inter',Arial,sans-serif;">Pour toute question, n'hésitez pas à nous contacter à <a href="mailto:${escHtml(ctx.orgEmail)}" style="color:#A95800;">${escHtml(ctx.orgEmail)}</a>.</p>`
     : ''
   const body = `
-<p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#A1A1AA;text-transform:uppercase;letter-spacing:0.8px;font-family:'Inter',sans-serif;">Rapport d'intervention</p>
-<h1 style="margin:0 0 12px;font-size:22px;font-weight:800;color:#FFFFFF;line-height:1.3;font-family:'Plus Jakarta Sans',sans-serif;">
+<p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#8F4600;text-transform:uppercase;letter-spacing:0.8px;font-family:'Geist','Inter',Arial,sans-serif;">Rapport d'intervention</p>
+<h1 style="margin:0 0 12px;font-size:22px;font-weight:800;color:#080807;line-height:1.3;font-family:'Geist','Inter',Arial,sans-serif;">
   Bonjour${ctx.recipientName ? ' ' + escHtml(ctx.recipientName) : ''},
 </h1>
-<p style="margin:0 0 24px;font-size:15px;color:#A1A1AA;line-height:1.6;font-family:'Inter',sans-serif;">
+<p style="margin:0 0 24px;font-size:15px;color:#6E6A62;line-height:1.6;font-family:'Geist','Inter',Arial,sans-serif;">
   Vous trouverez en pièce jointe le rapport de l'intervention réalisée le ${escHtml(ctx.date)}. Il reprend les travaux effectués, les observations éventuelles et les photos associées lorsqu'elles sont disponibles.
 </p>
 ${renderInfoBox([{ label: 'Contrat', value: escHtml(ctx.contractTitle), large: true }])}
-<p style="margin:0;font-size:13px;color:#555555;line-height:1.5;font-family:'Inter',sans-serif;">Le rapport complet est joint en PDF.</p>
+<p style="margin:0;font-size:13px;color:#6E6A62;line-height:1.5;font-family:'Geist','Inter',Arial,sans-serif;">Le rapport complet est joint en PDF.</p>
 ${contactLine}`
 
   return renderEmailShell({
     title: `Rapport d'intervention : ${ctx.contractTitle}`,
     headerName: ctx.orgName,
     bodyHtml: body,
+    brand: organizationEmailBrand({ name: ctx.orgName, logoUrl: ctx.logoUrl, primaryColor: ctx.primaryColor, signature: ctx.signature, replyTo: ctx.orgEmail }),
+    includeSignature: Boolean(ctx.signature),
   })
 }
