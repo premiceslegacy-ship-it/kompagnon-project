@@ -1451,9 +1451,9 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 </div>
 
                 {isOwner && (
-                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-4">
+                    <div id="sarah" className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-4 scroll-mt-24">
                         <div>
-                            <h2 className="text-xl font-bold text-primary mb-1">Assistant Sarah</h2>
+                            <h2 className="text-2xl font-bold text-primary mb-1">Assistant Sarah</h2>
                             <p className="text-sm text-secondary">Réglage de l&apos;autonomie de Sarah, réservé aux propriétaires du compte.</p>
                         </div>
                         <div className="flex items-center justify-between gap-4 pt-2 border-t border-[var(--elevation-border)]">
