@@ -2915,7 +2915,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
                 {manualDistributionMode && (
                   <div className="space-y-2 rounded-xl border border-accent/30 bg-accent/5 p-2.5">
                     <p className="text-[11px] font-semibold text-primary">
-                      Répartir {fmt(internalSaleToDistributeHt)} HT — poids par ligne (total : {distributionWeightSum.toFixed(1)} %)
+                      Répartir {fmt(internalSaleToDistributeHt)} HT, poids par ligne (total : {distributionWeightSum.toFixed(1)} %)
                     </p>
                     <div className="space-y-1.5 max-h-48 overflow-y-auto">
                       {sections.flatMap(section =>

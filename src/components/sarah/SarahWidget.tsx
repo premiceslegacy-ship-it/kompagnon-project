@@ -277,7 +277,7 @@ async function executeAction(action: ActionProposal): Promise<ActionResult> {
       }
     }
     if (lastNetworkError) {
-      return { message: "La connexion a été interrompue. Si l'action s'est terminée côté serveur, elle apparaîtra dans la liste — ne la relancez pas pour éviter un doublon." }
+      return { message: "La connexion a été interrompue. Si l'action s'est terminée côté serveur, elle apparaîtra dans la liste. Ne la relancez pas pour éviter un doublon." }
     }
     return { message: 'Impossible de confirmer cette action pour le moment.' }
   }
@@ -343,7 +343,7 @@ async function executeLegacyAction(action: ActionProposal): Promise<string> {
           created_at: new Date().toISOString(),
         }))
       }
-      return `Le brief a été transmis à Chloé. Ouvrez l'éditeur de devis — elle aura toutes les informations pour démarrer directement.`
+      return `Le brief a été transmis à Chloé. Ouvrez l'éditeur de devis, elle aura toutes les informations pour démarrer directement.`
     }
 
     case 'open_url':
@@ -809,7 +809,7 @@ function VoiceScreen({ onBack, pageCtx, pathname, userName, send }: {
         {isActive && (
           <p className="text-xs opacity-40 mt-1 tabular-nums">
             {formatTimer(elapsedSeconds)}
-            {remainingMinutes !== null && ` — ${remainingMinutes} min restantes`}
+            {remainingMinutes !== null && ` (${remainingMinutes} min restantes)`}
           </p>
         )}
         {!isActive && !error && (

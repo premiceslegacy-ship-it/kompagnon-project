@@ -90,7 +90,7 @@ export default function ReceptionTab({ chantier, reserves: initialReserves, canE
     : receptionStatus === 'avec_reserve'
     ? 'Réceptionnée avec réserves'
     : receptionStatus === 'reserve_levee'
-    ? 'Réserves levées — RG libérable'
+    ? 'Réserves levées, RG libérable'
     : null
 
   const statusColor = receptionStatus === 'sans_reserve' || receptionStatus === 'reserve_levee'
@@ -180,7 +180,7 @@ export default function ReceptionTab({ chantier, reserves: initialReserves, canE
         <div className="flex items-center justify-between bg-[var(--elevation-1)] border border-[var(--elevation-border)] rounded-xl px-4 py-3">
           <div>
             <p className="text-sm font-semibold text-primary">Décompte Général Définitif</p>
-            <p className="text-xs text-secondary mt-0.5">PDF récapitulatif — marché + avenants + situations + RG</p>
+            <p className="text-xs text-secondary mt-0.5">PDF récapitulatif : marché, avenants, situations et RG</p>
           </div>
           <a
             href={`/api/pdf/dgd/${chantier.id}`}
@@ -198,7 +198,7 @@ export default function ReceptionTab({ chantier, reserves: initialReserves, canE
       {(chantier.default_retention_pct ?? 0) > 0 && (
         <div className={`rounded-xl border px-4 py-3 space-y-1 ${receptionStatus === 'reserve_levee' || receptionStatus === 'sans_reserve' ? 'border-green-500/30 bg-green-500/5' : 'border-amber-500/30 bg-amber-500/5'}`}>
           <p className="text-xs font-semibold text-primary">
-            Retenue de garantie — {chantier.default_retention_pct}%
+            Retenue de garantie ({chantier.default_retention_pct}%)
           </p>
           <p className="text-xs text-secondary">
             {receptionStatus === 'reserve_levee' || receptionStatus === 'sans_reserve'

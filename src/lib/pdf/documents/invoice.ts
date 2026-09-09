@@ -97,7 +97,7 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
     line2Parts.join(' · '),
     insuranceLine,
     organization.certifications,
-    isReverseCharge ? 'Autoliquidation de la TVA — art. 283-2 nonies du CGI. La TVA est due par le preneur assujetti.' : null,
+    isReverseCharge ? 'Autoliquidation de la TVA (art. 283-2 nonies du CGI). La TVA est due par le preneur assujetti.' : null,
   ].filter((l): l is string => !!l && l.length > 0)
 
   const logoImg = organization.logo_url ? await embedImage(doc.doc, organization.logo_url) : null

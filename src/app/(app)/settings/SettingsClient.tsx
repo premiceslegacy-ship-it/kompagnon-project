@@ -192,7 +192,7 @@ function SecondaryActivitiesSelector({
     return (
         <div className="space-y-2">
             <p className="text-sm font-semibold text-primary">Vous faites aussi</p>
-            <p className="text-xs text-secondary">Optionnel — aide Sarah à mieux contextualiser vos devis sur vos autres activités.</p>
+            <p className="text-xs text-secondary">Optionnel. Aide Sarah à mieux contextualiser vos devis sur vos autres activités.</p>
             <div className="flex flex-wrap gap-2 pt-1">
                 {others.map((a) => {
                     const checked = selected.includes(a.id)

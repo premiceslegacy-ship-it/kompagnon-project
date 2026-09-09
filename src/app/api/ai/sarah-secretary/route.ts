@@ -72,7 +72,7 @@ const SARAH_TOOLS = [
     type: 'function',
     function: {
       name: 'search_catalog',
-      description: 'Rechercher des prestations, matériaux ou taux de main-d\'œuvre par nom, référence ou catégorie. Utiliser dès qu\'une question porte sur un prix, une référence catalogue, ou avant de proposer une ligne dans draft_quote/draft_invoice — le catalogue n\'est plus injecté en permanence dans le contexte.',
+      description: 'Rechercher des prestations, matériaux ou taux de main-d\'œuvre par nom, référence ou catégorie. Utiliser dès qu\'une question porte sur un prix, une référence catalogue, ou avant de proposer une ligne dans draft_quote/draft_invoice. Le catalogue n\'est plus injecté en permanence dans le contexte.',
       parameters: {
         type: 'object',
         properties: {
@@ -208,7 +208,7 @@ const SARAH_TOOLS = [
     type: 'function',
     function: {
       name: 'get_financial_summary',
-      description: 'Donner le chiffre facturé TTC, l\'encaissé, les devis en attente et le nombre de chantiers en cours sur un mois donné. Utiliser pour toute question sur le CA, la facturation, les encaissements ou le nombre de chantiers actifs — ce sont les mêmes chiffres que ceux affichés sur le tableau de bord.',
+      description: 'Donner le chiffre facturé TTC, l\'encaissé, les devis en attente et le nombre de chantiers en cours sur un mois donné. Utiliser pour toute question sur le CA, la facturation, les encaissements ou le nombre de chantiers actifs. Ce sont les mêmes chiffres que ceux affichés sur le tableau de bord.',
       parameters: {
         type: 'object',
         properties: {
@@ -352,7 +352,7 @@ async function executeSarahTool(
 
     const lines = clients.map(c => {
       const name = c.company_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ') ?? c.contact_name ?? c.email ?? '?'
-      return `[${c.id}] ${name}${c.email ? ` — ${c.email}` : ''}`
+      return `[${c.id}] ${name}${c.email ? ` (${c.email})` : ''}`
     })
     return `Clients trouvés :\n${lines.join('\n')}`
   }
@@ -1065,7 +1065,7 @@ Niveaux de risque des actions :
 - moyen : préparer une relance, modifier un planning, créer un brouillon de devis.
 - fort : envoyer au client, créer une facture, modifier un montant, supprimer.
 
-Format de réponse — JSON strict uniquement :
+Format de réponse : JSON strict uniquement :
 {
   "reply": "Ta réponse en français naturel",
   "action": null
@@ -1738,7 +1738,7 @@ export async function POST(req: NextRequest) {
           const full = [m.prenom, m.name].filter(Boolean).join(' ')
           return `${full}${m.role_label ? ` (${m.role_label})` : ''} [MEMBER:${m.id}]`
         }).join(', ')
-        contextLines.push(`  [EQUIPE:${eq.id}] ${eq.name}${membresStr ? ` — membres : ${membresStr}` : ''}`)
+        contextLines.push(`  [EQUIPE:${eq.id}] ${eq.name}${membresStr ? ` (membres : ${membresStr})` : ''}`)
       }
     }
     if (membresIndividuels?.length) {
@@ -1807,7 +1807,7 @@ export async function POST(req: NextRequest) {
       contextLines.push('', 'Vos dernières actions exécutées (validées par l\'utilisateur, à mentionner si on vous demande ce qui a été fait) :')
       for (const a of executedActions) {
         const when = a.executed_at ? String(a.executed_at).slice(0, 10) : '?'
-        contextLines.push(`  ${when} : ${a.title}${a.description && a.description !== a.title ? ` — ${shortText(a.description, 100)}` : ''}`)
+        contextLines.push(`  ${when} : ${a.title}${a.description && a.description !== a.title ? ` (${shortText(a.description, 100)})` : ''}`)
       }
     }
     const pendingActions = ((pendingActionsResult as any)?.data ?? []) as Array<{ type: string; title: string; created_at: string }>

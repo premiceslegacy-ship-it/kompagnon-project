@@ -13,7 +13,7 @@ import { renderDgdPdf, type DgdLine } from '@/lib/pdf/documents/dgd'
 
 function pdfOrigin(): string {
   const origin = process.env.NEXT_PUBLIC_APP_URL
-  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant — requis pour charger les polices PDF')
+  if (!origin) throw new Error('NEXT_PUBLIC_APP_URL manquant, requis pour charger les polices PDF')
   return origin
 }
 

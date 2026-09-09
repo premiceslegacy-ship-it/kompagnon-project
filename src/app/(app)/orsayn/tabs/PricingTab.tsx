@@ -25,7 +25,7 @@ export default function PricingTab({ featureUsageRows, modelUsageRows, pricingSi
     return (
       <section className="card px-8 py-10 text-center">
         <p className="text-sm text-secondary font-body">
-          Aucune donnée de pricing ou d&apos;usage IA pour le moment — ces sections s&apos;activeront avec les premiers usages IA et abonnements Stripe.
+          Aucune donnée de pricing ou d&apos;usage IA pour le moment. Ces sections s&apos;activeront avec les premiers usages IA et abonnements Stripe.
         </p>
       </section>
     )
