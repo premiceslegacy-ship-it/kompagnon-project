@@ -164,9 +164,23 @@ CREATE TABLE IF NOT EXISTS public.invoices (
 );
 
 -- FK croisée : quotes.invoice_id → invoices (dépendance circulaire résolue après création)
-ALTER TABLE public.quotes
-  ADD CONSTRAINT IF NOT EXISTS fk_quotes_invoice_id
-  FOREIGN KEY (invoice_id) REFERENCES public.invoices(id) ON DELETE SET NULL;
+-- PostgreSQL n'accepte pas ADD CONSTRAINT IF NOT EXISTS (contrairement à
+-- CREATE TABLE/INDEX IF NOT EXISTS) : bug découvert le 2026-09-09 en testant
+-- le provisioning (scripts/apply-schema.mjs) contre un Postgres vierge —
+-- cette ligne fait échouer toute application des migrations depuis zéro.
+-- Les instances existantes ne sont pas affectées : la contrainte y est déjà
+-- posée depuis leur premier provisioning. Bloc DO + vérification pg_constraint
+-- pour rester idempotent comme l'intention originale.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_quotes_invoice_id'
+  ) THEN
+    ALTER TABLE public.quotes
+      ADD CONSTRAINT fk_quotes_invoice_id
+      FOREIGN KEY (invoice_id) REFERENCES public.invoices(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 -- ----------------------------------------------------------
 -- invoice_items
