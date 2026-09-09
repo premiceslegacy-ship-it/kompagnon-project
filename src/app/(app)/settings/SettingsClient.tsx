@@ -16,6 +16,7 @@ import { updateMemberRole, removeMember, sendTeamInvite } from '@/lib/data/mutat
 import { saveRolePermissions } from '@/lib/data/mutations/roles';
 import { categoryLabel, permissionLabel } from '@/lib/permissions/labels';
 import { updateOrganization } from '@/lib/data/mutations/organization';
+import { deactivateCompanyMemory } from '@/lib/data/mutations/company-memory';
 import { updateEmailSettings } from '@/lib/data/mutations/email-settings';
 import { updateProfile, updatePassword } from '@/lib/data/mutations/profile';
 import { updatePublicFormSettings } from '@/lib/data/mutations/quote-requests';
@@ -120,6 +121,7 @@ type Props = {
     subscriptionAccessEndsAt: string | null;
     einvoicingConfig: EinvoicingConfig;
     canConfigureEinvoicing: boolean;
+    companyMemories: import('@/lib/data/queries/company-memory').CompanyMemoryRow[];
     oauthResult: 'success' | 'error' | null;
     oauthDetail: string | null;
 };
@@ -192,7 +194,7 @@ function SecondaryActivitiesSelector({
     return (
         <div className="space-y-2">
             <p className="text-sm font-semibold text-primary">Vous faites aussi</p>
-            <p className="text-xs text-secondary">Optionnel — aide Sarah à mieux contextualiser vos devis sur vos autres activités.</p>
+            <p className="text-xs text-secondary">Optionnel. Aide Sarah à mieux contextualiser vos devis sur vos autres activités.</p>
             <div className="flex flex-wrap gap-2 pt-1">
                 {others.map((a) => {
                     const checked = selected.includes(a.id)
@@ -215,7 +217,7 @@ function SecondaryActivitiesSelector({
     )
 }
 
-export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkPro, stripeLinkExpert, selfService, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt, einvoicingConfig, canConfigureEinvoicing, oauthResult, oauthDetail }: Props) {
+export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkPro, stripeLinkExpert, selfService, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt, einvoicingConfig, canConfigureEinvoicing, companyMemories, oauthResult, oauthDetail }: Props) {
     const router = useRouter()
     const webhookUrl = supabaseUrl
         ? `${supabaseUrl}/functions/v1/whatsapp-webhook`
@@ -382,6 +384,24 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         organization?.sarah_auto_low_risk ?? false,
     );
     const [sarahAutoLowRiskSaveStatus, setSarahAutoLowRiskSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+    // ─── Mémoire des assistants IA (consultation/purge, chantier 7 point 4) ──
+    const [memories, setMemories] = useState(companyMemories);
+    const [deletingMemoryId, setDeletingMemoryId] = useState<string | null>(null);
+
+    function handleDeleteMemory(memoryId: string) {
+        const previous = memories;
+        setDeletingMemoryId(memoryId);
+        setMemories(prev => prev.filter(m => m.id !== memoryId));
+        startTransition(async () => {
+            const result = await deactivateCompanyMemory(memoryId);
+            if (result.error) {
+                setMemories(previous);
+                alert(result.error);
+            }
+            setDeletingMemoryId(null);
+        });
+    }
 
     const [publicFormSettings, setPublicFormSettings] = useState({
         enabled: organization?.public_form_enabled ?? false,
@@ -1451,9 +1471,9 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 </div>
 
                 {isOwner && (
-                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-4">
+                    <div id="sarah" className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-4 scroll-mt-24">
                         <div>
-                            <h2 className="text-xl font-bold text-primary mb-1">Assistant Sarah</h2>
+                            <h2 className="text-2xl font-bold text-primary mb-1">Assistant Sarah</h2>
                             <p className="text-sm text-secondary">Réglage de l&apos;autonomie de Sarah, réservé aux propriétaires du compte.</p>
                         </div>
                         <div className="flex items-center justify-between gap-4 pt-2 border-t border-[var(--elevation-border)]">
@@ -2596,6 +2616,44 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             onClose={() => setShowExportComptableModal(false)}
                         />
                     )}
+
+                    {/* ── Mémoire des assistants IA (chantier 7 point 4) ────── */}
+                    <div className="rounded-3xl card p-8 space-y-6">
+                        <div>
+                            <h2 className="text-2xl font-bold text-primary mb-1">Mémoire de Sarah et Chloé</h2>
+                            <p className="text-sm text-secondary max-w-2xl">
+                                Les informations que vos assistants IA ont retenues au fil des conversations et des devis (préférences client, prix corrigés, habitudes). Vous pouvez en supprimer un élément à tout moment.
+                            </p>
+                        </div>
+
+                        {memories.length === 0 ? (
+                            <div className="rounded-2xl border border-[var(--elevation-border)] bg-base/60 dark:bg-white/5 p-5 text-sm text-secondary">
+                                Aucun élément mémorisé pour le moment.
+                            </div>
+                        ) : (
+                            <div className="rounded-2xl border border-[var(--elevation-border)] divide-y divide-[var(--elevation-border)] overflow-hidden max-h-[480px] overflow-y-auto">
+                                {memories.map(memory => (
+                                    <div key={memory.id} className="flex items-start justify-between gap-4 p-4">
+                                        <div className="min-w-0">
+                                            <span className="text-[11px] font-bold uppercase tracking-wider text-secondary">
+                                                {memory.type === 'chloe_price_correction' ? 'Prix corrigé' : memory.type === 'sarah_memory' ? 'Retenu par Sarah' : memory.type}
+                                            </span>
+                                            <p className="text-sm text-primary mt-1 break-words">{memory.content}</p>
+                                            <p className="text-xs text-secondary mt-1">{new Date(memory.created_at).toLocaleDateString('fr-FR')}</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteMemory(memory.id)}
+                                            disabled={deletingMemoryId === memory.id}
+                                            className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 flex-shrink-0 mt-0.5"
+                                        >
+                                            Supprimer
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
 
                     <div className="rounded-3xl card p-8 space-y-6">
                         <div>

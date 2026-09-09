@@ -33,7 +33,7 @@ const TIER_INFO: TierInfo[] = [
     highlight: 'Le plus choisi',
     features: [
       'Tous les outils de gestion, sans limites',
-      'Sarah — secrétaire métier IA (120 appels/mois)',
+      'Sarah, secrétaire métier IA (120 appels/mois)',
       'Sarah vocale ElevenLabs (60 min/mois)',
       'Planning IA illimité',
       'Catalogue IA, import documents illimité',
@@ -47,7 +47,7 @@ const TIER_INFO: TierInfo[] = [
     stripeEnvKey: 'NEXT_PUBLIC_STRIPE_LINK_EXPERT',
     features: [
       'Tout Pro, sans aucune limite',
-      'Sarah illimitée — texte et vocale (300 min/mois)',
+      'Sarah illimitée, texte et vocale (300 min/mois)',
       'Toutes les IA illimitées',
       'Support prioritaire',
     ],
@@ -66,11 +66,11 @@ const CURRENT_TIER_BENEFITS: Record<SubscriptionTier, string[]> = {
     'Sarah répond à vos questions métier à tout moment',
     'Sarah vocale gère vos urgences les mains dans le cambouis',
     'Tous les outils du quotidien sans compteur qui stresse',
-    '120 appels Sarah/mois — de quoi couvrir une semaine chargée chaque semaine',
+    '120 appels Sarah/mois, de quoi couvrir une semaine chargée chaque semaine',
   ],
   expert: [
     'Aucune limite sur Sarah, ni sur aucun autre outil IA',
-    'Sarah vocale 300 min/mois — 10 minutes par jour ouvré',
+    'Sarah vocale 300 min/mois, soit 10 minutes par jour ouvré',
     'La totalité de la plateforme déverrouillée, sans compromis',
     'Vous allez plus vite que vos concurrents, chaque jour',
   ],

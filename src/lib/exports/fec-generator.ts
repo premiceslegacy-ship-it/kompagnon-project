@@ -372,7 +372,7 @@ export function generateFec(input: GenerateFecInput): GenerateFecResult {
     !inv.is_vat_subject && inv.invoice_type !== 'avoir' && inv.total_ttc > 0,
   ).length
   if (autoLiqCount > 0) {
-    warnings.push(`${autoLiqCount} facture(s) sans TVA détectée(s) — vérifiez les cas d'auto-liquidation (sous-traitance BTP art. 283-2 nonies CGI) avec votre comptable.`)
+    warnings.push(`${autoLiqCount} facture(s) sans TVA détectée(s). Vérifiez les cas d'auto-liquidation (sous-traitance BTP, art. 283-2 nonies CGI) avec votre comptable.`)
   }
 
   const allLines: FecLine[] = []

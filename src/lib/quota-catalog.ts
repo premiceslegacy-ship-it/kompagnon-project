@@ -87,7 +87,7 @@ export const QUOTA_DEFINITIONS: Record<QuotaFeature, QuotaDefinition> = {
   quote_ai: { label: 'Analyse devis', unit: 'call', moduleKey: 'quote_ai', section: 'ia_base' },
   planning_ai: { label: 'Planning IA', unit: 'call', moduleKey: 'planning_ai', section: 'ia_base' },
   chantier_assistant: { label: 'Assistant chantier IA', unit: 'call', moduleKey: 'chantier_assistant', section: 'ia_base' },
-  sarah_assistant: { label: 'Sarah — secrétaire métier', unit: 'call', moduleKey: 'sarah_assistant', section: 'ia_base' },
+  sarah_assistant: { label: 'Sarah, secrétaire métier', unit: 'call', moduleKey: 'sarah_assistant', section: 'ia_base' },
   suggest_tasks: { label: 'Suggestions taches', unit: 'call', moduleKey: 'suggest_tasks', section: 'ia_base' },
   catalog_ai: { label: 'Catalogue IA', unit: 'call', moduleKey: 'catalog_ai', section: 'ia_base' },
   document_import_ai: { label: 'Import documents IA', unit: 'document', moduleKey: 'document_import_ai', section: 'ia_base' },

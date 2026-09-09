@@ -12,7 +12,7 @@ export default async function ClientsPage() {
     hasPermission('clients.delete'),
     hasPermission('import.clients'),
     hasPermission('reminders.send_manual'),
-    isModuleEnabled('relances_ai'),  // email-draft utilise le module relances_ai — Starter inclus
+    isModuleEnabled('relances_ai'),  // email-draft utilise le module relances_ai (Starter inclus)
     getOrganization(),
   ])
   return (

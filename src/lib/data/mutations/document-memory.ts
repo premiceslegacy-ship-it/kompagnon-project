@@ -222,3 +222,97 @@ export async function syncQuoteMemoryEntry(supabase: SupabaseClientLike, orgId: 
     console.error('[syncQuoteMemoryEntry]', error)
   }
 }
+
+// ─── Apprentissage prix Chloe (ecart proposition -> version envoyee) ───────────
+
+type LearningQuoteItem = {
+  designation: string | null
+  description: string | null
+  unit_price: number | null
+  ai_source: string | null
+  ai_suggested_unit_price: number | null
+}
+
+// Ecart minimum pour valoir une correction : evite de memoriser du bruit sur
+// de simples arrondis de centimes (ex: 45.00 -> 45.01 lors d'un recalcul).
+const MIN_PRICE_DELTA_RATIO = 0.03
+const MIN_PRICE_DELTA_ABS = 1
+
+function isSignificantCorrection(suggested: number, actual: number): boolean {
+  const delta = Math.abs(actual - suggested)
+  if (delta < MIN_PRICE_DELTA_ABS) return false
+  return delta / Math.max(suggested, 1) >= MIN_PRICE_DELTA_RATIO
+}
+
+/**
+ * A l'envoi d'un devis (sendQuote), compare le prix propose par Chloe a la
+ * creation (ai_suggested_unit_price, fige) au prix final retenu par
+ * l'artisan (unit_price, potentiellement modifie depuis). Chaque correction
+ * significative devient une entree company_memory que le RAG de Chloe
+ * (match_company_memory, sans filtre de type) reprend automatiquement au
+ * prochain devis similaire -- aucun changement necessaire cote lecture.
+ *
+ * Volontairement appele en tache de fond (void) depuis sendQuote : ne doit
+ * jamais ralentir l'envoi d'un devis percu par l'artisan. Best effort par
+ * conception, comme syncQuoteMemoryEntry juste au-dessus.
+ */
+export async function syncQuoteLearningEntry(supabase: SupabaseClientLike, orgId: string, quoteId: string) {
+  try {
+    const { data: items } = await supabase
+      .from('quote_items')
+      .select('designation, description, unit_price, ai_source, ai_suggested_unit_price')
+      .eq('quote_id', quoteId)
+      .not('ai_suggested_unit_price', 'is', null)
+
+    const corrections = ((items ?? []) as LearningQuoteItem[]).filter(item =>
+      item.unit_price != null
+      && item.ai_suggested_unit_price != null
+      && isSignificantCorrection(item.ai_suggested_unit_price, item.unit_price),
+    )
+
+    if (corrections.length === 0) return
+
+    const activityId = await getActivityId(supabase, orgId)
+
+    for (const item of corrections) {
+      const label = (item.designation ?? item.description)?.trim().slice(0, 120) || 'ligne sans designation'
+      const suggested = formatAmount(item.ai_suggested_unit_price)
+      const actual = formatAmount(item.unit_price)
+      const direction = Number(item.unit_price) > Number(item.ai_suggested_unit_price) ? 'augmente' : 'baisse'
+      const content = `Pour "${label}", Chloe avait propose ${suggested} EUR HT mais l'artisan a ${direction} a ${actual} EUR HT sur un devis envoye. Reutiliser ${actual} EUR HT en priorite sur ce type de ligne.`
+
+      // Anti-doublon simple : une correction quasi identique deja memorisee
+      // (meme debut de contenu) n'est pas reecrite a chaque nouveau devis.
+      const { data: existing } = await supabase
+        .from('company_memory')
+        .select('id')
+        .eq('organization_id', orgId)
+        .eq('type', 'chloe_price_correction')
+        .eq('is_active', true)
+        .ilike('content', `%${label.slice(0, 40)}%${direction}%`)
+        .limit(1)
+
+      if (existing?.length) continue
+
+      await supabase.from('company_memory').insert({
+        organization_id: orgId,
+        type: 'chloe_price_correction',
+        content,
+        source: 'ai_extracted',
+        confidence: 0.85,
+        is_active: true,
+        metadata: {
+          quote_id: quoteId,
+          label,
+          suggested_unit_price: item.ai_suggested_unit_price,
+          actual_unit_price: item.unit_price,
+          ...(activityId ? { activity_id: activityId } : {}),
+        },
+        embedding: null, // vectorise par le cron embeddings, comme les autres memoires
+      })
+    }
+  } catch (error) {
+    console.error('[syncQuoteLearningEntry]', error)
+  }
+}
+

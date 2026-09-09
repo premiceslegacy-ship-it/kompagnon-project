@@ -243,7 +243,7 @@ function ExpenseForm({
           {rentalCatalog.length > 0 ? (
             <div className="flex gap-2 flex-wrap">
               <select className="input input-sm flex-1 min-w-[180px]" value={form.rentalSubcategory} onChange={e => set('rentalSubcategory', e.target.value)}>
-                <option value="">— Sélectionner —</option>
+                <option value="">Sélectionner</option>
                 {rentalCatalog.map(it => <option key={it.slug} value={it.slug}>{it.label}</option>)}
                 <option value="autre">Autre…</option>
               </select>

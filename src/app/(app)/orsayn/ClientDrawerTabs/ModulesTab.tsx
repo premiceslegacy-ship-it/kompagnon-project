@@ -17,7 +17,7 @@ export default function ModulesTab({ row }: { row: ClientRow }) {
     return (
       <div className="card px-6 py-5">
         <p className="text-sm text-secondary font-body">
-          Cette ligne n&apos;a pas encore d&apos;organisation résolue — la configuration produit sera disponible dès le premier appel IA synchronisé (ingest).
+          Cette ligne n&apos;a pas encore d&apos;organisation résolue. La configuration produit sera disponible dès le premier appel IA synchronisé (ingest).
         </p>
       </div>
     )
@@ -86,7 +86,7 @@ export default function ModulesTab({ row }: { row: ClientRow }) {
             defaultChecked={row.hasMetalPricing}
             className="h-4 w-4 rounded border-[var(--elevation-border)] accent-accent"
           />
-          Actif — s&apos;active normalement seul (tier Pro+ et activité métal), ce toggle sert de filet manuel
+          Actif : s&apos;active normalement seul (tier Pro+ et activité métal), ce toggle sert de filet manuel
         </label>
         <button type="submit" className="btn-pill btn-pill-primary w-full text-sm">
           Appliquer

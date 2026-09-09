@@ -1,6 +1,7 @@
 'use server'
 
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 
 export type VerifyRecoveryState = { error: string | null }
@@ -28,5 +29,6 @@ export async function verifyRecoveryOtp(
   }
 
   // Session créée → rediriger vers la page de saisie du nouveau mot de passe
+  revalidatePath('/', 'layout')
   redirect('/reset-password')
 }

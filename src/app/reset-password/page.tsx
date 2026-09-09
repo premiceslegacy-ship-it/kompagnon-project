@@ -4,7 +4,7 @@ import { useFormState, useFormStatus } from 'react-dom'
 import { useState } from 'react'
 import { AlertCircle, ArrowRight, Loader2, Eye, EyeOff } from 'lucide-react'
 import { resetPassword, type ResetPasswordState } from './actions'
-import { BrandMonogram } from '@/components/brand/BrandMonogram'
+import { BrandWordmark } from '@/components/brand/BrandMonogram'
 import { LegalFooter } from '@/components/legal/LegalFooter'
 
 const initialState: ResetPasswordState = { error: null }
@@ -41,8 +41,8 @@ export default function ResetPasswordPage() {
 
       {/* Logo */}
       <div className="relative z-10 mb-10">
-        <div className="w-12 h-12 rounded-2xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center backdrop-blur-sm">
-          <BrandMonogram background="dark" className="w-8 h-8 object-contain" />
+        <div className="px-5 py-3.5 rounded-2xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center backdrop-blur-sm">
+          <BrandWordmark background="dark" className="h-6 object-contain" />
         </div>
       </div>
 

@@ -330,7 +330,7 @@ function ExpenseForm({
                 value={form.rentalSubcategory}
                 onChange={e => set('rentalSubcategory', e.target.value)}
               >
-                <option value="">— Sélectionner —</option>
+                <option value="">Sélectionner</option>
                 {rentalCatalog.map(it => (
                   <option key={it.slug} value={it.slug}>{it.label}</option>
                 ))}
@@ -973,7 +973,7 @@ export default function RentabiliteTab({
                 value={linkingInvoiceId}
                 onChange={e => setLinkingInvoiceId(e.target.value)}
               >
-                <option value="">— Choisir une facture —</option>
+                <option value="">Choisir une facture</option>
                 {availableToLink.map(inv => {
                   const label = [inv.number, inv.title].filter(Boolean).join(' - ') || inv.id
                   const amount = inv.total_ht != null ? ` · ${fmtMoney(inv.total_ht)}` : ''
@@ -1051,7 +1051,7 @@ export default function RentabiliteTab({
         <div className="flex items-center gap-2">
           <Users className="w-4 h-4 text-secondary" />
           <h3 className="text-sm font-semibold text-primary">Main-d&apos;œuvre</h3>
-          <span className="text-xs text-secondary">— le taux s&apos;applique à tous les chantiers du membre</span>
+          <span className="text-xs text-secondary">(le taux s&apos;applique à tous les chantiers du membre)</span>
         </div>
 
         {laborByMember.length === 0 ? (

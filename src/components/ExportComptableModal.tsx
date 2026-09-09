@@ -201,14 +201,14 @@ export default function ExportComptableModal({ isVatSubject, isMicro, tvaLabel, 
           {/* Régime détecté */}
           <div className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-4 py-3">
             <p className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1">Régime détecté</p>
-            <p className="text-sm text-zinc-900 dark:text-white font-medium">{tvaLabel}{nafCode ? ` — NAF ${nafCode}` : ''}</p>
+            <p className="text-sm text-zinc-900 dark:text-white font-medium">{tvaLabel}{nafCode ? ` (NAF ${nafCode})` : ''}</p>
           </div>
 
           {isMicro && (
             <div className="rounded-2xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 px-4 py-3 flex gap-3">
               <Info className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
               <p className="text-sm text-blue-700 dark:text-blue-300">
-                Micro-entrepreneur — export CSV uniquement (le FEC ne s’applique pas aux régimes micro, art. 50-0 CGI).
+                Micro-entrepreneur : export CSV uniquement (le FEC ne s’applique pas aux régimes micro, art. 50-0 CGI).
               </p>
             </div>
           )}
@@ -217,7 +217,7 @@ export default function ExportComptableModal({ isVatSubject, isMicro, tvaLabel, 
             <div className="rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-4 py-3 flex gap-3">
               <Info className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
               <p className="text-sm text-amber-700 dark:text-amber-300">
-                Organisation en franchise art. 293 B CGI — export sans TVA.
+                Organisation en franchise art. 293 B CGI : export sans TVA.
               </p>
             </div>
           )}

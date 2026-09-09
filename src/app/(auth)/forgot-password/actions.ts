@@ -29,11 +29,17 @@ export async function forgotPassword(
 
   const admin = createAdminClient()
 
-  // Chercher l'utilisateur (ne pas révéler s'il existe ou non)
-  const { data: userList } = await admin.auth.admin.listUsers()
-  const existingUser = userList?.users?.find(u => u.email === email)
+  // Chercher l'utilisateur par la table profiles (indexée sur email) plutôt
+  // que listUsers() : celui-ci pagine à 50 par défaut et un .find() en mémoire
+  // ne trouve jamais un utilisateur au-delà de la première page, sans erreur
+  // ni log — l'email n'est alors simplement jamais envoyé.
+  const { data: existingProfile } = await admin
+    .from('profiles')
+    .select('id')
+    .eq('email', email)
+    .maybeSingle()
 
-  if (!existingUser) {
+  if (!existingProfile) {
     return { error: null, success: true }
   }
 
@@ -41,7 +47,7 @@ export async function forgotPassword(
   const { data: membership } = await admin
     .from('memberships')
     .select('organization_id, organizations(name, slug, email_from_address)')
-    .eq('user_id', existingUser.id)
+    .eq('user_id', existingProfile.id)
     .eq('is_active', true)
     .single()
 

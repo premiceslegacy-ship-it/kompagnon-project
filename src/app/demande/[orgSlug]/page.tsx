@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { resolveCatalogContext, type ResolvedCatalogContext } from '@/lib/catalog-context'
 import type { MaterialDimensionSchema, MaterialPriceVariant } from '@/lib/catalog-pricing'
 import PublicFormClient from './PublicFormClient'
+import styles from './demande.module.css'
 
 export type PublicMaterial = {
   id: string
@@ -228,13 +229,13 @@ export default async function DemandePage({ params }: { params: { orgSlug: strin
 
   if (!org.public_form_enabled) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-8">
-        <div className="max-w-md text-center space-y-4">
+      <div className={styles.disabledShell}>
+        <div className={styles.disabledCard}>
           {org.logo_url && (
-            <img src={org.logo_url} alt={org.name} className="h-16 mx-auto object-contain" />
+            <img src={org.logo_url} alt={org.name} className={styles.disabledLogo} />
           )}
-          <h1 className="text-2xl font-bold text-gray-900">{org.name}</h1>
-          <p className="text-gray-500">Le formulaire de demande de devis est temporairement désactivé.</p>
+          <h1 className={styles.disabledTitle}>{org.name}</h1>
+          <p className={styles.disabledText}>Le formulaire de demande de devis est temporairement désactivé.</p>
         </div>
       </div>
     )

@@ -139,7 +139,7 @@ export default function TermsPage() {
           (article D.441-5 du Code de commerce).
         </p>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
-          Orsayn est entrepreneur individuel en franchise de TVA — article 293 B du CGI. La TVA
+          Orsayn est entrepreneur individuel en franchise de TVA (article 293 B du CGI). La TVA
           n&apos;est pas applicable aux factures émises à la date des présentes conditions.
         </p>
       </section>
@@ -158,7 +158,7 @@ export default function TermsPage() {
           L&apos;export des données et les pages légales restent accessibles depuis le hall d&apos;activation.
         </p>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
-          En cas de manquement grave — notamment non-paiement répété ou usage contraire à la loi —
+          En cas de manquement grave, notamment non-paiement répété ou usage contraire à la loi,
           Orsayn peut résilier le service après mise en demeure restée sans effet pendant 15 jours.
         </p>
       </section>
@@ -167,8 +167,8 @@ export default function TermsPage() {
         <h2 className="text-2xl font-bold">Responsabilité</h2>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
           Orsayn est soumis à une obligation de moyens dans la fourniture du service. Sa responsabilité
-          est limitée aux préjudices directs et prévisibles. Les dommages indirects — perte de
-          chiffre d&apos;affaires, manque à gagner, atteinte à l&apos;image — sont exclus.
+          est limitée aux préjudices directs et prévisibles. Les dommages indirects (perte de
+          chiffre d&apos;affaires, manque à gagner, atteinte à l&apos;image) sont exclus.
         </p>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
           La responsabilité totale d&apos;Orsayn est plafonnée au montant des sommes versées par le

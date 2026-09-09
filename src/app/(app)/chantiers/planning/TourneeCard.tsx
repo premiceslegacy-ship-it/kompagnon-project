@@ -164,7 +164,7 @@ export function TourneeCard({ slot, index, isFirst, members = [], onEdit, onDele
       date,
       hours,
       start_time: startTime,
-      description: `Tournée — ${slot.chantier_title}`,
+      description: `Tournée : ${slot.chantier_title}`,
     }
 
     let result: { error: string | null } = { error: null }
@@ -180,7 +180,7 @@ export function TourneeCard({ slot, index, isFirst, members = [], onEdit, onDele
       for (const member of presentMembers) {
         result = await createMemberPointageAdmin(slot.chantier_id, member.id, {
           ...pointagePayload,
-          description: `Tournée — ${slot.chantier_title} — ${member.fullName}`,
+          description: `Tournée : ${slot.chantier_title} (${member.fullName})`,
         })
         if (result.error) break
       }

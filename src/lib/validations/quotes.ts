@@ -74,6 +74,10 @@ export const UpsertQuoteItemSchema = z.object({
   ai_confidence: z.number().min(0).max(1).nullable().optional(),
   ai_source: z.enum(['catalog', 'recent_quote', 'memory', 'client_input', 'ai_estimate', 'document']).nullable().optional(),
   ai_warnings: z.array(z.string().max(300)).optional(),
+  // Prix suggere par Chloe a la creation IA, jamais reecrit par la suite
+  // (voir migration 183). N'est jamais fourni par l'editeur de devis lors
+  // d'une edition manuelle -- seul createQuoteFromAIResult le renseigne.
+  ai_suggested_unit_price: z.number().min(0).nullable().optional(),
   measurement_metadata: measurementMetadataSchema.nullable().optional(),
   vat_rate: z.number().min(0).max(100).optional(),
   position: z.number().int().min(0),

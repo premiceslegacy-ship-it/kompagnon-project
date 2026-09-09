@@ -74,7 +74,7 @@ export default function OverviewTab({
             {sharedAppUrlRows.length} organisation{sharedAppUrlRows.length > 1 ? 's' : ''} sans URL d&apos;app propre (instance mutualisée)
           </p>
           <p className="mt-1 text-xs text-secondary font-body">
-            Ces organisations partagent une même instance avec d&apos;autres clients — une seule URL d&apos;app suffit pour toutes.
+            Ces organisations partagent une même instance avec d&apos;autres clients : une seule URL d&apos;app suffit pour toutes.
             Renseignez <span className="font-mono">app_url</span> (même valeur) sur chacune, puis relancez &quot;Resync config&quot;.
           </p>
           <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
@@ -93,7 +93,7 @@ export default function OverviewTab({
             {missingOrgIdRows.length} instance{missingOrgIdRows.length > 1 ? 's' : ''} sans organisation résolue
           </p>
           <p className="mt-1 text-xs text-secondary font-body">
-            Le dernier changement de tier/module n&apos;a pas atteint l&apos;instance cliente — le client peut avoir payé sans que ses droits
+            Le dernier changement de tier/module n&apos;a pas atteint l&apos;instance cliente. Le client peut avoir payé sans que ses droits
             aient été mis à jour. Vérifier <span className="font-mono">organization_id</span> puis relancer &quot;Resync config&quot;.
           </p>
           <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
@@ -112,7 +112,7 @@ export default function OverviewTab({
             {neverAttemptedRows.length} organisation{neverAttemptedRows.length > 1 ? 's' : ''} préconfigurée{neverAttemptedRows.length > 1 ? 's' : ''}, jamais synchronisée{neverAttemptedRows.length > 1 ? 's' : ''}
           </p>
           <p className="mt-1 text-xs text-secondary font-body">
-            Créées via le formulaire de préconfiguration, aucune offre n&apos;a encore été appliquée ni de synchro tentée — ce n&apos;est pas un échec.
+            Créées via le formulaire de préconfiguration, aucune offre n&apos;a encore été appliquée ni de synchro tentée. Ce n&apos;est pas un échec.
             Ouvrir la fiche puis &quot;Appliquer l&apos;offre&quot; (onglet Offre) pour lancer la première synchro.
           </p>
           <ul className="mt-2 space-y-1 text-xs text-secondary font-body">
@@ -138,7 +138,7 @@ export default function OverviewTab({
             {technicalFailureRows.map((row) => (
               <li key={`${row.sourceInstance}:${row.organizationId}`}>
                 <span className="font-semibold text-primary">{row.label}</span> ({row.sourceInstance})
-                {row.configSyncError ? <span className="font-medium text-red-600"> — {row.configSyncError}</span> : ''}
+                {row.configSyncError ? <span className="font-medium text-red-600">, {row.configSyncError}</span> : ''}
               </li>
             ))}
           </ul>
@@ -151,7 +151,7 @@ export default function OverviewTab({
           <p className="mt-1 text-xs text-secondary">Une nouvelle livraison Stripe rejouera ces événements : les échecs ne sont plus marqués comme définitivement consommés.</p>
           <ul className="mt-2 space-y-1 text-xs text-secondary">
             {failedWebhookEvents.slice(0, 5).map((event) => (
-              <li key={event.source_id}><span className="font-mono">{event.event_type}</span> — {event.error_msg || 'erreur inconnue'}</li>
+              <li key={event.source_id}><span className="font-mono">{event.event_type}</span> : {event.error_msg || 'erreur inconnue'}</li>
             ))}
           </ul>
         </section>

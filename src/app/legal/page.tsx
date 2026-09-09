@@ -31,7 +31,7 @@ export default function LegalPage() {
             <br />
             {LEGAL_EDITOR.registration}
             <br />
-            TVA non applicable — article 293 B du CGI
+            TVA non applicable (article 293 B du CGI)
             <br />
             {LEGAL_EDITOR.phone ? <>Téléphone : {LEGAL_EDITOR.phone}<br /></> : null}
             Email : {legalContactLabel(LEGAL_CONTACT.legalEmail)}
@@ -47,7 +47,7 @@ export default function LegalPage() {
           <div>
             <p className="text-sm font-semibold text-slate-900 dark:text-white">Exécution applicative</p>
             <p className="mt-1 text-sm leading-6 text-slate-700 dark:text-zinc-300">
-              Cloudflare, Inc. — 101 Townsend St, San Francisco, CA 94107, USA
+              Cloudflare, Inc., 101 Townsend St, San Francisco, CA 94107, USA
               <br />
               <a
                 href="https://www.cloudflare.com"
@@ -62,7 +62,7 @@ export default function LegalPage() {
           <div>
             <p className="text-sm font-semibold text-slate-900 dark:text-white">Base de données et stockage</p>
             <p className="mt-1 text-sm leading-6 text-slate-700 dark:text-zinc-300">
-              Supabase, Inc. — 970 Toa Payoh North, Singapour (données stockées en région EU West — Frankfurt, Allemagne)
+              Supabase, Inc., 970 Toa Payoh North, Singapour (données stockées en région EU West, Frankfurt, Allemagne)
               <br />
               <a
                 href="https://supabase.com"

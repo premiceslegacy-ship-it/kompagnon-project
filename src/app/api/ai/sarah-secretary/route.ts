@@ -72,7 +72,7 @@ const SARAH_TOOLS = [
     type: 'function',
     function: {
       name: 'search_catalog',
-      description: 'Rechercher des prestations, matériaux ou taux de main-d\'œuvre par nom, référence ou catégorie. Utiliser dès qu\'une question porte sur un prix, une référence catalogue, ou avant de proposer une ligne dans draft_quote/draft_invoice — le catalogue n\'est plus injecté en permanence dans le contexte.',
+      description: 'Rechercher des prestations, matériaux ou taux de main-d\'œuvre par nom, référence ou catégorie. Utiliser dès qu\'une question porte sur un prix, une référence catalogue, ou avant de proposer une ligne dans draft_quote/draft_invoice. Le catalogue n\'est plus injecté en permanence dans le contexte.',
       parameters: {
         type: 'object',
         properties: {
@@ -208,7 +208,7 @@ const SARAH_TOOLS = [
     type: 'function',
     function: {
       name: 'get_financial_summary',
-      description: 'Donner le chiffre facturé TTC, l\'encaissé, les devis en attente et le nombre de chantiers en cours sur un mois donné. Utiliser pour toute question sur le CA, la facturation, les encaissements ou le nombre de chantiers actifs — ce sont les mêmes chiffres que ceux affichés sur le tableau de bord.',
+      description: 'Donner le chiffre facturé TTC, l\'encaissé, les devis en attente et le nombre de chantiers en cours sur un mois donné. Utiliser pour toute question sur le CA, la facturation, les encaissements ou le nombre de chantiers actifs. Ce sont les mêmes chiffres que ceux affichés sur le tableau de bord.',
       parameters: {
         type: 'object',
         properties: {
@@ -222,16 +222,23 @@ const SARAH_TOOLS = [
 
 // ─── Tool execution ───────────────────────────────────────────────────────────
 
+// Plafond par conversation : garde-fou contre le bruit/l'abus plutot qu'une
+// vraie limite technique. Aligne sur MAX_TOOL_ROUNDS (voir plus bas) : une
+// conversation peut legitimement contenir plusieurs faits distincts a
+// retenir (un prix negocie ET une preference client, par exemple), la
+// limite a 1 empechait ce cas courant.
+const MAX_MEMORY_SAVES_PER_CONVERSATION = 3
+
 async function executeSarahTool(
   name: string,
   args: Record<string, unknown>,
   orgId: string,
-  memorySavedThisConversation: { done: boolean },
+  memorySavedThisConversation: { count: number },
   conversationId: string | null,
 ): Promise<string> {
   if (name === 'save_memory') {
-    if (memorySavedThisConversation.done) {
-      return 'Mémoire déjà sauvegardée dans cette conversation. Je retiens l\'information pour la suite.'
+    if (memorySavedThisConversation.count >= MAX_MEMORY_SAVES_PER_CONVERSATION) {
+      return 'Nombre maximum de souvenirs enregistres pour cette conversation. Je retiens le reste pour la suite de l\'echange sans le memoriser durablement.'
     }
 
     const content = (args.content as string | undefined)?.trim()
@@ -241,7 +248,13 @@ async function executeSarahTool(
       return 'Contenu trop court pour être mémorisé.'
     }
 
-    // Vérifier doublon simple avant d'écrire (ilike sur content)
+    // Vérifier doublon simple avant d'écrire (ilike sur content). Filtre sur
+    // le meme conversationId + un debut de contenu proche : rattrape le cas
+    // ou le process a redemarre entre deux appels d'outils (le compteur en
+    // memoire ci-dessus repart alors a zero, la base garde la trace). Ne
+    // bloque plus toute nouvelle sauvegarde des qu'une premiere existe pour
+    // la conversation : plusieurs faits distincts par conversation sont
+    // desormais legitimes (voir MAX_MEMORY_SAVES_PER_CONVERSATION).
     const admin = createAdminClient()
     if (conversationId) {
       const { data: alreadySavedInConversation } = await admin
@@ -251,11 +264,11 @@ async function executeSarahTool(
         .eq('type', 'sarah_memory')
         .eq('metadata->>sarah_conversation_id', conversationId)
         .eq('is_active', true)
+        .ilike('content', `%${content.slice(0, 40)}%`)
         .limit(1)
 
       if (alreadySavedInConversation?.length) {
-        memorySavedThisConversation.done = true
-        return 'Mémoire déjà sauvegardée dans cette conversation. Je retiens l\'information pour la suite.'
+        return 'Cette information est déjà dans ma mémoire pour cette conversation.'
       }
     }
 
@@ -296,7 +309,7 @@ async function executeSarahTool(
       }
     }
 
-    memorySavedThisConversation.done = true
+    memorySavedThisConversation.count += 1
     return `Mémorisé : "${content}"`
   }
 
@@ -352,7 +365,7 @@ async function executeSarahTool(
 
     const lines = clients.map(c => {
       const name = c.company_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ') ?? c.contact_name ?? c.email ?? '?'
-      return `[${c.id}] ${name}${c.email ? ` — ${c.email}` : ''}`
+      return `[${c.id}] ${name}${c.email ? ` (${c.email})` : ''}`
     })
     return `Clients trouvés :\n${lines.join('\n')}`
   }
@@ -1065,7 +1078,7 @@ Niveaux de risque des actions :
 - moyen : préparer une relance, modifier un planning, créer un brouillon de devis.
 - fort : envoyer au client, créer une facture, modifier un montant, supprimer.
 
-Format de réponse — JSON strict uniquement :
+Format de réponse : JSON strict uniquement :
 {
   "reply": "Ta réponse en français naturel",
   "action": null
@@ -1210,6 +1223,79 @@ function sanitizeSarahAttachment(raw: unknown): SarahAttachment | null {
   return { name, mimeType, dataUrl }
 }
 
+// ─── Persistance serveur des tours de conversation ─────────────────────────────
+//
+// Historique jusqu'ici uniquement côté client (historyRef dans
+// SarahWidget.tsx), perdu à chaque nouveau montage du widget puisque
+// conversationId est un crypto.randomUUID() généré à l'ouverture. Ces deux
+// fonctions donnent à Sarah une mémoire des échanges récents de
+// l'organisation, indépendante du conversationId de la session en cours.
+
+/**
+ * Écrit le tour user + réponse Sarah après coup. Appelée en tâche de fond
+ * (void), jamais attendue : ne doit jamais retarder la réponse perçue par
+ * l'utilisateur, même pattern que syncUsageLogToOperator dans callAI.ts.
+ */
+async function persistConversationTurn(params: {
+  orgId: string
+  userId: string | null
+  conversationId: string | null
+  userMessage: string
+  reply: string
+}): Promise<void> {
+  if (!params.conversationId) return
+  try {
+    const admin = createAdminClient()
+    await admin.from('sarah_conversation_messages').insert([
+      {
+        organization_id: params.orgId,
+        user_id: params.userId,
+        conversation_id: params.conversationId,
+        role: 'user',
+        content: params.userMessage.slice(0, 8000),
+      },
+      {
+        organization_id: params.orgId,
+        user_id: params.userId,
+        conversation_id: params.conversationId,
+        role: 'sarah',
+        content: params.reply.slice(0, 8000),
+      },
+    ])
+  } catch (error) {
+    console.error('[persistConversationTurn]', error)
+  }
+}
+
+/**
+ * Recharge les derniers échanges de l'organisation (toutes conversations et
+ * tous utilisateurs confondus) au premier message d'une nouvelle session,
+ * pour que Sarah reste au courant de ce qui s'est dit récemment même quand
+ * le client redémarre avec un historique vide. Plafonné à 10 lignes, comme
+ * la troncature déjà appliquée à l'historique envoyé par le client.
+ */
+async function fetchRecentConversationContext(orgId: string): Promise<string> {
+  try {
+    const admin = createAdminClient()
+    const { data } = await admin
+      .from('sarah_conversation_messages')
+      .select('role, content, created_at')
+      .eq('organization_id', orgId)
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    if (!data?.length) return ''
+
+    const lines = [...data]
+      .reverse()
+      .map(row => `${row.role === 'user' ? 'Client' : 'Sarah'} : ${row.content}`)
+    return lines.join('\n')
+  } catch (error) {
+    console.error('[fetchRecentConversationContext]', error)
+    return ''
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { message, page, pathname, pageContext, history, conversationId: rawConversationId, attachment: rawAttachment } = await req.json()
@@ -1242,9 +1328,14 @@ export async function POST(req: NextRequest) {
 
     const isFirstMessage = !conversationHistory.some(h => h.role === 'user')
 
-    const [businessCtx, ragContext, dailyBriefResult, incomingBriefsResult, executedActionsResult, pendingActionsResult] = await Promise.all([
+    const [businessCtx, ragContext, recentConversationContext, dailyBriefResult, incomingBriefsResult, executedActionsResult, pendingActionsResult] = await Promise.all([
       getBusinessContext(orgId),
       fetchRAGContext(orgId, message, { limit: 4 }),
+      // Contexte récent persisté en base, uniquement au premier message : le
+      // client redémarre avec un historique vide à chaque ouverture du widget
+      // (conversationId change), Sarah reste néanmoins au courant de ce qui
+      // s'est dit récemment dans l'organisation (voir migration 184).
+      isFirstMessage ? fetchRecentConversationContext(orgId) : Promise.resolve(''),
       // Lire le brief du jour uniquement au premier message de la conversation
       isFirstMessage
         ? supabase
@@ -1577,6 +1668,10 @@ export async function POST(req: NextRequest) {
       contextLines.push('', 'Mémoire entreprise (extraits pertinents) :', ragContext)
     }
 
+    if (recentConversationContext) {
+      contextLines.push('', 'Échanges récents avec cette entreprise (autre session, pour continuité) :', recentConversationContext)
+    }
+
     if (todayPointages?.length || todayCompletedTasks?.length || todayNotes?.length || todayPhotos?.length) {
       contextLines.push('', `Réalisé aujourd'hui (${today}) :`)
 
@@ -1738,7 +1833,7 @@ export async function POST(req: NextRequest) {
           const full = [m.prenom, m.name].filter(Boolean).join(' ')
           return `${full}${m.role_label ? ` (${m.role_label})` : ''} [MEMBER:${m.id}]`
         }).join(', ')
-        contextLines.push(`  [EQUIPE:${eq.id}] ${eq.name}${membresStr ? ` — membres : ${membresStr}` : ''}`)
+        contextLines.push(`  [EQUIPE:${eq.id}] ${eq.name}${membresStr ? ` (membres : ${membresStr})` : ''}`)
       }
     }
     if (membresIndividuels?.length) {
@@ -1807,7 +1902,7 @@ export async function POST(req: NextRequest) {
       contextLines.push('', 'Vos dernières actions exécutées (validées par l\'utilisateur, à mentionner si on vous demande ce qui a été fait) :')
       for (const a of executedActions) {
         const when = a.executed_at ? String(a.executed_at).slice(0, 10) : '?'
-        contextLines.push(`  ${when} : ${a.title}${a.description && a.description !== a.title ? ` — ${shortText(a.description, 100)}` : ''}`)
+        contextLines.push(`  ${when} : ${a.title}${a.description && a.description !== a.title ? ` (${shortText(a.description, 100)})` : ''}`)
       }
     }
     const pendingActions = ((pendingActionsResult as any)?.data ?? []) as Array<{ type: string; title: string; created_at: string }>
@@ -1835,7 +1930,7 @@ export async function POST(req: NextRequest) {
     }
 
     const userContext = contextLines.join('\n')
-    const memorySavedThisConversation = { done: false }
+    const memorySavedThisConversation = { count: 0 }
 
     // Message utilisateur : texte seul, ou multimodal si une pièce jointe est fournie.
     const userMessageContent: string | Array<Record<string, unknown>> = attachment
@@ -1940,6 +2035,7 @@ export async function POST(req: NextRequest) {
       }
 
       await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed2, businessCtx.sarahAutoLowRisk)
+      void persistConversationTurn({ orgId, userId: user?.id ?? null, conversationId, userMessage: message, reply: parsed2.reply })
       return NextResponse.json(parsed2)
     }
 
@@ -1953,6 +2049,7 @@ export async function POST(req: NextRequest) {
     }
 
     await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed, businessCtx.sarahAutoLowRisk)
+    void persistConversationTurn({ orgId, userId: user?.id ?? null, conversationId, userMessage: message, reply: parsed.reply })
     return NextResponse.json(parsed)
   } catch (err) {
     if (err instanceof AIModuleDisabledError) {
