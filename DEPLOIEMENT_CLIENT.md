@@ -684,12 +684,40 @@ Pour la release actuelle, les migrations supplémentaires à appliquer chez les 
 - `167_nickel_lme_pricing.sql` — universelle (étend une contrainte CHECK), mais n'a d'effet que pour les clients avec `has_metal_pricing = true`
 - `168_metal_price_history.sql` — idem, universelle mais utile seulement si `has_metal_pricing = true`
 - `169_plan_measurements.sql` — universelle pour les instances utilisant le pré-métré IA
+- `170_cross_tenant_hardening.sql` — durcissement policies Storage `logos` + verrouillage `match_company_memory`, invisible en single-tenant mais **à pousser systématiquement** avant toute instance mutualisée
+- `171_fix_initialize_organization_for_user.sql` — **CRITIQUE : sans elle, tout signup échoue** (`initialize_organization_for_user` référençait des colonnes inexistantes)
+- `172_organization_entitlements.sql` — table d'entitlement locale pour le SaaS mutualisé ; les instances dédiées existantes restent en mode legacy, aucun effet
+- `173_super_pdp_einvoicing_config.sql`
+- `174_pa_provider_default_cleanup.sql`
+- `175_einvoicing_permission_label.sql`
+- `176_super_pdp_emission_reception.sql` — granularité emission/reception indépendante sur Super PDP, pilotée uniquement par le cockpit
+- `177_sarah_autonomy.sql` — réglage `organizations.sarah_auto_low_risk`, off par défaut, exécution automatique des actions Sarah à risque `low` uniquement
+- `178_auto_reminder_default_on.sql` — change seulement le `DEFAULT` pour les organisations créées après cette migration, n'affecte pas les clients existants
+- `179_einvoicing_consent_timestamps.sql`
+- `180_einvoicing_onboarding_intent.sql`
+- `181_company_memory_hnsw_index.sql` — index HNSW sur `subvector(embedding,1,4000)::halfvec(4000)`, voir §1.c ci-dessous pour le détail technique
+- `182_match_company_memory_use_hnsw.sql` — `match_company_memory` exploite l'index 181, signature et contrat inchangés côté appelant
+- `183_quote_items_ai_suggested_price.sql` — `quote_items.ai_suggested_unit_price`, alimente l'apprentissage prix de Chloé à l'envoi du devis
+- `184_sarah_conversation_messages.sql` — **nouvelle table + redéploiement app obligatoire** (voir note ci-dessous)
 
 **Correctifs sécurité — audit backend juillet 2026 (voir `docs/backend-audit-2026-07.md`) :**
 - `156_harden_identity_rls.sql` — bloque l'élévation de privilège via `memberships` (un membre ne peut plus se promouvoir owner/admin via le client anon). **À pousser sur chaque client.**
 - `157_security_definer_search_path.sql` — fixe `search_path` sur les 7 fonctions `SECURITY DEFINER` (dont `get_user_org_id`/`user_has_permission`, appelées dans toutes les policies). **À pousser sur chaque client.**
 - `158_invoice_immutability.sql` — rend les factures émises immuables (trigger) et restreint le DELETE physique aux brouillons. **À pousser sur chaque client.**
 - **Cockpit uniquement** : `supabase/operator-migrations/008_webhook_events.sql` — table d'idempotence des webhooks Stripe. À appliquer sur le **projet Supabase operator** (pas via `supabase db push` du projet client) : lier le projet operator puis pousser, ou l'exécuter dans le SQL editor du projet operator. Sans elle, le webhook Stripe fonctionne mais sans dédup (dégradation sûre, pas de crash).
+- **Cockpit uniquement** : `supabase/operator-migrations/016_restore_missing_unique_constraints.sql` (2026-09-09) — répare deux contraintes `UNIQUE` (`operator_clients_source_instance_org_unique`, `operator_usage_events_source_log_unique`) déclarées dès `001_operator_usage.sql` mais disparues de la base réelle du cockpit à une date non tracée (probablement autour du 8 août 2026). Sans elles, l'ingestion d'usage échoue en silence (`ON CONFLICT` sans contrainte associée, erreur Postgres `42P10` absorbée par le pattern best-effort) : coût IA à 0 € pour tous les clients dans `/orsayn`. Idempotente, à vérifier sur toute recréation du cockpit.
+
+Effets des migrations 170–184 :
+- `170` : policies Storage `logos` contraintes au chemin `${user.id}/logo.ext` (plus seulement au `bucket_id`) + verrouillage `match_company_memory` — invisible tant qu'une instance ne porte qu'une seule organisation, **obligatoire avant d'ouvrir une instance à plusieurs organisations**
+- `171` : corrige `initialize_organization_for_user` — **bloquante, à vérifier en priorité sur tout projet créé avant le 2026-08-08** : sans elle, la création de compte échoue avec `column owner_id of relation organizations does not exist`
+- `172` : `organization_entitlements` — n'a d'effet que sur l'instance SaaS mutualisée (`pyxnmohknxmbpbcuvudg`) ; les instances setup dédiées restent en mode legacy sans ligne
+- `173`–`176` : bascule complète de la facturation électronique vers Super PDP (remplace B2Brouter, jamais réellement implémenté), granularité emission/reception indépendante — voir `docs/atelier-facturation-electronique.md`
+- `177` : `organizations.sarah_auto_low_risk BOOLEAN DEFAULT false` — autonomie Sarah sur les actions à risque `low` uniquement, réglable par l'owner dans `/settings#sarah`
+- `178` : change le `DEFAULT` de `auto_reminder_enabled` à `true` pour les organisations créées après cette migration — n'affecte aucun client existant
+- `179`–`180` : horodatage du consentement client sur l'emission/reception Super PDP + intention exprimée à l'onboarding (affichage uniquement, n'active rien)
+- `181`–`182` : index HNSW sur `company_memory` (voir détail technique dans le fichier de migration : `subvector(embedding,1,4000)::halfvec(4000)`, contournement de la limite 4000 dims de `halfvec` face aux embeddings Qwen3 en 4096 dims) + `match_company_memory` mis à jour pour l'exploiter, pré-filtre puis reclassement exact — signature inchangée côté appelant (`src/lib/ai/rag.ts`)
+- `183` : `quote_items.ai_suggested_unit_price` — capture le prix initialement proposé par Chloé, comparé à l'envoi du devis pour détecter les corrections de l'artisan et alimenter `company_memory`
+- `184` : nouvelle table `sarah_conversation_messages` — persistance serveur des tours de conversation Sarah (jusqu'ici uniquement côté client). **Obligatoire avant d'utiliser** : la reprise de contexte entre sessions Sarah. **Redéployer l'app après migration** (`./scripts/deploy-client.sh atelier-<client>`) : la route `sarah-secretary` lit/écrit cette table à chaque échange
 
 Effets des migrations 152–166 :
 - `152` : `chantier_plannings.arrived_at` — pointage "Arrivée" persisté en base (remplace le localStorage), visible depuis n'importe quel appareil
@@ -2193,8 +2221,10 @@ Créer un cron-job.org gratuit → ping `https://<ref>.supabase.co/rest/v1/` tou
 
 ## ─── REGISTRE DES CLIENTS DÉPLOYÉS ─────────────────────────────────────────────
 
-> Mettre à jour à chaque nouveau client.
+> Mettre à jour à chaque nouveau client. Aucun client setup (per-client dédié) déployé à ce jour (2026-09-09) — seule l'instance SaaS mutualisée existe.
 
-| Client | Project Ref | Domaine | Déployé le | Migrations | WhatsApp | Fact. élec. |
-|--------|-------------|---------|------------|------------|---------|------------|
-| Weber Tôlerie (**démo**) | `pyxnmohknxmbpbcuvudg` | localhost | 2024 | 001→125 | ❌ | export_only |
+| Instance | Project Ref | Domaine | Rôle | Migrations à jour au | WhatsApp | Fact. élec. |
+|--------|-------------|---------|------|------------|---------|------------|
+| `atelier-app` (SaaS mutualisé Pro/Expert, porte aussi le compte démo Weber Tôlerie) | `pyxnmohknxmbpbcuvudg` | app.atelier-btp.fr | Worker unique, N organisations self-service | 184 (vérifié 2026-09-09) | ❌ | export_only |
+
+Client setup 3k (per-client dédié, 1 Supabase + 1 Worker par client) : aucune ligne pour l'instant, ce tableau grandit au premier déploiement via `DEPLOIEMENT_CLIENT.md` ci-dessus. Cockpit (`ghkacozmtvvmlbbwwnlp`) suivi séparément, pas dans ce registre.
