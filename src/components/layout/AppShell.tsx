@@ -93,6 +93,7 @@ export function AppShell({
           userName={profile?.full_name ?? null}
           alertCount={notifications.total}
           alerts={notifications}
+          isOwner={currentRoleSlug === 'owner'}
         />
       )}
     </>
