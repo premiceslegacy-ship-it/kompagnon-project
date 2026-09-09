@@ -110,7 +110,7 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
             <p className="text-sm text-secondary">
               Statut : <span className={isConnected ? 'text-emerald-600 dark:text-emerald-400 font-medium' : hasIssue ? 'text-red-600 dark:text-red-400 font-medium' : ''}>{STATUS_LABELS[config.oauth_status]}</span>
               {config.oauth_connected_at && isConnected && (
-                <> — depuis le {new Date(config.oauth_connected_at).toLocaleDateString('fr-FR')}</>
+                <> depuis le {new Date(config.oauth_connected_at).toLocaleDateString('fr-FR')}</>
               )}
             </p>
           </div>
@@ -125,7 +125,7 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
             {config.onboarding_intent === 'activate' && (
               <p className="text-sm text-secondary">
                 Lors de votre inscription, vous aviez indiqué vouloir activer la facturation électronique dès que
-                possible — c'est le moment.
+                possible. C'est le moment.
               </p>
             )}
             <button
@@ -174,7 +174,7 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
                   {isEmissionPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-secondary" />}
                 </span>
                 <p className="text-sm text-secondary mt-0.5">
-                  Facultatif jusqu’au 1er septembre 2027 — activez-la dès maintenant si vous souhaitez être prêt en avance.
+                  Facultatif jusqu’au 1er septembre 2027. Activez-la dès maintenant si vous souhaitez être prêt en avance.
                 </p>
               </div>
             </div>

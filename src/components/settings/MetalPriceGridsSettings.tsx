@@ -424,7 +424,7 @@ function ExcelImporter({ onImported }: { onImported: (count: number) => void }) 
           {preview.rows.length > 0 && (
             <div className="rounded-xl border border-[var(--elevation-border)] overflow-hidden">
               <div className="px-4 py-2.5 bg-[var(--elevation-1)]/40 border-b border-[var(--elevation-border)]">
-                <p className="text-xs font-semibold text-secondary">{preview.rows.length} grille{preview.rows.length > 1 ? 's' : ''} détectée{preview.rows.length > 1 ? 's' : ''} — vérifiez avant d&apos;importer</p>
+                <p className="text-xs font-semibold text-secondary">{preview.rows.length} grille{preview.rows.length > 1 ? 's' : ''} détectée{preview.rows.length > 1 ? 's' : ''}, vérifiez avant d&apos;importer</p>
               </div>
               <div className="divide-y divide-[var(--elevation-border)] max-h-56 overflow-y-auto">
                 {preview.rows.map((row, i) => (

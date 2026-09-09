@@ -8,6 +8,7 @@ import { resolveCatalogContext } from '@/lib/catalog-context'
 import { getWhatsAppConfig } from '@/lib/data/mutations/whatsapp'
 import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/membership'
 import { getOrganizationExports } from '@/lib/data/queries/organization-exports'
+import { getCompanyMemories } from '@/lib/data/queries/company-memory'
 import { getEmailTemplates } from '@/lib/data/queries/emailTemplates'
 import { getPublicRuntimeConfig } from '@/lib/supabase/config'
 import { getMetalPriceGrids } from '@/lib/data/mutations/metal-price-grids'
@@ -50,7 +51,7 @@ export default async function SettingsPage({
   const oauthResult = searchParams?.oauth === 'success' || searchParams?.oauth === 'error' ? searchParams.oauth : null
   const oauthDetail = searchParams?.oauth_detail ?? null
 
-  const [profile, members, roles, joinCode, organization, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, membership, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialMetalPriceGrids, initialClauseTemplates, organizationModules, entitlement, einvoicingConfig, canConfigureEinvoicing] = await Promise.all([
+  const [profile, members, roles, joinCode, organization, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, membership, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialMetalPriceGrids, initialClauseTemplates, organizationModules, entitlement, einvoicingConfig, canConfigureEinvoicing, companyMemories] = await Promise.all([
     getCurrentUserProfile(),
     getTeamMembers(),
     getOrgRoles(),
@@ -75,6 +76,7 @@ export default async function SettingsPage({
     getOrganizationEntitlement(),
     getOrganizationEinvoicingConfig(),
     hasPermission('einvoicing.configure'),
+    getCompanyMemories(),
   ])
 
   const catalogContext = resolveCatalogContext(organization)
@@ -122,6 +124,7 @@ export default async function SettingsPage({
       subscriptionAccessEndsAt={entitlement?.accessEndsAt ?? null}
       einvoicingConfig={einvoicingConfig}
       canConfigureEinvoicing={canConfigureEinvoicing}
+      companyMemories={companyMemories}
       oauthResult={oauthResult}
       oauthDetail={oauthDetail}
     />

@@ -211,7 +211,7 @@ function PointageMemberPanel({
       <div className="p-4 border-b border-[var(--elevation-border)] flex items-center gap-2">
         <PlusCircle className="w-4 h-4 text-accent" />
         <p className="font-bold text-primary text-sm">Pointer les heures d&apos;un membre</p>
-        <span className="text-xs text-secondary ml-1">— membres sans accès à l&apos;app</span>
+        <span className="text-xs text-secondary ml-1">(membres sans accès à l&apos;app)</span>
       </div>
       <form onSubmit={handleSubmit} className="p-4 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

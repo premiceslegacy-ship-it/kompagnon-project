@@ -10,6 +10,7 @@ import {
   Paperclip, FileText, ImageIcon, AudioLines, Loader2,
 } from 'lucide-react'
 import type { NotificationsSummary } from '@/lib/data/queries/notifications'
+import { updateOrganization } from '@/lib/data/mutations/organization'
 import { useSarahVoice } from './useSarahVoice'
 import type { VoiceLiveState, VoiceLiveError } from './useSarahVoice'
 
@@ -277,7 +278,7 @@ async function executeAction(action: ActionProposal): Promise<ActionResult> {
       }
     }
     if (lastNetworkError) {
-      return { message: "La connexion a été interrompue. Si l'action s'est terminée côté serveur, elle apparaîtra dans la liste — ne la relancez pas pour éviter un doublon." }
+      return { message: "La connexion a été interrompue. Si l'action s'est terminée côté serveur, elle apparaîtra dans la liste. Ne la relancez pas pour éviter un doublon." }
     }
     return { message: 'Impossible de confirmer cette action pour le moment.' }
   }
@@ -343,7 +344,7 @@ async function executeLegacyAction(action: ActionProposal): Promise<string> {
           created_at: new Date().toISOString(),
         }))
       }
-      return `Le brief a été transmis à Chloé. Ouvrez l'éditeur de devis — elle aura toutes les informations pour démarrer directement.`
+      return `Le brief a été transmis à Chloé. Ouvrez l'éditeur de devis, elle aura toutes les informations pour démarrer directement.`
     }
 
     case 'open_url':
@@ -502,9 +503,17 @@ function SarahAvatar({ size = 40, pulse = false }: { size?: number; pulse?: bool
 
 // ─── Carte d'action ───────────────────────────────────────────────────────────
 
-function ActionCard({ action, onConfirm, onReject }: {
-  action: ActionProposal; onConfirm: () => void; onReject: () => void
+function ActionCard({ action, onConfirm, onReject, showAutonomyOffer }: {
+  action: ActionProposal; onConfirm: () => void; onReject: () => void; showAutonomyOffer?: boolean
 }) {
+  const [autonomyState, setAutonomyState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  async function handleAlwaysAllow() {
+    setAutonomyState('saving')
+    const result = await updateOrganization({ sarah_auto_low_risk: true })
+    setAutonomyState(result.error ? 'error' : 'saved')
+  }
+
   const cfg = {
     low:    { border: 'rgba(16,185,129,0.3)',  bg: 'rgba(16,185,129,0.06)',  label: 'Simple',       color: 'rgb(16,185,129)' },
     medium: { border: 'rgba(249,115,22,0.3)',  bg: 'rgba(249,115,22,0.06)',  label: 'Confirmation', color: 'rgb(249,115,22)' },
@@ -530,6 +539,28 @@ function ActionCard({ action, onConfirm, onReject }: {
           style={{ background: cfg.border, color: cfg.color }}>{cfg.label}</span>
       </div>
       <p className="text-xs leading-relaxed opacity-65">{action.description}</p>
+      {/* S'affiche meme si sarah_auto_low_risk est deja actif : le widget ne
+          charge pas cet etat (eviterait une requete supplementaire dans
+          AppShell pour tous les roles), et re-enregistrer true est sans
+          consequence si c'est deja la valeur en base. */}
+      {showAutonomyOffer && action.risk === 'low' && (
+        <div className="text-[11px] opacity-60">
+          {autonomyState === 'saved' ? (
+            <span>Sarah agira seule sur ce type d&apos;action à l&apos;avenir.</span>
+          ) : autonomyState === 'error' ? (
+            <span>Impossible d&apos;enregistrer la préférence.</span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleAlwaysAllow}
+              disabled={autonomyState === 'saving'}
+              className="underline underline-offset-2 hover:opacity-80 disabled:opacity-50"
+            >
+              {autonomyState === 'saving' ? 'Enregistrement...' : 'Toujours faire ça seule'}
+            </button>
+          )}
+        </div>
+      )}
       <div className="flex gap-2">
         <button onClick={onConfirm}
           className="flex-1 py-2 rounded-xl text-xs font-bold transition-all active:scale-95"
@@ -557,8 +588,8 @@ function ActionCard({ action, onConfirm, onReject }: {
 
 // ─── Bulle de message ─────────────────────────────────────────────────────────
 
-function Bubble({ msg, onConfirm, onReject }: {
-  msg: Message; onConfirm: (id: string) => void; onReject: (id: string) => void
+function Bubble({ msg, onConfirm, onReject, showAutonomyOffer }: {
+  msg: Message; onConfirm: (id: string) => void; onReject: (id: string) => void; showAutonomyOffer?: boolean
 }) {
   const isUser = msg.role === 'user'
   return (
@@ -581,7 +612,7 @@ function Bubble({ msg, onConfirm, onReject }: {
           }}>
           <p className="whitespace-pre-wrap">{msg.content}</p>
           {msg.action && (
-            <ActionCard action={msg.action} onConfirm={() => onConfirm(msg.id)} onReject={() => onReject(msg.id)} />
+            <ActionCard action={msg.action} onConfirm={() => onConfirm(msg.id)} onReject={() => onReject(msg.id)} showAutonomyOffer={showAutonomyOffer} />
           )}
         </div>
         <span className="text-[10px] mt-1 opacity-35 px-0.5">
@@ -809,7 +840,7 @@ function VoiceScreen({ onBack, pageCtx, pathname, userName, send }: {
         {isActive && (
           <p className="text-xs opacity-40 mt-1 tabular-nums">
             {formatTimer(elapsedSeconds)}
-            {remainingMinutes !== null && ` — ${remainingMinutes} min restantes`}
+            {remainingMinutes !== null && ` (${remainingMinutes} min restantes)`}
           </p>
         )}
         {!isActive && !error && (
@@ -1104,7 +1135,7 @@ function useDrawerLogic({
 
 function PanelContent({ pageCtx, pathname, userName, loading, errorCode, messages, voiceMode,
   input, setInput, onKey, send, setVoiceMode, onClose, inputRef, bottomRef,
-  confirmAction, rejectAction, attachment, setAttachment }: {
+  confirmAction, rejectAction, attachment, setAttachment, isOwner }: {
   pageCtx: PageContext
   pathname: string
   userName: string | null
@@ -1124,6 +1155,7 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
   rejectAction: (id: string) => void
   attachment: PendingAttachment | null
   setAttachment: (a: PendingAttachment | null) => void
+  isOwner?: boolean
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
@@ -1223,7 +1255,7 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
           {/* Messages */}
           <div className="flex-1 overflow-y-auto py-4 space-y-4 min-h-0" style={{ paddingLeft: 16, paddingRight: 16 }}>
             {messages.map(m => (
-              <Bubble key={m.id} msg={m} onConfirm={confirmAction} onReject={rejectAction} />
+              <Bubble key={m.id} msg={m} onConfirm={confirmAction} onReject={rejectAction} showAutonomyOffer={isOwner} />
             ))}
             {loading && <TypingDots />}
             {errorCode && <ErrorBanner code={errorCode} />}
@@ -1340,9 +1372,10 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
 
 // ─── Drawer mobile ────────────────────────────────────────────────────────────
 
-function SarahDrawerMobile({ onClose, pathname, pageCtx, userName, alertCount, alerts, autoBriefOnOpen, highlightedActionId }: {
+function SarahDrawerMobile({ onClose, pathname, pageCtx, userName, alertCount, alerts, autoBriefOnOpen, highlightedActionId, isOwner }: {
   onClose: () => void; pathname: string; pageCtx: PageContext
   userName: string | null; alertCount: number; alerts?: SarahAlerts | null; autoBriefOnOpen: boolean; highlightedActionId?: string | null
+  isOwner?: boolean
 }) {
   const logic = useDrawerLogic({ pageCtx, pathname, userName, alertCount, alerts, autoBriefOnOpen, highlightedActionId })
   const panelStyle: React.CSSProperties = {
@@ -1361,7 +1394,7 @@ function SarahDrawerMobile({ onClose, pathname, pageCtx, userName, alertCount, a
         <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
           <div className="w-9 h-1 rounded-full" style={{ background: 'rgba(128,128,128,0.3)' }} />
         </div>
-        <PanelContent pageCtx={pageCtx} pathname={pathname} userName={userName} onClose={onClose} {...logic} />
+        <PanelContent pageCtx={pageCtx} pathname={pathname} userName={userName} onClose={onClose} isOwner={isOwner} {...logic} />
       </div>
     </>
   )
@@ -1369,11 +1402,12 @@ function SarahDrawerMobile({ onClose, pathname, pageCtx, userName, alertCount, a
 
 // ─── Drawer desktop ───────────────────────────────────────────────────────────
 
-function SarahDrawerDesktop({ onClose, pathname, pageCtx, userName, snap, alertCount, alerts, autoBriefOnOpen, highlightedActionId, buttonPos }: {
+function SarahDrawerDesktop({ onClose, pathname, pageCtx, userName, snap, alertCount, alerts, autoBriefOnOpen, highlightedActionId, buttonPos, isOwner }: {
   onClose: () => void; pathname: string; pageCtx: PageContext
   userName: string | null; snap: 'left' | 'right'; alertCount: number; alerts?: SarahAlerts | null; autoBriefOnOpen: boolean;
   highlightedActionId?: string | null;
   buttonPos: { x: number; y: number } | null
+  isOwner?: boolean
 }) {
   const logic = useDrawerLogic({ pageCtx, pathname, userName, alertCount, alerts, autoBriefOnOpen, highlightedActionId })
   const isVoice = logic.voiceMode
@@ -1404,17 +1438,18 @@ function SarahDrawerDesktop({ onClose, pathname, pageCtx, userName, snap, alertC
   return (
     <div className="fixed z-[9999] flex flex-col overflow-hidden"
       style={panelStyle}>
-      <PanelContent pageCtx={pageCtx} pathname={pathname} userName={userName} onClose={onClose} {...logic} />
+      <PanelContent pageCtx={pageCtx} pathname={pathname} userName={userName} onClose={onClose} isOwner={isOwner} {...logic} />
     </div>
   )
 }
 
 // ─── Widget principal ─────────────────────────────────────────────────────────
 
-export function SarahWidget({ userName, alertCount = 0, alerts = null }: {
+export function SarahWidget({ userName, alertCount = 0, alerts = null, isOwner = false }: {
   userName: string | null
   alertCount?: number
   alerts?: SarahAlerts | null
+  isOwner?: boolean
 }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -1616,12 +1651,12 @@ export function SarahWidget({ userName, alertCount = 0, alerts = null }: {
       {isOpen && isMobile && (
         <SarahDrawerMobile onClose={() => setIsOpen(false)} pathname={pathname}
           pageCtx={pageCtx} userName={userName} alertCount={alertCount} alerts={alerts} autoBriefOnOpen={autoBrief}
-          highlightedActionId={highlightedActionId} />
+          highlightedActionId={highlightedActionId} isOwner={isOwner} />
       )}
       {isOpen && !isMobile && (
         <SarahDrawerDesktop onClose={() => setIsOpen(false)} pathname={pathname}
           pageCtx={pageCtx} userName={userName} snap={snap} alertCount={alertCount} alerts={alerts} autoBriefOnOpen={autoBrief}
-          highlightedActionId={highlightedActionId} buttonPos={pos} />
+          highlightedActionId={highlightedActionId} buttonPos={pos} isOwner={isOwner} />
       )}
 
       {/* Bouton flottant */}

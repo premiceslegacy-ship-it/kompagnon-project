@@ -46,12 +46,17 @@ CREATE POLICY "profiles_select"
   USING (
     auth.uid() = id
     OR EXISTS (
+      -- id qualifié en profiles.id : memberships porte elle aussi une colonne
+      -- id (sa PK), donc "id" seul est ambigu ici. La policy déployée en
+      -- production stocke déjà la forme qualifiée (vérifié via pg_get_expr) —
+      -- ce texte source n'avait jamais été rejoué depuis, découvert le
+      -- 2026-09-09 en testant le provisioning contre un Postgres vierge.
       SELECT 1 FROM public.memberships m1
       JOIN public.memberships m2
         ON m1.organization_id = m2.organization_id
       WHERE m1.user_id = auth.uid()
         AND m1.is_active = true
-        AND m2.user_id = id
+        AND m2.user_id = profiles.id
         AND m2.is_active = true
     )
   );

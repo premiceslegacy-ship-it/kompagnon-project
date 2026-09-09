@@ -244,7 +244,7 @@ function NewMaterialModal({
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-secondary">Fournisseur</label>
                 <select name="supplier_id" className={`${inputCls} appearance-none`}>
-                  <option value="">— Aucun —</option>
+                  <option value="">Aucun</option>
                   {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
@@ -2061,7 +2061,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
             </div>
             <ActionMenu actions={[
               ...(catalogAIEnabled ? [{
-                label: 'Léa — assistante catalogue',
+                label: 'Léa, assistante catalogue',
                 icon: <AssistantAvatar assistant="lea" size={16} className="border-none bg-transparent shadow-none !rounded-full" />,
                 onClick: () => setIsAIPanelOpen(true),
               }] : []),
@@ -2646,7 +2646,7 @@ function ImportPrestationsModal({ isOpen, onClose, onSuccess, bundleTemplateLabe
               <label className="flex items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed border-[var(--elevation-border)] hover:border-accent/50 hover:bg-accent/5 transition-colors cursor-pointer text-sm text-secondary">
                 <FileUp className="w-4 h-4 flex-shrink-0" />
                 {headersFile ? (
-                  <span className="text-primary font-medium truncate max-w-xs">{headersFile.name}{headersCount != null ? ` — ${headersCount} ligne${headersCount > 1 ? 's' : ''}` : ''}</span>
+                  <span className="text-primary font-medium truncate max-w-xs">{headersFile.name}{headersCount != null ? ` (${headersCount} ligne${headersCount > 1 ? 's' : ''})` : ''}</span>
                 ) : 'Choisir le fichier CSV ou Excel'}
                 <input type="file" accept=".csv,.xlsx,.xls" onChange={handleHeadersChange} className="sr-only" />
               </label>
@@ -2668,7 +2668,7 @@ function ImportPrestationsModal({ isOpen, onClose, onSuccess, bundleTemplateLabe
               <label className="flex items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed border-[var(--elevation-border)] hover:border-accent/50 hover:bg-accent/5 transition-colors cursor-pointer text-sm text-secondary">
                 <FileUp className="w-4 h-4 flex-shrink-0" />
                 {linesFile ? (
-                  <span className="text-primary font-medium truncate max-w-xs">{linesFile.name}{linesCount != null ? ` — ${linesCount} ligne${linesCount > 1 ? 's' : ''}` : ''}</span>
+                  <span className="text-primary font-medium truncate max-w-xs">{linesFile.name}{linesCount != null ? ` (${linesCount} ligne${linesCount > 1 ? 's' : ''})` : ''}</span>
                 ) : 'Choisir le fichier CSV ou Excel'}
                 <input type="file" accept=".csv,.xlsx,.xls" onChange={handleLinesChange} className="sr-only" />
               </label>
@@ -2710,7 +2710,7 @@ function ImportPrestationsModal({ isOpen, onClose, onSuccess, bundleTemplateLabe
               {!linesFile && (
                 <div className="flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-secondary flex-shrink-0" />
-                  <span className="text-secondary">Pas de fichier lignes — les modèles seront créés sans lignes de détail</span>
+                  <span className="text-secondary">Pas de fichier lignes : les modèles seront créés sans lignes de détail</span>
                 </div>
               )}
             </div>

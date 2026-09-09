@@ -165,7 +165,7 @@ function joinNotes(label: string, values: string[] | undefined) {
 function measurementToQuote(measurement: PlanMeasurementResult): AIQuoteResult {
   const grouped = new Map<string, PlanMeasurementItem[]>()
   for (const item of measurement.items.filter(candidate => candidate.validationStatus !== 'excluded')) {
-    const key = `${item.trade} — ${item.roomName?.trim() || 'Général'}`
+    const key = `${item.trade} (${item.roomName?.trim() || 'Général'})`
     grouped.set(key, [...(grouped.get(key) ?? []), item])
   }
 
@@ -849,7 +849,7 @@ export default function AtelierIAClient({ initialMeasurementTrades }: { initialM
                         </Icon3D>
                         <div className="text-center">
                           <p className="font-semibold text-primary text-sm">Glissez votre document ici</p>
-                          <p className="text-xs text-secondary mt-1">PDF, PNG ou JPEG — max 10 Mo</p>
+                          <p className="text-xs text-secondary mt-1">PDF, PNG ou JPEG, 10 Mo maximum</p>
                         </div>
                       </div>
                     ) : (

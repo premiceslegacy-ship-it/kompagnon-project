@@ -90,7 +90,7 @@ function AlertRow({ alert, clients }: { alert: CommercialEvent; clients: ClientO
             <span className="text-xs text-secondary font-body">{autoSendLabel}</span>
           </div>
           <p className="mt-1 text-sm font-medium text-primary font-body truncate">{alert.subject_preview}</p>
-          <p className="text-xs text-secondary font-body">{client?.label ?? alert.source_instance} — {alert.tier_context}</p>
+          <p className="text-xs text-secondary font-body">{client?.label ?? alert.source_instance} ({alert.tier_context})</p>
         </div>
         <button
           type="button"
@@ -259,7 +259,7 @@ function ComposeForm({ clients }: { clients: ClientOption[] }) {
           placeholder="autre@exemple.fr, prospect@exemple.fr"
           className="w-full cockpit-input text-sm text-primary"
         />
-        <p className="mt-1 text-xs text-secondary font-body">Séparés par virgule — s'ajoute aux clients cochés</p>
+        <p className="mt-1 text-xs text-secondary font-body">Séparés par virgule, s'ajoute aux clients cochés</p>
       </div>
 
       <div>
@@ -368,7 +368,7 @@ export default function EmailsTab({ pendingAlerts, sentEmails, clients }: Props)
                     )}
                   </div>
                   <p className="mt-1 text-sm font-medium text-primary font-body">{email.subject_preview}</p>
-                  <p className="text-xs text-secondary font-body">{email.source_instance} — {email.actor_email}</p>
+                  <p className="text-xs text-secondary font-body">{email.source_instance} ({email.actor_email})</p>
                 </div>
               </div>
               {email.body_text && (

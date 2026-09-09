@@ -1769,7 +1769,7 @@ export default function InvoiceEditorClient({
           <div className="flex items-center justify-between pt-1">
             <div>
               <p className="text-xs font-medium text-primary">Autoliquidation TVA</p>
-              <p className="text-xs text-secondary">Sous-traitance BTP — art. 283-2 nonies CGI</p>
+              <p className="text-xs text-secondary">Sous-traitance BTP (art. 283-2 nonies CGI)</p>
             </div>
             <button
               type="button"
@@ -1781,7 +1781,7 @@ export default function InvoiceEditorClient({
           </div>
           {isReverseCharge && (
             <p className="text-xs text-amber-500 bg-amber-500/10 rounded px-2 py-1.5">
-              La mention "Autoliquidation TVA — art. 283-2 nonies CGI" sera imprimee sur la facture. TVA portee par le donneur d'ordre.
+              La mention "Autoliquidation de la TVA (art. 283-2 nonies du CGI)" sera imprimee sur la facture. TVA portee par le donneur d'ordre.
             </p>
           )}
 

@@ -473,7 +473,7 @@ export default function MonEspaceDashboardClient({
         <div className="card p-4 border-accent/30 bg-accent/5 space-y-3">
           <p className="text-sm font-bold text-primary">Nouveau pointage</p>
           <select className="input w-full" value={pChantier} onChange={e => setPChantier(e.target.value)}>
-            <option value="">— Choisir un chantier —</option>
+            <option value="">Choisir un chantier</option>
             {chantiers.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
           </select>
           <div className="grid grid-cols-3 gap-2">
@@ -531,7 +531,7 @@ export default function MonEspaceDashboardClient({
         <div className="card p-4 border-accent/30 bg-accent/5 space-y-3">
           <p className="text-sm font-bold text-primary">Nouvelle photo</p>
           <select className="input w-full" value={phChantier} onChange={e => setPhChantier(e.target.value)}>
-            <option value="">— Choisir un chantier —</option>
+            <option value="">Choisir un chantier</option>
             {chantiers.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
           </select>
           <label className="flex items-center justify-center gap-2 border border-dashed border-[var(--elevation-border)] rounded-lg py-6 cursor-pointer hover:bg-[var(--elevation-1)] transition-colors">
@@ -735,7 +735,7 @@ export default function MonEspaceDashboardClient({
                 <span className="font-bold">
                   {a.start_date === a.end_date ? `Absent(e) le ${fmtDate(a.start_date)}` : `Absent(e) du ${fmtDate(a.start_date)} au ${fmtDate(a.end_date)}`}
                 </span>
-                {a.reason ? ` — ${a.reason}` : ''}
+                {a.reason ? ` (${a.reason})` : ''}
               </p>
             </div>
           ))}
