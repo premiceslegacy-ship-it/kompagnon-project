@@ -262,7 +262,7 @@ async function pushUsageEventToOperator(payload: OperatorUsageEventPayload): Pro
   }
 }
 
-async function syncUsageLogToOperator(logId: string | null, payload: Omit<OperatorUsageEventPayload, 'local_usage_log_id'>) {
+export async function syncUsageLogToOperator(logId: string | null, payload: Omit<OperatorUsageEventPayload, 'local_usage_log_id'>) {
   if (!logId) return
 
   const url = process.env.OPERATOR_INGEST_URL?.trim()
@@ -387,6 +387,10 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
               ...(params.request.body as Record<string, unknown>),
               model: params.model,
               user: params.organizationId,
+              // Sans ce flag, OpenRouter n'inclut pas `usage.cost` dans la
+              // réponse : provider_cost reste NULL en base et le cockpit
+              // agrège 0 € pour tout le monde, silencieusement.
+              usage: { include: true },
             }),
           })
 
