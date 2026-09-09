@@ -222,16 +222,23 @@ const SARAH_TOOLS = [
 
 // ─── Tool execution ───────────────────────────────────────────────────────────
 
+// Plafond par conversation : garde-fou contre le bruit/l'abus plutot qu'une
+// vraie limite technique. Aligne sur MAX_TOOL_ROUNDS (voir plus bas) : une
+// conversation peut legitimement contenir plusieurs faits distincts a
+// retenir (un prix negocie ET une preference client, par exemple), la
+// limite a 1 empechait ce cas courant.
+const MAX_MEMORY_SAVES_PER_CONVERSATION = 3
+
 async function executeSarahTool(
   name: string,
   args: Record<string, unknown>,
   orgId: string,
-  memorySavedThisConversation: { done: boolean },
+  memorySavedThisConversation: { count: number },
   conversationId: string | null,
 ): Promise<string> {
   if (name === 'save_memory') {
-    if (memorySavedThisConversation.done) {
-      return 'Mémoire déjà sauvegardée dans cette conversation. Je retiens l\'information pour la suite.'
+    if (memorySavedThisConversation.count >= MAX_MEMORY_SAVES_PER_CONVERSATION) {
+      return 'Nombre maximum de souvenirs enregistres pour cette conversation. Je retiens le reste pour la suite de l\'echange sans le memoriser durablement.'
     }
 
     const content = (args.content as string | undefined)?.trim()
@@ -241,7 +248,13 @@ async function executeSarahTool(
       return 'Contenu trop court pour être mémorisé.'
     }
 
-    // Vérifier doublon simple avant d'écrire (ilike sur content)
+    // Vérifier doublon simple avant d'écrire (ilike sur content). Filtre sur
+    // le meme conversationId + un debut de contenu proche : rattrape le cas
+    // ou le process a redemarre entre deux appels d'outils (le compteur en
+    // memoire ci-dessus repart alors a zero, la base garde la trace). Ne
+    // bloque plus toute nouvelle sauvegarde des qu'une premiere existe pour
+    // la conversation : plusieurs faits distincts par conversation sont
+    // desormais legitimes (voir MAX_MEMORY_SAVES_PER_CONVERSATION).
     const admin = createAdminClient()
     if (conversationId) {
       const { data: alreadySavedInConversation } = await admin
@@ -251,11 +264,11 @@ async function executeSarahTool(
         .eq('type', 'sarah_memory')
         .eq('metadata->>sarah_conversation_id', conversationId)
         .eq('is_active', true)
+        .ilike('content', `%${content.slice(0, 40)}%`)
         .limit(1)
 
       if (alreadySavedInConversation?.length) {
-        memorySavedThisConversation.done = true
-        return 'Mémoire déjà sauvegardée dans cette conversation. Je retiens l\'information pour la suite.'
+        return 'Cette information est déjà dans ma mémoire pour cette conversation.'
       }
     }
 
@@ -296,7 +309,7 @@ async function executeSarahTool(
       }
     }
 
-    memorySavedThisConversation.done = true
+    memorySavedThisConversation.count += 1
     return `Mémorisé : "${content}"`
   }
 
@@ -1835,7 +1848,7 @@ export async function POST(req: NextRequest) {
     }
 
     const userContext = contextLines.join('\n')
-    const memorySavedThisConversation = { done: false }
+    const memorySavedThisConversation = { count: 0 }
 
     // Message utilisateur : texte seul, ou multimodal si une pièce jointe est fournie.
     const userMessageContent: string | Array<Record<string, unknown>> = attachment

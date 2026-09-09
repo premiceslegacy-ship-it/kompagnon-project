@@ -16,7 +16,7 @@ import { renderContractPdfBufferById } from '@/lib/pdf/server'
 import type { Client } from '@/lib/data/queries/clients'
 import { coerceLegalVatRate } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
-import { syncQuoteMemoryEntry } from '@/lib/data/mutations/document-memory'
+import { syncQuoteMemoryEntry, syncQuoteLearningEntry } from '@/lib/data/mutations/document-memory'
 
 type Result = { error: string | null }
 
@@ -394,6 +394,10 @@ export async function createQuoteFromAIResult(aiQuote: AIQuoteDraftInput): Promi
         ai_confidence: item.ai_confidence ?? null,
         ai_source: item.ai_source ?? (item.is_estimated ? 'ai_estimate' : null),
         ai_warnings: item.ai_warnings ?? [],
+        // Fige le prix propose par Chloe : compare a unit_price au moment
+        // de l'envoi du devis pour detecter les corrections de l'artisan
+        // (voir syncQuoteLearningEntry / migration 183).
+        ai_suggested_unit_price: item.unit_price,
         measurement_metadata: item.measurement_metadata ?? null,
         dim_quantity: item.dim_quantity ?? 1,
         length_m: item.length_m ?? null,
@@ -528,6 +532,10 @@ export async function upsertQuoteItem(item: {
   ai_confidence?: number | null
   ai_source?: 'catalog' | 'recent_quote' | 'memory' | 'client_input' | 'ai_estimate' | 'document' | null
   ai_warnings?: string[]
+  // Reserve a createQuoteFromAIResult (creation initiale par IA) : jamais
+  // fourni par l'editeur de devis lors d'une edition manuelle, pour ne
+  // jamais ecraser le prix suggere d'origine (voir migration 183).
+  ai_suggested_unit_price?: number | null
   measurement_metadata?: Record<string, unknown> | null
   vat_rate?: number
   position: number
@@ -706,6 +714,10 @@ export async function sendQuote(quoteId: string, options?: { attachContractIds?:
   // Forcer le recalcul des totaux avant lecture (garantit que total_ttc est à jour)
   await recalcQuoteTotals(quoteId, orgId)
   await syncQuoteMemoryEntry(supabase, orgId, quoteId)
+  // Tache de fond, jamais attendue : compare le prix propose par Chloe au
+  // prix final retenu par l'artisan et memorise les ecarts significatifs
+  // (voir document-memory.ts). Ne doit jamais ralentir la reponse d'envoi.
+  void syncQuoteLearningEntry(supabase, orgId, quoteId)
 
   // Charger les infos du devis + client + org pour l'email
   const { data: quote } = await supabase
