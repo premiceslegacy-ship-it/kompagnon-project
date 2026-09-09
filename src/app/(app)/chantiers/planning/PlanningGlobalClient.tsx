@@ -844,7 +844,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
             <div className="min-w-0">
               <p className="text-sm font-semibold text-primary">{sarahInfoBanner}</p>
               <p className="text-xs text-secondary mt-0.5">
-                Action déjà effectuée par Sarah — le planning ci-dessous est à jour. Utilisez le menu &quot;⋯&quot; pour déclarer une autre absence si besoin.
+                Action déjà effectuée par Sarah. Le planning ci-dessous est à jour. Utilisez le menu &quot;⋯&quot; pour déclarer une autre absence si besoin.
               </p>
             </div>
           </div>
@@ -2158,7 +2158,7 @@ function SemaineView({
                         </button>
                       )}
                       <p className={`text-[9px] font-semibold leading-tight ${col.text} opacity-90 truncate ${onDuplicatePlanning ? 'pl-4' : ''} pr-4`}>
-                        {fmtTime(p.start_time!)}{p.end_time ? ` — ${fmtTime(p.end_time)}` : ''}
+                        {fmtTime(p.start_time!)}{p.end_time ? ` (${fmtTime(p.end_time)})` : ''}
                       </p>
                       <p className={`text-[10px] font-bold leading-tight truncate mt-0.5 ${col.text}`}>
                         {p.chantier_title}

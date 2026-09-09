@@ -87,7 +87,7 @@ const METAL_STARTER_PRESETS: StarterPreset[] = [
 
 const METAL_CHECKLISTS: VerticalPackChecklist[] = [
   {
-    label: 'Avant livraison chantier — ouvrage métallique',
+    label: 'Avant livraison chantier, ouvrage métallique',
     items: [
       { label: 'Certificat matière EN 10204 3.1 collecté pour les aciers structurels' },
       { label: 'Contrôle visuel des soudures (absence de porosité, morsures, manque de pénétration)' },

@@ -63,7 +63,7 @@ function MetalGridPriceHint({ grid }: { grid: MetalPriceGrid }) {
         <span className="text-secondary">Chargement du cours matière...</span>
       ) : suggested != null ? (
         <span className="text-secondary">
-          Grille matière liée (<strong className="text-primary">{grid.label}</strong>) — prix suggéré au cours du jour :{' '}
+          Grille matière liée (<strong className="text-primary">{grid.label}</strong>), prix suggéré au cours du jour :{' '}
           <strong className="text-primary tabular-nums">{suggested.toFixed(2)} € / {grid.unit}</strong>. Le prix de vente ci-dessus reste inchangé tant que vous ne le modifiez pas vous-même.
         </span>
       ) : (

@@ -297,7 +297,7 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
       const subtotal = section.items.filter(i => !i.price_pending).reduce((s, i) => s + i.quantity * i.unit_price, 0)
       rows.push({
         cells: [
-          { value: `Sous-total — ${section.title}`, style: { font: F.regular, size: SIZE.sm, color: COLOR.secondary } },
+          { value: `Sous-total (${section.title})`, style: { font: F.regular, size: SIZE.sm, color: COLOR.secondary } },
           ...cols.slice(1, -1).map(() => ({ value: '' })),
           { value: fmt(subtotal, quote.currency), style: { font: F.heading, size: SIZE.sm, color: COLOR.black } },
         ],

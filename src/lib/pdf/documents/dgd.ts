@@ -171,7 +171,7 @@ export async function renderDgdPdfWithFonts(data: DgdPdfData, fontBytes: FontByt
   if (receptionDate) {
     cy -= SIZE.sm + 2
     const statusLabel = receptionStatus === 'sans_reserve' ? 'sans reserve' : receptionStatus === 'reserve_levee' ? 'reserves levees' : 'avec reserves'
-    doc.page.drawText(pdfText(`Reception : ${fmtDate(receptionDate)} — ${statusLabel}`), { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.sm, font: F.regular, color: COLOR.muted })
+    doc.page.drawText(pdfText(`Reception : ${fmtDate(receptionDate)} (${statusLabel})`), { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.sm, font: F.regular, color: COLOR.muted })
   }
 
   if (clientName) {
@@ -270,7 +270,7 @@ export async function renderDgdPdfWithFonts(data: DgdPdfData, fontBytes: FontByt
   doc.page.drawLine({ start: { x: PAGE.margin + sigColW + SPACE.xl, y: sigTopY }, end: { x: PAGE.margin + sigColW + SPACE.xl + sigColW, y: sigTopY }, thickness: 1, color: COLOR.divider })
 
   const parties = [
-    { label: `L'Entrepreneur — ${organization.name}`, sub: organization.signatory_name ?? '' },
+    { label: `L'Entrepreneur (${organization.name})`, sub: organization.signatory_name ?? '' },
     { label: "Le Maitre d'ouvrage", sub: clientName ?? '' },
   ]
   parties.forEach((party, i) => {

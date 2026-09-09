@@ -173,7 +173,7 @@ export default function OffreTab({ row }: { row: ClientRow }) {
             )}
           </p>
           <p className="mt-1 text-xs text-secondary">
-            L&apos;activation OAuth se fait par le client, depuis son instance — non pilotable depuis ce formulaire.
+            L&apos;activation OAuth se fait par le client, depuis son instance : non pilotable depuis ce formulaire.
           </p>
         </div>
         <p className="text-xs leading-relaxed text-secondary">

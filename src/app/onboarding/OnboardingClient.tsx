@@ -119,6 +119,24 @@ function SubmitButton({ label }: { label: string }) {
   )
 }
 
+// Même useFormStatus que SubmitButton : sans lui, ce lien restait cliquable et
+// silencieux pendant la soumission de skipInvites (aucun signe que la redirection
+// est en cours), au risque d'un double-clic pendant les ~2s de traitement serveur.
+function SkipButton({ label }: { label: string }) {
+  const { pending } = useFormStatus()
+  return (
+    <button
+      type="submit"
+      formAction={skipInvites}
+      disabled={pending}
+      className="w-full flex items-center justify-center gap-1.5 text-center text-xs text-white/25 hover:text-white/50 transition-colors py-2 disabled:opacity-40 disabled:cursor-wait"
+    >
+      {pending && <Loader2 className="w-3 h-3 animate-spin" />}
+      {label}
+    </button>
+  )
+}
+
 type Props = { firstName: string | null; initialEmail: string | null; roles: OrgRole[]; joinCode: string | null; selfService: boolean }
 
 export default function OnboardingClient({ firstName, initialEmail, roles, joinCode, selfService }: Props) {
@@ -292,7 +310,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
             >
               <button
                 type="button"
-                onClick={() => { if (isSingleChoice) selectActivity(family.activityIds[0]) }}
+                onClick={() => selectActivity(family.activityIds[0])}
                 className={`w-full flex items-center justify-between gap-3 px-4 py-3 text-left transition-colors ${
                   isSelectedFamily ? 'bg-accent/10' : 'hover:bg-white/[0.03]'
                 }`}
@@ -450,7 +468,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
             )
           })}
         </div>
-        <p className="text-xs text-white/30">Optionnel — aide Sarah à mieux contextualiser vos devis.</p>
+        <p className="text-xs text-white/30">Optionnel. Aide Sarah à mieux contextualiser vos devis.</p>
       </div>
     )
   }
@@ -988,13 +1006,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
 
                 <div className="pt-1 space-y-2">
                   <SubmitButton label={`Démarrer ${APP_NAME}`} />
-                  <button
-                    type="submit"
-                    formAction={skipInvites}
-                    className="w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors py-2"
-                  >
-                    Passer cette étape
-                  </button>
+                  <SkipButton label="Passer cette étape" />
                 </div>
               </form>
 

@@ -945,7 +945,7 @@ export default function TourneeView({
                   <option value="">Sélectionner un chantier...</option>
                   {chantiers.map(c => (
                     <option key={c.id} value={c.id}>
-                      {c.title}{c.city ? ` — ${c.city}` : ''}
+                      {c.title}{c.city ? ` (${c.city})` : ''}
                     </option>
                   ))}
                 </select>

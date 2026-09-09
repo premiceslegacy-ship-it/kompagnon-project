@@ -183,7 +183,7 @@ export default function SupplierPriceRequestsPanel({
                 onChange={e => setForm(f => ({ ...f, supplier_id: e.target.value }))}
                 className="w-full px-3 py-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
               >
-                <option value="">— Fournisseur —</option>
+                <option value="">Fournisseur</option>
                 {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
@@ -206,7 +206,7 @@ export default function SupplierPriceRequestsPanel({
                 onChange={e => setForm(f => ({ ...f, unit: e.target.value === '__other__' ? f.unit : e.target.value }))}
                 className="w-full px-3 py-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
               >
-                <option value="">— Unité —</option>
+                <option value="">Unité</option>
                 {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                 {form.unit && !UNITS.includes(form.unit) && <option value="__other__">{form.unit}</option>}
               </select>
@@ -277,7 +277,7 @@ export default function SupplierPriceRequestsPanel({
                   {cfg.icon}{cfg.label}
                 </span>
                 <span className="text-sm font-medium text-primary truncate">{req.designation}</span>
-                {req.supplier && <span className="text-xs text-secondary truncate hidden sm:block">— {req.supplier.name}</span>}
+                {req.supplier && <span className="text-xs text-secondary truncate hidden sm:block">({req.supplier.name})</span>}
                 {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-secondary shrink-0 ml-auto" /> : <ChevronDown className="w-3.5 h-3.5 text-secondary shrink-0 ml-auto" />}
               </button>
               <div className="flex items-center gap-1 shrink-0">
