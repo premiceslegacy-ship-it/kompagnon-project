@@ -1223,6 +1223,79 @@ function sanitizeSarahAttachment(raw: unknown): SarahAttachment | null {
   return { name, mimeType, dataUrl }
 }
 
+// ─── Persistance serveur des tours de conversation ─────────────────────────────
+//
+// Historique jusqu'ici uniquement côté client (historyRef dans
+// SarahWidget.tsx), perdu à chaque nouveau montage du widget puisque
+// conversationId est un crypto.randomUUID() généré à l'ouverture. Ces deux
+// fonctions donnent à Sarah une mémoire des échanges récents de
+// l'organisation, indépendante du conversationId de la session en cours.
+
+/**
+ * Écrit le tour user + réponse Sarah après coup. Appelée en tâche de fond
+ * (void), jamais attendue : ne doit jamais retarder la réponse perçue par
+ * l'utilisateur, même pattern que syncUsageLogToOperator dans callAI.ts.
+ */
+async function persistConversationTurn(params: {
+  orgId: string
+  userId: string | null
+  conversationId: string | null
+  userMessage: string
+  reply: string
+}): Promise<void> {
+  if (!params.conversationId) return
+  try {
+    const admin = createAdminClient()
+    await admin.from('sarah_conversation_messages').insert([
+      {
+        organization_id: params.orgId,
+        user_id: params.userId,
+        conversation_id: params.conversationId,
+        role: 'user',
+        content: params.userMessage.slice(0, 8000),
+      },
+      {
+        organization_id: params.orgId,
+        user_id: params.userId,
+        conversation_id: params.conversationId,
+        role: 'sarah',
+        content: params.reply.slice(0, 8000),
+      },
+    ])
+  } catch (error) {
+    console.error('[persistConversationTurn]', error)
+  }
+}
+
+/**
+ * Recharge les derniers échanges de l'organisation (toutes conversations et
+ * tous utilisateurs confondus) au premier message d'une nouvelle session,
+ * pour que Sarah reste au courant de ce qui s'est dit récemment même quand
+ * le client redémarre avec un historique vide. Plafonné à 10 lignes, comme
+ * la troncature déjà appliquée à l'historique envoyé par le client.
+ */
+async function fetchRecentConversationContext(orgId: string): Promise<string> {
+  try {
+    const admin = createAdminClient()
+    const { data } = await admin
+      .from('sarah_conversation_messages')
+      .select('role, content, created_at')
+      .eq('organization_id', orgId)
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    if (!data?.length) return ''
+
+    const lines = [...data]
+      .reverse()
+      .map(row => `${row.role === 'user' ? 'Client' : 'Sarah'} : ${row.content}`)
+    return lines.join('\n')
+  } catch (error) {
+    console.error('[fetchRecentConversationContext]', error)
+    return ''
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { message, page, pathname, pageContext, history, conversationId: rawConversationId, attachment: rawAttachment } = await req.json()
@@ -1255,9 +1328,14 @@ export async function POST(req: NextRequest) {
 
     const isFirstMessage = !conversationHistory.some(h => h.role === 'user')
 
-    const [businessCtx, ragContext, dailyBriefResult, incomingBriefsResult, executedActionsResult, pendingActionsResult] = await Promise.all([
+    const [businessCtx, ragContext, recentConversationContext, dailyBriefResult, incomingBriefsResult, executedActionsResult, pendingActionsResult] = await Promise.all([
       getBusinessContext(orgId),
       fetchRAGContext(orgId, message, { limit: 4 }),
+      // Contexte récent persisté en base, uniquement au premier message : le
+      // client redémarre avec un historique vide à chaque ouverture du widget
+      // (conversationId change), Sarah reste néanmoins au courant de ce qui
+      // s'est dit récemment dans l'organisation (voir migration 184).
+      isFirstMessage ? fetchRecentConversationContext(orgId) : Promise.resolve(''),
       // Lire le brief du jour uniquement au premier message de la conversation
       isFirstMessage
         ? supabase
@@ -1588,6 +1666,10 @@ export async function POST(req: NextRequest) {
 
     if (ragContext) {
       contextLines.push('', 'Mémoire entreprise (extraits pertinents) :', ragContext)
+    }
+
+    if (recentConversationContext) {
+      contextLines.push('', 'Échanges récents avec cette entreprise (autre session, pour continuité) :', recentConversationContext)
     }
 
     if (todayPointages?.length || todayCompletedTasks?.length || todayNotes?.length || todayPhotos?.length) {
@@ -1953,6 +2035,7 @@ export async function POST(req: NextRequest) {
       }
 
       await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed2, businessCtx.sarahAutoLowRisk)
+      void persistConversationTurn({ orgId, userId: user?.id ?? null, conversationId, userMessage: message, reply: parsed2.reply })
       return NextResponse.json(parsed2)
     }
 
@@ -1966,6 +2049,7 @@ export async function POST(req: NextRequest) {
     }
 
     await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed, businessCtx.sarahAutoLowRisk)
+    void persistConversationTurn({ orgId, userId: user?.id ?? null, conversationId, userMessage: message, reply: parsed.reply })
     return NextResponse.json(parsed)
   } catch (err) {
     if (err instanceof AIModuleDisabledError) {
