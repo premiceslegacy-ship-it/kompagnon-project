@@ -4,6 +4,7 @@ import type { OrganizationModuleKey } from '@/lib/organization-modules'
 import { getOperatorSourceInstance, signOperatorPayload, type OperatorUsageEventPayload } from '@/lib/operator'
 import { checkAIRateLimit } from '@/lib/rate-limit'
 import { AIQuotaExceededError, checkQuota, type AIBillingMode, type QuotaCheckResult } from '@/lib/quota'
+import { getOrganizationOpenRouterKey } from '@/lib/ai/openrouter-credentials'
 
 export type AIProvider = 'openrouter'
 export type AIInputKind = 'text' | 'image' | 'audio' | 'mixed'
@@ -145,9 +146,9 @@ function getAppUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
 }
 
-function getOpenRouterHeaders(extraHeaders?: Record<string, string>): HeadersInit {
+function getOpenRouterHeaders(apiKey: string, extraHeaders?: Record<string, string>): HeadersInit {
   return {
-    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY ?? ''}`,
+    Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
     'HTTP-Referer': getAppUrl(),
     'X-Title': process.env.NEXT_PUBLIC_APP_NAME ?? 'ATELIER',
@@ -157,9 +158,9 @@ function getOpenRouterHeaders(extraHeaders?: Record<string, string>): HeadersIni
 
 // Pas de Content-Type ici : le body est un FormData multipart, fetch pose lui-même
 // le boundary. En fixer un manuellement casserait l'encodage de la requête.
-function getOpenRouterAudioHeaders(extraHeaders?: Record<string, string>): HeadersInit {
+function getOpenRouterAudioHeaders(apiKey: string, extraHeaders?: Record<string, string>): HeadersInit {
   return {
-    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY ?? ''}`,
+    Authorization: `Bearer ${apiKey}`,
     'HTTP-Referer': getAppUrl(),
     'X-Title': process.env.NEXT_PUBLIC_APP_NAME ?? 'ATELIER',
     ...extraHeaders,
@@ -356,7 +357,16 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
   try {
     let data: T
 
-    if (!process.env.OPENROUTER_API_KEY) {
+    // client_owned : la clé du client vit soit dans organization_ai_credentials
+    // (mutualisé, plusieurs orgs sur le même Worker), soit directement dans
+    // OPENROUTER_API_KEY du Worker (modèle dédié historique, 1 org par instance
+    // : le client fournit sa clé au provisioning, voir scripts/deploy-client.sh)
+    // — les deux sont "la clé de ce client", pas orsayn_shared vs client_owned.
+    const apiKey = quotaCheck.aiBillingMode === 'client_owned'
+      ? (await getOrganizationOpenRouterKey(params.organizationId)) ?? process.env.OPENROUTER_API_KEY ?? null
+      : process.env.OPENROUTER_API_KEY ?? null
+
+    if (!apiKey) {
       if (quotaCheck.aiBillingMode === 'client_owned') {
         throw new AIProviderCreditError('openrouter', quotaCheck.aiBillingMode, null, 'Clé OpenRouter client manquante.')
       }
@@ -376,13 +386,13 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
         ? await fetch(OPENROUTER_TRANSCRIPTION_URL, {
             method: 'POST',
             signal: timeout.signal,
-            headers: getOpenRouterAudioHeaders(params.request.headers),
+            headers: getOpenRouterAudioHeaders(apiKey, params.request.headers),
             body: params.request.body as FormData,
           })
         : await fetch(OPENROUTER_URL, {
             method: 'POST',
             signal: timeout.signal,
-            headers: getOpenRouterHeaders(params.request.headers),
+            headers: getOpenRouterHeaders(apiKey, params.request.headers),
             body: JSON.stringify({
               ...(params.request.body as Record<string, unknown>),
               model: params.model,

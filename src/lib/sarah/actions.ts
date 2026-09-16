@@ -1343,9 +1343,9 @@ export async function confirmSarahAction(proposalId: string): Promise<{ ok: bool
   }
 }
 
-// Auto-exécution des actions "low risk" quand l'organisation a activé
-// sarah_auto_low_risk. Réutilise exactement le chemin de confirmSarahAction
-// (réservation atomique pending -> executed, dedupe, permission ai.sarah) :
+// Auto-exécution des actions "low risk", toujours actives. Réutilise
+// exactement le chemin de confirmSarahAction (réservation atomique
+// pending -> executed, dedupe, permission ai.sarah) :
 // aucune nouvelle surface d'écriture, seul le déclencheur change (Sarah au
 // lieu d'un clic humain). Marque le payload pour que l'UI affiche "exécuté
 // automatiquement" sur la carte.

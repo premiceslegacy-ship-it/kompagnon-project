@@ -351,7 +351,6 @@ export async function POST(req: NextRequest) {
   if (!await hasPermission('quotes.create')) return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
   const membership = await getCurrentMembershipContext()
   if (membership?.roleSlug !== 'owner' && membership?.roleSlug !== 'admin') return NextResponse.json({ error: 'Action réservée aux administrateurs.' }, { status: 403 })
-  if (!process.env.OPENROUTER_API_KEY) return NextResponse.json({ error: 'Clé API IA non configurée (OPENROUTER_API_KEY manquante)' }, { status: 500 })
   if (!(req.headers.get('content-type') ?? '').includes('multipart/form-data')) return NextResponse.json({ error: 'Fichier manquant' }, { status: 400 })
 
   const formData = await req.formData()

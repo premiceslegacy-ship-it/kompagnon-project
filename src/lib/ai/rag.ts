@@ -18,7 +18,7 @@ export async function fetchRAGContext(
   options: { limit?: number; activityId?: string | null } = {},
 ): Promise<string> {
   const { limit = 5, activityId } = options
-  const embedding = await generateEmbedding(queryText)
+  const embedding = await generateEmbedding(queryText, orgId)
   if (!embedding) return ''
 
   const admin = createAdminClient()

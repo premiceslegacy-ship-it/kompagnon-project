@@ -2,6 +2,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # deploy-edge-functions.sh — Déploie les Supabase Edge Functions sur un client
 #
+# WhatsApp (whatsapp-webhook) n'est plus déployé par ce script depuis l'audit
+# du 2026-09-16 : la feature est mise de côté (intégration API Meta trop
+# coûteuse), et la fonction ne vérifiait aucune signature Meta
+# (X-Hub-Signature-256) sur les POST entrants — service_role + URL publique +
+# actions métier réelles (devis/factures) + lecture CA/impayés. Voir
+# /Users/useersm/.claude/plans/oui-on-audit-tout-compiled-music.md (finding F3).
+# Ne pas réactiver ce déploiement sans avoir d'abord implémenté la
+# vérification de signature dans supabase/functions/whatsapp-webhook.
+#
 # Usage :
 #   ./scripts/deploy-edge-functions.sh <PROJECT_REF> \
 #     --resend-key re_xxx \
@@ -14,14 +23,15 @@
 #     La clé Atelier est ignorée, celle du client est injectée à la place.
 #     Utile quand le client gère sa propre conso IA (compte openrouter.ai perso).
 #
-# Les autres clés partagées Atelier (MISTRAL, SHARED_WABA_*) sont lues
-# depuis .env.local — elles sont identiques pour tous les clients.
-# Les clés par client (RESEND, APP_URL) se passent en argument pour ne pas
-# avoir à modifier .env.local entre chaque déploiement.
+# Les autres clés partagées Atelier (MISTRAL) sont lues depuis .env.local —
+# elles sont identiques pour tous les clients. Les clés par client (RESEND,
+# APP_URL) se passent en argument pour ne pas avoir à modifier .env.local
+# entre chaque déploiement.
 #
-# B2Brouter n'est pas déployé ici : l'intégration e-facturation tourne côté
-# app Next/Cloudflare Worker et se configure avec les variables B2BROUTER_*
-# dans Cloudflare Workers.
+# Super PDP n'est pas déployé ici : l'intégration e-facturation tourne côté
+# app Next/Cloudflare Worker et se configure avec les variables SUPER_PDP_*
+# dans Cloudflare Workers (SUPER_PDP_CLIENT_SECRET/SUPER_PDP_ENCRYPTION_KEY
+# restent uniquement côté cockpit, jamais sur une instance client).
 #
 # Exemples :
 #   # Clé Atelier partagée (défaut)
@@ -86,8 +96,6 @@ fi
 # ─── Clés Atelier partagées (depuis .env.local) ───────────────────────────────
 
 MISTRAL_KEY=$(grep '^MISTRAL_API_KEY=' .env.local | cut -d '=' -f2- | tr -d '"')
-SHARED_WABA_PHONE_NUMBER_ID=$(grep '^SHARED_WABA_PHONE_NUMBER_ID=' .env.local | cut -d '=' -f2- | tr -d '"')
-SHARED_WABA_ACCESS_TOKEN=$(grep '^SHARED_WABA_ACCESS_TOKEN=' .env.local | cut -d '=' -f2- | tr -d '"')
 
 # ─── Résolution de la clé OpenRouter ─────────────────────────────────────────
 # Priorité : --openrouter-key (clé client) > .env.local (clé Atelier partagée)
@@ -111,35 +119,24 @@ fi
 [ -z "$RESEND_KEY" ]                && echo "⚠️   --resend-key non fourni (envoi d'emails désactivé)"
 [ -z "$RESEND_FROM" ]               && echo "⚠️   --resend-from non fourni (envoi d'emails désactivé)"
 [ -z "$APP_URL" ]                   && echo "⚠️   --app-url non fourni (liens PDF dans emails désactivés)"
-[ -z "$SHARED_WABA_PHONE_NUMBER_ID" ] && echo "ℹ️   SHARED_WABA_PHONE_NUMBER_ID absent de .env.local (mode WABA mutualisée désactivé)"
-[ -z "$SHARED_WABA_ACCESS_TOKEN" ]    && echo "ℹ️   SHARED_WABA_ACCESS_TOKEN absent de .env.local (mode WABA mutualisée désactivé)"
 
 echo ""
 echo "🚀  Déploiement Edge Functions → projet Supabase : $PROJECT_REF"
 echo "    OpenRouter : $OPENROUTER_SOURCE"
 echo "────────────────────────────────────────────────────────────────"
 
-# ─── 1. Deploy whatsapp-webhook ───────────────────────────────────────────────
+# ─── Secrets ────────────────────────────────────────────────────────────────
+# whatsapp-webhook n'est plus déployé ici (feature mise de côté, voir en-tête
+# du fichier) — il n'y a donc plus de fonction Edge à déployer sur ce projet.
 
 echo ""
-echo "📦  [1/2] Déploiement whatsapp-webhook..."
-supabase functions deploy whatsapp-webhook \
-  --project-ref "$PROJECT_REF" \
-  --no-verify-jwt
-echo "✅  whatsapp-webhook déployé"
-
-# ─── 2. Secrets ───────────────────────────────────────────────────────────────
-
-echo ""
-echo "🔑  [2/2] Injection des secrets..."
+echo "🔑  Injection des secrets..."
 
 SECRETS="OPENROUTER_API_KEY=$OPENROUTER_KEY"
 [ -n "$MISTRAL_KEY" ]                 && SECRETS="$SECRETS MISTRAL_API_KEY=$MISTRAL_KEY"
 [ -n "$RESEND_KEY" ]                  && SECRETS="$SECRETS RESEND_API_KEY=$RESEND_KEY"
 [ -n "$RESEND_FROM" ]                 && SECRETS="$SECRETS RESEND_FROM_EMAIL=$RESEND_FROM"
 [ -n "$APP_URL" ]                     && SECRETS="$SECRETS APP_URL=$APP_URL"
-[ -n "$SHARED_WABA_PHONE_NUMBER_ID" ] && SECRETS="$SECRETS SHARED_WABA_PHONE_NUMBER_ID=$SHARED_WABA_PHONE_NUMBER_ID"
-[ -n "$SHARED_WABA_ACCESS_TOKEN" ]    && SECRETS="$SECRETS SHARED_WABA_ACCESS_TOKEN=$SHARED_WABA_ACCESS_TOKEN"
 
 # shellcheck disable=SC2086
 supabase secrets set $SECRETS --project-ref "$PROJECT_REF"
@@ -151,11 +148,6 @@ echo ""
 echo "────────────────────────────────────────────────────────────────"
 echo "✅  Déploiement terminé pour le projet : $PROJECT_REF"
 echo ""
-echo "URL webhook (si mode propre WABA) :"
-echo "  https://$PROJECT_REF.supabase.co/functions/v1/whatsapp-webhook"
-echo ""
 echo "Étapes restantes (si premier déploiement) :"
 echo "  1. Migrations : supabase link --project-ref $PROJECT_REF && supabase db push"
-echo "  2. Mode mutualisé : Settings → WhatsApp → cocher 'Numéro bot Atelier' + ajouter numéros"
-echo "  3. Mode propre WABA : configurer le webhook dans Meta + Verify Token dans Settings"
 echo ""

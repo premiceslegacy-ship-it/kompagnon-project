@@ -167,9 +167,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Action non autorisée.' }, { status: 403 })
   }
 
-  if (!process.env.OPENROUTER_API_KEY) {
-    return NextResponse.json({ error: 'Clé API IA non configurée' }, { status: 500 })
-  }
 
   const formData = await req.formData()
   const file = formData.get('file') as File | null

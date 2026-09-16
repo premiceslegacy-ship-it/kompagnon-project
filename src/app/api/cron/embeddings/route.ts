@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
 
   const { data: rows, error } = await supabase
     .from('company_memory')
-    .select('id, content')
+    .select('id, content, organization_id')
     .is('embedding', null)
     .eq('is_active', true)
     .limit(BATCH_SIZE)
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   let errors = 0
 
   for (const row of rows) {
-    const embedding = await generateEmbedding(row.content)
+    const embedding = await generateEmbedding(row.content, row.organization_id ?? null)
     if (!embedding) {
       errors++
       continue

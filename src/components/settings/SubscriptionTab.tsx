@@ -20,9 +20,9 @@ type TierInfo = {
   highlight?: string
 }
 
-// Starter n'est plus une offre commerciale active (seules setup_only / pro / expert sont
-// vendues) — retiré des tiers proposés à l'achat. CURRENT_TIER_BENEFITS et detectCurrentTier
-// gardent leur branche 'starter' pour ne pas casser l'affichage d'un client déjà sur ce tier.
+// Starter n'est plus une offre commerciale active (seules setup_only / pro / expert
+// existent) — retiré du type SubscriptionTier lui-même (quota-catalog.ts, 2026-09-16),
+// aucun client actif dessus au moment du retrait.
 const TIER_INFO: TierInfo[] = [
   {
     tier: 'pro',
@@ -56,12 +56,6 @@ const TIER_INFO: TierInfo[] = [
 
 const CURRENT_TIER_BENEFITS: Record<SubscriptionTier, string[]> = {
   setup_only: [],
-  starter: [
-    'Vos devis sont analysés et générés par IA en quelques secondes',
-    'Les relances partent automatiquement, rédigées dans votre ton',
-    'L\'OCR transforme vos tickets en dépenses sans saisie manuelle',
-    'Le planning IA réorganise votre semaine en un clic',
-  ],
   pro: [
     'Sarah répond à vos questions métier à tout moment',
     'Sarah vocale gère vos urgences les mains dans le cambouis',
@@ -79,7 +73,7 @@ const CURRENT_TIER_BENEFITS: Record<SubscriptionTier, string[]> = {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function tierRank(tier: SubscriptionTier): number {
-  return { setup_only: 0, starter: 1, pro: 2, expert: 3 }[tier]
+  return { setup_only: 0, pro: 1, expert: 2 }[tier]
 }
 
 function detectCurrentTier(modules: OrganizationModules): SubscriptionTier {
@@ -88,7 +82,6 @@ function detectCurrentTier(modules: OrganizationModules): SubscriptionTier {
     // Convention : on affiche "Pro" par défaut si sarah_assistant actif; l'upgrade Expert reste visible
     return 'pro'
   }
-  if (modules.relances_ai || modules.quote_ai) return 'starter'
   return 'setup_only'
 }
 

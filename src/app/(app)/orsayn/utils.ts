@@ -92,8 +92,7 @@ export function getCommercialEventLabel(eventType: string): string {
 }
 
 export function getSuggestedTier(tier: import('@/lib/quota-catalog').SubscriptionTier): import('@/lib/quota-catalog').SubscriptionTier {
-  if (tier === 'setup_only') return 'starter'
-  if (tier === 'starter') return 'pro'
+  if (tier === 'setup_only') return 'pro'
   if (tier === 'pro') return 'expert'
   return 'expert'
 }
@@ -132,7 +131,6 @@ export function formatCommercialStatus(row: Pick<ClientRow, 'tier' | 'aiBillingM
 export function formatTier(tier: import('@/lib/quota-catalog').SubscriptionTier): string {
   return {
     setup_only: 'Installation seule',
-    starter: 'Essentiel',
     pro: 'Pro',
     expert: 'Expert',
   }[tier]

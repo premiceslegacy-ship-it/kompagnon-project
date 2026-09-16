@@ -21,10 +21,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
     }
 
-    if (!process.env.OPENROUTER_API_KEY) {
-      return NextResponse.json({ error: 'Clé API IA non configurée' }, { status: 500 })
-    }
-
     const orgId = await getCurrentOrganizationId()
     if (!orgId) return NextResponse.json({ error: 'Organisation introuvable' }, { status: 401 })
 

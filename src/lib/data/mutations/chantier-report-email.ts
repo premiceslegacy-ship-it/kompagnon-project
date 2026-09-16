@@ -154,8 +154,6 @@ async function generateEmailIntro(ctx: {
   orgName: string
   orgId: string
 }): Promise<string> {
-  if (!process.env.OPENROUTER_API_KEY) return defaultIntro(ctx)
-
   const userMsg = `Génère un court message d'introduction (2-3 phrases max, ton professionnel mais chaleureux) pour accompagner le rapport PDF d'un chantier BTP envoyé par email.
 
 Chantier : "${ctx.chantierTitle}"

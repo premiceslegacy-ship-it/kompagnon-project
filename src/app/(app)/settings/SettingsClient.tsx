@@ -32,6 +32,7 @@ import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids';
 import MetalPriceGridsSettings from '@/components/settings/MetalPriceGridsSettings';
 import ClauseTemplatesSettings from '@/components/settings/ClauseTemplatesSettings';
 import SubscriptionTab from '@/components/settings/SubscriptionTab';
+import OpenRouterKeyTab from '@/components/settings/OpenRouterKeyTab';
 import EinvoicingTab from '@/components/settings/EinvoicingTab';
 import type { EinvoicingConfig } from '@/lib/einvoicing-config';
 import type { QuoteClauseTemplate } from '@/lib/data/queries/clause-templates';
@@ -379,12 +380,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     );
     const [autoMemberReportsSaveStatus, setAutoMemberReportsSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-    // ─── Autonomie limitée de Sarah sur les actions low risk (migration 177) ──
-    const [sarahAutoLowRisk, setSarahAutoLowRisk] = useState<boolean>(
-        organization?.sarah_auto_low_risk ?? false,
-    );
-    const [sarahAutoLowRiskSaveStatus, setSarahAutoLowRiskSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-
     // ─── Mémoire des assistants IA (consultation/purge, chantier 7 point 4) ──
     const [memories, setMemories] = useState(companyMemories);
     const [deletingMemoryId, setDeletingMemoryId] = useState<string | null>(null);
@@ -729,22 +724,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             } else {
                 setSubtotalsSaveStatus('saved');
                 setTimeout(() => setSubtotalsSaveStatus('idle'), 2000);
-            }
-        });
-    }
-
-    function handleSaveSarahAutoLowRisk(nextValue: boolean) {
-        setSarahAutoLowRisk(nextValue);
-        setSarahAutoLowRiskSaveStatus('saving');
-        startTransition(async () => {
-            const result = await updateOrganization({ sarah_auto_low_risk: nextValue });
-            if (result.error) {
-                setSarahAutoLowRiskSaveStatus('error');
-                setSarahAutoLowRisk(prev => !prev);
-                setTimeout(() => setSarahAutoLowRiskSaveStatus('idle'), 3000);
-            } else {
-                setSarahAutoLowRiskSaveStatus('saved');
-                setTimeout(() => setSarahAutoLowRiskSaveStatus('idle'), 2000);
             }
         });
     }
@@ -1470,32 +1449,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     </div>
                 </div>
 
-                {isOwner && (
-                    <div id="sarah" className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-4 scroll-mt-24">
-                        <div>
-                            <h2 className="text-2xl font-bold text-primary mb-1">Assistant Sarah</h2>
-                            <p className="text-sm text-secondary">Réglage de l&apos;autonomie de Sarah, réservé aux propriétaires du compte.</p>
-                        </div>
-                        <div className="flex items-center justify-between gap-4 pt-2 border-t border-[var(--elevation-border)]">
-                            <div>
-                                <p className="text-sm font-semibold text-primary">Actions simples en autonomie</p>
-                                <p className="text-xs text-secondary max-w-xl">Sarah peut effectuer seule les actions simples et réversibles (créer une tâche, une fiche client, transmettre un brief à Chloé...). Les actions sensibles (envoi de facture, encaissement, email client) resteront toujours soumises à votre confirmation.</p>
-                                {sarahAutoLowRiskSaveStatus === 'saved' && <p className="text-xs text-green-500 font-medium mt-1">Préférence enregistrée.</p>}
-                                {sarahAutoLowRiskSaveStatus === 'error' && <p className="text-xs text-red-500 font-medium mt-1">Erreur lors de l&apos;enregistrement.</p>}
-                            </div>
-                            <button
-                                type="button"
-                                role="switch"
-                                aria-checked={sarahAutoLowRisk}
-                                onClick={() => handleSaveSarahAutoLowRisk(!sarahAutoLowRisk)}
-                                disabled={isPending || sarahAutoLowRiskSaveStatus === 'saving'}
-                                className={`relative flex-shrink-0 w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 ${sarahAutoLowRisk ? 'bg-accent' : 'bg-[var(--elevation-border)]'}`}
-                            >
-                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${sarahAutoLowRisk ? 'translate-x-6' : 'translate-x-0'}`} />
-                            </button>
-                        </div>
-                    </div>
-                )}
                 </div>
             );
         }
@@ -3310,7 +3263,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
         if (activeTab === 'abonnement') {
             return (
-                <div className="rounded-3xl card p-8">
+                <div className="rounded-3xl card p-8 space-y-8">
                     <SubscriptionTab
                         modules={organizationModules ?? {} as OrganizationModules}
                         stripeLinkPro={stripeLinkPro}
@@ -3320,6 +3273,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         accessStatus={subscriptionAccessStatus}
                         accessEndsAt={subscriptionAccessEndsAt}
                     />
+                    <OpenRouterKeyTab />
                 </div>
             )
         }

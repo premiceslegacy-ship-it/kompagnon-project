@@ -107,7 +107,6 @@ if $GENERATE_ENV; then
   TIER_CHOICE=""
   ask_choice TIER_CHOICE "Tier MRR du client :" \
     "setup-only : pas de MRR, IA désactivée" \
-    "starter    : 39 EUR/mois, IA sans Sarah" \
     "pro        : 69 EUR/mois, Sarah + vocal live 60 min" \
     "expert     : 139 EUR/mois, tout illimité + vocal live 300 min"
 
@@ -126,13 +125,6 @@ if $GENERATE_ENV; then
     if confirm "Le client utilise-t-il sa propre clé OpenRouter ?"; then
       OWN_OPENROUTER="true"
     fi
-  fi
-
-  # Facturation électronique B2Brouter ?
-  B2BROUTER_ACTIVE="false"
-  echo ""
-  if confirm "Activer la facturation électronique B2Brouter (add-on annuel) ?"; then
-    B2BROUTER_ACTIVE="true"
   fi
 
   echo ""
@@ -179,16 +171,9 @@ if $GENERATE_ENV; then
     sed_inplace "s|OPENROUTER_API_KEY=\"COPIER_DEPUIS_ENV_LOCAL\"|OPENROUTER_API_KEY=\"${CLIENT_OR_KEY}\"|" "$ENV_FILE"
   fi
 
-  if [[ "$B2BROUTER_ACTIVE" == "true" ]]; then
-    B2B_KEY="" B2B_ACCOUNT="" B2B_WEBHOOK=""
-    ask B2B_KEY     "B2Brouter API key"
-    ask B2B_ACCOUNT "B2Brouter account ID"
-    ask B2B_WEBHOOK "B2Brouter webhook secret"
-    sed_inplace "s|B2BROUTER_ENV=\"sandbox\"|B2BROUTER_ENV=\"production\"|" "$ENV_FILE"
-    sed_inplace "s|B2BROUTER_API_KEY=\"\"|B2BROUTER_API_KEY=\"${B2B_KEY}\"|" "$ENV_FILE"
-    sed_inplace "s|B2BROUTER_ACCOUNT_ID=\"\"|B2BROUTER_ACCOUNT_ID=\"${B2B_ACCOUNT}\"|" "$ENV_FILE"
-    sed_inplace "s|B2BROUTER_WEBHOOK_SECRET=\"\"|B2BROUTER_WEBHOOK_SECRET=\"${B2B_WEBHOOK}\"|" "$ENV_FILE"
-  fi
+  # Facturation électronique : rien à demander ici. Le mode (off/export_only/
+  # super_pdp) se pilote depuis le cockpit via organization_einvoicing_config
+  # — aucune variable ni secret par client, voir DEPLOIEMENT_CLIENT.md.
 
   echo ""
   echo "Fichier $ENV_FILE genere (tier: $TIER_SLUG)."

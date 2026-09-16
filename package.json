@@ -21,7 +21,8 @@
     "cf-typegen": "node ./node_modules/wrangler/bin/wrangler.js types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:isolation": "node --import tsx tests/isolation/seed.mts && vitest run --config tests/isolation/vitest.config.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation'
 import type { LucideIcon } from 'lucide-react'
 import {
   ArrowRight,
-  Bot,
   Building2,
   Check,
   ChevronDown,
@@ -276,16 +275,6 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
       reward: 80,
       tag: 'Bonus',
       icon: Globe,
-    },
-    {
-      title: 'Régler l\'autonomie de Sarah',
-      description: 'Laissez Sarah effectuer seule les actions simples et réversibles (tâche, fiche client, brief à Chloé) sans attendre votre confirmation.',
-      href: '/settings?tab=entreprise#sarah',
-      done: readiness.sarahAutonomyReady,
-      optional: true,
-      reward: 60,
-      tag: 'Bonus',
-      icon: Bot,
     },
   ]
 

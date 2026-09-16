@@ -1,10 +1,11 @@
 # SOP Déploiement — Nouveau client Atelier
 
 > **Document vivant.** Toute nouvelle étape de déploiement doit être ajoutée ici immédiatement.
-> Modèle : **1 Supabase + 1 déploiement Cloudflare Workers + 1 domaine** par client — données totalement isolées.
+> Modèle décrit dans la majorité de ce document (encore le mode de livraison actif pour les clients déjà provisionnés ainsi) : **1 Supabase + 1 déploiement Cloudflare Workers + 1 domaine** par client — données totalement isolées.
+> **Trajectoire cible pour l'offre setup 3k, décidée le 2026-09-16** : basculer vers le modèle mutualisé (1 seul projet Supabase, N clients dedans) — voir section dédiée ci-dessous. Ce document reste la référence des deux modes tant que la bascule n'est pas terminée pour tout le parc.
 
 > **Etat réel mai 2026 :** le déploiement app client, les migrations, les Edge Functions et les Workers cron sont opérables. Les variables Cloudflare sont entièrement automatisables : `scripts/prepare-cloudflare-env.mjs` injecte les secrets via Wrangler (`--apply-secrets`) et les variables texte via l'API REST Cloudflare (`--apply-all`). `CLOUDFLARE_ACCOUNT_ID` et `CLOUDFLARE_API_TOKEN` requis dans `.env.local` pour `--apply-all`.
-> **Scopes séparées :** Stripe abonnements cockpit → `docs/scope-cockpit-stripe-abonnements.md`. Super PDP / facturation électronique → `docs/atelier-facturation-electronique.md`. Paiement en ligne des factures artisan → `docs/scope-paiement-en-ligne.md`. WhatsApp mutualisé → en attente de vérification Meta / routage central.
+> **Scopes séparées :** Stripe abonnements cockpit → `docs/scope-cockpit-stripe-abonnements.md`. Super PDP / facturation électronique → `docs/atelier-facturation-electronique.md`. Paiement en ligne des factures artisan → `docs/scope-paiement-en-ligne.md`. WhatsApp → abandonné (2026-09-16), voir section dédiée.
 
 ---
 
@@ -24,26 +25,28 @@ Client BTP
 
 ---
 
-## Cockpit : modèle à deux modes (per-client aujourd'hui, mutualisé possible demain)
+## Cockpit : modèle à deux modes (per-client en cours de sortie, mutualisé devenu la cible)
 
-Le modèle de déploiement actuel est **single-tenant par instance** (1 org réelle par instance Supabase), mais le cockpit modélise déjà le tenant logique comme la paire `(source_instance, organization_id)` — pas `source_instance` seul :
+Le modèle historique était **single-tenant par instance** (1 org réelle par instance Supabase) ; le modèle cible pour l'offre setup 3k, décidé le 2026-09-16, est mutualisé (voir section dédiée plus haut). Le cockpit modélise déjà le tenant logique comme la paire `(source_instance, organization_id)` — pas `source_instance` seul, ce qui a permis à cette bascule de ne pas nécessiter de changement de schéma côté cockpit :
 
 - `operator_clients` : upsert `onConflict: 'source_instance,organization_id'`
 - `operator_usage_events` : idempotence `onConflict: 'source_instance,local_usage_log_id'`
 - config-sync et quotas sont scopés par `organization_id`, pas par instance
 
-Conséquence : un client **setup 3k sur mesure** (son propre Supabase, ses clés OpenRouter) et un futur **SaaS mutualisé** (plusieurs organisations dans une même instance) apparaissent dans le même cockpit sans changement de schéma — per-client = 1 `source_instance` × 1 org, mutualisé = 1 `source_instance` × N orgs.
+Conséquence : un client **setup 3k** (organisation mutualisée dans `atelier-app`) et un client self-service (Pro/Expert, même instance) apparaissent dans le même cockpit sans changement de schéma — per-client historique = 1 `source_instance` × 1 org, mutualisé = 1 `source_instance` × N orgs.
 
-Deux points à trancher explicitement avant d'ouvrir une instance à plusieurs organisations (pas avant, cela reste théorique en single-tenant) :
+Points encore ouverts pour l'ouverture à des clients setup 3k payants (le mutualisé n'est plus théorique, mais ces deux points n'ont pas été retraités par l'audit du 2026-09-16, qui a porté sur l'isolation cross-tenant, pas sur la volumétrie du cockpit) :
 
 1. `syncClientQuotaConfig` pousse une config vers une `app_url` par client — en mutualisé, N organisations partageraient la même URL. Le payload porte déjà `organization_id`, mais le routage réception côté instance (`config-sync`) est à valider explicitement pour ce cas.
 2. Le cron `quota-alerts` et l'expiration d'essai itèrent `operator_client_subscriptions` sans pagination — cadence et volumétrie à revoir dès qu'une instance porte plusieurs organisations (voir le sous-skill `cron-webhooks-integrations` du dossier backend-orsayn, pattern fan-out cron).
 
 ---
 
-## Instance mutualisée `atelier-app` — cas particulier, pas un per-client
+## Instance mutualisée `atelier-app` — devenue le modèle cible de l'offre setup 3k
 
-Ce document décrit le modèle **1 Supabase + 1 Worker + 1 domaine par client**. `atelier-app` (Worker Cloudflare, domaine `app.atelier-btp.fr`) déroge à ce modèle : c'est une instance **unique et partagée** portant potentiellement N organisations self-service, avec le même Supabase `pyxnmohknxmbpbcuvudg` que les autres environnements de test.
+Ce document décrit historiquement le modèle **1 Supabase + 1 Worker + 1 domaine par client**. `atelier-app` (Worker Cloudflare, domaine `app.atelier-btp.fr`) déroge à ce modèle depuis le départ : c'est une instance **unique et partagée** portant potentiellement N organisations, avec le même Supabase `pyxnmohknxmbpbcuvudg` que les autres environnements de test. Jusqu'au 2026-09-16, elle ne servait qu'au parcours self-service (Pro/Expert sans setup) ; **elle devient désormais aussi le mode de livraison cible de l'offre setup 3k** : un client "on s'occupe de tout" est provisionné comme une organisation supplémentaire dans ce même projet Supabase, pas dans un projet dédié.
+
+Ce choix avait été explicitement écarté le 2026-09-09 dans `docs/souverainete-donnees/03-trajectoire.md` ("chantier de refonte plus lourd que l'urgence actuelle ne le justifie"). Il redevient praticable après l'audit et le durcissement du 2026-09-16 : voir `docs/souverainete-donnees/` pour la trajectoire à jour, et le sous-skill `auth-rls-access-control` (`references/multi-tenant-isolation.md`) du dossier `backend-orsayn` pour le détail technique des failles corrigées et de la méthode de vérification.
 
 Différences clés par rapport au protocole per-client ci-dessous :
 - `.env.client-atelier-app` (non versionné) suit le template `pro`, avec `SHARED_EMAIL_DOMAIN="atelier-btp.fr"` et `RESEND_REPLY_TO_ADDRESS="contact@orsayn.fr"` — domaine de repli pour les emails métier (relances, factures) des organisations qui n'ont pas configuré leur propre `email_from_address`. Voir `src/lib/email/index.ts` (`sendEmail`) pour le mécanisme de fallback : le nom affiché reste celui de l'organisation cliente, seule l'adresse technique est partagée.
@@ -51,6 +54,41 @@ Différences clés par rapport au protocole per-client ci-dessous :
 - KV namespaces dédiés (ne jamais réutiliser ceux du cockpit) : `NEXT_INC_CACHE_KV` et `NEXT_TAG_CACHE_KV_ATELIER_APP` — `deploy-client.sh atelier-app` swappe temporairement les ids dédiés puis restaure la configuration du cockpit.
 - Déploiement : `./scripts/deploy-client.sh atelier-app`, crons via `./scripts/deploy-cron-workers.sh atelier-app --env-file=.env.client-atelier-app`, Custom Domain `app.atelier-btp.fr` ajouté manuellement (Workers → atelier-app → Settings → Domains & Routes).
 - Suivi détaillé de la construction de cette instance : `docs/roadmap-saas-mutualise-2026-08.md` (étapes B0 à B5).
+
+### Pas de domaine personnalisé par client — décision du 2026-09-16
+
+Chaque organisation mutualisée se connecte sur `app.atelier-btp.fr`, sans nom de domaine propre. Ce qui compte pour le client n'est pas l'URL de connexion mais l'identité affichée sur ce qu'il produit et envoie : devis, factures, emails portent déjà son logo, son nom, son SIRET (`organizations.logo_url`, `.name`, `.brand_name`, `.siret`, etc. — déjà en base et déjà utilisés par `src/lib/pdf/` et `src/lib/email/index.ts`). Le fallback email déjà en place (`SHARED_EMAIL_DOMAIN`, voir ci-dessus) couvre le seul écart technique réel : l'adresse technique d'envoi est mutualisée, mais le nom affiché à l'expéditeur reste celui du client.
+
+Aucune résolution d'organisation par hostname à construire : pas de colonne `custom_domain`, pas de Custom Domain Cloudflare par client, pas de mécanisme à maintenir.
+
+### Clé OpenRouter par organisation — construit le 2026-09-16
+
+Aujourd'hui `OPENROUTER_API_KEY` est un secret Cloudflare par Worker (un client = un Worker = une clé) sur le modèle dédié historique. En mutualisé, plusieurs organisations partagent le même Worker `atelier-app` : la clé devient une donnée par organisation (`organization_ai_credentials`, chiffrée AES-256-GCM), pas une variable d'environnement globale.
+
+La règle retenue diffère par offre, **sans fallback entre les deux** :
+- **Abonnement self-service (Pro/Expert, sans setup)** : toujours la clé Atelier partagée (`OPENROUTER_API_KEY`). Pas de clé client, jamais.
+- **Setup 3k mutualisé** : toujours la clé du client, saisie par lui dans `/settings` (compte OpenRouter personnel). Pas de repli sur la clé Atelier pour cette offre — un client `client_owned` sans clé enregistrée voit ses appels IA échouer explicitement plutôt que de basculer silencieusement sur la clé partagée.
+
+**Implémentation :**
+- Migration `187_organization_openrouter_key.sql` : table `organization_ai_credentials` (PK `organization_id`, colonne `openrouter_key_encrypted`), RLS activée **sans aucune policy** — accessible uniquement via `createAdminClient()`/`service_role`, même le membre propriétaire de l'organisation ne peut pas la lire via PostgREST (vérifié en base locale : `SELECT` par un client anon connecté renvoie `[]`). Pattern copié de `supabase/operator-migrations/013_super_pdp_oauth_credentials.sql`.
+- `src/lib/ai/openrouter-credentials.ts` : lecture/écriture/suppression, chiffrement via `src/lib/crypto/secrets.ts` (même mécanisme que les tokens OAuth Super PDP), clé de chiffrement dans `ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY` (secret Worker, jamais en base, distinct par instance — voir `.env.example`).
+- `src/lib/ai/callAI.ts` et `src/lib/ai/embeddings.ts` résolvent la clé selon `ai_billing_mode` : `client_owned` lit d'abord `organization_ai_credentials`, puis retombe sur `OPENROUTER_API_KEY` du Worker (modèle dédié historique, où la clé client est directement le secret du Worker) — ce second niveau n'est pas un fallback client/Atelier, c'est la même clé client exprimée différemment selon le modèle de déploiement.
+- UI cliente : section dans `/settings` → onglet Abonnement (`src/components/settings/OpenRouterKeyTab.tsx`), visible uniquement si `ai_billing_mode = 'client_owned'`. Write-only : la clé n'est jamais renvoyée au navigateur une fois enregistrée, seule sa présence est affichée.
+- Dix routes IA (`analyze-quote`, `chantier-assistant`, `email-draft`, `estimate-labor`, `parse-document-pdf`, `measure-plan`, `scan-receipt`, `suggest-tasks`, `suggest-jalons`, `transcribe-audio`) avaient une garde précoce `if (!process.env.OPENROUTER_API_KEY)` qui aurait bloqué tout client `client_owned` sans clé Atelier configurée sur le Worker mutualisé — retirée, la garde vit maintenant uniquement dans `callAI()` qui connaît le mode de facturation.
+
+**Reste à faire :** aucune UI cockpit pour forcer `ai_billing_mode = 'client_owned'` sur une organisation setup 3k — se fait aujourd'hui via `OffreTab.tsx` (`/orsayn`, champ "Mode facturation IA").
+
+**Suivi de consommation cockpit — inchangé, déjà en place.** Que la clé utilisée soit celle du client ou la clé Atelier partagée, la consommation IA de chaque organisation remonte déjà au cockpit via `operator_usage_events`/`usage_logs` scopés par `organization_id` (voir `callAI.ts`, `syncUsageLogToOperator`) — le fait qu'un client utilise sa propre clé OpenRouter ne dispense pas de logguer l'usage côté Atelier.
+
+### Migration des données client par agent IA — à construire
+
+L'idée retenue : un opérateur humain (ou Hermes Agent / Claude) reçoit d'un client un fichier contenant ses données existantes (clients, catalogue, devis, factures) et les fait migrer par un agent IA qui agit directement dans la base mutualisée, scopé à l'organisation de ce client. **Non construit à ce jour.** Deux garde-fous non négociables avant de construire cet agent, vu l'audit du 2026-09-16 :
+- l'agent doit agir via un chemin qui porte `organization_id` de façon fiable à chaque écriture (soit via un client authentifié comme un membre de cette organisation, soit via `service_role` avec un `.eq('organization_id', ...)` explicite sur **chaque** requête — jamais l'un des deux à moitié) ;
+- avant de lui donner un accès en écriture large, écrire ses scénarios comme des cas du harnais `tests/isolation/` (voir sous-skill `multi-tenant-test-harness`) : un agent qui écrit en masse via `service_role` amplifie exactement le risque qu'un seul filtre `organization_id` oublié devienne une fuite entre deux clients payants.
+
+### Rappel : la mutualisation ne ferme pas la porte à un self-hosted
+
+`docs/souverainete-donnees/` documente une trajectoire de sortie de Supabase cloud vers un self-hosted (VPS, distribution Docker officielle) pour reprendre la main sur les quotas et coûts, indépendamment du choix mono-projet/multi-projet. Un projet Supabase mutualisé migre vers un self-hosted exactement comme un projet dédié (le schéma, les migrations et le code applicatif ne changent pas) — la mutualisation et la souveraineté des données sont deux décisions orthogonales, pas concurrentes. Voir `docs/souverainete-donnees/03-trajectoire.md` pour la décision à jour.
 
 ---
 
@@ -140,7 +178,7 @@ manuellement par toi en T1, donnés à ce moment-là), `CRON_SECRET` et les autr
 souplesse en fin de quota).
 
 Une fois les 9 réponses obtenues, Claude reformule le bloc "Protocole de session" rempli et
-demande confirmation avant de lancer T1-T7 / C1-C10.
+demande confirmation avant de lancer T1-T7 / C1-C9.
 
 ---
 
@@ -213,7 +251,7 @@ Offre souscrite : [setup_only | pro | expert]
     ne jamais le proposer à un nouveau client. Le tier reste géré techniquement en interne
     (quota-catalog.ts, webhook Stripe) pour ne pas casser un client historique déjà dessus,
     mais il n'apparaît plus dans les choix d'achat de l'app ni dans ce protocole.
-  → Détermine modules + quota_config dans organization_modules au déploiement (étape C8)
+  → Détermine modules + quota_config dans organization_modules au déploiement (étape C7)
   → setup_only : app complète sans IA par défaut — tous les modules IA à false, tous quotas à 0,
     OPENROUTER_API_KEY optionnel (si client veut sa propre clé pour usage futur). Si le client
     fournit sa clé (ai_billing_mode = client_owned), Sarah texte et le reste des modules IA
@@ -262,8 +300,8 @@ Ces étapes nécessitent une interface web ou une action humaine irremplaçable.
 
 **À faire une seule fois sur ta machine (déjà fait) :**
 ```bash
-supabase login   # débloque C1, C5, C6
-wrangler login   # débloque T3, C7
+supabase login   # débloque C1, C5
+wrangler login   # débloque T3, C6
 # @opennextjs/cloudflare est une dépendance locale du projet (npm install) — pas d'install globale nécessaire
 ```
 
@@ -331,16 +369,15 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 | C2 | Créer les 4 buckets Storage + RLS (`logos`, `chantier-photos`, `quote-attachments`, `organization-exports`) | Supabase MCP | MCP connecté ✅ |
 | C3 | Configurer Auth Supabase (Site URL + Redirect URLs + OTP) | Supabase MCP | MCP connecté ✅ |
 | C4 | Générer `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` uniques si non fournis | Terminal (`openssl rand -hex 32`) | — |
-| C5 | Déployer la Edge Function `whatsapp-webhook` | `supabase functions deploy` | `supabase login` ✅ |
-| C6 | Déployer la Edge Function + injecter les secrets (`OPENROUTER`, `MISTRAL`, `RESEND`, `APP_URL`; `SHARED_WABA_*` seulement en mode Meta/Graph-compatible) | `./scripts/deploy-edge-functions.sh <ref> --resend-key ... --resend-from ... --app-url ...` | `supabase login` ✅ |
-| C7 | Déployer les Workers cron (auto-reminder + embeddings + data-retention) + injecter `APP_URL` + `CRON_SECRET` | `./scripts/deploy-cron-workers.sh atelier-nomclient --env-file=.env.client-nomclient` | `wrangler login` ✅ |
-| C8 | Peupler `company_memory` avec le contexte de l'entretien client + configurer `organization_modules` selon l'offre souscrite | Supabase MCP | MCP connecté ✅ |
-| C9 | Vérifier migrations, permissions, buckets, modules IA | Supabase MCP | MCP connecté ✅ |
-| C10 | Afficher récapitulatif final + URL app client + modules actifs ; WhatsApp mutualisé reste en attente tant que le routeur central n'est pas livré | — | — |
+| C5 | Injecter les secrets partagés (`OPENROUTER`, `MISTRAL`, `RESEND`, `APP_URL`) — `whatsapp-webhook` n'est plus déployée (feature abandonnée, voir étape 6) | `./scripts/deploy-edge-functions.sh <ref> --resend-key ... --resend-from ... --app-url ...` | `supabase login` ✅ |
+| C6 | Déployer les Workers cron (auto-reminder + embeddings + data-retention) + injecter `APP_URL` + `CRON_SECRET` | `./scripts/deploy-cron-workers.sh atelier-nomclient --env-file=.env.client-nomclient` | `wrangler login` ✅ |
+| C7 | Peupler `company_memory` avec le contexte de l'entretien client + configurer `organization_modules` selon l'offre souscrite | Supabase MCP | MCP connecté ✅ |
+| C8 | Vérifier migrations, permissions, buckets, modules IA | Supabase MCP | MCP connecté ✅ |
+| C9 | Afficher récapitulatif final + URL app client + modules actifs | — | — |
 
 **Note C4/T4 (variables Cloudflare Workers) :** le script `cf:env --apply-all` injecte la liste complète — secrets via Wrangler et variables texte via l'API REST Cloudflare. Requiert `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` dans `.env.local`.
 
-**Note C8 — Configuration modules IA selon l'offre souscrite :**
+**Note C7 — Configuration modules IA selon l'offre souscrite :**
 
 Après avoir peuplé `company_memory`, je configure `organization_modules.modules`, `organization_modules.quota_config` et `organization_modules.overflow_mode` via Supabase MCP selon le champ "Offre souscrite" du protocole :
 
@@ -1290,7 +1327,7 @@ Planification externe alternative — cron-job.org :
 
 **Quand déclencher manuellement :**
 - Après la migration `057_embedding_qwen3.sql` (vide les embeddings existants — à re-générer)
-- Après avoir peuplé `company_memory` (étape C8) pour que le RAG soit opérationnel immédiatement
+- Après avoir peuplé `company_memory` (étape C7) pour que le RAG soit opérationnel immédiatement
 
 ```bash
 # Déclencher manuellement via curl
@@ -1361,54 +1398,19 @@ METALPRICEAPI_KEY=...   ← clé Atelier partagée (obtenir sur metalpriceapi.co
 
 **Lien catalogue (depuis cette version) :** si un article du catalogue (`materials`) est lié à une grille métal (`metal_price_grids.catalog_item_id`), sa fiche d'édition affiche un encart informatif avec le prix suggéré au cours du jour — sans jamais écraser `sale_price` automatiquement. Aucune action de déploiement requise, c'est un appel côté client à la même route `/api/metal-prices`.
 
-### 6. Edge Function WhatsApp
+### 6. Edge Function WhatsApp — abandonnée (2026-09-16)
 
-Script automatisé (lancé par Claude via terminal) :
+**WhatsApp est abandonné comme feature** (intégration API Meta jugée trop coûteuse) : les modules `whatsapp_agent`, `whatsapp_ocr`, `whatsapp_proactive` restent à `false` sur tous les tiers. L'Edge Function `supabase/functions/whatsapp-webhook` a été retirée de `scripts/deploy-edge-functions.sh` (elle ne se déploie plus sur les nouveaux clients) et supprimée sur les instances où elle avait déjà été poussée — trouvée `ACTIVE` et **non signée** (aucune vérification `X-Hub-Signature-256` malgré `service_role` et des actions métier réelles) sur `pyxnmohknxmbpbcuvudg` lors de l'audit du 2026-09-16, supprimée le jour même. Détail du finding : sous-skill `cron-webhooks-integrations` du dossier `backend-orsayn`.
+
+Ne pas redéployer cette fonction sans avoir d'abord implémenté la vérification de signature — ni sans avoir revalidé que la feature est effectivement relancée côté produit.
+
 ```bash
+# Déploiement : le bloc whatsapp-webhook a été retiré, cette commande ne
+# déploie plus que les secrets partagés (OpenRouter, Mistral, Resend, APP_URL).
 ./scripts/deploy-edge-functions.sh <PROJECT_REF> \
   --resend-key re_xxx \
   --resend-from contact@client.fr \
   --app-url https://client.fr
-```
-
-**Séparation clés partagées / clés par client :**
-- **Depuis `.env.local`** (clés Atelier identiques partout) : `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`
-- **Depuis `.env.local` si mode Meta/Graph-compatible** : `SHARED_WABA_PHONE_NUMBER_ID`, `SHARED_WABA_ACCESS_TOKEN`
-- **En argument** (clés propres au client) : `--resend-key`, `--resend-from`, `--app-url`
-
-Cela évite de modifier `.env.local` entre chaque déploiement client.
-
-`APP_URL` est requis pour les liens PDF dans les emails envoyés depuis WhatsApp (`send_quote`, `send_invoice`).
-
-**Architecture WhatsApp mutualisée Twilio :**
-
-Le mode cible est un webhook central côté Orsayn. Twilio ne doit pas être configuré avec une URL Supabase par client.
-
-```
-Twilio WhatsApp Atelier
-  → https://<cockpit-orsayn>/api/whatsapp/twilio
-  → routeur central Orsayn
-  → résolution du client via le numéro WhatsApp autorisé
-  → traitement sur l'instance client concernée
-  → réponse sortante via Twilio
-```
-
-Dans ce mode, `whatsapp-webhook` côté Supabase client reste utile comme brique de traitement si le routeur central l'appelle, mais il n'est pas l'URL webhook configurée dans Twilio.
-
-URL webhook client (mode propre WABA Meta/Graph-compatible uniquement) :
-```
-https://<PROJECT_REF>.supabase.co/functions/v1/whatsapp-webhook
-```
-
-Le Verify Token est généré automatiquement dans **Settings → Agent WhatsApp** de l'app.
-
-**Mise à jour code** (quand la Edge Function évolue) :
-```bash
-# Un client
-./scripts/deploy-edge-functions.sh <ref> --resend-key re_xxx --resend-from contact@client.fr --app-url https://client.fr
-
-# Tous les clients (adapter les valeurs par client)
-for ref in ref1 ref2 ref3; do ./scripts/deploy-edge-functions.sh $ref --resend-key re_xxx --resend-from contact@client.fr --app-url https://client.fr; done
 ```
 
 ### 7. Company Memory — contexte IA (rempli par Claude après l'entretien)
@@ -1462,7 +1464,7 @@ Impact support appareils :
 
 ## ─── CHECKLISTS ─────────────────────────────────────────────────────────────────
 
-### Checklist technique (Claude vérifie en C9)
+### Checklist technique (Claude vérifie en C8)
 
 - [ ] `SELECT count(*) FROM permissions` → count cohérent avec le projet de référence (voir note §1 — plus 48 depuis 062)
 - [ ] `SELECT count(*) FROM storage.buckets` → 4 buckets

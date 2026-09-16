@@ -23,7 +23,6 @@ export const DEFAULT_MODULES_BY_PROFILE: Record<BusinessProfile, OrganizationMod
 export const DEFAULT_ORGANIZATION_MODULES: OrganizationModules = getModulesForTier('expert')
 
 export const MODULES_SETUP_ONLY: OrganizationModules = getModulesForTier('setup_only')
-export const MODULES_STARTER: OrganizationModules = getModulesForTier('starter')
 export const MODULES_PRO: OrganizationModules = getModulesForTier('pro')
 export const MODULES_EXPERT: OrganizationModules = getModulesForTier('expert')
 

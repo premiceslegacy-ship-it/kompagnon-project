@@ -871,9 +871,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Action réservée aux administrateurs.' }, { status: 403 })
   }
 
-  if (!process.env.OPENROUTER_API_KEY) {
-    return NextResponse.json({ error: 'Clé API IA non configurée (OPENROUTER_API_KEY manquante)' }, { status: 500 })
-  }
 
   const orgId = await getCurrentOrganizationId()
   const contentType = req.headers.get('content-type') ?? ''

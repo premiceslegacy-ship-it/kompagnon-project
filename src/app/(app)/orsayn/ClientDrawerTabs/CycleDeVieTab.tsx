@@ -61,7 +61,6 @@ export default function CycleDeVieTab({ row }: { row: ClientRow }) {
               <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
               {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
               <select name="targetTier" defaultValue="pro" className={inputSmCls}>
-                <option value="starter">starter</option>
                 <option value="pro">pro</option>
                 <option value="expert">expert</option>
               </select>

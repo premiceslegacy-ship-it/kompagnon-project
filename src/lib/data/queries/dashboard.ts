@@ -70,7 +70,6 @@ export type DashboardSetupReadiness = {
   firstQuoteReady: boolean
   teamReady: boolean
   publicFormReady: boolean
-  sarahAutonomyReady: boolean
   counts: {
     clients: number
     quotes: number
@@ -658,7 +657,7 @@ export async function getDashboardSetupReadiness(deps?: QueryDeps): Promise<Dash
         name, email, business_activity_id, address_line1, postal_code, city,
         siret, vat_number, is_vat_subject, iban, bic, payment_terms_days,
         signatory_name, signatory_role, signature_image, public_form_enabled,
-        sarah_auto_low_risk, setup_checklist_dismissed
+        setup_checklist_dismissed
       `)
       .eq('id', orgId)
       .single(),
@@ -722,7 +721,6 @@ export async function getDashboardSetupReadiness(deps?: QueryDeps): Promise<Dash
     firstQuoteReady: (quotesCount ?? 0) > 0,
     teamReady: (teamCount ?? 0) > 1,
     publicFormReady: org.public_form_enabled === true,
-    sarahAutonomyReady: org.sarah_auto_low_risk === true,
     counts: {
       clients: clientsCount ?? 0,
       quotes: quotesCount ?? 0,
