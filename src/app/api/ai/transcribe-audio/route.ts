@@ -24,9 +24,6 @@ export async function POST(req: NextRequest) {
 
   const currentMembership = await getCurrentMembershipContext()
 
-  if (!process.env.OPENROUTER_API_KEY) {
-    return NextResponse.json({ error: 'Transcription non configurée' }, { status: 500 })
-  }
 
   const orgId = currentMembership?.organizationId
   if (!orgId) {

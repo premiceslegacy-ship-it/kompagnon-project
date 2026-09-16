@@ -1,4 +1,4 @@
-export const SUBSCRIPTION_TIERS = ['setup_only', 'starter', 'pro', 'expert'] as const
+export const SUBSCRIPTION_TIERS = ['setup_only', 'pro', 'expert'] as const
 
 export type SubscriptionTier = typeof SUBSCRIPTION_TIERS[number]
 
@@ -15,7 +15,7 @@ export const PRODUCT_MODULE_KEYS = [
   'weekly_summary',
   'quote_ai',
   'planning_ai',
-  'chantier_assistant',  // Assistant IA inline dans la fiche chantier (Starter+)
+  'chantier_assistant',  // Assistant IA inline dans la fiche chantier
   'sarah_assistant',     // Sarah — widget global secrétaire métier (Pro+)
   'suggest_tasks',
   'catalog_ai',
@@ -45,7 +45,7 @@ export type TechnicalQuotaFeature =
   | 'whatsapp_document_ocr'
   | 'reminder_draft'
   | 'auto_reminder_draft'
-  | 'email_draft'         // Rédaction email client via IA (Starter+, quota relances_ai)
+  | 'email_draft'         // Rédaction email client via IA (quota relances_ai)
   | 'chantier_report_summary'
   | 'chantier_assistant'
   | 'sarah_assistant'
@@ -117,7 +117,7 @@ export const TECHNICAL_FEATURE_TO_QUOTA: Record<TechnicalQuotaFeature, QuotaFeat
   whatsapp_document_ocr: 'whatsapp_ocr',
   reminder_draft: 'relances_ai',
   auto_reminder_draft: 'relances_ai',
-  email_draft: 'relances_ai',    // Mails clients IA partagent le quota relances — Starter inclus
+  email_draft: 'relances_ai',    // Mails clients IA partagent le quota relances
   chantier_report_summary: 'chantier_report_ai',
   chantier_assistant: 'chantier_assistant',
   sarah_assistant: 'sarah_assistant',
@@ -129,25 +129,6 @@ export const TECHNICAL_FEATURE_TO_QUOTA: Record<TechnicalQuotaFeature, QuotaFeat
 
 export const MODULES_BY_TIER: Record<SubscriptionTier, Record<ProductModuleKey, boolean>> = {
   setup_only: Object.fromEntries(PRODUCT_MODULE_KEYS.map((key) => [key, false])) as Record<ProductModuleKey, boolean>,
-  starter: {
-    relances_ai: true,
-    weekly_summary: true,
-    quote_ai: true,
-    planning_ai: true,
-    chantier_assistant: true,   // Assistant inline fiche chantier — Starter+
-    sarah_assistant: false,     // Sarah widget global — Pro+
-    suggest_tasks: true,
-    catalog_ai: true,
-    document_import_ai: true,
-    chantier_report_ai: true,
-    labor_estimate_ai: true,
-    receipt_ocr: true,
-    voice_input: true,
-    voice_live: false,          // Vocal live — Pro+
-    whatsapp_agent: false,
-    whatsapp_ocr: false,
-    whatsapp_proactive: false,
-  },
   pro: {
     relances_ai: true,
     weekly_summary: true,
@@ -178,26 +159,6 @@ const UNLIMITED = -1
 
 export const QUOTAS_BY_TIER: Record<SubscriptionTier, Record<QuotaFeature, number>> = {
   setup_only: Object.fromEntries(QUOTA_FEATURES.map((key) => [key, 0])) as Record<QuotaFeature, number>,
-  starter: {
-    relances_ai: 20,
-    weekly_summary: 8,
-    quote_ai: 15,
-    planning_ai: 10,
-    chantier_assistant: 25,
-    sarah_assistant: 0,         // Sarah Pro+ uniquement
-    suggest_tasks: 15,
-    catalog_ai: 10,
-    document_import_ai: 15,
-    chantier_report_ai: UNLIMITED,
-    labor_estimate_ai: UNLIMITED,
-    receipt_ocr: UNLIMITED,
-    voice_input: 20,
-    voice_live_minutes: 0,      // Vocal live — Pro+
-    wa_messages: 0,
-    wa_vocal_minutes: 0,
-    wa_proactive_messages: 0,
-    whatsapp_ocr: 0,
-  },
   pro: {
     relances_ai: 60,
     weekly_summary: 12,

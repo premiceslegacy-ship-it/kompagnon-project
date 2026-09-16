@@ -22,7 +22,6 @@ export type BusinessContext = {
   metalPriceGrids: MetalPriceGridContext[]
   verticalPackId: VerticalPackId | null
   verticalPackLabel: string | null
-  sarahAutoLowRisk: boolean
 }
 
 export async function getBusinessContext(orgId: string): Promise<BusinessContext> {
@@ -31,7 +30,7 @@ export async function getBusinessContext(orgId: string): Promise<BusinessContext
   const [{ data: org }, { data: grids }] = await Promise.all([
     supabase
       .from('organizations')
-      .select('name, sector, business_profile, business_activity_id, secondary_activity_ids, has_metal_pricing, business_vertical_pack, sarah_auto_low_risk')
+      .select('name, sector, business_profile, business_activity_id, secondary_activity_ids, has_metal_pricing, business_vertical_pack')
       .eq('id', orgId)
       .single(),
     supabase
@@ -77,7 +76,6 @@ export async function getBusinessContext(orgId: string): Promise<BusinessContext
     metalPriceGrids,
     verticalPackId: verticalPack?.id ?? null,
     verticalPackLabel: verticalPack?.label ?? null,
-    sarahAutoLowRisk: org?.sarah_auto_low_risk ?? false,
   }
 }
 

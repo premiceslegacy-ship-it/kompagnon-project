@@ -20,11 +20,7 @@ type TenantContext = { sourceInstance: string; organizationId: string }
 
 function tierFromPriceId(priceId: string | null | undefined): SubscriptionTier | null {
   if (!priceId) return null
-  // STRIPE_PRICE_STARTER volontairement conservé : Starter n'est plus vendu, mais un
-  // customer.subscription.updated peut encore arriver pour un abonné historique sur cette
-  // Price ID. La retirer ferait échouer le webhook pour lui ("Price ID non reconnu").
   const entries: Array<[string | undefined, SubscriptionTier]> = [
-    [process.env.STRIPE_PRICE_STARTER, 'starter'],
     [process.env.STRIPE_PRICE_PRO, 'pro'],
     [process.env.STRIPE_PRICE_EXPERT, 'expert'],
     [process.env.STRIPE_PRICE_EXPERT_LEGACY, 'expert'],

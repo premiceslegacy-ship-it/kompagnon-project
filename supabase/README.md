@@ -122,5 +122,5 @@ Les migrations sont identiques pour tous les clients. Les données sont totaleme
 
 - **`010_seed_permissions.sql` est critique** : doit être exécuté avant le 1er signup, sinon `initialize_organization_for_user` ne peut pas assigner les permissions aux rôles.
 - **Triggers auth** (`007_triggers.sql`) : nécessitent les droits `service_role`. Via Supabase CLI ou l'éditeur SQL du dashboard uniquement.
-- **RLS** : toutes les tables sont protégées. Les mutations admin (webhooks B2Brouter, invitations) utilisent le `service_role` key côté serveur.
+- **RLS** : toutes les tables sont protégées. Les mutations admin (webhook Stripe, invitations) utilisent le `service_role` key côté serveur.
 - **join_code** : généré automatiquement à la création de chaque organisation. Permet à un salarié de rejoindre l'équipe sans invitation email individuelle.

@@ -303,7 +303,7 @@ async function executeSarahTool(
 
     // Tenter de générer l'embedding inline si la ligne est courte (< 500 chars)
     if (content.length <= 500 && insertedRow?.id) {
-      const embedding = await generateEmbedding(content)
+      const embedding = await generateEmbedding(content, orgId)
       if (embedding) {
         await admin.from('company_memory').update({ embedding }).eq('id', insertedRow.id)
       }
@@ -924,9 +924,8 @@ async function resolveActionOrAskForClient(
   userId: string | null,
   conversationId: string | null,
   parsed: { reply: string; action?: unknown },
-  autoLowRisk: boolean,
 ): Promise<void> {
-  const attached = await attachPersistentProposal(orgId, userId, conversationId, parsed.action, autoLowRisk)
+  const attached = await attachPersistentProposal(orgId, userId, conversationId, parsed.action)
   if (attached && typeof attached === 'object' && '__clientNotFound' in attached) {
     const clientName = (attached as { __clientNotFound: string }).__clientNotFound
     parsed.action = undefined
@@ -941,7 +940,6 @@ async function attachPersistentProposal(
   userId: string | null,
   conversationId: string | null,
   action: unknown,
-  autoLowRisk: boolean,
 ): Promise<unknown> {
   if (!action || typeof action !== 'object') return action
   const act = action as Record<string, unknown>
@@ -991,10 +989,9 @@ async function attachPersistentProposal(
 
   if (!proposal) return action
 
-  // Autonomie limitée : les actions "low risk" peuvent être exécutées sans
-  // attendre le clic humain si l'organisation l'a activé. Jamais medium/high,
-  // quel que soit le réglage — la garde est sur `risk`, pas sur le type.
-  if (autoLowRisk && risk === 'low') {
+  // Autonomie sur les actions "low risk" : toujours exécutées sans attendre
+  // le clic humain. Jamais medium/high — la garde est sur `risk`, pas sur le type.
+  if (risk === 'low') {
     const result = await confirmSarahActionAuto(proposal.id)
     return {
       ...act,
@@ -2034,7 +2031,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed2, businessCtx.sarahAutoLowRisk)
+      await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed2)
       void persistConversationTurn({ orgId, userId: user?.id ?? null, conversationId, userMessage: message, reply: parsed2.reply })
       return NextResponse.json(parsed2)
     }
@@ -2048,7 +2045,7 @@ export async function POST(req: NextRequest) {
       parsed.reply = safeReplyFromRaw(raw, parsed.action)
     }
 
-    await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed, businessCtx.sarahAutoLowRisk)
+    await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed)
     void persistConversationTurn({ orgId, userId: user?.id ?? null, conversationId, userMessage: message, reply: parsed.reply })
     return NextResponse.json(parsed)
   } catch (err) {

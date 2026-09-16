@@ -40,7 +40,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'permission_denied', code: 'permission_denied' }, { status: 403 })
   }
 
-  if (!process.env.OPENROUTER_API_KEY) return NextResponse.json({ error: 'Clé API IA non configurée' }, { status: 500 })
 
   const { data: membership } = await supabase
     .from('memberships').select('organization_id').eq('user_id', user.id).single()

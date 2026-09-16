@@ -34,8 +34,6 @@ export async function generateAIReminderDraft(
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { subject: null, body: null, rank: 1, clientEmail: null, clientName: '', error: 'Non authentifié.' }
 
-  if (!process.env.OPENROUTER_API_KEY) return { subject: null, body: null, rank: 1, clientEmail: null, clientName: '', error: 'Clé API IA manquante.' }
-
   // Fetch l'item + org + profil utilisateur connecté
   const { data: { user } } = await supabase.auth.getUser()
   const [orgRes, reminderCountRes, profileRes] = await Promise.all([
@@ -284,8 +282,6 @@ export async function getWeeklySummary(): Promise<WeeklySummaryResult> {
       .eq('organization_id', orgId)
       .eq('status', 'actif'),
   ])
-
-  if (!process.env.OPENROUTER_API_KEY) return { summary: null, error: 'Clé API IA manquante.' }
 
   // Calcul rentabilité pour les chantiers actifs (max 10 pour limiter les appels)
   const activeChantiers = (chantiers ?? []).slice(0, 10)

@@ -10,7 +10,6 @@ import {
   Paperclip, FileText, ImageIcon, AudioLines, Loader2,
 } from 'lucide-react'
 import type { NotificationsSummary } from '@/lib/data/queries/notifications'
-import { updateOrganization } from '@/lib/data/mutations/organization'
 import { useSarahVoice } from './useSarahVoice'
 import type { VoiceLiveState, VoiceLiveError } from './useSarahVoice'
 
@@ -503,17 +502,9 @@ function SarahAvatar({ size = 40, pulse = false }: { size?: number; pulse?: bool
 
 // ─── Carte d'action ───────────────────────────────────────────────────────────
 
-function ActionCard({ action, onConfirm, onReject, showAutonomyOffer }: {
-  action: ActionProposal; onConfirm: () => void; onReject: () => void; showAutonomyOffer?: boolean
+function ActionCard({ action, onConfirm, onReject }: {
+  action: ActionProposal; onConfirm: () => void; onReject: () => void
 }) {
-  const [autonomyState, setAutonomyState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
-
-  async function handleAlwaysAllow() {
-    setAutonomyState('saving')
-    const result = await updateOrganization({ sarah_auto_low_risk: true })
-    setAutonomyState(result.error ? 'error' : 'saved')
-  }
-
   const cfg = {
     low:    { border: 'rgba(16,185,129,0.3)',  bg: 'rgba(16,185,129,0.06)',  label: 'Simple',       color: 'rgb(16,185,129)' },
     medium: { border: 'rgba(249,115,22,0.3)',  bg: 'rgba(249,115,22,0.06)',  label: 'Confirmation', color: 'rgb(249,115,22)' },
@@ -539,28 +530,6 @@ function ActionCard({ action, onConfirm, onReject, showAutonomyOffer }: {
           style={{ background: cfg.border, color: cfg.color }}>{cfg.label}</span>
       </div>
       <p className="text-xs leading-relaxed opacity-65">{action.description}</p>
-      {/* S'affiche meme si sarah_auto_low_risk est deja actif : le widget ne
-          charge pas cet etat (eviterait une requete supplementaire dans
-          AppShell pour tous les roles), et re-enregistrer true est sans
-          consequence si c'est deja la valeur en base. */}
-      {showAutonomyOffer && action.risk === 'low' && (
-        <div className="text-[11px] opacity-60">
-          {autonomyState === 'saved' ? (
-            <span>Sarah agira seule sur ce type d&apos;action à l&apos;avenir.</span>
-          ) : autonomyState === 'error' ? (
-            <span>Impossible d&apos;enregistrer la préférence.</span>
-          ) : (
-            <button
-              type="button"
-              onClick={handleAlwaysAllow}
-              disabled={autonomyState === 'saving'}
-              className="underline underline-offset-2 hover:opacity-80 disabled:opacity-50"
-            >
-              {autonomyState === 'saving' ? 'Enregistrement...' : 'Toujours faire ça seule'}
-            </button>
-          )}
-        </div>
-      )}
       <div className="flex gap-2">
         <button onClick={onConfirm}
           className="flex-1 py-2 rounded-xl text-xs font-bold transition-all active:scale-95"
@@ -588,8 +557,8 @@ function ActionCard({ action, onConfirm, onReject, showAutonomyOffer }: {
 
 // ─── Bulle de message ─────────────────────────────────────────────────────────
 
-function Bubble({ msg, onConfirm, onReject, showAutonomyOffer }: {
-  msg: Message; onConfirm: (id: string) => void; onReject: (id: string) => void; showAutonomyOffer?: boolean
+function Bubble({ msg, onConfirm, onReject }: {
+  msg: Message; onConfirm: (id: string) => void; onReject: (id: string) => void
 }) {
   const isUser = msg.role === 'user'
   return (
@@ -612,7 +581,7 @@ function Bubble({ msg, onConfirm, onReject, showAutonomyOffer }: {
           }}>
           <p className="whitespace-pre-wrap">{msg.content}</p>
           {msg.action && (
-            <ActionCard action={msg.action} onConfirm={() => onConfirm(msg.id)} onReject={() => onReject(msg.id)} showAutonomyOffer={showAutonomyOffer} />
+            <ActionCard action={msg.action} onConfirm={() => onConfirm(msg.id)} onReject={() => onReject(msg.id)} />
           )}
         </div>
         <span className="text-[10px] mt-1 opacity-35 px-0.5">
@@ -1255,7 +1224,7 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
           {/* Messages */}
           <div className="flex-1 overflow-y-auto py-4 space-y-4 min-h-0" style={{ paddingLeft: 16, paddingRight: 16 }}>
             {messages.map(m => (
-              <Bubble key={m.id} msg={m} onConfirm={confirmAction} onReject={rejectAction} showAutonomyOffer={isOwner} />
+              <Bubble key={m.id} msg={m} onConfirm={confirmAction} onReject={rejectAction} />
             ))}
             {loading && <TypingDots />}
             {errorCode && <ErrorBanner code={errorCode} />}
