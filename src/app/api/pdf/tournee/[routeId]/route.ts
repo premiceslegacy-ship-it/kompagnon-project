@@ -65,6 +65,8 @@ export async function GET(
   const slots: TourneeSlot[] = rows.map((row: any) => ({
     id: row.id,
     chantier_id: row.chantier_id,
+    event_type: 'chantier' as const,
+    title: null,
     planned_date: row.planned_date,
     start_time: row.start_time,
     end_time: row.end_time,

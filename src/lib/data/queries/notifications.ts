@@ -27,6 +27,7 @@ export type NotificationsSummary = {
   newRequests: number
   decennaleExpiringDays: number | null
   chantiersAtRisk: number
+  chantiersHighSubcontract: number
   maintenanceDue: number
   maintenanceBillingPending: number
   dailyBriefPending: boolean
@@ -50,6 +51,7 @@ export const EMPTY_NOTIFICATIONS: NotificationsSummary = {
   newRequests: 0,
   decennaleExpiringDays: null,
   chantiersAtRisk: 0,
+  chantiersHighSubcontract: 0,
   maintenanceDue: 0,
   maintenanceBillingPending: 0,
   dailyBriefPending: false,
@@ -313,12 +315,13 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
   const missingPointages = missingPointageSlots.length
 
   let chantiersAtRisk = 0
+  let chantiersHighSubcontract = 0
   const chantierIds = (activeChantiers ?? []).map(c => c.id)
   if (chantierIds.length > 0) {
     const [{ data: expenses }, { data: chantierPointages }] = await Promise.all([
       supabase
         .from('chantier_expenses')
-        .select('chantier_id, amount_ht')
+        .select('chantier_id, amount_ht, category')
         .in('chantier_id', chantierIds),
       supabase
         .from('chantier_pointages')
@@ -329,13 +332,21 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     const fallbackRate = orgDecennale?.default_labor_cost_per_hour
       ?? (orgDecennale?.default_hourly_rate ? orgDecennale.default_hourly_rate * 0.5 : 0)
     const costs: Record<string, number> = {}
+    const subcontractCosts: Record<string, number> = {}
     for (const exp of expenses ?? []) {
       costs[exp.chantier_id] = (costs[exp.chantier_id] ?? 0) + (exp.amount_ht ?? 0)
+      if (exp.category === 'sous_traitance') {
+        subcontractCosts[exp.chantier_id] = (subcontractCosts[exp.chantier_id] ?? 0) + (exp.amount_ht ?? 0)
+      }
     }
     for (const p of chantierPointages ?? []) {
       costs[p.chantier_id] = (costs[p.chantier_id] ?? 0) + (p.hours ?? 0) * (p.rate_snapshot ?? fallbackRate)
     }
     chantiersAtRisk = (activeChantiers ?? []).filter(c => (costs[c.id] ?? 0) >= (c.budget_ht ?? 0) * 0.9).length
+    chantiersHighSubcontract = (activeChantiers ?? []).filter(c => {
+      const total = costs[c.id] ?? 0
+      return total > 0 && (subcontractCosts[c.id] ?? 0) / total > 0.4
+    }).length
   }
 
   const dailyBriefPending = canUseAI && Array.isArray(dailyBriefRow) && dailyBriefRow.length > 0
@@ -501,6 +512,7 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
   if (canSeeChantiers && (completedTasks ?? 0) > 0) sarahAlertLines.push(`${completedTasks} tâche${(completedTasks ?? 0) > 1 ? 's chantier terminées' : ' chantier terminée'} récemment.`)
   if (canSeeLeads && (newRequests ?? 0) > 0) sarahAlertLines.push(`${newRequests} demande${(newRequests ?? 0) > 1 ? 's' : ''} de devis à traiter.`)
   if (canSeeChantiers && chantiersAtRisk > 0) sarahAlertLines.push(`${chantiersAtRisk} chantier${chantiersAtRisk > 1 ? 's' : ''} en alerte budget.`)
+  if (canSeeChantiers && chantiersHighSubcontract > 0) sarahAlertLines.push(`${chantiersHighSubcontract} chantier${chantiersHighSubcontract > 1 ? 's dépassent' : ' dépasse'} 40 % de coûts en sous-traitance.`)
   if (maintenanceBillingPending > 0) sarahAlertLines.push(`${maintenanceBillingPending} intervention${maintenanceBillingPending > 1 ? 's maintenance' : ' maintenance'} à facturer.`)
   if (dailyBriefPending) sarahAlertLines.push('Le brief du jour est disponible.')
 
@@ -520,6 +532,7 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     newRequests: canSeeLeads ? newRequests ?? 0 : 0,
     decennaleExpiringDays,
     chantiersAtRisk: canSeeChantiers ? chantiersAtRisk : 0,
+    chantiersHighSubcontract: canSeeChantiers ? chantiersHighSubcontract : 0,
     maintenanceDue,
     maintenanceBillingPending,
     dailyBriefPending,

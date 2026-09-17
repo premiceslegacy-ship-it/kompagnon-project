@@ -11,10 +11,16 @@ import { AIModuleDisabledError, AIProviderCreditError, callAI } from '@/lib/ai/c
 
 type PlanningSource = 'chantier' | 'maintenance'
 
+export type PlanningEventType = 'chantier' | 'rdv_commercial' | 'visite_technique' | 'personnel' | 'autre'
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type PlanningSlotInput = {
-  chantierId: string
+  // Requis si eventType est 'chantier' (ou omis, valeur par défaut) ; absent
+  // pour un événement libre (RDV commercial, visite technique, personnel...).
+  chantierId?: string | null
+  eventType?: PlanningEventType
+  title?: string | null      // requis pour un événement libre (chantierId absent)
   plannedDate: string       // YYYY-MM-DD
   startTime?: string | null // HH:MM
   endTime?: string | null   // HH:MM
@@ -91,6 +97,23 @@ function validatePlanningAssigneeLabel(data: {
   return null
 }
 
+// Un événement sans chantier (RDV commercial, visite technique, personnel...)
+// exige un titre ; un événement de chantier (par défaut) exige chantierId.
+function validatePlanningEventShape(data: {
+  chantierId?: string | null
+  eventType?: PlanningEventType
+  title?: string | null
+}): string | null {
+  const eventType = data.eventType ?? 'chantier'
+  if (eventType === 'chantier') {
+    if (!data.chantierId) return 'Chantier requis pour ce type de créneau.'
+    return null
+  }
+  if (data.chantierId) return 'Un événement libre ne peut pas être rattaché à un chantier.'
+  if (!data.title?.trim()) return 'Titre requis pour un événement sans chantier.'
+  return null
+}
+
 async function findAbsentMemberError(
   supabase: Awaited<ReturnType<typeof createClient>>,
   orgId: string,
@@ -139,14 +162,18 @@ export async function createPlanningSlot(data: PlanningSlotInput): Promise<{ err
 
   const validationError = validatePlanningAssigneeLabel(data)
   if (validationError) return { error: validationError }
+  const shapeError = validatePlanningEventShape(data)
+  if (shapeError) return { error: shapeError }
 
-  const { data: chantier } = await supabase
-    .from('chantiers')
-    .select('id')
-    .eq('id', data.chantierId)
-    .eq('organization_id', orgId)
-    .maybeSingle()
-  if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
+  if (data.chantierId) {
+    const { data: chantier } = await supabase
+      .from('chantiers')
+      .select('id')
+      .eq('id', data.chantierId)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (!chantier) return { error: 'Chantier introuvable ou non autorisé.' }
+  }
   if (data.equipeId) {
     const { data: equipe } = await supabase
       .from('chantier_equipes')
@@ -170,7 +197,10 @@ export async function createPlanningSlot(data: PlanningSlotInput): Promise<{ err
   if (absenceError) return { error: absenceError }
 
   const { error } = await supabase.from('chantier_plannings').insert({
-    chantier_id: data.chantierId,
+    chantier_id: data.chantierId ?? null,
+    organization_id: orgId,
+    event_type: data.eventType ?? 'chantier',
+    title: data.chantierId ? null : (data.title?.trim() ?? null),
     planned_date: data.plannedDate,
     start_time: data.startTime ?? null,
     end_time: data.endTime ?? null,
@@ -190,7 +220,7 @@ export async function createPlanningSlot(data: PlanningSlotInput): Promise<{ err
     url: '/mon-espace/dashboard',
   }, user.id).catch(() => {})
   revalidatePath('/chantiers/planning')
-  revalidatePath(`/chantiers/${data.chantierId}`)
+  if (data.chantierId) revalidatePath(`/chantiers/${data.chantierId}`)
   return { error: null }
 }
 
@@ -208,8 +238,10 @@ export async function createPlanningSlots(slots: PlanningSlotInput[]): Promise<{
 
   const invalidSlot = slots.find(slot => validatePlanningAssigneeLabel(slot))
   if (invalidSlot) return { error: validatePlanningAssigneeLabel(invalidSlot), created: 0 }
+  const invalidShape = slots.find(slot => validatePlanningEventShape(slot))
+  if (invalidShape) return { error: validatePlanningEventShape(invalidShape), created: 0 }
 
-  const chantierIds = [...new Set(slots.map(s => s.chantierId))]
+  const chantierIds = [...new Set(slots.map(s => s.chantierId).filter((id): id is string => !!id))]
   if (chantierIds.length > 0) {
     const { data: chantiers } = await supabase
       .from('chantiers')
@@ -247,7 +279,10 @@ export async function createPlanningSlots(slots: PlanningSlotInput[]): Promise<{
   if (absenceError) return { error: absenceError, created: 0 }
 
   const rows = slots.map(s => ({
-    chantier_id: s.chantierId,
+    chantier_id: s.chantierId ?? null,
+    organization_id: orgId,
+    event_type: s.eventType ?? 'chantier',
+    title: s.chantierId ? null : (s.title?.trim() ?? null),
     planned_date: s.plannedDate,
     start_time: s.startTime ?? null,
     end_time: s.endTime ?? null,
@@ -291,10 +326,44 @@ export async function createPlanningSlots(slots: PlanningSlotInput[]): Promise<{
   }))
 
   revalidatePath('/chantiers/planning')
-  for (const chantierId of new Set(slots.map(s => s.chantierId))) {
+  for (const chantierId of new Set(slots.map(s => s.chantierId).filter((id): id is string => !!id))) {
     revalidatePath(`/chantiers/${chantierId}`)
   }
   return { error: null, created: slots.length }
+}
+
+// ─── Génération en série (récurrence simple) ───────────────────────────────
+// "Tous les lundis pendant 2 mois" : génère un créneau par occurrence, tous
+// indépendants une fois créés (pas de lien de série en base — modifier ou
+// supprimer une occurrence n'affecte jamais les autres).
+export type PlanningRecurrenceInput = Omit<PlanningSlotInput, 'plannedDate'> & {
+  startDate: string           // YYYY-MM-DD, première occurrence
+  endDate: string             // YYYY-MM-DD, dernière occurrence incluse
+  daysOfWeek: number[]        // 0 = dimanche ... 6 = samedi
+}
+
+function expandRecurrence(input: PlanningRecurrenceInput): PlanningSlotInput[] {
+  const { startDate, endDate, daysOfWeek, ...rest } = input
+  const days = new Set(daysOfWeek)
+  const slots: PlanningSlotInput[] = []
+  let cursor = new Date(`${startDate}T12:00:00`)
+  const end = new Date(`${endDate}T12:00:00`)
+  // Borne dure : évite une récurrence mal bornée qui générerait des milliers
+  // de lignes (ex: date de fin très éloignée saisie par erreur).
+  const MAX_OCCURRENCES = 200
+  while (cursor <= end && slots.length < MAX_OCCURRENCES) {
+    if (days.has(cursor.getDay())) {
+      slots.push({ ...rest, plannedDate: dateParis(cursor.getTime()) })
+    }
+    cursor = new Date(cursor.getTime() + 86400000)
+  }
+  return slots
+}
+
+export async function createPlanningRecurrence(input: PlanningRecurrenceInput): Promise<{ error: string | null; created: number }> {
+  const slots = expandRecurrence(input)
+  if (slots.length === 0) return { error: 'Aucune occurrence dans la période choisie.', created: 0 }
+  return createPlanningSlots(slots)
 }
 
 export type MaintenancePlanningSlotInput = {
@@ -479,11 +548,11 @@ export async function updatePlanningSlot(id: string, data: PlanningSlotUpdateInp
 
   const { data: existing } = await supabase
     .from('chantier_plannings')
-    .select('id, chantier_id, label, member_id, equipe_id, planned_date, chantiers!inner(organization_id)')
+    .select('id, chantier_id, label, member_id, equipe_id, planned_date, organization_id')
     .eq('id', id)
     .single()
 
-  if (!existing || (existing as any).chantiers?.organization_id !== orgId) {
+  if (!existing || existing.organization_id !== orgId) {
     return { error: 'Créneau introuvable ou non autorisé.' }
   }
 
@@ -551,12 +620,11 @@ export async function deletePlanningSlot(id: string): Promise<{ error: string | 
   // Vérifier que le créneau appartient bien à l'org avant de supprimer
   const { data: planning } = await supabase
     .from('chantier_plannings')
-    .select('chantier_id, chantiers!inner(organization_id)')
+    .select('chantier_id, organization_id')
     .eq('id', id)
     .single()
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if (!planning || (planning as any).chantiers?.organization_id !== orgId) {
+  if (!planning || planning.organization_id !== orgId) {
     return { error: 'Créneau introuvable ou non autorisé.' }
   }
 
@@ -567,7 +635,7 @@ export async function deletePlanningSlot(id: string): Promise<{ error: string | 
 
   if (error) return { error: error.message }
   revalidatePath('/chantiers/planning')
-  revalidatePath(`/chantiers/${planning.chantier_id}`)
+  if (planning.chantier_id) revalidatePath(`/chantiers/${planning.chantier_id}`)
   return { error: null }
 }
 
@@ -1304,7 +1372,7 @@ export async function planWeekWithAI(prompt: string, weekMondayDate: string): Pr
   }).join('\n')
   const existingContext = [existingChantierContext, existingMaintenanceContext].filter(Boolean).join('\n') || '(aucun créneau existant cette semaine)'
 
-  const systemPrompt = `Tu t'appelles Nora. Tu es assistante de planification chez ATELIER by Orsayn. Tu dois parser une description de planning en langage naturel et retourner un JSON structure. Tu connais les chantiers, les equipes et les membres de l'organisation. Tu es efficace et tu places les bonnes personnes aux bons endroits.
+  const systemPrompt = `Tu t'appelles Sarah. Tu es assistante de planification chez ATELIER by Orsayn. Tu dois parser une description de planning en langage naturel et retourner un JSON structure. Tu connais les chantiers, les equipes et les membres de l'organisation. Tu es efficace et tu places les bonnes personnes aux bons endroits.
 
 Chantiers disponibles (avec adresses si connues) :
 ${chantiersContext}

@@ -26,6 +26,7 @@ const EMPTY: NotificationsSummary = {
   newRequests: 0,
   decennaleExpiringDays: null,
   chantiersAtRisk: 0,
+  chantiersHighSubcontract: 0,
   maintenanceDue: 0,
   maintenanceBillingPending: 0,
   dailyBriefPending: false,

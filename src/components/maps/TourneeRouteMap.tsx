@@ -25,7 +25,7 @@ type TourneeRouteMapProps = {
 export function TourneeRouteMap({ slots, departure, className }: TourneeRouteMapProps) {
   const [points, setPoints] = useState<RouteMapPoint[] | null>(null)
 
-  const uniqueChantierIds = [...new Set(slots.map(s => s.chantier_id).filter(Boolean))]
+  const uniqueChantierIds = [...new Set(slots.map(s => s.chantier_id).filter((id): id is string => !!id))]
   const chantierIdsKey = uniqueChantierIds.join(',')
 
   useEffect(() => {
@@ -37,7 +37,7 @@ export function TourneeRouteMap({ slots, departure, className }: TourneeRouteMap
       const seen = new Set<string>()
       const ordered: RouteMapPoint[] = []
       for (const slot of slots) {
-        if (seen.has(slot.chantier_id)) continue
+        if (!slot.chantier_id || seen.has(slot.chantier_id)) continue
         const rp = routePoints.find(p => p.chantierId === slot.chantier_id)
         if (!rp) continue
         seen.add(slot.chantier_id)
