@@ -128,7 +128,7 @@ function DocumentChoiceModal({ onClose, onSelectQuote, onSelectMeasure }: {
             onClick={onSelectQuote}
             className="card p-5 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
           >
-            <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
+            <div className="w-10 h-10 flex items-center justify-center mb-4">
               <ClipboardList className="w-5 h-5 text-accent" />
             </div>
             <p className="text-sm font-bold text-primary">Créer un devis classique</p>
@@ -143,7 +143,7 @@ function DocumentChoiceModal({ onClose, onSelectQuote, onSelectMeasure }: {
             onClick={onSelectMeasure}
             className="card p-5 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
           >
-            <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
+            <div className="w-10 h-10 flex items-center justify-center mb-4">
               <Ruler className="w-5 h-5 text-accent" />
             </div>
             <p className="text-sm font-bold text-primary">Faire un pré-métré depuis un plan</p>

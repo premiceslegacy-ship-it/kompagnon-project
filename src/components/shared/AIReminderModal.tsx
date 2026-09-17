@@ -71,7 +71,7 @@ export default function AIReminderModal({ type, id, onSent, onClose }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-[var(--elevation-border)]">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-accent/10 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center">
               <Bot className="w-4 h-4 text-accent" />
             </div>
             <div>

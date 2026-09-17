@@ -74,7 +74,7 @@ export function PushEnableBanner() {
   return (
     <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md">
       <div className="flex items-center gap-3 rounded-2xl border border-[var(--elevation-border)] bg-surface/95 backdrop-blur px-4 py-3 shadow-xl">
-        <div className="shrink-0 w-9 h-9 rounded-xl bg-accent/15 flex items-center justify-center">
+        <div className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center">
           <Bell className="w-5 h-5 text-accent" />
         </div>
         <div className="min-w-0 flex-1">

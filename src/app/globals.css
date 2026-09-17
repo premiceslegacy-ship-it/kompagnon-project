@@ -214,7 +214,6 @@
   .card-interactive:hover,
   .card[onclick]:hover,
   .card.cursor-pointer:hover {
-    transform: translateY(-1px);
     box-shadow: 0 2px 4px var(--shadow-ring), 0 8px 20px var(--shadow-drop-strong);
     z-index: 1;
   }
@@ -226,7 +225,6 @@
   .card-interactive:active,
   .card[onclick]:active,
   .card.cursor-pointer:active {
-    transform: translateY(0.5px);
     box-shadow: 0 1px 2px var(--shadow-ring);
   }
   .dark .card-interactive:active,
@@ -301,12 +299,10 @@
   }
 
   .btn-pill:hover {
-    transform: translateY(-1px);
     box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 16px var(--shadow-drop-strong);
   }
 
   .btn-pill:active {
-    transform: translateY(1px);
     box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
@@ -343,13 +339,11 @@
   }
 
   .btn-primary:hover:not(:disabled) {
-    transform: translateY(-1px);
     background: #ffb84d;
     box-shadow: 0 2px 4px rgba(120, 53, 15, 0.14), 0 6px 16px rgba(180, 83, 9, 0.22);
   }
 
   .btn-primary:active:not(:disabled) {
-    transform: translateY(1px);
     box-shadow: 0 1px 2px rgba(120, 53, 15, 0.12);
   }
 
@@ -379,7 +373,6 @@
 
   .btn-secondary:hover:not(:disabled) {
     background: #f8fafc;
-    transform: translateY(-1px);
     box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 16px var(--shadow-drop-strong);
   }
 
@@ -389,7 +382,6 @@
   }
 
   .btn-secondary:active:not(:disabled) {
-    transform: translateY(1px);
     box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
@@ -429,7 +421,6 @@
   }
 
   .btn-icon:hover {
-    transform: translateY(-1px);
     box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 14px var(--shadow-drop-strong);
   }
 
@@ -438,7 +429,6 @@
   }
 
   .btn-icon:active {
-    transform: translateY(1px);
     box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
@@ -464,7 +454,6 @@
   }
 
   .btn-avatar:hover {
-    transform: translateY(-1px);
     box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 14px var(--shadow-drop-strong);
   }
 
@@ -473,7 +462,6 @@
   }
 
   .btn-avatar:active {
-    transform: translateY(1px);
     box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
@@ -496,13 +484,11 @@
   }
 
   .btn-danger:hover:not(:disabled) {
-    transform: translateY(-1px);
     background: #f87171;
     box-shadow: 0 2px 4px rgba(127, 29, 29, 0.16), 0 6px 16px rgba(239, 68, 68, 0.26);
   }
 
   .btn-danger:active:not(:disabled) {
-    transform: translateY(1px);
     box-shadow: 0 1px 2px rgba(127, 29, 29, 0.14);
   }
 
@@ -531,7 +517,6 @@
   a[class*="bg-accent"][class*="text-black"]:hover,
   a[class*="bg-accent"][class*="text-white"]:hover,
   label[class*="bg-accent"][class*="text-black"]:hover {
-    transform: translateY(-1px) !important;
     box-shadow: 0 2px 4px rgba(120, 53, 15, 0.14), 0 6px 16px rgba(180, 83, 9, 0.22) !important;
   }
 
@@ -540,7 +525,6 @@
   a[class*="bg-accent"][class*="text-black"]:active,
   a[class*="bg-accent"][class*="text-white"]:active,
   label[class*="bg-accent"][class*="text-black"]:active {
-    transform: translateY(1px) !important;
     box-shadow: 0 1px 2px rgba(120, 53, 15, 0.12) !important;
   }
 
@@ -561,13 +545,11 @@
 
   button[class*="rounded-full"][class*="bg-surface"][class*="border"]:hover:not(:disabled),
   a[class*="rounded-full"][class*="bg-surface"][class*="border"]:hover {
-    transform: translateY(-1px);
     box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 16px var(--shadow-drop-strong);
   }
 
   button[class*="rounded-full"][class*="bg-surface"][class*="border"]:active:not(:disabled),
   a[class*="rounded-full"][class*="bg-surface"][class*="border"]:active {
-    transform: translateY(1px);
     box-shadow: 0 1px 2px var(--shadow-ring) !important;
   }
 
@@ -720,12 +702,10 @@
   }
 
   .state-card:hover {
-    transform: translateY(-1px);
     box-shadow: 0 2px 4px var(--shadow-ring), 0 6px 14px var(--shadow-drop-strong);
   }
 
   .state-card:active {
-    transform: translateY(0.5px);
     box-shadow: 0 1px 2px var(--shadow-ring);
   }
 
@@ -848,14 +828,6 @@
     box-shadow: none;
   }
 
-  .state-action:hover {
-    transform: translateY(-1px);
-  }
-
-  .state-action:active {
-    transform: translateY(0.5px);
-  }
-
   /* ═══════════════════
    * NAVIGATION CHIPS
    * Tactile topbar items + instant pending state
@@ -883,15 +855,6 @@
   .dark .nav-chip-active,
   .dark .nav-chip-pending {
     background: rgba(255, 255, 255, 0.07);
-  }
-
-  .nav-chip:hover {
-    transform: translateY(-1px);
-  }
-
-  .nav-chip:active,
-  .nav-chip-pending {
-    transform: translateY(0.5px);
   }
 
   .nav-chip svg {
@@ -1265,14 +1228,6 @@
     font-size: 0.78rem;
     font-weight: 650;
     transition: transform 0.14s, background-color 0.14s, color 0.14s;
-  }
-
-  .cockpit-button:hover {
-    transform: translateY(-1px);
-  }
-
-  .cockpit-button:active {
-    transform: translateY(0);
   }
 
   .cockpit-button-dark {

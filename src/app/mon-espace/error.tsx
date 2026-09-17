@@ -24,7 +24,7 @@ export default function MemberSpaceError({
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
       <div className="card max-w-sm w-full p-6 text-center space-y-4">
-        <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-500/10 flex items-center justify-center">
+        <div className="w-12 h-12 mx-auto rounded-2xl flex items-center justify-center">
           <AlertTriangle className="w-6 h-6 text-amber-500" />
         </div>
         <div>

@@ -563,7 +563,7 @@ export default function RecurringClient({
           <div className="modal-panel space-y-5 sm:max-w-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center">
                   <Truck className="w-5 h-5 text-amber-500" />
                 </div>
                 <h3 className="text-lg font-bold text-primary">Calculer le transport</h3>
@@ -621,7 +621,7 @@ export default function RecurringClient({
           <div className="modal-panel space-y-5 sm:max-w-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center">
                   <Package className="w-5 h-5 text-purple-500" />
                 </div>
                 <h3 className="text-lg font-bold text-primary">Équipement amorti</h3>

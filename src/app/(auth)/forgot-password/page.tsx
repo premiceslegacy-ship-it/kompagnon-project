@@ -50,7 +50,7 @@ export default function ForgotPasswordPage() {
           {state.success ? (
             /* ── État succès ── */
             <div className="flex flex-col items-center text-center gap-4 py-4">
-              <div className="w-14 h-14 rounded-full bg-accent/10 flex items-center justify-center">
+              <div className="w-14 h-14 rounded-full flex items-center justify-center">
                 <CheckCircle2 className="w-7 h-7 text-accent" />
               </div>
               <div>

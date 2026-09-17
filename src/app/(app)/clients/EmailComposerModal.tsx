@@ -25,6 +25,7 @@ type Props = {
   orgName: string
   orgSignature: string | null
   hasAI: boolean
+  preselectedClientId?: string
 }
 
 type Tab = 'manual' | 'sarah'
@@ -68,6 +69,7 @@ export default function EmailComposerModal({
   orgName,
   orgSignature,
   hasAI,
+  preselectedClientId,
 }: Props) {
   const [tab, setTab] = useState<Tab>('manual')
   const [object, setObject] = useState('')
@@ -76,7 +78,9 @@ export default function EmailComposerModal({
   // Sélection destinataires
   const [category, setCategory] = useState<CategoryFilter>('all')
   const [searchRecipient, setSearchRecipient] = useState('')
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set(preselectedClientId ? [preselectedClientId] : [])
+  )
 
   // Champs Sarah
   const [sarahContext, setSarahContext] = useState('')
@@ -235,7 +239,7 @@ export default function EmailComposerModal({
       <div className="modal-overlay">
         <div className="modal-panel animate-in fade-in duration-300 max-w-lg text-center">
           <div className="flex flex-col items-center gap-5 py-8">
-            <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center">
+            <div className="w-16 h-16 rounded-full flex items-center justify-center">
               <CheckCircle2 className="w-8 h-8 text-green-500" />
             </div>
             <div className="space-y-2">
@@ -268,7 +272,7 @@ export default function EmailComposerModal({
 
         {/* En-tête */}
         <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center">
             <Mail className="w-5 h-5 text-accent" />
           </div>
           <div>

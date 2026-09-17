@@ -48,7 +48,7 @@ export default function VerifyRecoveryForm({ email }: { email: string }) {
 
           {/* Icon */}
           <div className="flex justify-center mb-6">
-            <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center">
               <KeyRound className="w-7 h-7 text-accent" />
             </div>
           </div>
