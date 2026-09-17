@@ -30,8 +30,18 @@ export async function resetPassword(
   const { error } = await supabase.auth.updateUser({ password })
 
   if (error) {
-    console.error('[resetPassword]', error.message)
-    return { error: 'Impossible de mettre à jour le mot de passe. Le lien a peut-être expiré.' }
+    console.error('[resetPassword]', error.status, error.message)
+
+    if (error.message.toLowerCase().includes('different from the old password')) {
+      return { error: 'Ce mot de passe est identique à l\'ancien. Choisissez-en un différent.' }
+    }
+    if (error.status === 504 || error.status === 500 || error.message.toLowerCase().includes('deadline') || error.message.toLowerCase().includes('context canceled')) {
+      return { error: 'Le service est momentanément indisponible. Réessayez dans quelques instants.' }
+    }
+    if (error.status === 401 || error.status === 403) {
+      return { error: 'Le lien a expiré. Demandez un nouveau lien de réinitialisation.' }
+    }
+    return { error: 'Impossible de mettre à jour le mot de passe. Réessayez ou redemandez un lien.' }
   }
 
   revalidatePath('/', 'layout')
