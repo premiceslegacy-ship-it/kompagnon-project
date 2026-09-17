@@ -279,6 +279,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         businessProfile: organization?.business_profile,
     });
     const [openActivityProfile, setOpenActivityProfile] = useState<BusinessProfile>(initialBusinessSelection.businessProfile);
+    const [businessProfileEditorOpen, setBusinessProfileEditorOpen] = useState(false);
     const [showSecondaryActivities, setShowSecondaryActivities] = useState<Partial<Record<BusinessProfile, boolean>>>({});
     const [selectedSecondaryActivities, setSelectedSecondaryActivities] = useState<BusinessActivityId[]>(
         normalizeSecondaryActivityIds(organization?.secondary_activity_ids, initialBusinessSelection.activity.id)
@@ -383,11 +384,20 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     // ─── Mémoire des assistants IA (consultation/purge, chantier 7 point 4) ──
     const [memories, setMemories] = useState(companyMemories);
     const [deletingMemoryId, setDeletingMemoryId] = useState<string | null>(null);
+    const [memoriesPage, setMemoriesPage] = useState(0);
+    const MEMORIES_PER_PAGE = 10;
+    const memoriesPageCount = Math.max(1, Math.ceil(memories.length / MEMORIES_PER_PAGE));
+    const memoriesPageItems = memories.slice(memoriesPage * MEMORIES_PER_PAGE, memoriesPage * MEMORIES_PER_PAGE + MEMORIES_PER_PAGE);
 
     function handleDeleteMemory(memoryId: string) {
         const previous = memories;
         setDeletingMemoryId(memoryId);
-        setMemories(prev => prev.filter(m => m.id !== memoryId));
+        setMemories(prev => {
+            const next = prev.filter(m => m.id !== memoryId);
+            const lastPage = Math.max(0, Math.ceil(next.length / MEMORIES_PER_PAGE) - 1);
+            setMemoriesPage(p => Math.min(p, lastPage));
+            return next;
+        });
         startTransition(async () => {
             const result = await deactivateCompanyMemory(memoryId);
             if (result.error) {
@@ -396,6 +406,18 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             }
             setDeletingMemoryId(null);
         });
+    }
+
+    // Libellé lisible par type de mémoire. sarah_memory et chloe_price_correction
+    // sont les seuls types alimentés aujourd'hui (Marco n'a pas encore de
+    // mémoire propre) ; le fallback générique couvre déjà tout futur type
+    // (ex: marco_memory) sans modification de ce composant.
+    function memoryTypeLabel(type: string): string {
+        if (type === 'chloe_price_correction') return 'Prix corrigé par Chloé';
+        if (type === 'sarah_memory') return 'Retenu par Sarah';
+        if (type === 'marco_memory') return 'Retenu par Marco';
+        if (type === 'quote' || type === 'invoice') return 'Résumé document';
+        return type;
     }
 
     const [publicFormSettings, setPublicFormSettings] = useState({
@@ -1099,10 +1121,25 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     </div>
                     <div className="h-px w-full bg-[var(--elevation-border)]"></div>
                     <div className="rounded-2xl bg-base dark:bg-white/5 border border-[var(--elevation-border)] p-6 space-y-5">
-                        <div>
-                            <h2 className="text-2xl font-bold text-primary">Profil métier</h2>
-                            <p className="text-sm text-secondary mt-1">Choisissez l’activité de référence qui correspond le mieux à votre entreprise.</p>
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <h2 className="text-2xl font-bold text-primary">Profil métier</h2>
+                                <p className="text-sm text-secondary mt-1">
+                                    Activité de référence : <span className="font-semibold text-primary">{currentBusinessSelection.activity.label}</span>
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setBusinessProfileEditorOpen((v) => !v)}
+                                className="shrink-0 flex items-center gap-1.5 text-sm font-semibold text-accent hover:text-accent/80 transition-colors"
+                            >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                {businessProfileEditorOpen ? 'Fermer' : 'Modifier'}
+                            </button>
                         </div>
+
+                        {businessProfileEditorOpen && <>
+                        <p className="text-sm text-secondary -mt-2">Choisissez l’activité de référence qui correspond le mieux à votre entreprise.</p>
 
                         <div className="space-y-3">
                             {(Object.entries(BUSINESS_ACTIVITIES_BY_PROFILE) as Array<[BusinessProfile, typeof BUSINESS_ACTIVITIES_BY_PROFILE[BusinessProfile]]>).map(([profileKey, activities]) => {
@@ -1177,10 +1214,9 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         />
 
                         <div className="rounded-xl border border-[var(--elevation-border)] bg-surface dark:bg-white/[0.03] p-4">
-                            <p className="text-xs font-bold text-secondary uppercase tracking-wider mb-1">Activité de référence</p>
-                            <p className="text-sm font-semibold text-primary">{currentBusinessSelection.activity.label}</p>
-                            <p className="text-xs text-secondary mt-1">Cela sert de base pour adapter l’expérience, sans limiter le reste de votre activité.</p>
+                            <p className="text-xs text-secondary">Cela sert de base pour adapter l’expérience, sans limiter le reste de votre activité.</p>
                         </div>
+                        </>}
                     </div>
                     <div className="h-px w-full bg-[var(--elevation-border)]"></div>
                     <div id="coordonnees"><h2 className="text-2xl font-bold text-primary mb-6">Coordonnées</h2>
@@ -1545,7 +1581,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     {joinCode && (
                         <div className="flex items-center justify-between p-4 rounded-2xl bg-base dark:bg-white/5 border border-[var(--elevation-border)]">
                             <div className="flex items-center gap-3">
-                                <div className="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center">
+                                <div className="w-9 h-9 rounded-xl flex items-center justify-center">
                                     <KeyRound className="w-4 h-4 text-accent" />
                                 </div>
                                 <div>
@@ -1672,7 +1708,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
                                 {inviteStatus === 'sent' ? (
                                     <div className="flex flex-col items-center text-center gap-4 py-4">
-                                        <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center">
+                                        <div className="w-12 h-12 rounded-full flex items-center justify-center">
                                             <Check className="w-6 h-6 text-green-500" />
                                         </div>
                                         <p className="font-semibold text-primary">Invitation envoyée !</p>
@@ -1973,8 +2009,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-6">
                     <div>
                         <h2 className="text-2xl font-bold text-primary mb-1">Configuration email</h2>
-                        <p className="text-sm text-secondary">Adresse utilisée pour l&apos;envoi des invitations et des emails métier (devis, factures, relances).</p>
-                        {selfService && <p className="mt-2 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-secondary">Votre espace SaaS utilise l&apos;adresse mutualisée affichée ci-dessous. Pour connecter un domaine personnalisé, contactez le support à <a className="text-accent underline" href="mailto:contact@orsayn.fr">contact@orsayn.fr</a>.</p>}
+                        <p className="text-sm text-secondary">Adresse utilisée pour l&apos;envoi des invitations et des emails métier (devis, factures, relances). Si un client répond à un devis ou une facture, la réponse arrive directement à l&apos;adresse renseignée dans &laquo;&nbsp;Email de contact&nbsp;&raquo; (onglet Entreprise), jamais à ce domaine d&apos;envoi.</p>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="space-y-2">
@@ -2000,10 +2035,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             />
                             <p className="text-xs text-secondary">{selfService ? 'Adresse gérée par Atelier BTP, lecture seule.' : 'Doit être vérifiée sur votre compte Resend.'}</p>
                         </div>
-                    </div>
-                    <div className="p-4 rounded-2xl bg-accent/5 border border-accent/20 text-sm text-secondary leading-relaxed">
-                        <strong className="text-primary">Comment configurer Resend ?</strong><br/>
-                        Créez un compte gratuit sur <span className="text-accent font-medium">resend.com</span>, vérifiez votre domaine (3 entrées DNS), copiez votre clé API dans <code className="bg-base px-1.5 py-0.5 rounded text-xs">.env.local</code> sous <code className="bg-base px-1.5 py-0.5 rounded text-xs">RESEND_API_KEY</code>, puis renseignez votre adresse ci-dessus.
                     </div>
                     <div className="flex justify-end">
                         <button
@@ -2075,7 +2106,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-4">
                     <div>
                         <h2 className="text-2xl font-bold text-primary mb-1">Templates emails</h2>
-                        <p className="text-sm text-secondary">Personnalisez le sujet et le corps de chaque email automatique. Les variables entre <code className="bg-base px-1 rounded text-xs">{'{{'}doubles accolades{'}}'}</code> sont remplacées à l&apos;envoi.</p>
+                        <p className="text-sm text-secondary">Personnalisez le sujet et le corps de chaque email automatique. Les variables entre <code className="bg-base px-1 rounded text-xs">{'{{'}doubles accolades{'}}'}</code> sont remplacées à l&apos;envoi. Quel que soit le domaine d&apos;envoi, une réponse du client arrive toujours à votre adresse de contact (onglet Entreprise), jamais dans le vide.</p>
                     </div>
                     {emailTemplates.map(tpl => {
                         const isExpanded = expandedTpl === tpl.slug
@@ -2573,9 +2604,9 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     {/* ── Mémoire des assistants IA (chantier 7 point 4) ────── */}
                     <div className="rounded-3xl card p-8 space-y-6">
                         <div>
-                            <h2 className="text-2xl font-bold text-primary mb-1">Mémoire de Sarah et Chloé</h2>
+                            <h2 className="text-2xl font-bold text-primary mb-1">Mémoire des assistants IA</h2>
                             <p className="text-sm text-secondary max-w-2xl">
-                                Les informations que vos assistants IA ont retenues au fil des conversations et des devis (préférences client, prix corrigés, habitudes). Vous pouvez en supprimer un élément à tout moment.
+                                Les informations que vos assistants IA ont retenues au fil des conversations et des devis (préférences client, prix corrigés, habitudes). Vous pouvez en supprimer un élément à tout moment. Les entrées non revues depuis 6 mois sont automatiquement recyclées.
                             </p>
                         </div>
 
@@ -2584,27 +2615,50 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                 Aucun élément mémorisé pour le moment.
                             </div>
                         ) : (
-                            <div className="rounded-2xl border border-[var(--elevation-border)] divide-y divide-[var(--elevation-border)] overflow-hidden max-h-[480px] overflow-y-auto">
-                                {memories.map(memory => (
-                                    <div key={memory.id} className="flex items-start justify-between gap-4 p-4">
-                                        <div className="min-w-0">
-                                            <span className="text-[11px] font-bold uppercase tracking-wider text-secondary">
-                                                {memory.type === 'chloe_price_correction' ? 'Prix corrigé' : memory.type === 'sarah_memory' ? 'Retenu par Sarah' : memory.type}
-                                            </span>
-                                            <p className="text-sm text-primary mt-1 break-words">{memory.content}</p>
-                                            <p className="text-xs text-secondary mt-1">{new Date(memory.created_at).toLocaleDateString('fr-FR')}</p>
+                            <>
+                                <div className="rounded-2xl border border-[var(--elevation-border)] divide-y divide-[var(--elevation-border)] overflow-hidden">
+                                    {memoriesPageItems.map(memory => (
+                                        <div key={memory.id} className="flex items-start justify-between gap-4 p-4">
+                                            <div className="min-w-0">
+                                                <span className="text-[11px] font-bold uppercase tracking-wider text-secondary">
+                                                    {memoryTypeLabel(memory.type)}
+                                                </span>
+                                                <p className="text-sm text-primary mt-1 break-words">{memory.content}</p>
+                                                <p className="text-xs text-secondary mt-1">{new Date(memory.created_at).toLocaleDateString('fr-FR')}</p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteMemory(memory.id)}
+                                                disabled={deletingMemoryId === memory.id}
+                                                className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 flex-shrink-0 mt-0.5"
+                                            >
+                                                Supprimer
+                                            </button>
                                         </div>
+                                    ))}
+                                </div>
+                                {memoriesPageCount > 1 && (
+                                    <div className="flex items-center justify-between text-sm">
                                         <button
                                             type="button"
-                                            onClick={() => handleDeleteMemory(memory.id)}
-                                            disabled={deletingMemoryId === memory.id}
-                                            className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 flex-shrink-0 mt-0.5"
+                                            onClick={() => setMemoriesPage(p => Math.max(0, p - 1))}
+                                            disabled={memoriesPage === 0}
+                                            className="font-semibold text-secondary hover:text-primary disabled:opacity-40 disabled:hover:text-secondary"
                                         >
-                                            Supprimer
+                                            Précédent
+                                        </button>
+                                        <span className="text-secondary">Page {memoriesPage + 1} sur {memoriesPageCount}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setMemoriesPage(p => Math.min(memoriesPageCount - 1, p + 1))}
+                                            disabled={memoriesPage >= memoriesPageCount - 1}
+                                            className="font-semibold text-secondary hover:text-primary disabled:opacity-40 disabled:hover:text-secondary"
+                                        >
+                                            Suivant
                                         </button>
                                     </div>
-                                ))}
-                            </div>
+                                )}
+                            </>
                         )}
                     </div>
 
@@ -2911,7 +2965,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             return (
                 <div className="space-y-6">
                     <div className="rounded-3xl card p-8 flex flex-col items-center justify-center gap-5 text-center min-h-[320px]">
-                        <div className="w-16 h-16 rounded-2xl bg-green-500/10 flex items-center justify-center">
+                        <div className="w-16 h-16 rounded-2xl flex items-center justify-center">
                             <MessageSquare className="w-8 h-8 text-green-500" />
                         </div>
                         <div>
@@ -2927,7 +2981,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     <div className="bg-surface dark:bg-white/5 rounded-2xl p-6 border border-[var(--elevation-border)] space-y-6 hidden">
                         {/* En-tête */}
                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center">
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center">
                                 <MessageSquare className="w-5 h-5 text-green-500" />
                             </div>
                             <div>
@@ -3316,7 +3370,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         <button onClick={() => setActiveTab('roles')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'roles' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><KeyRound className="w-5 h-5" />Rôles &amp; permissions</button>
                     )}
                     <button onClick={() => setActiveTab('emails')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'emails' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Mail className="w-5 h-5" />Relances &amp; emails</button>
-                    <button onClick={() => setActiveTab('confidentialite')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'confidentialite' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><ShieldCheck className="w-5 h-5" />Données &amp; confidentialité</button>
                     <button onClick={() => setActiveTab('integration')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'integration' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Globe className="w-5 h-5" />Intégration</button>
                     <button onClick={() => setActiveTab('formulaire')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'formulaire' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Inbox className="w-5 h-5" />Formulaire public</button>
                     <button onClick={() => setActiveTab('securite')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'securite' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Lock className="w-5 h-5" />Sécurité</button>
@@ -3326,6 +3379,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                     {currentRoleSlug === 'owner' && (
                         <button onClick={() => setActiveTab('abonnement')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'abonnement' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><Star className="w-5 h-5" />Abonnement</button>
                     )}
+                    <button onClick={() => setActiveTab('confidentialite')} className={`w-full text-left px-4 py-3 rounded-xl font-semibold transition-all flex items-center gap-3 ${activeTab === 'confidentialite' ? 'bg-surface dark:bg-white/5 shadow-sm text-primary border border-[var(--elevation-border)]' : 'text-secondary hover:bg-base hover:text-primary'}`}><ShieldCheck className="w-5 h-5" />Données &amp; confidentialité</button>
                 </div>
                 <div className="flex-1">{renderContent()}</div>
             </div>
@@ -3340,7 +3394,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         window.scrollTo({ top, behavior: 'smooth' });
                     }}
                     aria-label="Aller au bouton Sauvegarder"
-                    className="fixed bottom-6 right-6 z-[9999] w-12 h-12 rounded-full bg-accent text-black shadow-2xl shadow-accent/30 flex items-center justify-center hover:scale-110 active:scale-95 transition-transform"
+                    className="fixed bottom-24 right-6 z-[9930] lg:bottom-6 w-12 h-12 rounded-full bg-accent text-black shadow-2xl shadow-accent/30 flex items-center justify-center hover:scale-110 active:scale-95 transition-transform"
                     title={orgIsDirty ? 'Modifications non sauvegardées' : 'Aller en haut pour sauvegarder'}
                 >
                     <ArrowUp className="w-5 h-5" />

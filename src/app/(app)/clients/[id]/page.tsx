@@ -4,6 +4,8 @@ import { notFound } from 'next/navigation';
 import { getClientById } from '@/lib/data/queries/clients';
 import { getClientQuotes } from '@/lib/data/queries/quotes';
 import { getClientInvoices } from '@/lib/data/queries/invoices';
+import { getOrganization } from '@/lib/data/queries/organization';
+import { isModuleEnabled } from '@/lib/data/queries/organization-modules';
 import { ClientActions } from './ClientActions';
 import { HistoriqueClient } from './HistoriqueClient';
 import { AddressLink } from '@/components/shared/AddressLink';
@@ -23,10 +25,12 @@ const formatCurrency = (amount: number) =>
 const cardClasses = "rounded-3xl card transition-all duration-300 ease-out";
 
 export default async function ClientProfilePage({ params }: { params: { id: string } }) {
-    const [client, quotes, invoices] = await Promise.all([
+    const [client, quotes, invoices, org, hasAI] = await Promise.all([
         getClientById(params.id),
         getClientQuotes(params.id),
         getClientInvoices(params.id),
+        getOrganization(),
+        isModuleEnabled('relances_ai'),
     ]);
 
     if (!client) {
@@ -54,7 +58,7 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
             <div className={`${cardClasses} p-8 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6`}>
                 <div className="flex min-w-0 flex-col gap-4">
                     <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl bg-accent/10 flex items-center justify-center shrink-0">
+                        <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0">
                             {client.type === 'company'
                                 ? <Building className="w-5 h-5 text-accent" />
                                 : <User className="w-5 h-5 text-accent" />
@@ -108,7 +112,13 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
                     </div>
                 </div>
                 <div className="flex w-full flex-wrap items-center gap-3 lg:w-auto lg:justify-end">
-                    <ClientActions client={client} />
+                    <ClientActions
+                        client={client}
+                        orgEmail={org?.email ?? null}
+                        orgName={org?.name ?? ''}
+                        orgSignature={org?.email_signature ?? null}
+                        hasAI={hasAI}
+                    />
                     <Link
                         href={`/finances/quote-editor?client=${client.id}&returnTo=${encodeURIComponent(`/clients/${client.id}`)}`}
                         className="flex min-w-[11rem] flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-full bg-accent px-6 py-3 font-bold text-black shadow-lg shadow-accent/20 transition-all hover:scale-105 lg:flex-none"
@@ -157,7 +167,7 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
                 </div>
                 {documents.length === 0 ? (
                     <div className="flex flex-col items-center justify-center p-12 text-center min-h-[240px]">
-                        <div className="w-14 h-14 rounded-2xl bg-accent/10 flex items-center justify-center mb-4">
+                        <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4">
                             <FileText className="w-6 h-6 text-accent" />
                         </div>
                         <p className="font-bold text-primary mb-1">Aucun document pour l&apos;instant</p>

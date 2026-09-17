@@ -8,7 +8,8 @@ import { type Client } from '@/lib/data/queries/clients'
 import { updateClient, deleteClient, type UpdateClientState } from '@/lib/data/mutations/clients'
 import { markInvoicePaid } from '@/lib/data/mutations/invoices'
 import { markQuoteAccepted } from '@/lib/data/mutations/quotes'
-import { Edit2, Trash2, X, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Edit2, Trash2, Mail, X, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import EmailComposerModal from '../EmailComposerModal'
 
 const inputCls =
   'w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all'
@@ -178,9 +179,18 @@ function EditModal({ client, onClose }: { client: Client; onClose: () => void })
   )
 }
 
-export function ClientActions({ client }: { client: Client }) {
+type ClientActionsProps = {
+  client: Client
+  orgEmail: string | null
+  orgName: string
+  orgSignature: string | null
+  hasAI: boolean
+}
+
+export function ClientActions({ client, orgEmail, orgName, orgSignature, hasAI }: ClientActionsProps) {
   const router = useRouter()
   const [editOpen, setEditOpen] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
   const [, startTransition] = useTransition()
 
   const handleDelete = () => {
@@ -201,6 +211,15 @@ export function ClientActions({ client }: { client: Client }) {
         <Edit2 className="w-4 h-4" />
         Modifier
       </button>
+      {client.email && (
+        <button
+          onClick={() => setEmailOpen(true)}
+          className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-[var(--elevation-border)] px-5 py-2.5 text-sm font-semibold text-secondary transition-all hover:border-accent/50 hover:text-primary"
+        >
+          <Mail className="w-4 h-4" />
+          Envoyer un email
+        </button>
+      )}
       <button
         onClick={handleDelete}
         className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-red-500/20 px-5 py-2.5 text-sm font-semibold text-red-400 transition-all hover:bg-red-500/10"
@@ -209,6 +228,18 @@ export function ClientActions({ client }: { client: Client }) {
         Supprimer
       </button>
       {editOpen && <EditModal client={client} onClose={() => setEditOpen(false)} />}
+      {emailOpen && (
+        <EmailComposerModal
+          isOpen={emailOpen}
+          onClose={() => setEmailOpen(false)}
+          allClients={[client]}
+          orgEmail={orgEmail}
+          orgName={orgName}
+          orgSignature={orgSignature}
+          hasAI={hasAI}
+          preselectedClientId={client.id}
+        />
+      )}
     </>
   )
 }
