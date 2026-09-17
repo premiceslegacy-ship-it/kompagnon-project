@@ -28,7 +28,7 @@ export default function RequestAccessForm() {
   if (done) {
     return (
       <div className="space-y-3 text-center py-4">
-        <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+        <div className="w-12 h-12 mx-auto rounded-full text-emerald-500 flex items-center justify-center">
           <Check className="w-6 h-6" />
         </div>
         <p className="text-sm text-primary font-semibold">Si cette adresse est enregistrée, un lien vient d&apos;être envoyé.</p>

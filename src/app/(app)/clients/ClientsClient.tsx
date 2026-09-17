@@ -931,7 +931,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="rounded-3xl card p-6 flex items-center gap-4">
-          <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-accent-green/10">
+          <div className="w-12 h-12 flex items-center justify-center">
             <Users className="w-6 h-6 text-accent-green" />
           </div>
           <div>
@@ -940,7 +940,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
           </div>
         </div>
         <div className="rounded-3xl card p-6 flex items-center gap-4">
-          <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-accent/10">
+          <div className="w-12 h-12 flex items-center justify-center">
             <Target className="w-6 h-6 text-accent" />
           </div>
           <div>
@@ -954,7 +954,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
           onClick={() => { setStatusFilter('followup'); setPage(1) }}
           className={`rounded-3xl card p-6 flex items-center gap-4 text-left transition-all ${totalFollowup > 0 ? 'hover:ring-1 hover:ring-warning/40 cursor-pointer' : 'cursor-default'}`}
         >
-          <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-warning/10">
+          <div className="w-12 h-12 flex items-center justify-center">
             <AlertCircle className="w-6 h-6 text-warning" />
           </div>
           <div>
@@ -964,7 +964,7 @@ export default function ClientsClient({ initialClients, canCreate, canEdit, canD
           </div>
         </button>
         <div className="rounded-3xl card p-6 flex items-center gap-4">
-          <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-blue-500/10">
+          <div className="w-12 h-12 flex items-center justify-center">
             <Euro className="w-6 h-6 text-blue-500" />
           </div>
           <div>

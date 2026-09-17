@@ -277,7 +277,7 @@ export default function SaveToCatalogModal({
                 <ChevronLeft className="w-5 h-5" />
               </button>
             )}
-            <div className="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center">
               <BookmarkPlus className="w-5 h-5 text-accent" />
             </div>
             <div>

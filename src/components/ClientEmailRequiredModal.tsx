@@ -51,7 +51,7 @@ export default function ClientEmailRequiredModal({ open, client, documentLabel, 
       <div className="modal-panel space-y-5 sm:max-w-md">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
               <Mail className="w-5 h-5 text-accent" />
             </div>
             <div>

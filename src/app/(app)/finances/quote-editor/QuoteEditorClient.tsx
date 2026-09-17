@@ -2282,7 +2282,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
                   onClick={() => handlePrestationSelect(p)}
                   className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-accent/5 border border-transparent hover:border-accent/20 transition-all text-left"
                 >
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-accent/10 text-accent">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-accent">
                     <Layers className="w-4 h-4" />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -2343,7 +2343,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
                         return (
                           <button key={entry.id} onClick={() => handleCatalogSelect(mat, 'material')}
                             className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-accent/5 border border-transparent hover:border-accent/20 transition-all text-left">
-                            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-blue-500/10 text-blue-500">
+                            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-blue-500">
                               <Package className="w-4 h-4" />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -2370,7 +2370,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
                         return (
                           <button key={entry.id} onClick={() => handleCatalogSelect(lr, 'labor')}
                             className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-accent/5 border border-transparent hover:border-accent/20 transition-all text-left">
-                            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-orange-500/10 text-orange-500">
+                            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-orange-500">
                               <Wrench className="w-4 h-4" />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -3740,7 +3740,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
           <div className="modal-panel space-y-5 sm:max-w-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center">
                   <Truck className="w-5 h-5 text-amber-500" />
                 </div>
                 <h3 className="text-lg font-bold text-primary">Calculer le transport</h3>
@@ -3798,7 +3798,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
           <div className="modal-panel space-y-5 sm:max-w-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center">
                   <Package className="w-5 h-5 text-purple-500" />
                 </div>
                 <h3 className="text-lg font-bold text-primary">Équipement amorti</h3>
@@ -4021,7 +4021,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
             <div className="bg-[var(--surface-primary)] border border-[var(--elevation-border)] rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[80vh]">
               <div className="flex items-center justify-between p-5 pb-3 border-b border-[var(--elevation-border)]">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center">
                     <FileText className="w-4 h-4 text-accent" />
                   </div>
                   <h2 className="text-base font-semibold text-primary">Insérer une clause</h2>

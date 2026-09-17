@@ -182,7 +182,7 @@ function CreateChoiceModal({ onClose, onSelectChantier, onSelectEntretien }: {
             onClick={onSelectChantier}
             className="card p-5 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
           >
-            <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-4">
               <HardHat className="w-5 h-5 text-accent" />
             </div>
             <p className="text-sm font-bold text-primary">Chantier / travaux</p>
@@ -197,7 +197,7 @@ function CreateChoiceModal({ onClose, onSelectChantier, onSelectEntretien }: {
             onClick={onSelectEntretien}
             className="card p-5 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
           >
-            <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-4">
               <Wrench className="w-5 h-5 text-accent" />
             </div>
             <p className="text-sm font-bold text-primary">Entretien récurrent</p>
@@ -294,7 +294,7 @@ function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
       <div className="modal-panel sm:max-w-lg">
         {/* Header modal */}
         <div className="flex items-center gap-3 px-6 pt-6 pb-4 border-b border-[var(--elevation-border)]">
-          <div className="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0">
             <HardHat className="w-5 h-5 text-accent" />
           </div>
           <div>
@@ -527,7 +527,7 @@ export default function ChantiersClient({
       {/* Header */}
       <div className="card p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0">
             <HardHat className="w-6 h-6 text-accent" />
           </div>
           <div>

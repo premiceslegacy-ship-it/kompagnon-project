@@ -465,7 +465,7 @@ export default function CatalogAIPanel({
         {/* Succès */}
         {successMsg && (
           <div className="p-6 flex flex-col items-center gap-3">
-            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center">
+            <div className="w-12 h-12 rounded-full flex items-center justify-center">
               <CheckCircle2 className="w-6 h-6 text-green-500" />
             </div>
             <p className="font-bold text-primary text-sm text-center">{successMsg}</p>

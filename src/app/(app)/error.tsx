@@ -25,7 +25,7 @@ export default function AppError({
   return (
     <div className="flex-1 flex items-center justify-center p-8 min-h-[60vh]">
       <div className="card max-w-md w-full p-8 text-center space-y-4">
-        <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/10 flex items-center justify-center">
+        <div className="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center">
           <AlertTriangle className="w-7 h-7 text-amber-500" />
         </div>
         <div>

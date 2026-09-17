@@ -515,7 +515,7 @@ export default function FinancesClient({
           <div className="modal-panel space-y-5 sm:max-w-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-2xl flex items-center justify-center">
                   <CalendarClock className="w-5 h-5 text-blue-500" />
                 </div>
                 <div>
@@ -607,7 +607,7 @@ export default function FinancesClient({
         <div className="modal-overlay">
           <div className="modal-panel space-y-6 sm:max-w-sm">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-accent/10 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-2xl flex items-center justify-center">
                 <Landmark className="w-5 h-5 text-accent" />
               </div>
               <div>
@@ -692,7 +692,7 @@ export default function FinancesClient({
           <div className="modal-panel space-y-5 sm:max-w-xl">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+                <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0">
                   <TrendingUp className="w-5 h-5 text-accent" />
                 </div>
                 <div>
