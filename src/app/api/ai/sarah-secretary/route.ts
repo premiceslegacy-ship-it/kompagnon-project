@@ -39,11 +39,11 @@ const SARAH_TOOLS = [
     type: 'function',
     function: {
       name: 'save_memory',
-      description: 'Mémoriser une information importante sur l\'entreprise, un client, une préférence ou une habitude. À appeler quand l\'utilisateur dit "rappelle-toi", "note bien", "retiens que", ou quand une info est clairement utile à long terme. Pas plus d\'une fois par conversation.',
+      description: 'Mémoriser un fait concret et réutilisable qui changera une décision future (un prix, un délai, une préférence récurrente, une règle de fonctionnement). À appeler quand l\'utilisateur dit explicitement "rappelle-toi", "note bien", "retiens que". Ne mémorise jamais un résumé de conversation, un fait ponctuel sans suite (une seule commande, un événement isolé) ou une généralité vague ("le client est sympa", "on a parlé du chantier X"). Si le fait n\'est pas quelque chose que tu pourrais réutiliser concrètement dans 3 mois pour une décision précise, ne le mémorise pas.',
       parameters: {
         type: 'object',
         properties: {
-          content: { type: 'string', description: 'Le fait à mémoriser, formulé de façon claire et autonome (ex: "Le client Dupont paie systématiquement en retard de 30 jours").' },
+          content: { type: 'string', description: 'Le fait à mémoriser, formulé de façon claire, autonome et actionnable (ex: "Le client Dupont paie systématiquement en retard de 30 jours", "Le tarif horaire negocié avec le sous-traitant Martin est de 45€/h").' },
           type: {
             type: 'string',
             enum: ['client_info', 'preference', 'process', 'habit', 'note'],
