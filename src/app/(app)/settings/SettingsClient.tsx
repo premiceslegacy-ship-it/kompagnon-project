@@ -3394,7 +3394,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                         window.scrollTo({ top, behavior: 'smooth' });
                     }}
                     aria-label="Aller au bouton Sauvegarder"
-                    className="fixed bottom-24 right-6 z-[9930] lg:bottom-6 w-12 h-12 rounded-full bg-accent text-black shadow-2xl shadow-accent/30 flex items-center justify-center hover:scale-110 active:scale-95 transition-transform"
+                    className="fixed bottom-40 right-6 z-[9930] lg:bottom-6 w-12 h-12 rounded-full bg-accent text-black shadow-2xl shadow-accent/30 flex items-center justify-center hover:scale-110 active:scale-95 transition-transform"
                     title={orgIsDirty ? 'Modifications non sauvegardées' : 'Aller en haut pour sauvegarder'}
                 >
                     <ArrowUp className="w-5 h-5" />

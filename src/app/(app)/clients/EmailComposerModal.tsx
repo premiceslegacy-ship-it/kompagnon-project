@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import {
   X, Mail, Sparkles, Send, AlertCircle, CheckCircle2, Loader2, Users, Search,
 } from 'lucide-react'
@@ -235,7 +236,7 @@ export default function EmailComposerModal({
   }
 
   if (sent) {
-    return (
+    return createPortal(
       <div className="modal-overlay">
         <div className="modal-panel animate-in fade-in duration-300 max-w-lg text-center">
           <div className="flex flex-col items-center gap-5 py-8">
@@ -256,11 +257,12 @@ export default function EmailComposerModal({
             </button>
           </div>
         </div>
-      </div>
+      </div>,
+      document.body
     )
   }
 
-  return (
+  return createPortal(
     <div className="modal-overlay">
       <div className="modal-panel animate-in fade-in duration-300 max-w-3xl w-full">
         <button
@@ -585,6 +587,7 @@ export default function EmailComposerModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
