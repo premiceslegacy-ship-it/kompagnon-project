@@ -11,6 +11,7 @@ test-results/
 .next/
 .open-next/
 .wrangler/
+supabase/.temp/
 cloudflare-env.d.ts
 .dev.vars*
 .assetsignore
