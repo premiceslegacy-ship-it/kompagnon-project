@@ -502,6 +502,14 @@ export default function JalonsTab({ initialJalons, chantierId, budgetHt, taches 
         </div>
       )}
 
+      {/* Conseil : acompte de démarrage */}
+      {jalons.length > 0 && jalons[0].acompte_pct < 30 && (
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-sm text-amber-600">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          Le premier jalon ({jalons[0].acompte_pct}%) est en dessous des 30% habituellement demandés à la signature avant de démarrer un chantier.
+        </div>
+      )}
+
       {/* Suggestions IA */}
       {aiErr && (
         <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-500">{aiErr}</div>

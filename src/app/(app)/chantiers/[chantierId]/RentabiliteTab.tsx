@@ -787,6 +787,11 @@ export default function RentabiliteTab({
   const budgetUsedPct = costBudget > 0 ? costTotal / costBudget : 0
   const budgetAlert   = budgetUsedPct > 0.9
 
+  // Conseils : sous-traitance et marge
+  const subcontractPct   = costTotal > 0 ? costSubcontract / costTotal : 0
+  const subcontractAlert = subcontractPct > 0.4
+  const marginAlert      = revenueHt > 0 && marginPct < 0.2
+
   const filteredExpenses = expenseFilter === 'all'
     ? expenses
     : expenses.filter(e => e.category === expenseFilter)
@@ -1396,11 +1401,25 @@ export default function RentabiliteTab({
         )}
       </div>}
 
-      {/* ── 5. Alerte budget ── */}
+      {/* ── 5. Alertes et conseils ── */}
       {!ownExpensesOnly && budgetAlert && (
         <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 text-sm">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           Les coûts dépassent 90 % du budget max ({fmtMoney(costBudget)} HT pour {targetMarginPct} % de marge). Risque de travailler sans marge.
+        </div>
+      )}
+
+      {!ownExpensesOnly && subcontractAlert && (
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 text-sm">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          La sous-traitance représente {fmtPct(subcontractPct)} des coûts ({fmtMoney(costSubcontract)} HT), au-delà des 40 % généralement recommandés pour garder la maîtrise du chantier.
+        </div>
+      )}
+
+      {!ownExpensesOnly && marginAlert && (
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 text-sm">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          La marge facturée ({fmtPct(marginPct)}) est sous le seuil de 20 % généralement recommandé pour rester rentable une fois le chantier soldé.
         </div>
       )}
 

@@ -430,6 +430,8 @@ export default function TourneeView({
   }
 
   function openEditModal(slot: TourneeSlot) {
+    // Une tournée ne porte que des créneaux de chantier (jamais d'événement libre).
+    if (!slot.chantier_id) return
     setFormChantier(slot.chantier_id)
     setFormStartTime(slot.start_time ?? '08:00')
     setFormDuration(slot.duration_min ?? 60)
@@ -531,6 +533,8 @@ export default function TourneeView({
   }
 
   async function handleMoveExistingSlotToRoute(slot: GlobalPlanning) {
+    // Une tournée ne porte que des créneaux de chantier (jamais d'événement libre).
+    if (!slot.chantier_id) return
     const routeId = effectiveRouteId ?? crypto.randomUUID()
     const willCreateRoute = !effectiveRouteId
 
@@ -577,7 +581,7 @@ export default function TourneeView({
         <div className="rounded-xl border border-[var(--elevation-border)] bg-surface p-4 shadow-sm dark:bg-white/[0.04]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-accent">
                 <Route className="h-4 w-4" />
               </div>
               <div>

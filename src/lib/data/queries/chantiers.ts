@@ -164,7 +164,9 @@ export type Equipe = {
 
 export type ChantierPlanning = {
   id: string
-  chantier_id: string
+  chantier_id: string | null   // null pour un événement libre (RDV commercial, visite technique, personnel...)
+  event_type: 'chantier' | 'rdv_commercial' | 'visite_technique' | 'personnel' | 'autre'
+  title: string | null         // titre libre, uniquement pour un événement sans chantier
   planned_date: string        // YYYY-MM-DD
   start_time: string | null   // HH:MM
   end_time: string | null     // HH:MM
@@ -734,14 +736,14 @@ export async function getAllPlannings(opts?: {
   let q = supabase
     .from('chantier_plannings')
     .select(`
-      id, chantier_id, planned_date, start_time, end_time,
+      id, chantier_id, event_type, title, planned_date, start_time, end_time,
       equipe_id, member_id, label, team_size, notes, created_at,
       route_id, route_order, duration_min, travel_from_prev_min, arrived_at,
-      chantier:chantiers!inner(title, city, status, organization_id, address_line1, postal_code),
+      chantier:chantiers(title, city, status, address_line1, postal_code),
       member:chantier_equipe_membres(prenom, name),
       equipe:chantier_equipes(name)
     `)
-    .eq('chantier.organization_id', orgId)
+    .eq('organization_id', orgId)
     .order('planned_date', { ascending: true })
     .order('start_time', { ascending: true, nullsFirst: false })
 
@@ -774,6 +776,8 @@ export async function getAllPlannings(opts?: {
     maintenance_intervention_id: null,
     maintenance_contract_id: null,
     chantier_id: row.chantier_id,
+    event_type: row.event_type ?? 'chantier',
+    title: row.title ?? null,
     planned_date: row.planned_date,
     start_time: row.start_time,
     end_time: row.end_time,
@@ -788,10 +792,10 @@ export async function getAllPlannings(opts?: {
     duration_min: row.duration_min ?? null,
     travel_from_prev_min: row.travel_from_prev_min ?? null,
     arrived_at: row.arrived_at ?? null,
-    chantier_title: row.chantier?.title ?? '-',
+    chantier_title: row.chantier?.title ?? row.title ?? '-',
     chantier_city: row.chantier?.city ?? null,
     chantier_status: row.chantier?.status ?? 'planifie',
-    chantier_color_idx: colorIdx(row.chantier_id),
+    chantier_color_idx: colorIdx(row.chantier_id ?? row.id),
     member_name: memberName,
     equipe_name: equipeRow?.name ?? null,
     chantier_address_line1: row.chantier?.address_line1 ?? null,
@@ -838,6 +842,8 @@ export async function getAllPlannings(opts?: {
       maintenance_intervention_id: row.id,
       maintenance_contract_id: contract?.id ?? null,
       chantier_id: supportId,
+      event_type: 'chantier' as const,
+      title: null,
       planned_date: row.date_intervention,
       start_time: row.start_time ? String(row.start_time).slice(0, 5) : null,
       end_time: row.end_time ? String(row.end_time).slice(0, 5) : null,

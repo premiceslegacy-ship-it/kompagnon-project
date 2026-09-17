@@ -143,6 +143,8 @@ export function TourneeCard({ slot, index, isFirst, members = [], onEdit, onDele
 
   async function handleDepart() {
     if (!arrivedAt) return
+    // Une tournée ne porte que des créneaux de chantier (jamais d'événement libre).
+    if (!slot.chantier_id) return
     setIsPointing(true)
     setPointageError(null)
 

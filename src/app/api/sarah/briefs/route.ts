@@ -10,7 +10,7 @@ const BRIEF_TTL_DAYS = 7
 // GET /api/sarah/briefs?target=chloe — retourne le brief pending le plus récent pour un assistant cible
 export async function GET(req: NextRequest) {
   const target = req.nextUrl.searchParams.get('target')
-  if (!target || !['chloe', 'nora', 'marco'].includes(target)) return NextResponse.json({ brief: null })
+  if (!target || !['chloe', 'marco', 'planning'].includes(target)) return NextResponse.json({ brief: null })
 
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return NextResponse.json({ brief: null })

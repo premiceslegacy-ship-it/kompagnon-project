@@ -5,7 +5,6 @@ export const AI_ASSISTANTS = {
   sarah:    { name: 'Sarah',   role: 'Secrétaire métier',    avatar: '/brand/sarah-avatar.webp' },
   chloe:    { name: 'Chloé',   role: 'Chiffreuse',           avatar: '/brand/chloe-avatar.webp' },
   marco:    { name: 'Marco',   role: 'Chef de chantier',     avatar: '/brand/marco-avatar.webp' },
-  nora:     { name: 'Nora',    role: 'Planificatrice',       avatar: '/brand/nora-avatar.webp' },
   valentin: { name: 'Valentin',role: 'Estimateur MO',        avatar: null },
   lea:      { name: 'Léa',     role: 'Assistante catalogue', avatar: '/brand/lea-avatar.webp' },
 } as const

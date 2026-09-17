@@ -2522,6 +2522,8 @@ export default function ChantierDetailClient({
       setPlannings(prev => [...prev, {
         id: planningId,
         chantier_id: chantier.id,
+        event_type: 'chantier' as const,
+        title: null,
         planned_date: data.plannedDate,
         start_time: data.startTime || null,
         end_time: data.endTime || null,

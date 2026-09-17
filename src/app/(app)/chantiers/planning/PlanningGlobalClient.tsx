@@ -27,7 +27,7 @@ import type { IndividualMember } from '@/lib/data/queries/members'
 import { AI_ASSISTANTS } from '@/lib/brand'
 import TourneeView from './TourneeView'
 import { planWeekWithAI, createPlanningSlot, createPlanningSlots, createMaintenancePlanningSlots, createAITournee, deletePlanningEntry, duplicatePlanningEntry, duplicatePlanningRange } from '@/lib/data/mutations/planning'
-import type { AIPlanningDeletion, AIPlanningSlot, AIUnknownPerson, AITour } from '@/lib/data/mutations/planning'
+import type { AIPlanningDeletion, AIPlanningSlot, AIUnknownPerson, AITour, PlanningEventType } from '@/lib/data/mutations/planning'
 import { createIndividualMember } from '@/lib/data/mutations/members'
 import { declareMemberAbsence, type ConflictingSlot } from '@/lib/data/mutations/absences'
 import { todayParis } from '@/lib/utils'
@@ -50,12 +50,19 @@ const CHANTIER_COLORS = [
   { bg: 'bg-cyan-500/20',    border: 'border-cyan-400',   text: 'text-cyan-700 dark:text-cyan-300',       hex: '#06b6d4' },
 ]
 
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  rdv_commercial: 'RDV commercial',
+  visite_technique: 'Visite technique',
+  personnel: 'Personnel',
+  autre: 'Autre',
+}
+
 // ─── Constantes calendrier ───────────────────────────────────────────────────
 
 const CAL_START_H = 5
 const CAL_END_H = 23
 const ROW_H = 56 // px par heure — légèrement plus grand pour la lisibilité desktop
-const PLANNING_ASSISTANT = AI_ASSISTANTS.nora
+const PLANNING_ASSISTANT = AI_ASSISTANTS.sarah
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -228,10 +235,10 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   const [aiModalOpen, setAiModalOpen] = useState(false)
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiStatus, setAiStatus] = useState<'idle' | 'loading' | 'new_member' | 'preview' | 'saving' | 'done' | 'error'>('idle')
-  const [noraBriefBanner, setNoraBriefBanner] = useState<string | null>(null)
+  const [planningBriefBanner, setPlanningBriefBanner] = useState<string | null>(null)
   const [sarahInfoBanner, setSarahInfoBanner] = useState<string | null>(null)
   // Fenêtre courte pendant laquelle on vérifie un brief Sarah en attente : évite
-  // que le modal Nora s'ouvre "brusquement" sans aucun signal avant coup.
+  // que le modal de planification s'ouvre "brusquement" sans aucun signal avant coup.
   const [checkingSarahBrief, setCheckingSarahBrief] = useState(false)
   const [aiSlots, setAiSlots] = useState<AIPlanningSlot[]>([])
   const [aiDeletions, setAiDeletions] = useState<AIPlanningDeletion[]>([])
@@ -259,7 +266,9 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
 
   // ─── Création manuelle d'un créneau (sans IA) ──────────────────────────────
   const [newSlotModalOpen, setNewSlotModalOpen] = useState(false)
+  const [newSlotEventType, setNewSlotEventType] = useState<PlanningEventType>('chantier')
   const [newSlotChantierId, setNewSlotChantierId] = useState('')
+  const [newSlotTitle, setNewSlotTitle] = useState('')
   const [newSlotDate, setNewSlotDate] = useState('')
   const [newSlotStartTime, setNewSlotStartTime] = useState('08:00')
   const [newSlotEndTime, setNewSlotEndTime] = useState('12:00')
@@ -271,7 +280,9 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   const [newSlotError, setNewSlotError] = useState<string | null>(null)
 
   function openNewSlotModal(prefillDate?: Date) {
+    setNewSlotEventType('chantier')
     setNewSlotChantierId(chantiers[0]?.id ?? '')
+    setNewSlotTitle('')
     setNewSlotDate(getLocalDateStr(prefillDate ?? selectedDate))
     setNewSlotStartTime('08:00')
     setNewSlotEndTime('12:00')
@@ -288,7 +299,9 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
   }
 
   async function handleCreateSlotConfirm() {
-    if (!newSlotChantierId || !newSlotDate) return
+    const isFreeEvent = newSlotEventType !== 'chantier'
+    if (isFreeEvent ? !newSlotTitle.trim() : !newSlotChantierId) return
+    if (!newSlotDate) return
     const assigneeName = newSlotAssigneeType === 'membre'
       ? (() => {
           const m = individualMembers.find(mm => mm.id === newSlotMemberId)
@@ -296,13 +309,15 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
         })()
       : (equipes.find(e => e.id === newSlotEquipeId)?.name ?? '')
     const chantierTitle = chantiers.find(c => c.id === newSlotChantierId)?.title ?? ''
-    const label = newSlotLabel.trim() || assigneeName || chantierTitle
+    const label = newSlotLabel.trim() || assigneeName || (isFreeEvent ? newSlotTitle.trim() : chantierTitle)
     if (!label) { setNewSlotError('Choisissez un membre, une équipe, ou saisissez un libellé.'); return }
 
     setNewSlotLoading(true)
     setNewSlotError(null)
     const result = await createPlanningSlot({
-      chantierId: newSlotChantierId,
+      chantierId: isFreeEvent ? null : newSlotChantierId,
+      eventType: newSlotEventType,
+      title: isFreeEvent ? newSlotTitle.trim() : null,
       plannedDate: newSlotDate,
       startTime: newSlotStartTime || null,
       endTime: newSlotEndTime || null,
@@ -332,15 +347,15 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
     setPlannings(initialPlannings)
   }, [initialPlannings])
 
-  // Brief Sarah→Nora : deux natures de brief très différentes.
+  // Brief laissé par Sarah pour le planning : deux natures très différentes.
   // - kind 'info' : Sarah a DÉJÀ agi (absence déclarée, créneau modifié...).
   //   Simple bandeau d'information sur la page — surtout pas le modal de
   //   génération, qui laissait croire qu'il restait quelque chose à générer.
-  // - brief de planification réel : ouvrir le modal Nora pré-rempli.
+  // - brief de planification réel : ouvrir le modal de planification pré-rempli.
   useEffect(() => {
     if (!planningAiEnabled) return
     setCheckingSarahBrief(true)
-    fetch('/api/sarah/briefs?target=nora')
+    fetch('/api/sarah/briefs?target=planning')
       .then(r => r.json())
       .then(({ brief }: { brief: { id: string; payload: { kind?: string; description?: string; chantier_title?: string } } | null }) => {
         if (!brief?.payload?.description?.trim()) return
@@ -350,7 +365,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
         } else {
           const chantierHint = brief.payload.chantier_title ? ` pour "${brief.payload.chantier_title}"` : ''
           setAiPrompt(desc)
-          setNoraBriefBanner(`Brief transmis par Sarah${chantierHint}.`)
+          setPlanningBriefBanner(`Brief transmis par Sarah${chantierHint}.`)
           setAiModalOpen(true)
         }
         fetch('/api/sarah/briefs', {
@@ -674,10 +689,12 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
     [weekPlannings]
   )
 
-  // Chantiers uniques dans la semaine (pour la légende)
+  // Chantiers uniques dans la semaine (pour la légende) — les événements
+  // libres (sans chantier) n'ont pas leur place dans une légende par chantier.
   const uniqueChantiers = useMemo(() => {
     const seen = new Set<string>()
-    return weekPlannings.filter(p => {
+    return weekPlannings.filter((p): p is typeof p & { chantier_id: string } => {
+      if (!p.chantier_id) return false
       if (seen.has(p.chantier_id)) return false
       seen.add(p.chantier_id)
       return true
@@ -917,7 +934,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
             disabled={checkingSarahBrief}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-accent text-black font-semibold text-sm hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-70 disabled:cursor-wait"
           >
-            {checkingSarahBrief ? <Loader2 className="w-4 h-4 animate-spin" /> : <AssistantAvatar assistant="nora" size={16} className="border-none bg-transparent shadow-none !rounded-full" />}
+            {checkingSarahBrief ? <Loader2 className="w-4 h-4 animate-spin" /> : <AssistantAvatar assistant="sarah" size={16} className="border-none bg-transparent shadow-none !rounded-full" />}
             {checkingSarahBrief ? 'Vérification...' : `Planifier avec ${PLANNING_ASSISTANT.name}`}
           </button>
         )}
@@ -1288,17 +1305,45 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-secondary">Chantier</label>
+              <label className="text-xs font-semibold text-secondary">Type</label>
               <select
                 className="input w-full text-sm"
-                value={newSlotChantierId}
-                onChange={e => setNewSlotChantierId(e.target.value)}
+                value={newSlotEventType}
+                onChange={e => setNewSlotEventType(e.target.value as PlanningEventType)}
               >
-                {chantiers.map(c => (
-                  <option key={c.id} value={c.id}>{c.title}</option>
-                ))}
+                <option value="chantier">Chantier</option>
+                <option value="rdv_commercial">RDV commercial</option>
+                <option value="visite_technique">Visite technique</option>
+                <option value="personnel">Personnel</option>
+                <option value="autre">Autre</option>
               </select>
             </div>
+
+            {newSlotEventType === 'chantier' ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-secondary">Chantier</label>
+                <select
+                  className="input w-full text-sm"
+                  value={newSlotChantierId}
+                  onChange={e => setNewSlotChantierId(e.target.value)}
+                >
+                  {chantiers.map(c => (
+                    <option key={c.id} value={c.id}>{c.title}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-secondary">Titre</label>
+                <input
+                  type="text"
+                  className="input w-full text-sm"
+                  placeholder="Ex : RDV client Dupont"
+                  value={newSlotTitle}
+                  onChange={e => setNewSlotTitle(e.target.value)}
+                />
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-secondary">Date</label>
@@ -1399,7 +1444,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
               <button onClick={closeNewSlotModal} className="btn-secondary text-sm px-4 py-2">Annuler</button>
               <button
                 onClick={handleCreateSlotConfirm}
-                disabled={newSlotLoading || !newSlotChantierId || !newSlotDate}
+                disabled={newSlotLoading || !newSlotDate || (newSlotEventType === 'chantier' ? !newSlotChantierId : !newSlotTitle.trim())}
                 className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2"
               >
                 {newSlotLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
@@ -1418,21 +1463,21 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
             {/* Header */}
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[var(--elevation-border)]">
               <div className="flex items-center gap-3">
-                <AssistantAvatar assistant="nora" size={32} />
+                <AssistantAvatar assistant="sarah" size={32} />
                 <div>
                   <h2 className="font-bold text-primary text-base">{PLANNING_ASSISTANT.name} <span className="font-normal text-secondary">, planification</span></h2>
                   <p className="text-xs text-secondary">Semaine du {fmtWeekLabel(weekStart)}</p>
                 </div>
               </div>
-              <button onClick={() => { setAiModalOpen(false); setNoraBriefBanner(null) }} className="text-secondary hover:text-primary transition-colors">
+              <button onClick={() => { setAiModalOpen(false); setPlanningBriefBanner(null) }} className="text-secondary hover:text-primary transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {noraBriefBanner && (
+            {planningBriefBanner && (
               <div className="mx-6 mt-3 flex items-center gap-2 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 px-3 py-2 text-xs text-[var(--accent)]">
                 <Check className="w-3.5 h-3.5 shrink-0" />
-                <span>{noraBriefBanner}</span>
+                <span>{planningBriefBanner}</span>
               </div>
             )}
 
@@ -1664,7 +1709,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
               {/* Phase done */}
               {aiStatus === 'done' && (
                 <div className="flex flex-col items-center gap-4 py-8">
-                  <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center">
+                  <div className="w-12 h-12 rounded-full flex items-center justify-center">
                     <Check className="w-6 h-6 text-green-500" />
                   </div>
                   <p className="text-sm text-secondary">Planning créé avec succès !</p>
@@ -2170,6 +2215,12 @@ function SemaineView({
                         <p className={`mt-0.5 flex items-center gap-0.5 text-[9px] font-semibold leading-tight ${col.text}`}>
                           <Wrench className="w-2.5 h-2.5" />
                           Entretien
+                        </p>
+                      )}
+                      {!p.chantier_id && heightPx > 44 && (
+                        <p className={`mt-0.5 flex items-center gap-0.5 text-[9px] font-semibold leading-tight ${col.text}`}>
+                          <Calendar className="w-2.5 h-2.5" />
+                          {EVENT_TYPE_LABELS[p.event_type] ?? 'Événement'}
                         </p>
                       )}
                       {heightPx > 52 && (

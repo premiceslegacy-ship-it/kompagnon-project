@@ -229,6 +229,15 @@ const SARAH_TOOLS = [
 // limite a 1 empechait ce cas courant.
 const MAX_MEMORY_SAVES_PER_CONVERSATION = 3
 
+// Extension future : seule Sarah a ce tool aujourd'hui. Chloe apprend
+// automatiquement des corrections de prix (voir syncQuoteLearningEntry dans
+// src/lib/data/mutations/document-memory.ts), mais Marco (chantier-assistant)
+// n'a aucune memoire persistante. Pour lui donner un save_memory equivalent :
+// dupliquer ce tool dans sa route API, ecrire en base avec type: 'marco_memory'
+// (colonne `type` de company_memory, meme table que sarah_memory), et l'UI de
+// gestion dans SettingsClient.tsx (section "Memoire des assistants IA")
+// l'affichera automatiquement via memoryTypeLabel() sans modification
+// supplementaire.
 async function executeSarahTool(
   name: string,
   args: Record<string, unknown>,
@@ -800,7 +809,7 @@ async function executeSarahTool(
 const SARAH_ACTION_TYPES = new Set([
   'task_complete', 'invoice_reminder', 'open_quote_editor', 'brief_chloe', 'brief_nora', 'brief_marco',
   'draft_quote', 'draft_invoice', 'open_url', 'draft_email',
-  'planning_create', 'planning_update', 'planning_delete',
+  'planning_create', 'planning_create_recurring', 'planning_update', 'planning_delete',
   'absence_declare', 'planning_replacement_suggest', 'pointage_reminder_prepare',
   'client_create', 'chantier_create', 'task_create', 'chantier_note_add', 'expense_record',
   'invoice_mark_paid', 'invoice_send', 'quote_send', 'quote_mark_accepted', 'quote_mark_refused', 'quote_followup',
@@ -814,19 +823,20 @@ const SARAH_ACTION_DEFAULTS: Record<string, { label: string; risk: 'low' | 'medi
   invoice_reminder: { label: 'Préparer une relance de facture', risk: 'medium' },
   open_quote_editor: { label: 'Ouvrir l\'éditeur de devis', risk: 'low' },
   brief_chloe: { label: 'Transmettre le brief à Chloé', risk: 'low' },
-  brief_nora: { label: 'Transmettre le brief à Nora', risk: 'low' },
+  brief_nora: { label: 'Préparer le planning de la semaine', risk: 'low' },
   brief_marco: { label: 'Transmettre le contexte à Marco', risk: 'low' },
   draft_quote: { label: 'Créer le brouillon de devis', risk: 'medium' },
   draft_invoice: { label: 'Créer le brouillon de facture', risk: 'medium' },
   open_url: { label: 'Ouvrir la page', risk: 'low' },
   draft_email: { label: 'Préparer l\'email', risk: 'high' },
   planning_create: { label: 'Créer le créneau planning', risk: 'medium' },
+  planning_create_recurring: { label: 'Créer les créneaux récurrents', risk: 'medium' },
   planning_update: { label: 'Modifier le créneau planning', risk: 'medium' },
   planning_delete: { label: 'Supprimer le créneau planning', risk: 'medium' },
   absence_declare: { label: 'Déclarer l\'absence', risk: 'medium' },
   planning_replacement_suggest: { label: 'Mettre en place le remplacement', risk: 'medium' },
   pointage_reminder_prepare: { label: 'Préparer le rappel de pointage', risk: 'low' },
-  client_create: { label: 'Créer la fiche client', risk: 'low' },
+  client_create: { label: 'Créer la fiche client', risk: 'medium' },
   chantier_create: { label: 'Créer le chantier', risk: 'medium' },
   task_create: { label: 'Ajouter la tâche', risk: 'low' },
   chantier_note_add: { label: 'Ajouter la note', risk: 'low' },
@@ -842,68 +852,8 @@ const SARAH_ACTION_DEFAULTS: Record<string, { label: string; risk: 'low' | 'medi
   client_update: { label: 'Mettre à jour la fiche client', risk: 'low' },
   pointage_record: { label: 'Enregistrer le pointage', risk: 'medium' },
   catalog_item_create: { label: 'Ajouter au catalogue', risk: 'low' },
-  member_create: { label: 'Ajouter le membre', risk: 'low' },
+  member_create: { label: 'Ajouter le membre', risk: 'medium' },
   document_archive: { label: 'Archiver le document', risk: 'low' },
-}
-
-// ─── Écriture d'un brief inter-assistant en base ──────────────────────────────
-
-async function saveAIBrief(
-  orgId: string,
-  targetAssistant: 'chloe' | 'nora' | 'marco',
-  payload: Record<string, unknown>,
-): Promise<void> {
-  const supabase = await createClient()
-  await supabase.from('ai_briefs').insert({
-    organization_id: orgId,
-    source_assistant: 'sarah',
-    target_assistant: targetAssistant,
-    payload,
-    status: 'pending',
-  })
-}
-
-// ─── Persistance des briefs inter-assistants selon le type d'action ──────────
-// - brief_chloe  → Chloé (devis)
-// - brief_nora   → Nora (planning)
-// - planning_*   → Nora (planning) avec description de l'action effectuée
-// - brief_marco  → Marco (chantier)
-
-async function persistActionBriefs(orgId: string, action: unknown): Promise<void> {
-  if (!action || typeof action !== 'object') return
-  const act = action as Record<string, unknown>
-  const type = act.type as string | undefined
-  const payload = (act.payload ?? {}) as Record<string, unknown>
-
-  if (type === 'brief_chloe') {
-    await saveAIBrief(orgId, 'chloe', payload).catch(() => {})
-    return
-  }
-
-  if (type === 'brief_nora') {
-    await saveAIBrief(orgId, 'nora', payload).catch(() => {})
-    return
-  }
-
-  if (type === 'brief_marco') {
-    await saveAIBrief(orgId, 'marco', payload).catch(() => {})
-    return
-  }
-
-  // Actions planning → informer Nora avec un résumé de ce qui a été fait
-  if (type === 'planning_create' || type === 'planning_update' || type === 'planning_delete') {
-    const label = (act.label as string | undefined) ?? (payload.label as string | undefined) ?? 'Créneau'
-    const chantierTitle = (payload.chantierTitle as string | undefined) ?? (payload.slotLabel as string | undefined) ?? ''
-    const date = (payload.plannedDate as string | undefined) ?? ''
-    const actionLabel = type === 'planning_create' ? 'Créneau créé' : type === 'planning_update' ? 'Créneau modifié' : 'Créneau supprimé'
-    const description = `${actionLabel} par Sarah : "${label ?? chantierTitle}"${date ? ` le ${date}` : ''}. Vérifier et ajuster si besoin.`
-    await saveAIBrief(orgId, 'nora', {
-      description,
-      chantier_title: chantierTitle,
-      action_type: type,
-      original_payload: payload,
-    }).catch(() => {})
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -949,7 +899,13 @@ async function attachPersistentProposal(
   const payload = (act.payload && typeof act.payload === 'object' ? act.payload : {}) as Record<string, unknown>
   const label = typeof act.label === 'string' && act.label.trim() ? act.label.trim() : 'Action Sarah'
   const description = typeof act.description === 'string' && act.description.trim() ? act.description.trim() : label
-  const risk = act.risk === 'high' || act.risk === 'medium' || act.risk === 'low' ? act.risk : 'low'
+  const modelRisk = act.risk === 'high' || act.risk === 'medium' || act.risk === 'low' ? act.risk : 'low'
+  // Garde-fou serveur : la création d'une fiche (client, membre) ne doit
+  // jamais s'auto-exécuter, même si le modèle la classe "low". Le risque
+  // n'est pas la sensibilité de l'action mais celle d'une hallucination
+  // (nom/email/téléphone inventés) exécutée sans clic humain.
+  const NEVER_AUTO_EXECUTE = new Set(['client_create', 'member_create'])
+  const risk = NEVER_AUTO_EXECUTE.has(type) && modelRisk === 'low' ? 'medium' : modelRisk
 
   // Garde-fou serveur : un nom de client mentionné mais introuvable ne doit
   // jamais donner lieu à une carte d'action. On résout ici plutôt que de
@@ -1039,7 +995,7 @@ Ce que tu peux faire :
 - Préparer un brief devis pour Chloé : si l'utilisateur veut créer un devis, collecte le client, la prestation, les quantités et conditions souhaitées, puis génère un bloc "brief_chloe" structuré pour que Chloé puisse démarrer directement.
 - Créer un brouillon simple de devis ou facture depuis le catalogue quand les lignes sont claires : prestations types, produits/services, main d'œuvre, quantités et prix connus. Le catalogue n'est plus dans le contexte : utilise search_catalog pour retrouver un prix ou un catalog_id précis, sinon écris simplement le nom de l'article dans la ligne, il sera rapproché du catalogue automatiquement à la création.
 - Transmettre à Chloé quand le devis est technique, mixte, incomplet ou demande des lignes non triviales : l'utilisateur doit sentir la collaboration entre agents, avec transmission visible puis redirection rapide.
-- Préparer un planning complet avec Nora : pour une semaine multi-chantiers, plusieurs personnes, tournées ou entretiens, génère un bloc "brief_nora" structuré et redirige vers le planning global.
+- Préparer un planning complet : pour une semaine multi-chantiers, plusieurs personnes, tournées ou entretiens, génère un bloc "brief_nora" structuré. Le planning global l'ouvre en preview pré-remplie, rien n'est créé avant validation de l'utilisateur.
 - Proposer des actions concrètes : tu joins une carte d'action au message, et l'utilisateur valide en un seul clic sur cette carte. La carte est la validation, ne demande pas de "oui" en plus.
 - Signaler des anomalies ou urgences détectées dans les données.
 - Résumer la journée ou la semaine à la demande.
@@ -1051,11 +1007,11 @@ Ce que tu peux faire :
 - Rechercher n'importe quel devis ou facture via search_documents (par référence, client ou statut) quand le document n'est pas dans le contexte.
 - Consulter le détail complet d'un chantier via get_chantier_details (tâches, planning, notes, dépenses) pour répondre précisément sur son avancement.
 - Consulter la situation complète d'un client via get_client_overview (chantiers actifs, factures en attente/retard, devis en attente) en un seul appel dès que la question croise plusieurs sujets pour ce client.
-- Lire les messages que les autres assistants (Marco, Chloé, Nora) vous transmettent : s'il y a un bloc "Messages des autres assistants" dans le contexte, mentionnez-le spontanément à l'utilisateur et proposez la suite logique.
+- Lire les messages que les autres assistants (Marco, Chloé) vous transmettent : s'il y a un bloc "Messages des autres assistants" dans le contexte, mentionnez-le spontanément à l'utilisateur et proposez la suite logique.
 - Gérer les absences, remplacements, conflits de planning et pointages manquants avec les outils dédiés (voir section "Planning intelligent" ci-dessous).
 
 Planning intelligent - règles impératives :
-- Une absence ne se déclare que si l'utilisateur le dit explicitement ("Nora est absente", "Marc ne vient pas"). Utilise alors l'action "absence_declare" pour l'enregistrer, avec validation.
+- Une absence ne se déclare que si l'utilisateur le dit explicitement ("Julie est absente", "Marc ne vient pas"). Utilise alors l'action "absence_declare" pour l'enregistrer, avec validation.
 - Un pointage manquant n'est JAMAIS une preuve d'absence. Si l'utilisateur demande "qui n'a pas pointé", utilise check_missing_pointages et présente le résultat comme une absence de pointage à vérifier, jamais comme une absence de la personne.
 - Avant de proposer un remplacement, utilise find_replacement_candidates. N'affirme jamais qu'une personne est "disponible" avec certitude : dis plutôt qu'elle n'est ni absente déclarée ni déjà occupée, et que la disponibilité reste à confirmer avec elle si aucune donnée positive ne le garantit.
 - N'invente jamais d'heures, de disponibilité ou d'horaires. Si une donnée manque, dis-le et propose de vérifier plutôt que d'agir.
@@ -1098,19 +1054,20 @@ Types d'actions disponibles :
 - "invoice_reminder" : préparer une relance pour une facture (payload: { invoice_id, client_name, draft_text })
 - "open_quote_editor" : ouvrir l'éditeur de devis pour un client (payload: { client_id?, client_name?, redirect_url })
 - "brief_chloe" : transmettre un brief devis à Chloé (payload: { client_name, client_id?, description, items?, conditions? })
-- "brief_nora" : transmettre un brief planning à Nora (payload: { description, week_hint?, items?, includes_maintenance? })
+- "brief_nora" : préparer un planning complet pour une semaine (payload: { description, week_hint?, items?, includes_maintenance? })
 - "draft_quote" : créer un brouillon de devis simple après validation (payload: { client_id?, client_name?, title?, notes?, items: [{ type?: "prestation" | "material" | "labor" | "custom", catalog_id?, name?, description?, quantity?, unit?, unit_price?, vat_rate?, is_internal? }], requires_chloe?: boolean })
 - "draft_invoice" : créer un brouillon de facture simple après validation (payload: { client_id?, client_name?, title?, issue_date?, due_date?, items: [{ type?: "prestation" | "material" | "labor" | "custom", catalog_id?, name?, description?, quantity?, unit?, unit_price?, vat_rate?, is_internal? }] })
 - "open_url" : rediriger vers une page de l'app (payload: { url, label })
 - "draft_email" : préparer puis envoyer après validation humaine un email client/prospect (payload: { client_ids?: string[], recipient_filter?: { mode: "manual" | "all_active" | "by_status", ids?: string[], statuses?: string[] }, subject, body })
-- "planning_create" : créer un créneau planning chantier simple (payload: { chantierId, chantierTitle, plannedDate, startTime?, endTime?, label, teamSize?, notes?, memberId?, memberName?, equipeId?, equipeName? })
+- "planning_create" : créer un créneau planning, chantier ou événement libre (payload: { chantierId?, chantierTitle?, eventType?: "chantier" | "rdv_commercial" | "visite_technique" | "personnel" | "autre", title?, plannedDate, startTime?, endTime?, label, teamSize?, notes?, memberId?, memberName?, equipeId?, equipeName? }). Par défaut eventType vaut "chantier" et chantierId est requis. Pour un RDV sans chantier (commercial, visite technique, personnel...), fixe eventType sur la bonne valeur, ne renseigne PAS chantierId, et donne un "title" clair (ex: "RDV client Dupont"). N'invente jamais un chantier pour caser un RDV qui n'en a pas.
+- "planning_create_recurring" : créer une série de créneaux récurrents sur une période (payload: { chantierId?, eventType?, title?, startDate, endDate, daysOfWeek: number[] (0=dimanche...6=samedi), startTime?, endTime?, label, teamSize?, notes?, memberId?, memberName?, equipeId?, equipeName? }). Utilise cette action quand l'utilisateur demande une récurrence explicite ("tous les lundis pendant 2 mois", "chaque mardi et jeudi jusqu'à fin novembre"). Chaque créneau généré est indépendant : le modifier ou le supprimer ensuite n'affecte pas les autres. Limite raisonnable : quelques mois, jamais une plage vague ou non bornée — demande une date de fin si elle manque.
 - "planning_update" : modifier un créneau existant (payload: { slotId, slotLabel, plannedDate?, startTime?, endTime?, label?, teamSize?, notes?, memberId?, memberName?, equipeId?, equipeName? })
 - "planning_delete" : supprimer un créneau existant (payload: { slotId, slotLabel, chantierTitle, plannedDate })
 - "brief_marco" : transmettre un contexte ou une question sur un chantier à Marco (payload: { chantier_id, chantier_title, description })
 - "absence_declare" : déclarer l'absence d'un membre après confirmation explicite de l'utilisateur (payload: { memberId, memberName, startDate, endDate, reason? })
 - "planning_replacement_suggest" : mettre en place un remplacement sur un créneau (payload: { slotId?, chantierId, plannedDate, startTime?, endTime?, memberId, memberName, label?, notes? })
 - "pointage_reminder_prepare" : préparer un rappel de pointage à un membre (payload: { memberId, memberName, reminderText? })
-- "client_create" : créer une fiche client ou prospect, risque faible (payload: { type: "company" | "individual", company_name?, first_name?, last_name?, contact_name?, email?, phone?, siret?, address_line1?, postal_code?, city?, status?: "active" | "prospect" | "lead_hot" | "lead_cold" | "subcontractor" })
+- "client_create" : créer une fiche client ou prospect, risque moyen (payload: { type: "company" | "individual", company_name?, first_name?, last_name?, contact_name?, email?, phone?, siret?, address_line1?, postal_code?, city?, status?: "active" | "prospect" | "lead_hot" | "lead_cold" | "subcontractor" }). N'inclus un champ (nom, email, téléphone, adresse, SIRET) QUE si l'utilisateur l'a explicitement donné dans la conversation. Ne complète jamais un champ manquant avec une valeur plausible ou un exemple ("jean.dupont@email.fr", "06 00 00 00 00") : laisse-le simplement absent du payload. Si le nom lui-même manque, demande-le avant de proposer la carte.
 - "chantier_create" : créer un chantier, risque moyen (payload: { title, client_id?, client_name?, description?, address_line1?, postal_code?, city?, start_date?, estimated_end_date?, budget_ht? })
 - "task_create" : ajouter une tâche à un chantier, risque faible (payload: { chantierId, title, description?, due_date?, member_ids?, equipe_ids? })
 - "chantier_note_add" : ajouter une note interne sur un chantier, risque faible (payload: { chantierId, content })
@@ -1126,7 +1083,7 @@ Types d'actions disponibles :
 - "client_update" : corriger un ou plusieurs champs d'une fiche client existante (email, téléphone, adresse, notes internes), risque faible (payload: { client_id, email?, phone?, address_line1?, internal_notes? }). Seuls les champs fournis sont modifiés, le reste de la fiche est conservé tel quel.
 - "pointage_record" : saisir un pointage d'heures pour un membre sur un chantier, risque moyen (payload: { chantier_id, member_id, date, hours, description? })
 - "catalog_item_create" : ajouter rapidement une matière ou un tarif de main-d'œuvre au catalogue, risque faible (payload: { kind: "material" | "labor", name, unit?, sale_price?, rate?, category? }). "rate" pour un tarif MO, "sale_price" pour une matière.
-- "member_create" : ajouter un membre individuel à l'équipe (compagnon sans compte utilisateur), risque faible (payload: { name, prenom?, email?, role_label?, chantier_id? })
+- "member_create" : ajouter un membre à l'équipe (compagnon sans compte utilisateur), risque moyen (payload: { name, prenom?, email?, role_label?, chantier_id? }). N'inclus un champ QUE si l'utilisateur l'a explicitement donné.
 - "document_archive" : archiver un devis ou une facture, risque faible (payload: { kind: "quote" | "invoice", document_id })
 
 Pages de l'app accessibles via "open_url" (utilise l'URL exacte) :
@@ -1148,7 +1105,8 @@ Règles absolues :
 - Ton "reply" qui accompagne une carte d'action annonce ce qui va être fait ("Voici la fiche prospect prête à créer, validez la carte ci-dessous."), il ne redemande pas l'autorisation. N'écris jamais "Validez-vous", "Confirmez-vous", "Souhaitez-vous que je" ni aucune autre question de permission dans un message qui contient déjà une carte.
 - Ne jamais exécuter une action sensible sans avoir proposé une carte d'action et attendu la confirmation (le clic sur la carte).
 - Pour un email à un destinataire précis, résous-le via search_client (qui renvoie son email) avant de proposer l'action. Ne mets jamais une adresse inventée. Prépare une action "draft_email" avec client_ids ou recipient_filter, subject et body. La confirmation humaine déclenchera l'envoi.
-- Ne jamais inventer de données. Si tu ne sais pas, dis-le simplement.
+- Ne jamais inventer de données. Si tu ne sais pas, dis-le simplement. Cela vaut en particulier pour la création de fiches ("client_create", "member_create", "chantier_create") : n'invente jamais un nom, un email, un téléphone ou une adresse qui n'a pas été donné mot pour mot par l'utilisateur.
+- Un client de type "individual" se dit toujours "particulier" en français, jamais "individuel" ni "client individuel". Un client de type "company" se dit "professionnel" ou "entreprise", jamais "société" seul ni le mot anglais "company".
 - Dès qu'une question porte sur un client précis et croise plusieurs sujets (factures ET chantiers, ou "la situation de ce client", ou "a-t-il des trucs en cours"), utilise get_client_overview en un seul appel plutôt que d'enchaîner get_chantier_details puis search_documents séparément : c'est plus fiable et ça évite d'oublier un des deux volets. N'affirme rien depuis un simple survol des listes globales du contexte ("Factures en attente de paiement", "Chantiers actifs") : ces listes couvrent toute l'entreprise, pas un client en particulier, et une lecture rapide fait rater une ligne. Une réponse "aucun(e)" doit toujours venir d'un appel d'outil qui confirme l'absence, jamais d'une simple absence de mention dans le contexte général.
 - Pour tout comptage ("combien de chantiers en cours", "combien de devis en attente"), utilise get_financial_summary plutôt que de compter les lignes d'une liste du contexte : ces listes sont plafonnées et peuvent ne pas représenter le total réel.
 - Ne jamais afficher un statut technique brut du contexte (en_cours, planifie, sent, viewed, draft, overdue...). Traduis-le toujours en français naturel : "en cours", "planifié", "envoyé", "consulté par le client", "brouillon", "en retard". Idem pour tout identifiant ou code interne : ne les montre jamais à l'utilisateur.
@@ -1344,7 +1302,7 @@ export async function POST(req: NextRequest) {
             .eq('is_active', true)
             .limit(1)
         : Promise.resolve({ data: null, error: null }),
-      // Messages transmis par les autres assistants (Marco, Chloé, Nora) à Sarah
+      // Messages transmis par les autres assistants (Marco, Chloé) à Sarah
       isFirstMessage
         ? supabase
             .from('ai_briefs')
@@ -1874,7 +1832,7 @@ export async function POST(req: NextRequest) {
     // Messages des autres assistants adressés à Sarah — injectés puis marqués consommés
     const incomingBriefs = ((incomingBriefsResult as any)?.data ?? []) as Array<{ id: string; source_assistant: string; payload: Record<string, unknown>; created_at: string }>
     if (incomingBriefs.length > 0) {
-      const SOURCE_NAMES: Record<string, string> = { marco: 'Marco (chef de chantier)', chloe: 'Chloé (devis)', nora: 'Nora (planning)' }
+      const SOURCE_NAMES: Record<string, string> = { marco: 'Marco (chef de chantier)', chloe: 'Chloé (devis)' }
       contextLines.push('', 'Messages des autres assistants (à mentionner à l\'utilisateur) :')
       for (const brief of incomingBriefs) {
         const from = SOURCE_NAMES[brief.source_assistant] ?? brief.source_assistant
