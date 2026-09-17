@@ -49,7 +49,7 @@ export default async function RapportsPage({
     vue === 'annee' ? getAnnualReport(year) : Promise.resolve(null),
     getHoursReport(year, hoursMonth),
     getTopClients(year, hoursMonth),
-    getTopChantiers(year, hoursMonth),
+    getTopChantiers(year, hoursMonth, 9999),
     getMaintenanceReport(year, hoursMonth),
     getAnnualObjectives(year),
     vue === 'mois' ? getMonthlyObjectives(year, month) : Promise.resolve(null),

@@ -489,6 +489,7 @@ export default function RapportsClient({
   const [hoursReport, setHoursReport] = useState(initialHoursReport)
   const [topClients, setTopClients] = useState(initialTopClients)
   const [topChantiers, setTopChantiers] = useState(initialTopChantiers)
+  const [selectedChantierMarginId, setSelectedChantierMarginId] = useState('')
   const [maintenanceReport, setMaintenanceReport] = useState(initialMaintenanceReport)
   const [annualObjectives, setAnnualObjectives] = useState(initialAnnualObjectives)
   const [monthlyObjectives, setMonthlyObjectives] = useState(initialMonthlyObjectives)
@@ -549,6 +550,16 @@ export default function RapportsClient({
   const billedSub = (ttc: number) => isVatSubject && ttc > 0 ? `${fmt(ttc)} TTC facturé` : 'Factures émises, non forcément encaissées'
   const collectedLabel = isVatSubject ? 'Encaissé TTC' : 'Encaissé'
   const vatLabel = isVatSubject ? 'TVA facturée' : 'TVA non applicable'
+
+  // Marge moyenne pondérée par CA sur les chantiers actifs de la période
+  // (plus représentatif qu'une moyenne simple des %, qui pèserait autant un
+  // petit chantier qu'un gros).
+  const chantiersMarginSumCa = topChantiers.reduce((s, c) => s + c.caHt, 0)
+  const chantiersMarginSumEur = topChantiers.reduce((s, c) => s + c.marginEur, 0)
+  const avgChantierMarginPct = chantiersMarginSumCa > 0 ? chantiersMarginSumEur / chantiersMarginSumCa : 0
+  const selectedChantierMargin = topChantiers.find(c => c.chantierId === selectedChantierMarginId) ?? topChantiers[0] ?? null
+  // Mêmes seuils que la jauge "Entretien" plus haut sur cette page : ≥20% bon, ≥5% correct, en dessous à surveiller.
+  const marginTone = (pct: number) => pct >= 0.2 ? 'text-accent-green' : pct >= 0.05 ? 'text-accent' : 'text-red-500'
 
   const objectivesEmpty = !objectives ||
     (!objectives.revenue_ht_target && !objectives.margin_eur_target &&
@@ -701,8 +712,14 @@ export default function RapportsClient({
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <KpiCard label={billedLabel} value={r.caHt > 0 ? fmt(r.caHt) : '-'} sub={billedSub(r.caTtc)} delta={<Delta current={r.caHt} prev={r.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
               <KpiCard label={collectedLabel} value={r.encaisse > 0 ? fmt(r.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={r.encaisse} prev={r.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
-              <KpiCard label="Bénéfice estimé" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} sub={r.hasCostData ? `${fmtPct(monthlyActualMarginPct)} · avant impôts et charges fixes` : 'Aucun coût réel saisi ce mois'} icon={<Target className="w-4 h-4" />} />
-              <KpiCard label="Bénéfice prévu sur factures" value={r.hasProjectedCostData ? fmt(r.projectedMarginHt) : '-'} sub={r.hasProjectedCostData ? `${fmtPct(r.projectedMarginPct)} · coûts des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
+              <KpiCard
+                label="Trésorerie nette"
+                value={r.hasCostData ? fmt(r.tresorerieNette) : '-'}
+                sub={r.hasCostData ? "Ce qu'il reste sur l'encaissé, TVA et coûts déduits (hors URSSAF/impôts)" : 'Aucun coût réel saisi ce mois'}
+                icon={<TrendingUp className="w-4 h-4" />}
+              />
+              <KpiCard label="Bénéfice réel (dépenses saisies)" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} sub={r.hasCostData ? `${fmtPct(monthlyActualMarginPct)} · facturé HT moins dépenses et main d'œuvre réelles` : 'Aucun coût réel saisi ce mois'} icon={<Target className="w-4 h-4" />} />
+              <KpiCard label="Bénéfice prévisionnel (coûts catalogue)" value={r.hasProjectedCostData ? fmt(r.projectedMarginHt) : '-'} sub={r.hasProjectedCostData ? `${fmtPct(r.projectedMarginPct)} · coûts théoriques des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
             </div>
           </div>
 
@@ -746,8 +763,14 @@ export default function RapportsClient({
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <KpiCard label={billedLabel} value={ar.caHt > 0 ? fmt(ar.caHt) : '-'} sub={billedSub(ar.caTtc)} delta={<Delta current={ar.caHt} prev={ar.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
               <KpiCard label={collectedLabel} value={ar.encaisse > 0 ? fmt(ar.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={ar.encaisse} prev={ar.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
-              <KpiCard label="Bénéfice estimé" value={ar.hasCostData ? fmt(ar.beneficeEstime) : '-'} sub={ar.hasCostData ? `${fmtPct(annualActualMarginPct)} · avant impôts et charges fixes` : 'Aucun coût réel saisi cette année'} icon={<Target className="w-4 h-4" />} />
-              <KpiCard label="Bénéfice prévu sur factures" value={ar.hasProjectedCostData ? fmt(ar.projectedMarginHt) : '-'} sub={ar.hasProjectedCostData ? `${fmtPct(ar.projectedMarginPct)} · coûts des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
+              <KpiCard
+                label="Trésorerie nette"
+                value={ar.hasCostData ? fmt(ar.tresorerieNette) : '-'}
+                sub={ar.hasCostData ? "Ce qu'il reste sur l'encaissé, TVA et coûts déduits (hors URSSAF/impôts)" : 'Aucun coût réel saisi cette année'}
+                icon={<TrendingUp className="w-4 h-4" />}
+              />
+              <KpiCard label="Bénéfice réel (dépenses saisies)" value={ar.hasCostData ? fmt(ar.beneficeEstime) : '-'} sub={ar.hasCostData ? `${fmtPct(annualActualMarginPct)} · facturé HT moins dépenses et main d'œuvre réelles` : 'Aucun coût réel saisi cette année'} icon={<Target className="w-4 h-4" />} />
+              <KpiCard label="Bénéfice prévisionnel (coûts catalogue)" value={ar.hasProjectedCostData ? fmt(ar.projectedMarginHt) : '-'} sub={ar.hasProjectedCostData ? `${fmtPct(ar.projectedMarginPct)} · coûts théoriques des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
             </div>
           </div>
 
@@ -992,6 +1015,57 @@ export default function RapportsClient({
             </div>
           )}
         </div>
+      </div>
+
+      <div className="card rounded-3xl p-6">
+        <div className="flex justify-between items-start gap-3 mb-4 flex-wrap">
+          <div>
+            <h2 className="text-lg font-bold text-primary">Marge par chantier</h2>
+            <p className="text-xs text-secondary mt-0.5">Marge HT sur {vue === 'mois' ? `${MONTH_LABELS[month - 1]} ${year}` : `l'année ${year}`}, chantier par chantier</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-secondary">Moyenne pondérée (tous chantiers)</p>
+            <p className={`text-lg font-bold tabular-nums ${topChantiers.length > 0 ? marginTone(avgChantierMarginPct) : 'text-secondary'}`}>
+              {topChantiers.length > 0 ? fmtPct(avgChantierMarginPct) : '-'}
+            </p>
+          </div>
+        </div>
+        {topChantiers.length === 0 ? (
+          <p className="text-sm text-secondary">Aucune donnée pour cette période.</p>
+        ) : (
+          <div className="space-y-4">
+            <select
+              className="input w-full sm:w-80 text-sm"
+              value={selectedChantierMargin?.chantierId ?? ''}
+              onChange={e => setSelectedChantierMarginId(e.target.value)}
+            >
+              {[...topChantiers].sort((a, b) => a.chantierTitle.localeCompare(b.chantierTitle, 'fr')).map(c => (
+                <option key={c.chantierId} value={c.chantierId}>{c.chantierTitle}</option>
+              ))}
+            </select>
+            {selectedChantierMargin && (
+              <div className="rounded-2xl border border-[var(--elevation-border)] p-4 flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <Link href={`/chantiers/${selectedChantierMargin.chantierId}`} className="text-sm font-semibold text-primary hover:text-accent transition-colors">
+                    {selectedChantierMargin.chantierTitle}
+                  </Link>
+                  {selectedChantierMargin.clientName && <p className="text-xs text-secondary mt-0.5">{selectedChantierMargin.clientName}</p>}
+                  <div className="flex gap-3 mt-1 text-xs text-secondary">
+                    <span>{billedLabel} : {fmt(selectedChantierMargin.caHt)}</span>
+                    <span>{collectedLabel} : {fmt(selectedChantierMargin.encaisseTtc)}</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-secondary">Marge HT</p>
+                  <p className={`text-2xl font-bold tabular-nums ${marginTone(selectedChantierMargin.marginPct)}`}>
+                    {fmtPct(selectedChantierMargin.marginPct)}
+                  </p>
+                  <p className="text-xs text-secondary">{fmt(selectedChantierMargin.marginEur)}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {showObjectives && vue === 'annee' && annualObjectives && (

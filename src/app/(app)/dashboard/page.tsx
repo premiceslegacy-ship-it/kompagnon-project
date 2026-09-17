@@ -67,7 +67,7 @@ const KPIRow = ({
 
     <div className={`${cardCls} flex flex-col justify-between`}>
       <div className="flex justify-between items-start">
-        <p className="text-sm font-semibold text-secondary tracking-wider uppercase">Encaissé</p>
+        <p className="text-sm font-semibold text-secondary tracking-wider uppercase">Encaissé TTC</p>
         <Receipt className="w-4 h-4 text-accent-green" />
       </div>
       <p className="text-3xl font-bold text-primary tabular-nums mt-4">
