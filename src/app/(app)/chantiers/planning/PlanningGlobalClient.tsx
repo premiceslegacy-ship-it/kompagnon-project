@@ -934,7 +934,7 @@ export default function PlanningGlobalClient({ initialPlannings, chantiers, equi
             disabled={checkingSarahBrief}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-accent text-black font-semibold text-sm hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-70 disabled:cursor-wait"
           >
-            {checkingSarahBrief ? <Loader2 className="w-4 h-4 animate-spin" /> : <AssistantAvatar assistant="sarah" size={16} className="border-none bg-transparent shadow-none !rounded-full" />}
+            {checkingSarahBrief ? <Loader2 className="w-4 h-4 animate-spin" /> : <AssistantAvatar assistant="sarah" size={16} className="border-none shadow-none !rounded-full" />}
             {checkingSarahBrief ? 'Vérification...' : `Planifier avec ${PLANNING_ASSISTANT.name}`}
           </button>
         )}
