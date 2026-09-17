@@ -408,7 +408,7 @@ export const BUSINESS_PROFILE_CONFIGS: Record<BusinessProfile, BusinessProfileCo
     onboardingLabel: 'Nettoyage',
     onboardingDescription: "Produits, prestations et modèles de devis prêts à l'emploi.",
     labelSet: buildLabelSet({
-      catalogTitle: 'Catalogue & process',
+      catalogTitle: 'Catalogue & tarifs',
       catalogSubtitle: 'Produits, prestations, ressources internes et modèles adaptés à votre activité de nettoyage.',
       material: ['Produit', 'Produits', 'Nouveau produit', "Aucun produit pour l'instant", 'Commencez par ajouter vos premiers produits.'],
       service: ['Prestation', 'Prestations', 'Nouvelle prestation', "Aucune prestation pour l'instant", 'Commencez par ajouter vos premières prestations.'],

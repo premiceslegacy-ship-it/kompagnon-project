@@ -695,49 +695,73 @@ export default function RapportsClient({
 
       {vue === 'mois' && r && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KpiCard label={billedLabel} value={r.caHt > 0 ? fmt(r.caHt) : '-'} sub={billedSub(r.caTtc)} delta={<Delta current={r.caHt} prev={r.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
-            <KpiCard label={collectedLabel} value={r.encaisse > 0 ? fmt(r.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={r.encaisse} prev={r.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
-            <KpiCard label={vatLabel} value={isVatSubject && r.tvaDue > 0 ? fmt(r.tvaDue) : '-'} delta={isVatSubject ? <Delta current={r.tvaDue} prev={r.prevTvaDue} /> : undefined} icon={<BarChart2 className="w-4 h-4" />} />
-            <KpiCard label="Bénéfice estimé" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} sub={r.hasCostData ? `${fmtPct(monthlyActualMarginPct)} · avant impôts et charges fixes` : 'Aucun coût réel saisi ce mois'} icon={<Target className="w-4 h-4" />} />
+          <div>
+            <h2 className="text-lg font-bold text-primary mb-1">Rentabilité</h2>
+            <p className="text-xs text-secondary mb-3">Ce que vous facturez, encaissez et gardez réellement une fois les coûts déduits.</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <KpiCard label={billedLabel} value={r.caHt > 0 ? fmt(r.caHt) : '-'} sub={billedSub(r.caTtc)} delta={<Delta current={r.caHt} prev={r.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
+              <KpiCard label={collectedLabel} value={r.encaisse > 0 ? fmt(r.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={r.encaisse} prev={r.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
+              <KpiCard label="Bénéfice estimé" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} sub={r.hasCostData ? `${fmtPct(monthlyActualMarginPct)} · avant impôts et charges fixes` : 'Aucun coût réel saisi ce mois'} icon={<Target className="w-4 h-4" />} />
+              <KpiCard label="Bénéfice prévu sur factures" value={r.hasProjectedCostData ? fmt(r.projectedMarginHt) : '-'} sub={r.hasProjectedCostData ? `${fmtPct(r.projectedMarginPct)} · coûts des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
+            </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KpiCard label="Bénéfice prévu sur factures" value={r.hasProjectedCostData ? fmt(r.projectedMarginHt) : '-'} sub={r.hasProjectedCostData ? `${fmtPct(r.projectedMarginPct)} · coûts des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
-            <KpiCard label="Chantiers terminés" value={String(r.chantiersTermines || '-')} icon={<HardHat className="w-4 h-4 text-amber-500" />} />
-            <KpiCard label="Chantiers en cours" value={String(r.chantiersEnCours || '-')} icon={<HardHat className="w-4 h-4" />} />
-            <KpiCard label="Heures travaillées" value={r.heuresTotal > 0 ? fmtH(r.heuresTotal) : '-'} delta={<Delta current={r.heuresTotal} prev={r.prevHeuresTotal} />} icon={<Clock className="w-4 h-4" />} />
+
+          <div>
+            <h2 className="text-lg font-bold text-primary mb-1">Activité</h2>
+            <p className="text-xs text-secondary mb-3">Volume de chantiers et d&apos;heures sur la période.</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <KpiCard label="Chantiers terminés" value={String(r.chantiersTermines || '-')} icon={<HardHat className="w-4 h-4 text-amber-500" />} />
+              <KpiCard label="Chantiers en cours" value={String(r.chantiersEnCours || '-')} icon={<HardHat className="w-4 h-4" />} />
+              <KpiCard label="Heures travaillées" value={r.heuresTotal > 0 ? fmtH(r.heuresTotal) : '-'} delta={<Delta current={r.heuresTotal} prev={r.prevHeuresTotal} />} icon={<Clock className="w-4 h-4" />} />
+              <KpiCard label={vatLabel} value={isVatSubject && r.tvaDue > 0 ? fmt(r.tvaDue) : '-'} delta={isVatSubject ? <Delta current={r.tvaDue} prev={r.prevTvaDue} /> : undefined} icon={<BarChart2 className="w-4 h-4" />} />
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <KpiCard
-              label="Contrats à facturer"
-              value={r.recurringContractsDue > 0 ? String(r.recurringContractsDue) : '-'}
-              sub={r.recurringExpectedHt > 0 ? `${fmt(r.recurringExpectedHt)} HT prévu ce mois` : 'Aucune facture de période à générer'}
-              icon={<Calendar className="w-4 h-4" />}
-            />
-            <KpiCard
-              label="Facturation périodique"
-              value={r.recurringBilledHt > 0 ? fmt(r.recurringBilledHt) : '-'}
-              sub="Factures de période déjà générées"
-              icon={<Euro className="w-4 h-4" />}
-            />
+
+          <div>
+            <h2 className="text-lg font-bold text-primary mb-1">Facturation périodique</h2>
+            <p className="text-xs text-secondary mb-3">Contrats récurrents à facturer ou déjà générés ce mois.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <KpiCard
+                label="Contrats à facturer"
+                value={r.recurringContractsDue > 0 ? String(r.recurringContractsDue) : '-'}
+                sub={r.recurringExpectedHt > 0 ? `${fmt(r.recurringExpectedHt)} HT prévu ce mois` : 'Aucune facture de période à générer'}
+                icon={<Calendar className="w-4 h-4" />}
+              />
+              <KpiCard
+                label="Facturation périodique"
+                value={r.recurringBilledHt > 0 ? fmt(r.recurringBilledHt) : '-'}
+                sub="Factures de période déjà générées"
+                icon={<Euro className="w-4 h-4" />}
+              />
+            </div>
           </div>
         </>
       )}
 
       {vue === 'annee' && ar && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KpiCard label={billedLabel} value={ar.caHt > 0 ? fmt(ar.caHt) : '-'} sub={billedSub(ar.caTtc)} delta={<Delta current={ar.caHt} prev={ar.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
-            <KpiCard label={collectedLabel} value={ar.encaisse > 0 ? fmt(ar.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={ar.encaisse} prev={ar.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
-            <KpiCard label={vatLabel} value={isVatSubject && ar.tvaDue > 0 ? fmt(ar.tvaDue) : '-'} icon={<BarChart2 className="w-4 h-4" />} />
-            <KpiCard label="Bénéfice estimé" value={ar.hasCostData ? fmt(ar.beneficeEstime) : '-'} sub={ar.hasCostData ? `${fmtPct(annualActualMarginPct)} · avant impôts et charges fixes` : 'Aucun coût réel saisi cette année'} icon={<Target className="w-4 h-4" />} />
+          <div>
+            <h2 className="text-lg font-bold text-primary mb-1">Rentabilité</h2>
+            <p className="text-xs text-secondary mb-3">Ce que vous facturez, encaissez et gardez réellement une fois les coûts déduits.</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <KpiCard label={billedLabel} value={ar.caHt > 0 ? fmt(ar.caHt) : '-'} sub={billedSub(ar.caTtc)} delta={<Delta current={ar.caHt} prev={ar.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
+              <KpiCard label={collectedLabel} value={ar.encaisse > 0 ? fmt(ar.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={ar.encaisse} prev={ar.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
+              <KpiCard label="Bénéfice estimé" value={ar.hasCostData ? fmt(ar.beneficeEstime) : '-'} sub={ar.hasCostData ? `${fmtPct(annualActualMarginPct)} · avant impôts et charges fixes` : 'Aucun coût réel saisi cette année'} icon={<Target className="w-4 h-4" />} />
+              <KpiCard label="Bénéfice prévu sur factures" value={ar.hasProjectedCostData ? fmt(ar.projectedMarginHt) : '-'} sub={ar.hasProjectedCostData ? `${fmtPct(ar.projectedMarginPct)} · coûts des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
+            </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KpiCard label="Bénéfice prévu sur factures" value={ar.hasProjectedCostData ? fmt(ar.projectedMarginHt) : '-'} sub={ar.hasProjectedCostData ? `${fmtPct(ar.projectedMarginPct)} · coûts des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
-            <KpiCard label="Chantiers terminés" value={String(ar.chantiersTermines || '-')} icon={<HardHat className="w-4 h-4 text-amber-500" />} />
-            <KpiCard label="Nouveaux clients" value={String(ar.nouveauxClients || '-')} icon={<Users className="w-4 h-4 text-blue-500" />} />
-            <KpiCard label="Heures travaillées" value={ar.heuresTotal > 0 ? fmtH(ar.heuresTotal) : '-'} icon={<Clock className="w-4 h-4" />} />
+
+          <div>
+            <h2 className="text-lg font-bold text-primary mb-1">Activité</h2>
+            <p className="text-xs text-secondary mb-3">Volume de chantiers, clients et heures sur l&apos;année.</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <KpiCard label="Chantiers terminés" value={String(ar.chantiersTermines || '-')} icon={<HardHat className="w-4 h-4 text-amber-500" />} />
+              <KpiCard label="Nouveaux clients" value={String(ar.nouveauxClients || '-')} icon={<Users className="w-4 h-4 text-blue-500" />} />
+              <KpiCard label="Heures travaillées" value={ar.heuresTotal > 0 ? fmtH(ar.heuresTotal) : '-'} icon={<Clock className="w-4 h-4" />} />
+              <KpiCard label={vatLabel} value={isVatSubject && ar.tvaDue > 0 ? fmt(ar.tvaDue) : '-'} icon={<BarChart2 className="w-4 h-4" />} />
+            </div>
           </div>
+
           <div className="card rounded-3xl p-6">
             <RevenueChart series={ar.series} prevSeries={ar.prevSeries} />
           </div>

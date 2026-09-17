@@ -2131,28 +2131,28 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-base/30 border-b border-[var(--elevation-border)]">
-                  <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Référence</th>
+                  <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Référence</th>
                   <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">
                     {activeTab === 'materials' ? catalogContext.labelSet.material.singular : activeTab === 'services' ? catalogContext.labelSet.service.singular : catalogContext.labelSet.laborRate.singular}
                   </th>
-                  <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Catégorie</th>
+                  <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Catégorie</th>
                   {activeTab === 'labor' && (
-                    <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Type</th>
+                    <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Type</th>
                   )}
                   {activeTab === 'labor' && (
-                    <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Unité</th>
+                    <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Unité</th>
                   )}
                   {(activeTab === 'materials' || activeTab === 'services') && (
-                    <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Tarif dim.</th>
+                    <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Tarif dim.</th>
                   )}
                   {activeTab === 'materials' && (
                     <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden lg:table-cell">Fournisseur</th>
                   )}
-                  <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">
+                  <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap hidden md:table-cell">
                     {activeTab === 'materials' || activeTab === 'services' ? "Coût HT" : "Coût interne"}
                   </th>
                   {(activeTab === 'materials' || activeTab === 'services') && (
-                    <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Marge (%)</th>
+                    <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap hidden md:table-cell">Marge (%)</th>
                   )}
                   {(activeTab === 'materials' || activeTab === 'services') && (
                     <th className="px-3 md:px-6 py-3 md:py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Prix de vente HT</th>
@@ -2167,13 +2167,14 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                 {activeTab === 'materials' || activeTab === 'services'
                     ? (paginatedData as CatalogMaterial[]).map(item => (
                       <tr key={item.id} className="hover:bg-accent/5 transition-colors group">
-                        <td className="px-3 md:px-6 py-3 md:py-4 min-w-[100px]">
+                        <td className="px-3 md:px-6 py-3 md:py-4 min-w-[100px] hidden md:table-cell">
                           <InlineText id={item.id} field="reference" value={item.reference} onSave={v => saveMaterialField(item, 'reference', v)} className="text-sm font-bold text-primary tabular-nums" />
                         </td>
-                        <td className="px-3 md:px-6 py-3 md:py-4 min-w-[180px] md:min-w-[250px]">
+                        <td className="px-3 md:px-6 py-3 md:py-4 min-w-[140px] md:min-w-[250px]">
                           <InlineText id={item.id} field="name" value={item.name} onSave={v => saveMaterialField(item, 'name', v)} />
+                          <div className="md:hidden mt-1">{getCategoryBadge(item.category)}</div>
                         </td>
-                        <td className="px-3 md:px-6 py-3 md:py-4">
+                        <td className="px-3 md:px-6 py-3 md:py-4 hidden md:table-cell">
                           <div onClick={() => startEdit(item.id, 'category', item.category ?? '')} className="cursor-pointer hover:opacity-80 transition-opacity w-fit">
                             {editingId === item.id && editingField === 'category' ? (
                               <input
@@ -2188,7 +2189,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                             ) : getCategoryBadge(item.category)}
                           </div>
                         </td>
-                        <td className="px-3 md:px-6 py-3 md:py-4">
+                        <td className="px-3 md:px-6 py-3 md:py-4 hidden md:table-cell">
                           {item.dimension_pricing_mode && item.dimension_pricing_mode !== 'none'
                             ? <span className="px-2 py-1 rounded-lg bg-accent/10 text-accent text-xs font-bold">{formatDimensionLabel(item)}</span>
                             : <span className="text-xs text-secondary">Standard</span>}
@@ -2210,17 +2211,17 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                             </select>
                           </td>
                         )}
-                        <td className="px-3 md:px-6 py-3 md:py-4 text-right">
+                        <td className="px-3 md:px-6 py-3 md:py-4 text-right hidden md:table-cell">
                           <InlineNumber id={item.id} field="purchase_price" value={item.purchase_price} onSave={v => saveMaterialField(item, 'purchase_price', v)} />
                         </td>
-                        <td className="px-3 md:px-6 py-3 md:py-4 text-right whitespace-nowrap">
+                        <td className="px-3 md:px-6 py-3 md:py-4 text-right whitespace-nowrap hidden md:table-cell">
                           <InlinePercent id={item.id} field="margin_rate" value={item.margin_rate} onSave={v => saveMaterialField(item, 'margin_rate', v)} />
                         </td>
                         <td className="px-3 md:px-6 py-3 md:py-4 text-right">
                           <InlineNumber id={item.id} field="sale_price" value={item.sale_price} onSave={v => saveMaterialField(item, 'sale_price', v)} bold />
                         </td>
                         <td className="px-3 md:px-6 py-3 md:py-4 text-right">
-                          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div>
                             <ActionMenu actions={[
                               { label: 'Modifier', icon: <Pencil className="w-4 h-4" />, onClick: () => setEditingMaterial(item) },
                               { label: 'Dupliquer', icon: <Copy className="w-4 h-4" />, onClick: () => handleDuplicateMaterial(item) },
@@ -2235,7 +2236,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                         <td className="px-3 md:px-6 py-3 md:py-4 min-w-[100px]">
                           <InlineText id={item.id} field="reference" value={item.reference} onSave={v => saveLaborField(item, 'reference', v)} className="text-sm font-bold text-primary tabular-nums" />
                         </td>
-                        <td className="px-3 md:px-6 py-3 md:py-4 min-w-[180px] md:min-w-[250px]">
+                        <td className="px-3 md:px-6 py-3 md:py-4 min-w-[140px] md:min-w-[250px]">
                           <div className="flex flex-col gap-0.5">
                             <InlineText id={item.id} field="designation" value={item.designation} onSave={v => saveLaborField(item, 'designation', v)} />
                             {item.category && <span className="text-xs text-secondary/60 px-2">{item.category}</span>}
@@ -2245,9 +2246,12 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                               </span>
                             )}
                             <InlineDescription id={item.id} value={item.description} onSave={v => saveLaborField(item, 'description', v)} />
+                            <span className="md:hidden text-xs text-secondary/60 px-2">
+                              {resourceTypeMap.get(item.type ?? 'human') ?? catalogContext.laborRateUi.typeHumanLabel} · {item.unit ?? 'h'}
+                            </span>
                           </div>
                         </td>
-                        <td className="px-3 md:px-6 py-3 md:py-4">
+                        <td className="px-3 md:px-6 py-3 md:py-4 hidden md:table-cell">
                           <div onClick={() => startEdit(item.id, 'category', item.category ?? '')} className="cursor-pointer hover:opacity-80 transition-opacity w-fit">
                             {editingId === item.id && editingField === 'category' ? (
                               <input
@@ -2262,12 +2266,12 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                             ) : getCategoryBadge(item.category)}
                           </div>
                         </td>
-                        <td className="px-3 md:px-6 py-3 md:py-4">
+                        <td className="px-3 md:px-6 py-3 md:py-4 hidden md:table-cell">
                           <span className="px-2 py-1 rounded-lg bg-base/50 text-xs font-bold text-secondary border border-[var(--elevation-border)]">
                             {resourceTypeMap.get(item.type ?? 'human') ?? catalogContext.laborRateUi.typeHumanLabel}
                           </span>
                         </td>
-                        <td className="px-3 md:px-6 py-3 md:py-4">
+                        <td className="px-3 md:px-6 py-3 md:py-4 hidden md:table-cell">
                           <UnitSelect
                             value={item.unit ?? 'h'}
                             onChange={v => saveLaborField(item, 'unit', v)}
@@ -2275,7 +2279,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                             compact
                           />
                         </td>
-                        <td className="px-3 md:px-6 py-3 md:py-4 text-right">
+                        <td className="px-3 md:px-6 py-3 md:py-4 text-right hidden md:table-cell">
                           <InlineNumber id={item.id} field="cost_rate" value={item.cost_rate} onSave={v => saveLaborField(item, 'cost_rate', v)} />
                         </td>
                         <td className="px-3 md:px-6 py-3 md:py-4 text-right">
@@ -2289,7 +2293,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                           </div>
                         </td>
                         <td className="px-3 md:px-6 py-3 md:py-4 text-right">
-                          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div>
                             <ActionMenu actions={[
                               { label: 'Supprimer', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => handleDeleteLabor(item.id) },
                             ]} />
@@ -2331,24 +2335,32 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
               <thead>
                 <tr className="bg-base/30 border-b border-[var(--elevation-border)]">
                   <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Nom</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.usage}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.composition}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.clientPrice}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.internalCost}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.margin}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">{profileLabels.templateColumns.active}</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">Actions</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">{profileLabels.templateColumns.usage}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">{profileLabels.templateColumns.composition}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">{profileLabels.templateColumns.clientPrice}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap hidden md:table-cell">{profileLabels.templateColumns.internalCost}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap hidden md:table-cell">{profileLabels.templateColumns.margin}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap hidden md:table-cell">{profileLabels.templateColumns.active}</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
                 {filteredPrestations.length > 0 ? paginatedPrestations.map(item => (
                   <tr key={item.id} className="hover:bg-accent/5 transition-colors group">
-                    <td className="px-6 py-4 min-w-[200px]">
+                    <td className="px-6 py-4 min-w-[160px] md:min-w-[200px]">
                       <p className="font-semibold text-primary">{item.name}</p>
-                      {item.description && <p className="text-xs text-secondary mt-0.5 truncate max-w-[280px]">{item.description}</p>}
+                      {item.description && <p className="text-xs text-secondary mt-0.5 truncate max-w-[280px] hidden md:block">{item.description}</p>}
+                      <div className="md:hidden mt-1 flex items-center gap-2 flex-wrap">
+                        {getCategoryBadge(item.category)}
+                        <button onClick={() => handleTogglePrestationActive(item)} className="transition-colors">
+                          {item.is_active
+                            ? <ToggleRight className="w-5 h-5 text-accent" />
+                            : <ToggleLeft className="w-5 h-5 text-secondary" />}
+                        </button>
+                      </div>
                     </td>
-                    <td className="px-6 py-4">{getCategoryBadge(item.category)}</td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 hidden md:table-cell">{getCategoryBadge(item.category)}</td>
+                    <td className="px-6 py-4 hidden md:table-cell">
                       <span className="text-sm text-secondary">
                         {item.items?.length ?? 0} ligne{(item.items?.length ?? 0) > 1 ? 's' : ''}
                       </span>
@@ -2356,15 +2368,15 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                     <td className="px-6 py-4 text-right">
                       <span className="text-sm font-bold text-primary tabular-nums">{formatCurrency(item.base_price_ht)}</span>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-right hidden md:table-cell">
                       <span className="text-sm text-secondary tabular-nums">{formatCurrency(item.base_cost_ht)}</span>
                     </td>
-                    <td className="px-6 py-4 text-right whitespace-nowrap">
+                    <td className="px-6 py-4 text-right whitespace-nowrap hidden md:table-cell">
                       <span className="px-2 py-1 rounded-md bg-base/50 text-xs font-bold text-secondary tabular-nums border border-[var(--elevation-border)] whitespace-nowrap">
                         {item.base_margin_pct ?? 0}%
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-right hidden md:table-cell">
                       <button onClick={() => handleTogglePrestationActive(item)} className="transition-colors">
                         {item.is_active
                           ? <ToggleRight className="w-6 h-6 text-accent" />
@@ -2372,7 +2384,7 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                       </button>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div>
                         <ActionMenu actions={[
                           { label: 'Modifier', icon: <Pencil className="w-4 h-4" />, onClick: () => setEditingPrestation(item) },
                           { label: 'Supprimer', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => handleDeletePrestation(item.id) },
@@ -2416,12 +2428,12 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
               <thead>
                 <tr className="bg-base/30 border-b border-[var(--elevation-border)]">
                   <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Nom</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Contact</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Email</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Téléphone</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">SIRET</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap whitespace-nowrap">Conditions paiement</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap whitespace-nowrap">Actions</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Contact</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden sm:table-cell">Email</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden sm:table-cell">Téléphone</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">SIRET</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Conditions paiement</th>
+                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--elevation-border)]">
@@ -2430,29 +2442,30 @@ export default function CatalogClient({ initialMaterials, initialLaborRates, ini
                     <tr key={supplier.id} className="hover:bg-accent/5 transition-colors group">
                       <td className="px-6 py-4">
                         <p className="font-semibold text-primary">{supplier.name}</p>
-                        {supplier.address && <p className="text-xs text-secondary mt-0.5 truncate max-w-[200px]">{supplier.address}</p>}
+                        {supplier.address && <p className="text-xs text-secondary mt-0.5 truncate max-w-[200px] hidden md:block">{supplier.address}</p>}
+                        {supplier.contact_name && <p className="text-xs text-secondary mt-0.5 md:hidden">{supplier.contact_name}</p>}
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 hidden md:table-cell">
                         <span className="text-sm text-primary">{supplier.contact_name ?? '—'}</span>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 hidden sm:table-cell">
                         {supplier.email
                           ? <a href={`mailto:${supplier.email}`} className="text-sm text-accent hover:underline flex items-center gap-1"><Mail className="w-3.5 h-3.5" />{supplier.email}</a>
                           : <span className="text-sm text-secondary">—</span>}
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 hidden sm:table-cell">
                         {supplier.phone
                           ? <a href={`tel:${supplier.phone}`} className="text-sm text-primary flex items-center gap-1"><Phone className="w-3.5 h-3.5" />{supplier.phone}</a>
                           : <span className="text-sm text-secondary">—</span>}
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 hidden md:table-cell">
                         <span className="text-sm text-secondary font-mono">{supplier.siret ?? '—'}</span>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 hidden md:table-cell">
                         <span className="text-sm text-secondary">{supplier.payment_terms ?? '—'}</span>
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div>
                           <ActionMenu actions={[
                             { label: 'Modifier', icon: <Pencil className="w-4 h-4" />, onClick: () => setEditingSupplier(supplier) },
                             { label: 'Supprimer', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => {
@@ -2737,7 +2750,7 @@ function ImportPrestationsModal({ isOpen, onClose, onSuccess, bundleTemplateLabe
         {/* Étape 3 : succès */}
         {step === 3 && result && (
           <div className="flex flex-col items-center gap-4 py-4">
-            <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center">
+            <div className="w-14 h-14 rounded-full flex items-center justify-center">
               <CheckCircle2 className="w-7 h-7 text-green-500" />
             </div>
             <p className="font-bold text-primary text-center">
