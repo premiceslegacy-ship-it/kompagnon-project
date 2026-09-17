@@ -38,13 +38,17 @@ export async function saveMonthlyObjectivesAction(
   return result
 }
 
+// Limite haute plutôt que le défaut (10) : la section "Marge par chantier"
+// a besoin de tous les chantiers actifs de la période, pas juste le top 10.
+const ALL_CHANTIERS_LIMIT = 9999
+
 export async function fetchMonthlyDataAction(year: number, month: number) {
   const hoursMonth = month
   const [monthlyReport, hoursReport, topClients, topChantiers, maintenanceReport, objectives] = await Promise.all([
     getMonthlyReport(year, month),
     getHoursReport(year, hoursMonth),
     getTopClients(year, hoursMonth),
-    getTopChantiers(year, hoursMonth),
+    getTopChantiers(year, hoursMonth, ALL_CHANTIERS_LIMIT),
     getMaintenanceReport(year, hoursMonth),
     getMonthlyObjectives(year, month),
   ])
@@ -56,7 +60,7 @@ export async function fetchAnnualDataAction(year: number) {
     getAnnualReport(year),
     getHoursReport(year),
     getTopClients(year),
-    getTopChantiers(year),
+    getTopChantiers(year, undefined, ALL_CHANTIERS_LIMIT),
     getMaintenanceReport(year),
     getAnnualObjectives(year),
   ])

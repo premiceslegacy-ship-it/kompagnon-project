@@ -18,6 +18,9 @@ export type MonthlyReport = {
   encaisse: number
   tvaDue: number
   beneficeEstime: number
+  expensesCost: number
+  laborCost: number
+  tresorerieNette: number
   hasCostData: boolean
   projectedCostHt: number
   projectedMarginHt: number
@@ -45,6 +48,9 @@ export type AnnualReport = {
   encaisse: number
   tvaDue: number
   beneficeEstime: number
+  expensesCost: number
+  laborCost: number
+  tresorerieNette: number
   hasCostData: boolean
   projectedCostHt: number
   projectedMarginHt: number
@@ -458,9 +464,15 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   const totalCosts = expensesCost + laborCost
   const hasCostData = expensesCost > 0 || heuresTotal > 0
   const beneficeEstime = caHt - totalCosts
+  // Trésorerie nette : ce qui reste après TVA à reverser et coûts réels payés,
+  // à partir de l'encaissé réel (pas le facturé). tvaDue est calculée sur le
+  // facturé, pas sur l'encaissé : on estime au prorata de la part encaissée
+  // du CA TTC de la période (pas de suivi de TVA sur encaissements par facture).
+  const tvaOnEncaisse = caTtc > 0 ? tvaDue * (encaisse / caTtc) : 0
+  const tresorerieNette = encaisse - tvaOnEncaisse - totalCosts
 
   return {
-    year, month, caHt, caTtc, encaisse, tvaDue, beneficeEstime, hasCostData,
+    year, month, caHt, caTtc, encaisse, tvaDue, beneficeEstime, expensesCost, laborCost, tresorerieNette, hasCostData,
     projectedCostHt, projectedMarginHt, projectedMarginPct, hasProjectedCostData,
     chantiersTermines, chantiersEnCours, heuresTotal,
     nouvellesFactures, facturesPayees, recurringExpectedHt, recurringBilledHt, recurringContractsDue,
@@ -587,12 +599,14 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
   const totalCosts = expensesCost + laborCost
   const hasCostData = expensesCost > 0 || heuresTotal > 0
   const beneficeEstime = caHt - totalCosts
+  const tvaOnEncaisse = caTtc > 0 ? tvaDue * (encaisse / caTtc) : 0
+  const tresorerieNette = encaisse - tvaOnEncaisse - totalCosts
 
   const series = buildSeries(validInv as any, year)
   const prevSeries = buildSeries(prevValid as any, year - 1)
 
   return {
-    year, caHt, caTtc, encaisse, tvaDue, beneficeEstime, hasCostData,
+    year, caHt, caTtc, encaisse, tvaDue, beneficeEstime, expensesCost, laborCost, tresorerieNette, hasCostData,
     projectedCostHt, projectedMarginHt, projectedMarginPct, hasProjectedCostData,
     chantiersTermines,
     nouveauxClients: newClients?.length ?? 0,
