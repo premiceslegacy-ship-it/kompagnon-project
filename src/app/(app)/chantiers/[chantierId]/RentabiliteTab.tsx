@@ -788,7 +788,11 @@ export default function RentabiliteTab({
   const budgetAlert   = budgetUsedPct > 0.9
 
   // Conseils : sous-traitance et marge
-  const subcontractPct   = costTotal > 0 ? costSubcontract / costTotal : 0
+  // Ratio calculé sur le budget du devis signé (pas sur les coûts déjà engagés) :
+  // en début de chantier, les premières dépenses saisies sont souvent presque
+  // toutes de la sous-traitance, ce qui donnerait un ratio proche de 100% sans
+  // rapport avec la réalité du chantier une fois terminé.
+  const subcontractPct   = budgetHt > 0 ? costSubcontract / budgetHt : 0
   const subcontractAlert = subcontractPct > 0.4
   const marginAlert      = revenueHt > 0 && marginPct < 0.2
 
@@ -1412,7 +1416,7 @@ export default function RentabiliteTab({
       {!ownExpensesOnly && subcontractAlert && (
         <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 text-sm">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          La sous-traitance représente {fmtPct(subcontractPct)} des coûts ({fmtMoney(costSubcontract)} HT), au-delà des 40 % généralement recommandés pour garder la maîtrise du chantier.
+          La sous-traitance représente {fmtPct(subcontractPct)} du budget devis ({fmtMoney(costSubcontract)} HT sur {fmtMoney(budgetHt)} HT), au-delà des 40 % généralement recommandés pour garder la maîtrise du chantier.
         </div>
       )}
 

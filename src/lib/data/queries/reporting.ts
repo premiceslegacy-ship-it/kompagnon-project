@@ -16,6 +16,8 @@ export type MonthlyReport = {
   caHt: number
   caTtc: number
   encaisse: number
+  encaisseHt: number
+  encaisseTva: number
   tvaDue: number
   beneficeEstime: number
   expensesCost: number
@@ -46,6 +48,8 @@ export type AnnualReport = {
   caHt: number
   caTtc: number
   encaisse: number
+  encaisseHt: number
+  encaisseTva: number
   tvaDue: number
   beneficeEstime: number
   expensesCost: number
@@ -429,6 +433,8 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   const caTtc = validInvoices.reduce((s, i) => s + (i.total_ttc ?? 0), 0)
   const tvaDue = validInvoices.reduce((s, i) => s + (i.total_tva ?? 0), 0)
   const encaisse = validInvoices.reduce((s, i) => s + paidTtc(i), 0)
+  const encaisseHt = validInvoices.reduce((s, i) => s + paidHt(i), 0)
+  const encaisseTva = encaisse - encaisseHt
   const validInvoiceIds = validInvoices.map((i: any) => i.id).filter(Boolean)
   const { data: projectedCostLines } = validInvoiceIds.length > 0
     ? await supabase
@@ -472,7 +478,7 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   const tresorerieNette = encaisse - tvaOnEncaisse - totalCosts
 
   return {
-    year, month, caHt, caTtc, encaisse, tvaDue, beneficeEstime, expensesCost, laborCost, tresorerieNette, hasCostData,
+    year, month, caHt, caTtc, encaisse, encaisseHt, encaisseTva, tvaDue, beneficeEstime, expensesCost, laborCost, tresorerieNette, hasCostData,
     projectedCostHt, projectedMarginHt, projectedMarginPct, hasProjectedCostData,
     chantiersTermines, chantiersEnCours, heuresTotal,
     nouvellesFactures, facturesPayees, recurringExpectedHt, recurringBilledHt, recurringContractsDue,
@@ -571,6 +577,8 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
   const caTtc = validInv.reduce((s, i) => s + (i.total_ttc ?? 0), 0)
   const tvaDue = validInv.reduce((s, i) => s + (i.total_tva ?? 0), 0)
   const encaisse = validInv.reduce((s, i) => s + paidTtc(i), 0)
+  const encaisseHt = validInv.reduce((s, i) => s + paidHt(i), 0)
+  const encaisseTva = encaisse - encaisseHt
   const validInvoiceIds = validInv.map((i: any) => i.id).filter(Boolean)
   const { data: projectedCostLines } = validInvoiceIds.length > 0
     ? await supabase
@@ -606,7 +614,7 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
   const prevSeries = buildSeries(prevValid as any, year - 1)
 
   return {
-    year, caHt, caTtc, encaisse, tvaDue, beneficeEstime, expensesCost, laborCost, tresorerieNette, hasCostData,
+    year, caHt, caTtc, encaisse, encaisseHt, encaisseTva, tvaDue, beneficeEstime, expensesCost, laborCost, tresorerieNette, hasCostData,
     projectedCostHt, projectedMarginHt, projectedMarginPct, hasProjectedCostData,
     chantiersTermines,
     nouveauxClients: newClients?.length ?? 0,
