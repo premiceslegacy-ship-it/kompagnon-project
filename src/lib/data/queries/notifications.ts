@@ -343,9 +343,13 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       costs[p.chantier_id] = (costs[p.chantier_id] ?? 0) + (p.hours ?? 0) * (p.rate_snapshot ?? fallbackRate)
     }
     chantiersAtRisk = (activeChantiers ?? []).filter(c => (costs[c.id] ?? 0) >= (c.budget_ht ?? 0) * 0.9).length
+    // Ratio calculé sur le budget du devis signé, pas sur les coûts déjà
+    // engagés : en début de chantier, les premières dépenses saisies sont
+    // souvent presque toutes de la sous-traitance, ce qui donnerait un ratio
+    // proche de 100% sans rapport avec la réalité du chantier une fois terminé.
     chantiersHighSubcontract = (activeChantiers ?? []).filter(c => {
-      const total = costs[c.id] ?? 0
-      return total > 0 && (subcontractCosts[c.id] ?? 0) / total > 0.4
+      const budget = c.budget_ht ?? 0
+      return budget > 0 && (subcontractCosts[c.id] ?? 0) / budget > 0.4
     }).length
   }
 

@@ -711,15 +711,21 @@ export default function RapportsClient({
             <p className="text-xs text-secondary mb-3">Ce que vous facturez, encaissez et gardez réellement une fois les coûts déduits.</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <KpiCard label={billedLabel} value={r.caHt > 0 ? fmt(r.caHt) : '-'} sub={billedSub(r.caTtc)} delta={<Delta current={r.caHt} prev={r.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
-              <KpiCard label={collectedLabel} value={r.encaisse > 0 ? fmt(r.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={r.encaisse} prev={r.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
               <KpiCard
-                label="Trésorerie nette"
+                label={collectedLabel}
+                value={r.encaisse > 0 ? fmt(r.encaisse) : '-'}
+                sub={isVatSubject && r.encaisse > 0 ? `dont ${fmt(r.encaisseTva)} de TVA · ${fmt(r.encaisseHt)} HT` : 'Paiements enregistrés'}
+                delta={<Delta current={r.encaisse} prev={r.prevEncaisse} />}
+                icon={<TrendingUp className="w-4 h-4 text-accent-green" />}
+              />
+              <KpiCard
+                label="Trésorerie nette avant URSSAF/impôts"
                 value={r.hasCostData ? fmt(r.tresorerieNette) : '-'}
-                sub={r.hasCostData ? "Ce qu'il reste sur l'encaissé, TVA et coûts déduits (hors URSSAF/impôts)" : 'Aucun coût réel saisi ce mois'}
+                sub={r.hasCostData ? "Ce qu'il reste sur l'encaissé, TVA à reverser et coûts déduits" : 'Aucun coût réel saisi ce mois'}
                 icon={<TrendingUp className="w-4 h-4" />}
               />
               <KpiCard label="Bénéfice réel (dépenses saisies)" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} sub={r.hasCostData ? `${fmtPct(monthlyActualMarginPct)} · facturé HT moins dépenses et main d'œuvre réelles` : 'Aucun coût réel saisi ce mois'} icon={<Target className="w-4 h-4" />} />
-              <KpiCard label="Bénéfice prévisionnel (coûts catalogue)" value={r.hasProjectedCostData ? fmt(r.projectedMarginHt) : '-'} sub={r.hasProjectedCostData ? `${fmtPct(r.projectedMarginPct)} · coûts théoriques des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
+              <KpiCard label="Marge théorique (prix de revient saisis)" value={r.hasProjectedCostData ? fmt(r.projectedMarginHt) : '-'} sub={r.hasProjectedCostData ? `${fmtPct(r.projectedMarginPct)} · coûts théoriques des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
             </div>
           </div>
 
@@ -762,15 +768,21 @@ export default function RapportsClient({
             <p className="text-xs text-secondary mb-3">Ce que vous facturez, encaissez et gardez réellement une fois les coûts déduits.</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <KpiCard label={billedLabel} value={ar.caHt > 0 ? fmt(ar.caHt) : '-'} sub={billedSub(ar.caTtc)} delta={<Delta current={ar.caHt} prev={ar.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
-              <KpiCard label={collectedLabel} value={ar.encaisse > 0 ? fmt(ar.encaisse) : '-'} sub="Paiements enregistrés" delta={<Delta current={ar.encaisse} prev={ar.prevEncaisse} />} icon={<TrendingUp className="w-4 h-4 text-accent-green" />} />
               <KpiCard
-                label="Trésorerie nette"
+                label={collectedLabel}
+                value={ar.encaisse > 0 ? fmt(ar.encaisse) : '-'}
+                sub={isVatSubject && ar.encaisse > 0 ? `dont ${fmt(ar.encaisseTva)} de TVA · ${fmt(ar.encaisseHt)} HT` : 'Paiements enregistrés'}
+                delta={<Delta current={ar.encaisse} prev={ar.prevEncaisse} />}
+                icon={<TrendingUp className="w-4 h-4 text-accent-green" />}
+              />
+              <KpiCard
+                label="Trésorerie nette avant URSSAF/impôts"
                 value={ar.hasCostData ? fmt(ar.tresorerieNette) : '-'}
-                sub={ar.hasCostData ? "Ce qu'il reste sur l'encaissé, TVA et coûts déduits (hors URSSAF/impôts)" : 'Aucun coût réel saisi cette année'}
+                sub={ar.hasCostData ? "Ce qu'il reste sur l'encaissé, TVA à reverser et coûts déduits" : 'Aucun coût réel saisi cette année'}
                 icon={<TrendingUp className="w-4 h-4" />}
               />
               <KpiCard label="Bénéfice réel (dépenses saisies)" value={ar.hasCostData ? fmt(ar.beneficeEstime) : '-'} sub={ar.hasCostData ? `${fmtPct(annualActualMarginPct)} · facturé HT moins dépenses et main d'œuvre réelles` : 'Aucun coût réel saisi cette année'} icon={<Target className="w-4 h-4" />} />
-              <KpiCard label="Bénéfice prévisionnel (coûts catalogue)" value={ar.hasProjectedCostData ? fmt(ar.projectedMarginHt) : '-'} sub={ar.hasProjectedCostData ? `${fmtPct(ar.projectedMarginPct)} · coûts théoriques des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
+              <KpiCard label="Marge théorique (prix de revient saisis)" value={ar.hasProjectedCostData ? fmt(ar.projectedMarginHt) : '-'} sub={ar.hasProjectedCostData ? `${fmtPct(ar.projectedMarginPct)} · coûts théoriques des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
             </div>
           </div>
 
