@@ -408,14 +408,12 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         });
     }
 
-    // Libellé lisible par type de mémoire. sarah_memory et chloe_price_correction
-    // sont les seuls types alimentés aujourd'hui (Marco n'a pas encore de
-    // mémoire propre) ; le fallback générique couvre déjà tout futur type
-    // (ex: marco_memory) sans modification de ce composant.
-    function memoryTypeLabel(type: string): string {
+    // Libellé lisible par type de mémoire. Le fallback générique couvre déjà
+    // tout futur type sans modification de ce composant.
+    function memoryTypeLabel(type: string, metadata?: { chantier_id?: string | null } | null): string {
         if (type === 'chloe_price_correction') return 'Prix corrigé par Chloé';
         if (type === 'sarah_memory') return 'Retenu par Sarah';
-        if (type === 'marco_memory') return 'Retenu par Marco';
+        if (type === 'marco_memory') return metadata?.chantier_id ? 'Retenu par Marco · ce chantier' : 'Retenu par Marco · tous les chantiers';
         if (type === 'quote' || type === 'invoice') return 'Résumé document';
         return type;
     }
@@ -2621,7 +2619,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                                         <div key={memory.id} className="flex items-start justify-between gap-4 p-4">
                                             <div className="min-w-0">
                                                 <span className="text-[11px] font-bold uppercase tracking-wider text-secondary">
-                                                    {memoryTypeLabel(memory.type)}
+                                                    {memoryTypeLabel(memory.type, memory.metadata)}
                                                 </span>
                                                 <p className="text-sm text-primary mt-1 break-words">{memory.content}</p>
                                                 <p className="text-xs text-secondary mt-1">{new Date(memory.created_at).toLocaleDateString('fr-FR')}</p>

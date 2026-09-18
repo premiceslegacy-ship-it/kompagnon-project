@@ -15,9 +15,9 @@ type MemoryRow = {
 export async function fetchRAGContext(
   orgId: string,
   queryText: string,
-  options: { limit?: number; activityId?: string | null } = {},
+  options: { limit?: number; activityId?: string | null; chantierId?: string | null } = {},
 ): Promise<string> {
-  const { limit = 5, activityId } = options
+  const { limit = 5, activityId, chantierId } = options
   const embedding = await generateEmbedding(queryText, orgId)
   if (!embedding) return ''
 
@@ -27,6 +27,7 @@ export async function fetchRAGContext(
     p_embedding: embedding,
     p_limit: limit,
     p_activity_id: activityId ?? null,
+    p_chantier_id: chantierId ?? null,
   })
 
   if (error || !data?.length) return ''
