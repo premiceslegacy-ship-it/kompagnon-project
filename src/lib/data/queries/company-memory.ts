@@ -8,6 +8,7 @@ export type CompanyMemoryRow = {
   source: string | null
   confidence: number | null
   created_at: string
+  metadata: { chantier_id?: string | null } | null
 }
 
 /**
@@ -25,7 +26,7 @@ export async function getCompanyMemories(): Promise<CompanyMemoryRow[]> {
 
   const { data, error } = await supabase
     .from('company_memory')
-    .select('id, type, content, source, confidence, created_at')
+    .select('id, type, content, source, confidence, created_at, metadata')
     .eq('organization_id', orgId)
     .eq('is_active', true)
     .order('created_at', { ascending: false })

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { generateEmbedding } from '@/lib/ai/embeddings'
+import { fetchRAGContext } from '@/lib/ai/rag'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getChantierById, getChantierTaches, getChantierPointages, getChantierNotes, getChantierEquipes, getChantierPlannings, getEquipes, type ChantierPlanning, type Equipe } from '@/lib/data/queries/chantiers'
 import { getChantierProfitability } from '@/lib/data/queries/chantier-profitability'
@@ -171,6 +174,21 @@ const TOOLS = [
           message: { type: 'string', description: 'Le message à transmettre à Sarah, formulé clairement avec le contexte du chantier (ex: "Le client du chantier Dupont demande une facture d\'acompte de 30%").' },
         },
         required: ['message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_memory',
+      description: 'Mémoriser un fait concret et réutilisable qui changera une décision future sur ce chantier ou sur les chantiers en général (un sous-traitant fiable ou problématique, une contrainte technique récurrente, un pattern de dépassement). À appeler quand l\'utilisateur dit explicitement "rappelle-toi", "note bien", "retiens que". Ne mémorise jamais un résumé de conversation ou un fait ponctuel sans suite. Précise si le souvenir concerne uniquement ce chantier ou les chantiers de l\'entreprise en général.',
+      parameters: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', description: 'Le fait à mémoriser, formulé de façon claire, autonome et actionnable (ex: "Le sous-traitant Martin livre systématiquement avec 3-4 jours de retard", "Sur ce chantier, l\'accès poids lourd est interdit avant 9h").' },
+          scope: { type: 'string', enum: ['chantier', 'entreprise'], description: '"chantier" si le fait ne concerne que ce chantier précis, "entreprise" s\'il est réutilisable sur d\'autres chantiers (ex: fiabilité d\'un sous-traitant, d\'un fournisseur).' },
+        },
+        required: ['content', 'scope'],
       },
     },
   },
@@ -645,6 +663,51 @@ async function executeTool(
     return `C'est transmis à Sarah : "${message}". Elle le verra dès l'ouverture de son chat.`
   }
 
+  if (name === 'save_memory') {
+    const content = (args.content as string | undefined)?.trim()
+    const scope = args.scope === 'chantier' ? 'chantier' : args.scope === 'entreprise' ? 'entreprise' : null
+    if (!content || content.length < 10) return 'Contenu trop court pour être mémorisé.'
+    if (!scope) return 'Précisez si ce souvenir concerne ce chantier ou les chantiers en général.'
+
+    const orgId = await getCurrentOrganizationId()
+    if (!orgId) return 'Impossible de sauvegarder ce souvenir pour le moment.'
+
+    const admin = createAdminClient()
+    const { data: existing } = await admin
+      .from('company_memory')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('type', 'marco_memory')
+      .ilike('content', `%${content.slice(0, 40)}%`)
+      .eq('is_active', true)
+      .limit(1)
+    if (existing && existing.length > 0) return 'Cette information est déjà dans ma mémoire.'
+
+    const { data: insertedRow, error } = await admin.from('company_memory').insert({
+      organization_id: orgId,
+      type: 'marco_memory',
+      content,
+      source: 'ai_extracted',
+      confidence: 0.9,
+      is_active: true,
+      metadata: {
+        chantier_id: scope === 'chantier' ? chantierId : null,
+      },
+      embedding: null,
+    }).select('id').single()
+
+    if (error) return 'Impossible de sauvegarder ce souvenir pour le moment.'
+
+    if (content.length <= 500 && insertedRow?.id) {
+      const embedding = await generateEmbedding(content, orgId)
+      if (embedding) {
+        await admin.from('company_memory').update({ embedding }).eq('id', insertedRow.id)
+      }
+    }
+
+    return `Mémorisé (${scope === 'chantier' ? 'ce chantier' : 'tous les chantiers'}) : "${content}"`
+  }
+
   return `Outil "${name}" non reconnu.`
 }
 
@@ -676,8 +739,10 @@ export async function POST(req: NextRequest) {
   if (!chantierId) return NextResponse.json({ error: 'chantierId manquant' }, { status: 400 })
   if (messages.length === 0) return NextResponse.json({ error: 'Messages vides' }, { status: 400 })
 
+  const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')?.content ?? ''
+
   // Charger le contexte complet du chantier
-  const [chantier, taches, pointages, notes, profitability, individualMembers, chantierEquipes, plannings, businessCtx, orgIndividualMembers, allEquipes, teamMembers] = await Promise.all([
+  const [chantier, taches, pointages, notes, profitability, individualMembers, chantierEquipes, plannings, businessCtx, orgIndividualMembers, allEquipes, teamMembers, ragContext] = await Promise.all([
     getChantierById(chantierId),
     getChantierTaches(chantierId),
     getChantierPointages(chantierId),
@@ -690,6 +755,7 @@ export async function POST(req: NextRequest) {
     getOrgIndividualMembers(),
     getEquipes(),
     getTeamMembers(),
+    lastUserMessage ? fetchRAGContext(orgId, lastUserMessage, { limit: 4, chantierId }) : Promise.resolve(''),
   ])
 
   if (!chantier) return NextResponse.json({ error: 'Chantier introuvable' }, { status: 404 })
@@ -757,6 +823,7 @@ Equipes connues (chantier + organisation) : ${equipesStr}
 Homonymes/prenoms ambigus : ${duplicateFirstNames.length > 0 ? duplicateFirstNames.join(' | ') : 'aucun'}
 Creneaux planning existants : ${planningsStr}
 Date du jour : ${today}
+${ragContext ? `\nMemoire (ce chantier + patterns generaux entreprise) :\n${ragContext}` : ''}
 
 Instructions :
 - Reponds toujours en francais, ton direct et humain, comme un chef de chantier experimente qui connait son equipe
@@ -775,6 +842,7 @@ ${canViewExpenses ? '' : '- Tu n\'as pas acces aux donnees financieres (couts, m
 - Si add_planning_slot retourne que le membre est inconnu, demande si c'est un nouveau membre. Si oui, collecte prenom, nom, taux horaire (facultatif) et email (facultatif), puis appelle add_member avant de recreer le creneau
 - N'appelle jamais add_member sans confirmation explicite que c'est bien un nouveau membre
 - Si la demande sort du chantier (facturation, relance client, email, devis, administratif), utilise send_to_sarah pour transmettre a Sarah avec le contexte, et dis a l'utilisateur que Sarah prend le relais dans son chat
+- Si l'utilisateur dit explicitement "rappelle-toi", "note bien", "retiens que", utilise save_memory. Precise scope "chantier" si le fait ne concerne que ce chantier, "entreprise" s'il est reutilisable ailleurs (ex: fiabilite d'un sous-traitant ou fournisseur). Ne memorise jamais sans demande explicite, et jamais un simple resume de conversation
 - Ne montre jamais un statut technique brut (en_cours, termine, sent...) : dis "en cours", "terminee", "envoye"
 - Chiffre tout ce qui peut l'etre, sois factuel
 - REGLE ABSOLUE : ne dis JAMAIS "c'est note", "j'ai ajoute", "je planifie", "c'est fait" sans avoir reellement appele l'outil correspondant dans ce meme tour. Une action demandee (note, pointage, tache, depense, creneau) = un appel d'outil, pas une simple reponse texte. Si tu ne peux pas agir, dis-le clairement.
