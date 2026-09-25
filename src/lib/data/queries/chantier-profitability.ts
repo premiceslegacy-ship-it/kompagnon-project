@@ -345,10 +345,13 @@ export async function getChantierProfitability(chantierId: string): Promise<Chan
 
     // Dédupliquer par id (au cas où une facture matche à la fois chantier_id et quote_id)
     const seen = new Set<string>()
+    // Les acomptes sont inclus : le solde est calculé net de l'acompte déjà
+    // versé (voir mutations/chantiers.ts, thisInvoiceHt pour isSolde), donc
+    // acompte + solde = montant du devis, sans double-comptage.
     const allValid = (invoices ?? []).filter((inv: any) => {
       if (seen.has(inv.id)) return false
       seen.add(inv.id)
-      return inv.invoice_type !== 'avoir' && inv.invoice_type !== 'acompte'
+      return inv.invoice_type !== 'avoir'
     })
     // Si des situations/soldes existent, exclure les factures standard liées via quote_id
     // (elles ont été remplacées par le mode situations et ne doivent pas être doublonnées)
