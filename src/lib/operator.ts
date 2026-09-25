@@ -34,17 +34,48 @@ export function isOperatorEmailAllowed(email: string | null | undefined): boolea
   return allowed.includes(email.trim().toLowerCase())
 }
 
+// Domaines qui ne désignent jamais un client (le cockpit lui-même, ou un
+// worker brut sans nom de client attribué). Si OPERATOR_SOURCE_INSTANCE
+// n'est pas défini et que le fallback sur NEXT_PUBLIC_APP_URL retombe sur
+// un de ces hosts, on refuse de fabriquer un identifiant de client : le
+// cockpit auto-crée une fiche "client" au premier événement reçu pour tout
+// source_instance inconnu (src/app/api/operator/ingest/route.ts), donc un
+// fallback silencieux ici a déjà créé par erreur une fiche client nommée
+// d'après le domaine de l'app elle-même (ex: app.atelier-btp.fr, 9 sept.
+// 2026) au lieu du nom du client attendu.
+const OPERATOR_NON_CLIENT_HOSTS = new Set(['orsayn-cockpit.mbebourasam.workers.dev', 'localhost'])
+
 export function getOperatorSourceInstance(): string {
   const explicit = process.env.OPERATOR_SOURCE_INSTANCE?.trim()
   if (explicit) return explicit
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()
   if (appUrl) {
+    let host: string
     try {
-      return new URL(appUrl).host
+      host = new URL(appUrl).host
     } catch {
-      return appUrl
+      host = appUrl
     }
+
+    if (OPERATOR_NON_CLIENT_HOSTS.has(host)) {
+      console.warn(
+        `[operator] OPERATOR_SOURCE_INSTANCE absent et host "${host}" identifié comme non-client — ` +
+          'utilisation de "unknown-instance" pour éviter de créer une fiche client erronée dans le cockpit.',
+      )
+      return 'unknown-instance'
+    }
+
+    // host non reconnu comme non-client (probable domaine client réel, ex:
+    // app.atelier-btp.fr) : on le garde pour ne pas perdre l'événement, mais
+    // on log pour repérer les instances où OPERATOR_SOURCE_INSTANCE n'a pas
+    // été injecté côté Cloudflare — c'est ce défaut d'injection qui a créé
+    // la fiche client erronée à l'origine de ce garde-fou.
+    console.warn(
+      `[operator] OPERATOR_SOURCE_INSTANCE absent, fallback sur le domaine "${host}" — ` +
+        'vérifier l\'injection des variables Cloudflare pour cette instance.',
+    )
+    return host
   }
 
   return 'unknown-instance'
