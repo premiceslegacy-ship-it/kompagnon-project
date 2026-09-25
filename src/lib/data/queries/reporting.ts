@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from './clients'
+import { todayParis } from '@/lib/utils'
 
 export type MonthSeries = {
   month: number
@@ -24,12 +25,17 @@ export type MonthlyReport = {
   laborCost: number
   tresorerieNette: number
   hasCostData: boolean
+  costsLikelyIncomplete: boolean
   projectedCostHt: number
   projectedMarginHt: number
   projectedMarginPct: number
   hasProjectedCostData: boolean
   chantiersTermines: number
   chantiersEnCours: number
+  // true si la période demandée n'est pas le mois courant : chantiersEnCours
+  // reflète alors le statut ACTUEL des chantiers (pas d'historique de statut
+  // en base), pas leur état réel pendant cette période passée.
+  chantiersEnCoursIsSnapshot: boolean
   heuresTotal: number
   nouvellesFactures: number
   facturesPayees: number
@@ -56,6 +62,7 @@ export type AnnualReport = {
   laborCost: number
   tresorerieNette: number
   hasCostData: boolean
+  costsLikelyIncomplete: boolean
   projectedCostHt: number
   projectedMarginHt: number
   projectedMarginPct: number
@@ -173,6 +180,18 @@ function paidHt(inv: InvoicePaymentLike): number {
   return (paidTtc(inv) / totalTtc) * totalHt
 }
 
+// Part de TVA réellement associée à l'encaissé de CETTE facture (prorata
+// propre à son propre taux/montant de TVA), plutôt qu'un ratio global
+// appliqué à tout le portefeuille — évite le biais quand des factures à
+// taux de TVA différents (ex: 5,5% rénovation énergétique vs 20% standard)
+// ou à statuts de paiement différents cohabitent dans la même période.
+function paidTva(inv: InvoicePaymentLike & { total_tva: number | null }): number {
+  const totalTtc = inv.total_ttc ?? 0
+  const totalTva = inv.total_tva ?? 0
+  if (totalTtc <= 0) return inv.status === 'paid' ? totalTva : 0
+  return (paidTtc(inv) / totalTtc) * totalTva
+}
+
 type InvoiceLineCost = {
   invoice_id: string
   quantity: number | null
@@ -276,6 +295,85 @@ async function calcLaborCost(
   return total
 }
 
+/**
+ * Variante par chantier de calcLaborCost : même hiérarchie de taux
+ * (rate_snapshot > taux individuel > fallback org), mais ventile le coût
+ * par chantier_id au lieu de retourner un total unique. Utilisée par
+ * getTopChantiers pour que "Marge par chantier" reste comparable au
+ * bénéfice réel global et à la fiche chantier individuelle (qui utilisent
+ * déjà les taux individuels), au lieu d'un taux fallback org uniforme qui
+ * sous/sur-estime le coût dès qu'un intervenant a un taux différent.
+ */
+async function calcLaborCostByChantier(
+  supabase: Awaited<ReturnType<typeof import('@/lib/supabase/server').createClient>>,
+  orgId: string,
+  pointages: Array<{ chantier_id: string; hours: number | null; user_id: string | null; member_id: string | null; rate_snapshot?: number | null }>
+): Promise<Record<string, number>> {
+  const result: Record<string, number> = {}
+  if (!pointages.length) return result
+
+  const withoutSnapshot = pointages.filter(p => p.rate_snapshot == null)
+  const userIds = [...new Set(withoutSnapshot.filter(p => p.user_id).map(p => p.user_id!))]
+  const memberIds = [...new Set(withoutSnapshot.filter(p => p.member_id).map(p => p.member_id!))]
+  const needFallback = withoutSnapshot.length > 0
+
+  const [orgRes, membershipsRes, fantomesRes] = await Promise.all([
+    needFallback
+      ? supabase
+          .from('organizations')
+          .select('default_labor_cost_per_hour, default_hourly_rate')
+          .eq('id', orgId)
+          .single()
+      : Promise.resolve({ data: null }),
+
+    userIds.length > 0
+      ? supabase
+          .from('memberships')
+          .select('user_id, labor_cost_per_hour')
+          .eq('organization_id', orgId)
+          .in('user_id', userIds)
+      : Promise.resolve({ data: [] as Array<{ user_id: string; labor_cost_per_hour: number | null }> }),
+
+    memberIds.length > 0
+      ? supabase
+          .from('chantier_equipe_membres')
+          .select('id, taux_horaire')
+          .in('id', memberIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; taux_horaire: number | null }> }),
+  ])
+
+  const orgFallback: number =
+    orgRes.data?.default_labor_cost_per_hour
+    ?? (orgRes.data?.default_hourly_rate ? orgRes.data.default_hourly_rate * 0.5 : 0)
+    ?? 0
+
+  const membershipRateByUserId: Record<string, number> = {}
+  for (const m of membershipsRes.data ?? []) {
+    if (m.labor_cost_per_hour != null) membershipRateByUserId[m.user_id] = m.labor_cost_per_hour
+  }
+
+  const fantomeRateById: Record<string, number> = {}
+  for (const fm of fantomesRes.data ?? []) {
+    if (fm.taux_horaire != null) fantomeRateById[fm.id] = fm.taux_horaire
+  }
+
+  for (const p of pointages) {
+    const hours = p.hours ?? 0
+    let rate: number
+    if (p.rate_snapshot != null) {
+      rate = p.rate_snapshot
+    } else if (p.user_id) {
+      rate = membershipRateByUserId[p.user_id] ?? orgFallback
+    } else if (p.member_id) {
+      rate = fantomeRateById[p.member_id] ?? orgFallback
+    } else {
+      rate = orgFallback
+    }
+    result[p.chantier_id] = (result[p.chantier_id] ?? 0) + hours * rate
+  }
+  return result
+}
+
 function emptyMonthSeries(): MonthSeries[] {
   return Array.from({ length: 12 }, (_, i) => ({
     month: i + 1,
@@ -312,6 +410,11 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
 
   const firstDay = `${year}-${String(month).padStart(2, '0')}-01`
   const lastDay = new Date(year, month, 0).toISOString().split('T')[0]
+  // chantiersEnCours lit le statut ACTUEL des chantiers (aucun historique de
+  // statut en base) : fiable seulement pour le mois courant, à traiter comme
+  // un instantané pour toute période passée.
+  const today = todayParis()
+  const chantiersEnCoursIsSnapshot = !(today >= firstDay && today <= lastDay)
 
   const prevDate = new Date(year, month - 2, 1)
   const prevYear = prevDate.getFullYear()
@@ -320,11 +423,16 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   const prevLastDay = new Date(prevYear, prevMonth, 0).toISOString().split('T')[0]
 
   // Tous les chantiers de l'org (pour filtrer pointages qui n'ont pas organization_id)
+  // Archivés/annulés exclus : leurs coûts ne doivent pas peser sur le rapport
+  // global alors qu'ils sont déjà invisibles des vues détaillées par chantier
+  // (getTopChantiers, getChantierProfitability).
   const [{ data: allOrgChantiers }, { data: activeMaintenanceContracts }] = await Promise.all([
     supabase
       .from('chantiers')
       .select('id, status, end_date, is_maintenance, maintenance_contract_id')
-      .eq('organization_id', orgId),
+      .eq('organization_id', orgId)
+      .eq('is_archived', false)
+      .neq('status', 'annule'),
     supabase
       .from('maintenance_contracts')
       .select('id')
@@ -470,17 +578,23 @@ export async function getMonthlyReport(year: number, month: number): Promise<Mon
   const totalCosts = expensesCost + laborCost
   const hasCostData = expensesCost > 0 || heuresTotal > 0
   const beneficeEstime = caHt - totalCosts
+  // Signal "coûts probablement incomplets" : un chantier facturé avec moins de
+  // 5% de coûts réels saisis n'a presque jamais vraiment coûté ça (matériel ou
+  // heures manquants) — le bénéfice/la trésorerie affichés sont alors gonflés
+  // par des données de saisie incomplètes, pas par une vraie rentabilité.
+  const costsLikelyIncomplete = caHt > 0 && (totalCosts / caHt) < 0.05
   // Trésorerie nette : ce qui reste après TVA à reverser et coûts réels payés,
   // à partir de l'encaissé réel (pas le facturé). tvaDue est calculée sur le
-  // facturé, pas sur l'encaissé : on estime au prorata de la part encaissée
-  // du CA TTC de la période (pas de suivi de TVA sur encaissements par facture).
-  const tvaOnEncaisse = caTtc > 0 ? tvaDue * (encaisse / caTtc) : 0
+  // facturé ; ici on prend la TVA réellement associée à l'encaissé, facture
+  // par facture (paidTva), pas un ratio global qui se dégraderait avec des
+  // taux de TVA hétérogènes dans la période.
+  const tvaOnEncaisse = validInvoices.reduce((s, i) => s + paidTva(i), 0)
   const tresorerieNette = encaisse - tvaOnEncaisse - totalCosts
 
   return {
-    year, month, caHt, caTtc, encaisse, encaisseHt, encaisseTva, tvaDue, beneficeEstime, expensesCost, laborCost, tresorerieNette, hasCostData,
+    year, month, caHt, caTtc, encaisse, encaisseHt, encaisseTva, tvaDue, beneficeEstime, expensesCost, laborCost, tresorerieNette, hasCostData, costsLikelyIncomplete,
     projectedCostHt, projectedMarginHt, projectedMarginPct, hasProjectedCostData,
-    chantiersTermines, chantiersEnCours, heuresTotal,
+    chantiersTermines, chantiersEnCours, chantiersEnCoursIsSnapshot, heuresTotal,
     nouvellesFactures, facturesPayees, recurringExpectedHt, recurringBilledHt, recurringContractsDue,
     prevCaHt, prevCaTtc, prevEncaisse, prevTvaDue, prevHeuresTotal,
   }
@@ -497,11 +611,14 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
   const prevLastDay = `${year - 1}-12-31`
 
   // Tous les chantiers de l'org (pour filtrer pointages qui n'ont pas organization_id)
+  // Archivés/annulés exclus : cf. commentaire équivalent dans getMonthlyReport.
   const [{ data: allChantiers }, { data: activeMaintenanceContracts }] = await Promise.all([
     supabase
       .from('chantiers')
       .select('id, status, end_date, created_at, is_maintenance, maintenance_contract_id')
-      .eq('organization_id', orgId),
+      .eq('organization_id', orgId)
+      .eq('is_archived', false)
+      .neq('status', 'annule'),
     supabase
       .from('maintenance_contracts')
       .select('id')
@@ -607,14 +724,17 @@ export async function getAnnualReport(year: number): Promise<AnnualReport | null
   const totalCosts = expensesCost + laborCost
   const hasCostData = expensesCost > 0 || heuresTotal > 0
   const beneficeEstime = caHt - totalCosts
-  const tvaOnEncaisse = caTtc > 0 ? tvaDue * (encaisse / caTtc) : 0
+  // Signal "coûts probablement incomplets" : cf. commentaire équivalent dans getMonthlyReport.
+  const costsLikelyIncomplete = caHt > 0 && (totalCosts / caHt) < 0.05
+  // TVA facture par facture (paidTva) : cf. commentaire équivalent dans getMonthlyReport.
+  const tvaOnEncaisse = validInv.reduce((s, i) => s + paidTva(i), 0)
   const tresorerieNette = encaisse - tvaOnEncaisse - totalCosts
 
   const series = buildSeries(validInv as any, year)
   const prevSeries = buildSeries(prevValid as any, year - 1)
 
   return {
-    year, caHt, caTtc, encaisse, encaisseHt, encaisseTva, tvaDue, beneficeEstime, expensesCost, laborCost, tresorerieNette, hasCostData,
+    year, caHt, caTtc, encaisse, encaisseHt, encaisseTva, tvaDue, beneficeEstime, expensesCost, laborCost, tresorerieNette, hasCostData, costsLikelyIncomplete,
     projectedCostHt, projectedMarginHt, projectedMarginPct, hasProjectedCostData,
     chantiersTermines,
     nouveauxClients: newClients?.length ?? 0,
@@ -845,8 +965,23 @@ export async function getTopClients(year: number, month?: number, limit = 10): P
       .select('id, client_id, status, created_at, end_date')
       .eq('organization_id', orgId)
       .not('client_id', 'is', null)
+      .eq('is_archived', false)
       .neq('status', 'annule'),
   ])
+
+  // chantier_pointages n'a pas de organization_id : on filtre via les chantiers
+  // de l'org déjà chargés ci-dessus (jamais de requête .in() sans ce scope).
+  const orgChantierIdsForClients = (chantiers ?? []).map(c => c.id)
+  const { data: pointages } = orgChantierIdsForClients.length > 0
+    // Main d'oeuvre : chantier_expenses ne couvre pas la MO, sans elle
+    // marginEur par client était structurellement gonflé (voir calcLaborCostByChantier).
+    ? await supabase
+        .from('chantier_pointages')
+        .select('chantier_id, hours, user_id, member_id, rate_snapshot')
+        .in('chantier_id', orgChantierIdsForClients)
+        .gte('date', firstDay)
+        .lte('date', lastDay)
+    : { data: [] as Array<{ chantier_id: string; hours: number | null; user_id: string | null; member_id: string | null; rate_snapshot: number | null }> }
 
   const chantiersActifs = (chantiers ?? []).filter(c =>
     c.status === 'en_cours' ||
@@ -875,6 +1010,13 @@ export async function getTopClients(year: number, month?: number, limit = 10): P
     const clientId = chantierClientMap[exp.chantier_id]
     if (!clientId) continue
     costByClient[clientId] = (costByClient[clientId] ?? 0) + (exp.amount_ht ?? 0)
+  }
+
+  const laborCostByChantier = await calcLaborCostByChantier(supabase, orgId, pointages ?? [])
+  for (const [chantierId, cost] of Object.entries(laborCostByChantier)) {
+    const clientId = chantierClientMap[chantierId]
+    if (!clientId) continue
+    costByClient[clientId] = (costByClient[clientId] ?? 0) + cost
   }
 
   const clientIds = [...new Set(Object.keys(caByClient))]
@@ -934,7 +1076,7 @@ export async function getTopChantiers(year: number, month?: number, limit = 10):
     quoteIds.length ? `quote_id.in.(${quoteIds.join(',')})` : null,
   ].filter(Boolean).join(',')
 
-  const [invoicesRes, expensesRes, pointagesRes, clientsRes, orgRes] = await Promise.all([
+  const [invoicesRes, expensesRes, pointagesRes, clientsRes] = await Promise.all([
     supabase
       .from('invoices')
       .select('id, chantier_id, quote_id, total_ht, total_ttc, total_paid, invoice_type, status')
@@ -953,7 +1095,7 @@ export async function getTopChantiers(year: number, month?: number, limit = 10):
 
     supabase
       .from('chantier_pointages')
-      .select('chantier_id, hours')
+      .select('chantier_id, hours, user_id, member_id, rate_snapshot')
       .in('chantier_id', chantierIds)
       .gte('date', firstDay)
       .lte('date', lastDay),
@@ -964,17 +1106,7 @@ export async function getTopChantiers(year: number, month?: number, limit = 10):
           .select('id, company_name, contact_name, first_name, last_name')
           .in('id', clientIds)
       : Promise.resolve({ data: [] as any[] }),
-
-    supabase
-      .from('organizations')
-      .select('default_labor_cost_per_hour, default_hourly_rate')
-      .eq('id', orgId)
-      .single(),
   ])
-
-  const orgFallbackRate = orgRes.data?.default_labor_cost_per_hour
-    ?? (orgRes.data?.default_hourly_rate ? orgRes.data.default_hourly_rate * 0.5 : null)
-    ?? 0
 
   const clientNameMap: Record<string, string> = {}
   for (const c of clientsRes.data ?? []) {
@@ -1004,7 +1136,11 @@ export async function getTopChantiers(year: number, month?: number, limit = 10):
     const key = inv.id
     if (seenInvoices.has(key)) continue
     seenInvoices.add(key)
-    if (inv.invoice_type === 'avoir' || inv.invoice_type === 'acompte') continue
+    // Les acomptes sont inclus : le solde est calculé net de l'acompte déjà
+    // versé (voir mutations/chantiers.ts), donc acompte + solde = montant du
+    // devis, sans double-comptage. Les exclure ferait disparaître l'acompte
+    // du CA du chantier, désynchronisant ce total du CA global de la page.
+    if (inv.invoice_type === 'avoir') continue
     invoicesByChantier[cid] = [...(invoicesByChantier[cid] ?? []), inv]
   }
 
@@ -1024,10 +1160,10 @@ export async function getTopChantiers(year: number, month?: number, limit = 10):
     expCostByChantier[exp.chantier_id] = (expCostByChantier[exp.chantier_id] ?? 0) + (exp.amount_ht ?? 0)
   }
 
-  const laborCostByChantier: Record<string, number> = {}
-  for (const p of pointagesRes.data ?? []) {
-    laborCostByChantier[p.chantier_id] = (laborCostByChantier[p.chantier_id] ?? 0) + (p.hours ?? 0) * orgFallbackRate
-  }
+  // Taux individuels (rate_snapshot > taux membre > fallback org), cohérent
+  // avec beneficeEstime global et la fiche chantier individuelle — voir
+  // calcLaborCostByChantier.
+  const laborCostByChantier = await calcLaborCostByChantier(supabase, orgId, pointagesRes.data ?? [])
 
   return chantiers
     .map(c => {

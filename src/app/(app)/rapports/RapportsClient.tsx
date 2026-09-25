@@ -709,6 +709,17 @@ export default function RapportsClient({
           <div>
             <h2 className="text-lg font-bold text-primary mb-1">Rentabilité</h2>
             <p className="text-xs text-secondary mb-3">Ce que vous facturez, encaissez et gardez réellement une fois les coûts déduits.</p>
+            {r.costsLikelyIncomplete && (
+              <div className="flex items-start gap-3 p-4 mb-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50">
+                <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Coûts probablement incomplets ce mois-ci</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                    Les dépenses et heures saisies représentent moins de 5 % du facturé. &quot;Bénéfice réel&quot; et &quot;Trésorerie nette&quot; ci-dessous sont probablement surestimés : pensez à enregistrer le matériel, la sous-traitance et les heures manquantes sur vos chantiers.
+                  </p>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <KpiCard label={billedLabel} value={r.caHt > 0 ? fmt(r.caHt) : '-'} sub={billedSub(r.caTtc)} delta={<Delta current={r.caHt} prev={r.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
               <KpiCard
@@ -727,6 +738,9 @@ export default function RapportsClient({
               <KpiCard label="Bénéfice réel (dépenses saisies)" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} sub={r.hasCostData ? `${fmtPct(monthlyActualMarginPct)} · facturé HT moins dépenses et main d'œuvre réelles` : 'Aucun coût réel saisi ce mois'} icon={<Target className="w-4 h-4" />} />
               <KpiCard label="Marge théorique (prix de revient saisis)" value={r.hasProjectedCostData ? fmt(r.projectedMarginHt) : '-'} sub={r.hasProjectedCostData ? `${fmtPct(r.projectedMarginPct)} · coûts théoriques des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
             </div>
+            <p className="text-xs text-secondary mt-2">
+              &quot;Bénéfice réel&quot; se base sur les dépenses et heures que vous avez saisies sur vos chantiers. &quot;Marge théorique&quot; se base sur le prix de revient indiqué sur chaque ligne facturée, indépendamment de ce qui a été réellement dépensé. Ces deux chiffres n&apos;ont pas la même source et peuvent diverger fortement selon votre discipline de saisie : ce n&apos;est pas une erreur.
+            </p>
           </div>
 
           <div>
@@ -734,7 +748,12 @@ export default function RapportsClient({
             <p className="text-xs text-secondary mb-3">Volume de chantiers et d&apos;heures sur la période.</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <KpiCard label="Chantiers terminés" value={String(r.chantiersTermines || '-')} icon={<HardHat className="w-4 h-4 text-amber-500" />} />
-              <KpiCard label="Chantiers en cours" value={String(r.chantiersEnCours || '-')} icon={<HardHat className="w-4 h-4" />} />
+              <KpiCard
+                label="Chantiers en cours"
+                value={String(r.chantiersEnCours || '-')}
+                sub={r.chantiersEnCoursIsSnapshot ? "Statut d'aujourd'hui, pas un historique de ce mois" : undefined}
+                icon={<HardHat className="w-4 h-4" />}
+              />
               <KpiCard label="Heures travaillées" value={r.heuresTotal > 0 ? fmtH(r.heuresTotal) : '-'} delta={<Delta current={r.heuresTotal} prev={r.prevHeuresTotal} />} icon={<Clock className="w-4 h-4" />} />
               <KpiCard label={vatLabel} value={isVatSubject && r.tvaDue > 0 ? fmt(r.tvaDue) : '-'} delta={isVatSubject ? <Delta current={r.tvaDue} prev={r.prevTvaDue} /> : undefined} icon={<BarChart2 className="w-4 h-4" />} />
             </div>
@@ -766,6 +785,17 @@ export default function RapportsClient({
           <div>
             <h2 className="text-lg font-bold text-primary mb-1">Rentabilité</h2>
             <p className="text-xs text-secondary mb-3">Ce que vous facturez, encaissez et gardez réellement une fois les coûts déduits.</p>
+            {ar.costsLikelyIncomplete && (
+              <div className="flex items-start gap-3 p-4 mb-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50">
+                <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Coûts probablement incomplets cette année</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                    Les dépenses et heures saisies représentent moins de 5 % du facturé. &quot;Bénéfice réel&quot; et &quot;Trésorerie nette&quot; ci-dessous sont probablement surestimés : pensez à enregistrer le matériel, la sous-traitance et les heures manquantes sur vos chantiers.
+                  </p>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <KpiCard label={billedLabel} value={ar.caHt > 0 ? fmt(ar.caHt) : '-'} sub={billedSub(ar.caTtc)} delta={<Delta current={ar.caHt} prev={ar.prevCaHt} />} icon={<Euro className="w-4 h-4" />} />
               <KpiCard
@@ -784,6 +814,9 @@ export default function RapportsClient({
               <KpiCard label="Bénéfice réel (dépenses saisies)" value={ar.hasCostData ? fmt(ar.beneficeEstime) : '-'} sub={ar.hasCostData ? `${fmtPct(annualActualMarginPct)} · facturé HT moins dépenses et main d'œuvre réelles` : 'Aucun coût réel saisi cette année'} icon={<Target className="w-4 h-4" />} />
               <KpiCard label="Marge théorique (prix de revient saisis)" value={ar.hasProjectedCostData ? fmt(ar.projectedMarginHt) : '-'} sub={ar.hasProjectedCostData ? `${fmtPct(ar.projectedMarginPct)} · coûts théoriques des lignes facturées` : 'Aucun coût interne sur les lignes'} icon={<BarChart2 className="w-4 h-4" />} />
             </div>
+            <p className="text-xs text-secondary mt-2">
+              &quot;Bénéfice réel&quot; se base sur les dépenses et heures que vous avez saisies sur vos chantiers. &quot;Marge théorique&quot; se base sur le prix de revient indiqué sur chaque ligne facturée, indépendamment de ce qui a été réellement dépensé. Ces deux chiffres n&apos;ont pas la même source et peuvent diverger fortement selon votre discipline de saisie : ce n&apos;est pas une erreur.
+            </p>
           </div>
 
           <div>
@@ -822,23 +855,23 @@ export default function RapportsClient({
           </div>
           {maintenanceActualCost > 0 && (
             <div className="grid grid-cols-2 md:grid-cols-2 gap-4">
-              <KpiCard label="Coûts terrain" value={fmt(mr.partsCost + mr.travelCost + mr.otherCost)} sub={`Pièces ${fmt(mr.partsCost)} · déplacement ${fmt(mr.travelCost)}`} icon={<HardHat className="w-4 h-4" />} />
+              <KpiCard label="Coûts terrain" value={fmt(mr.partsCost + mr.travelCost + mr.otherCost)} sub={`Pièces ${fmt(mr.partsCost)} · déplacement ${fmt(mr.travelCost)} · toutes dépenses du chantier support`} icon={<HardHat className="w-4 h-4" />} />
               <KpiCard label="Marge estimée" value={mr.marginEur > 0 ? fmt(mr.marginEur) : '-'} sub={mr.revenueHt > 0 ? `${fmtPct(maintenanceActualMarginPct)} · après coûts terrain et MO` : undefined} icon={<Target className="w-4 h-4" />} />
             </div>
           )}
           {(mr.expectedRevenueHt > 0 || mr.expectedCostHt > 0) && (
             <>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <KpiCard label="Prévu / période" value={mr.expectedRevenueHt > 0 ? fmt(mr.expectedRevenueHt) : '-'} sub="Prix récurrents actifs" icon={<Calendar className="w-4 h-4" />} />
-                <KpiCard label="Coût prévu / période" value={mr.expectedCostHt > 0 ? fmt(mr.expectedCostHt) : '-'} sub="Référence catalogue entretien" icon={<HardHat className="w-4 h-4" />} />
-                <KpiCard label="Marge prévue / période" value={fmt(mr.expectedMarginHt)} sub={`${fmtPct(maintenanceExpectedMarginPct)} prévu`} icon={<Target className="w-4 h-4" />} />
+                <KpiCard label="Prévu par cycle de contrat" value={mr.expectedRevenueHt > 0 ? fmt(mr.expectedRevenueHt) : '-'} sub="Montant contractuel, pas ramené au mois affiché" icon={<Calendar className="w-4 h-4" />} />
+                <KpiCard label="Coût prévu par cycle de contrat" value={mr.expectedCostHt > 0 ? fmt(mr.expectedCostHt) : '-'} sub="Référence catalogue entretien" icon={<HardHat className="w-4 h-4" />} />
+                <KpiCard label="Marge prévue par cycle de contrat" value={fmt(mr.expectedMarginHt)} sub={`${fmtPct(maintenanceExpectedMarginPct)} prévu`} icon={<Target className="w-4 h-4" />} />
               </div>
               {maintenanceActualCost > 0 ? (
                 <div className="rounded-2xl bg-secondary/5 border border-secondary/10 p-4 space-y-2">
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-semibold text-primary">Jauge marge entretien</span>
                     <span className="text-secondary">
-                      Réel {fmt(mr.marginEur)} · Prévu {fmt(mr.expectedMarginHt)}
+                      Réel (mois affiché) {fmt(mr.marginEur)} · Prévu (cycle contrat) {fmt(mr.expectedMarginHt)}
                     </span>
                   </div>
                   <div className="h-2 rounded-full bg-secondary/15 overflow-hidden">
@@ -851,6 +884,9 @@ export default function RapportsClient({
                     <span>CA réel {fmt(mr.revenueHt)}</span>
                     <span>Coûts réels {fmt(maintenanceActualCost)}</span>
                   </div>
+                  <p className="text-xs text-secondary">
+                    Le &quot;Prévu&quot; correspond à un cycle complet du contrat (ex: trimestriel), pas ramené au mois affiché : les deux valeurs ne sont pas directement comparables si le cycle ne correspond pas à un mois.
+                  </p>
                 </div>
               ) : (
                 <p className="text-xs text-secondary">Aucun coût réel saisi sur la période. La jauge sera disponible dès qu&apos;une heure ou dépense est enregistrée.</p>
