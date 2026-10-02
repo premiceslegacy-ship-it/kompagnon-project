@@ -6,6 +6,7 @@ import {
   initializeQuotasForTier,
   recordOperatorClientEvent,
   syncClientQuotaConfig,
+  TRIAL_DURATION_DAYS,
 } from '@/lib/operator/trial-lifecycle'
 import { getModulesForTier, getQuotaConfigForTier } from '@/lib/quota-catalog'
 import { DEFAULT_EINVOICING_CONFIG } from '@/lib/einvoicing-config'
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest) {
 
   const operator = createOperatorAdminClient()
   const now = new Date()
-  const trialEnd = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000)
+  const trialEnd = new Date(now.getTime() + TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000)
   const email = payload.contact_email.trim().toLowerCase()
   const siret = payload.siret.replace(/\s/g, '')
 
@@ -222,9 +223,9 @@ export async function POST(req: NextRequest) {
   const appUrl = payload.app_url.replace(/\/$/, '')
   const customerEmail = buildAtelierTrialStartedEmail({ appUrl, companyName: payload.company_name })
   const operatorEmail = buildAtelierNotificationEmail({
-    subject: `[Atelier] Nouvel essai — ${payload.company_name}`,
+    subject: `[Atelier] Nouvel essai : ${payload.company_name}`,
     title: 'Nouvel essai démarré',
-    body: `${payload.company_name} vient de démarrer un essai Pro de 14 jours. Préférence de conversion : ${payload.preferred_tier}. Source : ${payload.signup_source ?? 'direct'}.`,
+    body: `${payload.company_name} vient de démarrer un essai Pro de ${TRIAL_DURATION_DAYS} jours. Préférence de conversion : ${payload.preferred_tier}. Source : ${payload.signup_source ?? 'direct'}.`,
   })
   await Promise.allSettled([
     sendAuthEmail({

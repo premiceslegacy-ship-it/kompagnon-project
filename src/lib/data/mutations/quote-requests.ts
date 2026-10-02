@@ -141,7 +141,7 @@ export async function submitQuoteRequest(
   const admin = createAdminClient()
   const { data: org, error: orgError } = await admin
     .from('organizations')
-    .select('id, name, public_form_notification_email')
+    .select('id, name, logo_url, public_form_notification_email')
     .eq('slug', orgSlug)
     .single()
 
@@ -205,6 +205,7 @@ export async function submitQuoteRequest(
       : null
     const { subject: notifSubject, html: notifHtml } = buildQuoteRequestNotificationEmail({
       orgName: org.name,
+      logoUrl: org.logo_url,
       name,
       email,
       phone,

@@ -28,7 +28,7 @@ export async function createOrganizationExport(): Promise<{ error: string | null
   const admin = createAdminClient()
   const { data: organization } = await admin
     .from('organizations')
-    .select('id, name')
+    .select('id, name, logo_url')
     .eq('id', membership.organizationId)
     .single()
 
@@ -97,6 +97,7 @@ export async function createOrganizationExport(): Promise<{ error: string | null
     } else {
       const { subject, html } = buildOrganizationExportReadyEmail({
         orgName: organization.name,
+        logoUrl: organization.logo_url,
         downloadUrl: signedData.signedUrl,
         expiresAt,
         summary: finalSummary,

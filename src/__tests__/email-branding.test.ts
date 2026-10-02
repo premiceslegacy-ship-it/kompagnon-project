@@ -60,7 +60,7 @@ describe('activation state', () => {
 
   it('presents the self-service trial as Pro', () => {
     const email = buildAtelierTrialStartedEmail({ appUrl: 'https://app.atelier-btp.fr', companyName: 'Atelier Test' })
-    expect(email.subject).toContain('14 jours Pro')
+    expect(email.subject).toContain('7 jours Pro')
     expect(email.html).toContain('formule Pro')
     expect(email.html).not.toContain('formule Expert')
   })

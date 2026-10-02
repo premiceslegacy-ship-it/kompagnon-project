@@ -6,7 +6,7 @@ import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { defaultBrandedSenderName } from '@/lib/brand'
 import { organizationEmailBrand, renderEmailShell } from '@/lib/email/layout'
-import { resolveOrganizationFromAddress } from '@/lib/email/resolver'
+import { MISSING_ORGANIZATION_EMAIL_ERROR, resolveOrganizationFromAddress } from '@/lib/email/resolver'
 
 export const dynamic = 'force-dynamic'
 
@@ -123,6 +123,11 @@ export async function POST(req: NextRequest) {
       }, { status: 422 })
     }
 
+    // La réponse d'un client doit arriver chez l'artisan, jamais sur une adresse technique.
+    if (!org.email?.trim()) {
+      return NextResponse.json({ error: MISSING_ORGANIZATION_EMAIL_ERROR }, { status: 422 })
+    }
+
     // Récupérer les destinataires selon le filtre
     let clientsQuery = admin
       .from('clients')
@@ -191,7 +196,7 @@ export async function POST(req: NextRequest) {
     }> = []
 
     // Vrai email de contact de l'organisation (pour replyTo et signature)
-    const contactEmail = org.email || orgFromAddress
+    const contactEmail = org.email
 
     // Envoi un par un (RGPD — chaque destinataire reçoit son propre email)
     for (const client of clients) {

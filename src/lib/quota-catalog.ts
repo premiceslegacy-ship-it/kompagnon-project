@@ -25,9 +25,6 @@ export const PRODUCT_MODULE_KEYS = [
   'receipt_ocr',
   'voice_input',
   'voice_live',          // Mode vocal streaming live Sarah (Pro+ et Expert)
-  'whatsapp_agent',
-  'whatsapp_ocr',
-  'whatsapp_proactive',
 ] as const
 
 export type ProductModuleKey = typeof PRODUCT_MODULE_KEYS[number]
@@ -39,10 +36,6 @@ export type TechnicalQuotaFeature =
   | 'document_parse'
   | 'weekly_summary'
   | 'planning_ai'
-  | 'whatsapp_reply'
-  | 'whatsapp_transcription'
-  | 'whatsapp_proactive'
-  | 'whatsapp_document_ocr'
   | 'reminder_draft'
   | 'auto_reminder_draft'
   | 'email_draft'         // Rédaction email client via IA (quota relances_ai)
@@ -69,16 +62,12 @@ export type QuotaFeature =
   | 'receipt_ocr'
   | 'voice_input'
   | 'voice_live_minutes'
-  | 'wa_messages'
-  | 'wa_vocal_minutes'
-  | 'wa_proactive_messages'
-  | 'whatsapp_ocr'
 
 export type QuotaDefinition = {
   label: string
   unit: QuotaUnit
   moduleKey: ProductModuleKey
-  section: 'ia_base' | 'whatsapp'
+  section: 'ia_base'
 }
 
 export const QUOTA_DEFINITIONS: Record<QuotaFeature, QuotaDefinition> = {
@@ -96,10 +85,6 @@ export const QUOTA_DEFINITIONS: Record<QuotaFeature, QuotaDefinition> = {
   receipt_ocr: { label: 'OCR tickets', unit: 'document', moduleKey: 'receipt_ocr', section: 'ia_base' },
   voice_input: { label: 'Saisie vocale (transcription)', unit: 'minute', moduleKey: 'voice_input', section: 'ia_base' },
   voice_live_minutes: { label: 'Vocal live Sarah', unit: 'minute', moduleKey: 'voice_live', section: 'ia_base' },
-  wa_messages: { label: 'Messages WhatsApp', unit: 'message', moduleKey: 'whatsapp_agent', section: 'whatsapp' },
-  wa_vocal_minutes: { label: 'Vocal WhatsApp', unit: 'minute', moduleKey: 'whatsapp_agent', section: 'whatsapp' },
-  wa_proactive_messages: { label: 'WhatsApp proactif', unit: 'message', moduleKey: 'whatsapp_proactive', section: 'whatsapp' },
-  whatsapp_ocr: { label: 'OCR WhatsApp', unit: 'document', moduleKey: 'whatsapp_ocr', section: 'whatsapp' },
 }
 
 export const QUOTA_FEATURES = Object.keys(QUOTA_DEFINITIONS) as QuotaFeature[]
@@ -111,10 +96,6 @@ export const TECHNICAL_FEATURE_TO_QUOTA: Record<TechnicalQuotaFeature, QuotaFeat
   document_parse: 'document_import_ai',
   weekly_summary: 'weekly_summary',
   planning_ai: 'planning_ai',
-  whatsapp_reply: 'wa_messages',
-  whatsapp_transcription: 'wa_vocal_minutes',
-  whatsapp_proactive: 'wa_proactive_messages',
-  whatsapp_document_ocr: 'whatsapp_ocr',
   reminder_draft: 'relances_ai',
   auto_reminder_draft: 'relances_ai',
   email_draft: 'relances_ai',    // Mails clients IA partagent le quota relances
@@ -144,14 +125,9 @@ export const MODULES_BY_TIER: Record<SubscriptionTier, Record<ProductModuleKey, 
     receipt_ocr: true,
     voice_input: true,
     voice_live: true,           // Vocal live inclus en Pro
-    whatsapp_agent: false,      // WhatsApp suspendu (vérification Meta en attente)
-    whatsapp_ocr: false,
-    whatsapp_proactive: false,
   },
-  // WhatsApp suspendu (vérification Meta en attente) : exclu explicitement même
-  // en Expert, qui active tous les autres modules par défaut.
   expert: Object.fromEntries(
-    PRODUCT_MODULE_KEYS.map((key) => [key, !key.startsWith('whatsapp_')])
+    PRODUCT_MODULE_KEYS.map((key) => [key, true])
   ) as Record<ProductModuleKey, boolean>,
 }
 
@@ -174,10 +150,6 @@ export const QUOTAS_BY_TIER: Record<SubscriptionTier, Record<QuotaFeature, numbe
     receipt_ocr: UNLIMITED,
     voice_input: 120,
     voice_live_minutes: 60,     // ~2 min/jour ouvré — marge ElevenLabs préservée (~$6-7/mois)
-    wa_messages: 0,
-    wa_vocal_minutes: 0,
-    wa_proactive_messages: 0,
-    whatsapp_ocr: 0,
   },
   expert: {
     relances_ai: UNLIMITED,
@@ -194,10 +166,6 @@ export const QUOTAS_BY_TIER: Record<SubscriptionTier, Record<QuotaFeature, numbe
     receipt_ocr: UNLIMITED,
     voice_input: UNLIMITED,
     voice_live_minutes: 300,    // ~10 min/jour ouvré — ElevenLabs ~$30-36/mois (couvert par hausse Expert 119→139€)
-    wa_messages: 0,
-    wa_vocal_minutes: 0,
-    wa_proactive_messages: 0,
-    whatsapp_ocr: 0,
   },
 }
 

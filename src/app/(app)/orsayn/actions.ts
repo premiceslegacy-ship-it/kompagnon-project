@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { Resend } from 'resend'
 import { buildAtelierCommercialEmail } from '@/lib/email/commercial'
+import { ATELIER_SENDER_NAME } from '@/lib/brand'
 import { getOperatorUser } from '@/lib/operator-auth'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -27,6 +28,7 @@ import {
   recordOperatorClientEvent,
   syncClientQuotaConfig,
   TRIAL_DURATION_DAYS,
+  TRIAL_TIER,
   UNRESOLVED_ORGANIZATION_ID,
 } from '@/lib/operator/trial-lifecycle'
 
@@ -160,7 +162,7 @@ async function sendOperatorCommercialEmail(input: {
 }) {
   const apiKey = process.env.RESEND_API_KEY?.trim()
   const fromAddress = process.env.RESEND_FROM_ADDRESS?.trim()
-  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Atelier BTP'
+  const fromName = ATELIER_SENDER_NAME
 
   if (!apiKey || !fromAddress) {
     return { status: 'skipped' as const, error: 'RESEND_API_KEY/RESEND_FROM_ADDRESS manquant' }
@@ -410,7 +412,7 @@ export async function activateOperatorTrial(formData: FormData) {
   const trialStartedAt = new Date().toISOString()
   const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString()
   const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance, requestedOrganizationId)
-  const trialTier = sourceInstance === 'atelier-app' ? 'pro' : 'expert'
+  const trialTier = TRIAL_TIER
 
   if (!organizationId) {
     throw new Error('organization_id introuvable pour cette instance — le client doit d\'abord avoir un appel IA synchronisé (ingest) ou être préconfiguré.')
@@ -570,7 +572,7 @@ export async function extendOperatorTrial(formData: FormData) {
     : Date.now()
   const trialEndsAt = new Date(baseTime + 7 * 24 * 60 * 60 * 1000).toISOString()
   const selfServiceTrial = subscription.accessStatus !== null
-  const trialTier = subscription.trialTier ?? (sourceInstance === 'atelier-app' ? 'pro' : 'expert')
+  const trialTier = TRIAL_TIER
   const { error } = await operator.from('operator_client_subscriptions').upsert({
     source_instance: sourceInstance,
     organization_id: organizationId,
@@ -821,7 +823,7 @@ export async function sendOperatorEmail(formData: FormData) {
 
   const apiKey = process.env.RESEND_API_KEY?.trim()
   const fromAddress = process.env.RESEND_FROM_ADDRESS?.trim()
-  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Atelier BTP'
+  const fromName = ATELIER_SENDER_NAME
   if (!apiKey || !fromAddress) throw new Error('RESEND non configuré dans le cockpit')
 
   const resend = new Resend(apiKey)
@@ -920,7 +922,7 @@ export async function validateQuotaAlert(formData: FormData) {
   const bodyLines = (alert.body_text ?? '').split('\n').filter(Boolean)
   const apiKey = process.env.RESEND_API_KEY?.trim()
   const fromAddress = process.env.RESEND_FROM_ADDRESS?.trim()
-  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Atelier BTP'
+  const fromName = ATELIER_SENDER_NAME
 
   let deliveryStatus: 'sent' | 'failed' | 'skipped' = 'skipped'
   let deliveryError: string | null = null

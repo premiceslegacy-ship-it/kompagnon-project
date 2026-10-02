@@ -119,7 +119,7 @@ async function notifyLifecycle(to: string | null, eventType: string, tier: Subsc
   const messages: Record<string, { subject: string; body: string }> = {
     payment_succeeded: { subject: 'Votre accès Atelier est activé', body: `Votre formule ${tier === 'expert' ? 'Expert' : 'Pro'} est active. Toute votre équipe peut reprendre le travail.` },
     payment_failed: { subject: 'Votre paiement Atelier doit être régularisé', body: 'Stripe va retenter le paiement. Votre accès reste ouvert pendant cette phase ; mettez votre moyen de paiement à jour pour éviter une interruption.' },
-    payment_recovered: { subject: 'Paiement régularisé — accès Atelier maintenu', body: 'Votre paiement a bien été récupéré. Vous pouvez continuer à utiliser Atelier normalement.' },
+    payment_recovered: { subject: 'Paiement régularisé : accès Atelier maintenu', body: 'Votre paiement a bien été récupéré. Vous pouvez continuer à utiliser Atelier normalement.' },
     subscription_cancelled: { subject: 'Votre accès Atelier est arrivé à son terme', body: 'Votre abonnement est terminé. Vos données restent exportables depuis le hall d’activation.' },
   }
   const message = messages[eventType]

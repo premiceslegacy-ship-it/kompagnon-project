@@ -23,9 +23,9 @@ function interpolate(template: string, vars: Record<string, string>): string {
   return Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), template)
 }
 
-function wrapHtml(orgName: string, bodyText: string): string {
+function wrapHtml(orgName: string, bodyText: string, logoUrl?: string | null): string {
   const bodyHtml = escHtml(bodyText).replace(/\n/g, '<br>')
-  return renderOrganizationEmail({ subject: orgName, orgName, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
+  return renderOrganizationEmail({ subject: orgName, orgName, logoUrl, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
 }
 
 // ─── Envoyer une relance facture ───────────────────────────────────────────────
@@ -47,7 +47,7 @@ export async function sendInvoiceReminder(
     { data: org },
   ] = await Promise.all([
     supabase.from('invoices').select('id, number, total_ttc, currency, due_date, client_id').eq('id', invoiceId).eq('organization_id', orgId).single(),
-    supabase.from('organizations').select('name, email, email_from_address').eq('id', orgId).single(),
+    supabase.from('organizations').select('name, email, email_from_address, logo_url').eq('id', orgId).single(),
   ])
 
   if (!invoice) return { error: 'Facture introuvable.' }
@@ -106,14 +106,14 @@ export async function sendInvoiceReminder(
   if (aiDraft) {
     subject = aiDraft.subject
     bodyText = aiDraft.body
-    html = wrapHtml(org.name, aiDraft.body.replace(/\n/g, '<br>'))
+    html = wrapHtml(org.name, aiDraft.body.replace(/\n/g, '<br>'), org.logo_url)
   } else {
     const defaultTpl = DEFAULT_EMAIL_TEMPLATES.find(t => t.slug === slug)
     const tpl = customTpl ?? defaultTpl
     if (!tpl) return { error: 'Template introuvable.' }
     subject = interpolate(tpl.subject, vars)
     bodyText = interpolate(tpl.body_text, vars)
-    html = wrapHtml(org.name, bodyText)
+    html = wrapHtml(org.name, bodyText, org.logo_url)
   }
 
   // Générer le PDF de la facture en pièce jointe
@@ -127,8 +127,13 @@ export async function sendInvoiceReminder(
 
   // Envoyer l'email si le client a une adresse
   if (clientEmail) {
-    await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
-      .catch(err => console.error('[sendInvoiceReminder] email error:', err))
+    const mail = await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
+      .catch((err): { error: string | null } => {
+        console.error('[sendInvoiceReminder] email error:', err)
+        return { error: "Impossible d'envoyer l'email." }
+      })
+    // Une relance non partie ne doit pas être journalisée comme envoyée.
+    if (mail.error) return { error: mail.error }
   }
 
   // Logger la relance dans la table reminders
@@ -169,7 +174,7 @@ export async function sendQuoteFollowup(
     organization,
   ] = await Promise.all([
     supabase.from('quotes').select('id, number, title, total_ttc, currency, client_id, signature_token, notes_client, payment_conditions').eq('id', quoteId).eq('organization_id', orgId).single(),
-    supabase.from('organizations').select('name, email, email_from_address').eq('id', orgId).single(),
+    supabase.from('organizations').select('name, email, email_from_address, logo_url').eq('id', orgId).single(),
     getQuoteById(quoteId),
     getOrganization(),
   ])
@@ -215,7 +220,7 @@ export async function sendQuoteFollowup(
   if (aiDraft) {
     subject = aiDraft.subject
     bodyText = aiDraft.body
-    html = wrapHtml(org.name, aiDraft.body.replace(/\n/g, '<br>'))
+    html = wrapHtml(org.name, aiDraft.body.replace(/\n/g, '<br>'), org.logo_url)
   } else {
     const { data: customTpl } = await supabase
       .from('email_templates')
@@ -231,7 +236,7 @@ export async function sendQuoteFollowup(
 
     subject = interpolate(tpl.subject, vars)
     bodyText = interpolate(tpl.body_text, vars)
-    html = wrapHtml(org.name, bodyText)
+    html = wrapHtml(org.name, bodyText, org.logo_url)
   }
 
   // Générer le PDF du devis en pièce jointe
@@ -252,8 +257,13 @@ export async function sendQuoteFollowup(
   }
 
   if (clientEmail) {
-    await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
-      .catch(err => console.error('[sendQuoteFollowup] email error:', err))
+    const mail = await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
+      .catch((err): { error: string | null } => {
+        console.error('[sendQuoteFollowup] email error:', err)
+        return { error: "Impossible d'envoyer l'email." }
+      })
+    // Une relance non partie ne doit pas être journalisée comme envoyée.
+    if (mail.error) return { error: mail.error }
   }
 
   // Logger

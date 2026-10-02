@@ -119,12 +119,6 @@ export async function POST(req: NextRequest) {
       .delete({ count: 'exact' })
       .lt('created_at', daysAgo(60)))
 
-  // Historique WhatsApp : 6 mois de conversation suffisent à l'agent.
-  await purge('whatsapp_messages', () =>
-    admin.from('whatsapp_messages')
-      .delete({ count: 'exact' })
-      .lt('created_at', daysAgo(180)))
-
   // Note : pa_status_events est un audit trail légal immuable, jamais purgé.
 
   console.log('[cron/data-retention]', JSON.stringify(results))

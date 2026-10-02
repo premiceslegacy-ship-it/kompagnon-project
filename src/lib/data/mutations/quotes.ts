@@ -80,9 +80,9 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;')
 }
 
-function wrapHtml(orgName: string, bodyText: string): string {
+function wrapHtml(orgName: string, bodyText: string, logoUrl?: string | null): string {
   const bodyHtml = escapeHtml(bodyText).replace(/\n/g, '<br>')
-  return renderOrganizationEmail({ subject: orgName, orgName, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
+  return renderOrganizationEmail({ subject: orgName, orgName, logoUrl, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
 }
 
 function normalizeSearchText(value: string | null | undefined) {
@@ -750,10 +750,11 @@ export async function sendQuote(quoteId: string, options?: { attachContractIds?:
         }
         const interpolate = (t: string) => Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), t)
         subject = interpolate(customTpl.subject ?? '')
-        html = wrapHtml(organization.name, interpolate(customTpl.body_text))
+        html = wrapHtml(organization.name, interpolate(customTpl.body_text), organization.logo_url)
       } else {
         const built = buildQuoteSentEmail({
           orgName: organization.name,
+          logoUrl: organization.logo_url,
           orgEmail: organization.email,
           clientName,
           quoteNumber: quote.number,

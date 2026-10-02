@@ -48,9 +48,8 @@ export default function CycleDeVieTab({ row }: { row: ClientRow }) {
           <ActionForm action={activateOperatorTrial} successMessage="Essai activé.">
             <input type="hidden" name="sourceInstance" value={row.sourceInstance} />
             {row.organizationId && <input type="hidden" name="organizationId" value={row.organizationId} />}
-            <input type="hidden" name="trialDays" value={row.sourceInstance === 'atelier-app' ? '14' : '30'} />
             <button type="submit" className="w-full rounded-pill bg-green-500/10 px-4 py-2.5 text-sm font-semibold text-green-700 transition hover:bg-green-500/20">
-              Essai {row.sourceInstance === 'atelier-app' ? 'Pro 14j' : 'Expert 30j'}
+              Essai Pro 7j
             </button>
           </ActionForm>
         )}

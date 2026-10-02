@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendAuthEmail } from '@/lib/email'
 import { buildSignupOtpEmail } from '@/lib/email/templates'
-import { APP_SIGNATURE } from '@/lib/brand'
+import { ATELIER_SENDER_NAME } from '@/lib/brand'
 import { headers } from 'next/headers'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { isSellableTier } from '@/lib/subscription-access'
@@ -115,7 +115,7 @@ export async function signup(_prevState: AuthState, formData: FormData): Promise
 
     const otp = linkData?.properties?.email_otp
     if (otp) {
-      const orgName = process.env.RESEND_FROM_NAME || APP_SIGNATURE
+      const orgName = process.env.RESEND_FROM_NAME || ATELIER_SENDER_NAME
       const { subject, html } = buildSignupOtpEmail({ otp, orgName })
       await sendAuthEmail({ to: email, subject, html })
       // Rediriger vers la page de saisie du code OTP

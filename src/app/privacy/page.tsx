@@ -84,7 +84,6 @@ export default function PrivacyPage() {
                 { traitement: 'Données métier (devis, factures, chantiers, clients)', finalite: 'Fourniture du service contractualisé', base: 'Exécution du contrat (art. 6(1)(b))' },
                 { traitement: 'Authentification et sessions', finalite: 'Sécurité des accès', base: 'Intérêt légitime (art. 6(1)(f))' },
                 { traitement: 'Logs d\'activité et d\'audit', finalite: 'Sécurité, détection d\'abus, conformité', base: 'Intérêt légitime (art. 6(1)(f))' },
-                { traitement: 'Conversations WhatsApp', finalite: 'Traçabilité des échanges client, qualité du service', base: 'Intérêt légitime (art. 6(1)(f))' },
                 { traitement: 'Facturation et gestion contractuelle', finalite: 'Exécution du contrat entre Orsayn et l\'artisan', base: 'Exécution du contrat (art. 6(1)(b))' },
                 { traitement: 'Conservation des pièces comptables', finalite: 'Obligation légale de conservation 10 ans', base: 'Obligation légale (art. 6(1)(c))' },
               ].map((row, i) => (
@@ -170,7 +169,6 @@ export default function PrivacyPage() {
                 { name: 'Mistral AI', pays: 'France (UE)', role: 'Transcription audio (saisie vocale)', garantie: 'Entité UE' },
                 { name: 'OpenRouter, Inc.', pays: 'USA', role: 'Routage des appels LLM (IA)', garantie: 'Clauses contractuelles types' },
                 { name: 'Resend, Inc.', pays: 'USA', role: 'Emails transactionnels', garantie: 'Clauses contractuelles types' },
-                { name: 'Twilio, Inc.', pays: 'USA', role: 'Messagerie WhatsApp', garantie: 'Data Privacy Framework' },
               ].map((row, i) => (
                 <tr key={i} className="border-b border-[var(--elevation-border)] last:border-0">
                   <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{row.name}</td>

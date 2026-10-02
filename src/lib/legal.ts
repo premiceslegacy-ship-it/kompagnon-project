@@ -113,7 +113,6 @@ export const LEGAL_COPY = {
 export const DATA_RETENTION_TABLE = [
   { type: 'Devis et factures', duration: '10 ans', base: 'Art. L123-22 Code de commerce' },
   { type: 'Données de compte (nom, email, org)', duration: '3 ans après fermeture', base: 'Prescription civile' },
-  { type: 'Conversations WhatsApp', duration: '1 an', base: 'Intérêt légitime — traçabilité des échanges client (art. 6(1)(f) RGPD)' },
   { type: 'Logs d\'activité et audit', duration: '1 an', base: 'Sécurité & conformité' },
   { type: 'Données de session (cookies)', duration: 'Session / 7 jours max', base: 'Strictement nécessaire' },
   { type: 'Exports ZIP générés', duration: '7 jours (lien de téléchargement)', base: 'Opérationnel' },

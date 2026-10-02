@@ -70,7 +70,7 @@ export default async function ActivationPage({ searchParams }: { searchParams?: 
   const heroDescription = isUnpaid
     ? 'Votre abonnement nécessite une régularisation. Mettez à jour votre moyen de paiement dans Stripe pour retrouver vos outils.'
     : activationState.canStartTrial
-      ? 'Découvrez la formule Pro pendant 14 jours, puis choisissez le niveau qui correspond à votre entreprise.'
+      ? 'Découvrez la formule Pro pendant 7 jours, puis choisissez le niveau qui correspond à votre entreprise.'
       : hasConsumedTrial
         ? 'Votre accès est en pause. Vos données, vos clients et vos habitudes restent là : choisissez votre formule pour reprendre sans ressaisie.'
         : 'Choisissez le niveau qui correspond à votre façon de travailler et gardez votre gestion sous contrôle.'
@@ -96,7 +96,7 @@ export default async function ActivationPage({ searchParams }: { searchParams?: 
 
             {activationState.canStartTrial && (
               <form action={startTrialAction} className={styles.trialForm}>
-                <CheckoutSubmitButton label="Activer 14 jours gratuitement" pendingLabel="Activation de votre accès…" featured />
+                <CheckoutSubmitButton label="Activer 7 jours gratuitement" pendingLabel="Activation de votre accès…" featured />
                 <p className={styles.trialNote}>Sans carte bancaire. Vous choisirez ensuite de continuer ou non.</p>
               </form>
             )}
