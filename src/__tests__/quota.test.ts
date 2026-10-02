@@ -13,7 +13,8 @@ describe('quota catalog', () => {
     expect(getQuotaFeatureForTechnicalFeature('quote_analysis')).toBe('quote_ai')
     expect(getQuotaFeatureForTechnicalFeature('document_parse')).toBe('document_import_ai')
     expect(getQuotaFeatureForTechnicalFeature('voice_transcription')).toBe('voice_input')
-    expect(getQuotaFeatureForTechnicalFeature('whatsapp_transcription')).toBe('wa_vocal_minutes')
+    // Les anciennes consommations WhatsApp restent lisibles dans l'historique sans quota associé.
+    expect(getQuotaFeatureForTechnicalFeature('whatsapp_transcription')).toBeNull()
   })
 
   it('defines every tier quota for every quota feature', () => {
@@ -37,12 +38,11 @@ describe('organization modules', () => {
     expect(modules.quote_ai).toBe(false)
   })
 
-  it('never activates whatsapp modules, even with an explicit input (module suspendu)', () => {
+  it('ignores legacy whatsapp keys still stored in organization_modules', () => {
     const modules = normalizeOrganizationModules({ whatsapp_agent: true, whatsapp_ocr: true, whatsapp_proactive: true })
 
-    expect(modules.whatsapp_agent).toBe(false)
-    expect(modules.whatsapp_ocr).toBe(false)
-    expect(modules.whatsapp_proactive).toBe(false)
+    expect(Object.keys(modules).some((key) => key.startsWith('whatsapp_'))).toBe(false)
+    expect(Object.keys(modules).sort()).toEqual([...ORGANIZATION_MODULE_KEYS].sort())
   })
 })
 

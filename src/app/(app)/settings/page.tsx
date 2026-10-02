@@ -5,7 +5,6 @@ import { getOrgRoles, getOrgJoinCode, getRolesWithPermissions } from '@/lib/data
 import { getOrganization } from '@/lib/data/queries/organization'
 import { getLaborRates, getMaterials, getPrestationTypes } from '@/lib/data/queries/catalog'
 import { resolveCatalogContext } from '@/lib/catalog-context'
-import { getWhatsAppConfig } from '@/lib/data/mutations/whatsapp'
 import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/membership'
 import { getOrganizationExports } from '@/lib/data/queries/organization-exports'
 import { getCompanyMemories } from '@/lib/data/queries/company-memory'
@@ -29,7 +28,6 @@ const SETTINGS_TABS = new Set([
   'integration',
   'formulaire',
   'confidentialite',
-  'whatsapp',
   'securite',
   'abonnement',
   'facturation',
@@ -51,7 +49,7 @@ export default async function SettingsPage({
   const oauthResult = searchParams?.oauth === 'success' || searchParams?.oauth === 'error' ? searchParams.oauth : null
   const oauthDetail = searchParams?.oauth_detail ?? null
 
-  const [profile, members, roles, joinCode, organization, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, membership, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialMetalPriceGrids, initialClauseTemplates, organizationModules, entitlement, einvoicingConfig, canConfigureEinvoicing, companyMemories] = await Promise.all([
+  const [profile, members, roles, joinCode, organization, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, membership, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialMetalPriceGrids, initialClauseTemplates, organizationModules, entitlement, einvoicingConfig, canConfigureEinvoicing, companyMemories] = await Promise.all([
     getCurrentUserProfile(),
     getTeamMembers(),
     getOrgRoles(),
@@ -61,7 +59,6 @@ export default async function SettingsPage({
     getLaborRates(),
     getPrestationTypes(),
     getSuppliers(),
-    getWhatsAppConfig(),
     getCurrentMembershipContext(),
     getOrganizationExports(),
     getEmailTemplates(),
@@ -81,7 +78,6 @@ export default async function SettingsPage({
 
   const catalogContext = resolveCatalogContext(organization)
   const { supabaseUrl } = getPublicRuntimeConfig()
-  const sharedWabaDisplayNumber = process.env.NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER ?? null
   const effectiveInitialTab = initialTab === 'facturation' && !canConfigureEinvoicing
     ? 'profil'
     : initialTab
@@ -96,12 +92,10 @@ export default async function SettingsPage({
       organization={organization}
       appUrl={getAppUrl()}
       supabaseUrl={supabaseUrl}
-      sharedWabaDisplayNumber={sharedWabaDisplayNumber}
       catalogMaterials={catalogMaterials}
       catalogLaborRates={catalogLaborRates}
       catalogPrestationTypes={catalogPrestationTypes}
       suppliers={suppliers}
-      whatsappConfig={whatsappConfig}
       catalogContext={catalogContext}
       currentRoleSlug={membership?.roleSlug ?? null}
       organizationExports={organizationExports}

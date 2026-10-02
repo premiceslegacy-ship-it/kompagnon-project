@@ -321,9 +321,9 @@ async function autoSendInvoice(
     function interpolate(template: string, vars: Record<string, string>): string {
       return Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), template)
     }
-    function wrapHtml(orgName: string, bodyText: string): string {
+    function wrapHtml(orgName: string, bodyText: string, logoUrl?: string | null): string {
       const bodyHtml = escHtml(bodyText).replace(/\n/g, '<br>')
-      return renderOrganizationEmail({ subject: orgName, orgName, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
+      return renderOrganizationEmail({ subject: orgName, orgName, logoUrl, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
     }
 
     const vars: Record<string, string> = {
@@ -334,7 +334,7 @@ async function autoSendInvoice(
     }
 
     const subject = interpolate(tpl.subject, vars)
-    const html = wrapHtml(org.name, interpolate(tpl.body_text, vars))
+    const html = wrapHtml(org.name, interpolate(tpl.body_text, vars), org.logo_url)
 
     // Générer le PDF
     let attachments: Array<{ filename: string; content: Buffer }> | undefined
@@ -348,13 +348,15 @@ async function autoSendInvoice(
       console.error('[cron/recurring] PDF generation error:', pdfErr)
     }
 
-    await sendEmail({
+    const mail = await sendEmail({
       organizationId: orgId,
       to: clientEmail,
       subject,
       html,
       attachments,
     })
+    // Une facture dont l'email n'est pas parti ne doit pas passer en « envoyée ».
+    if (mail.error) throw new Error(mail.error)
 
     // Marquer comme envoyée
     await admin
@@ -386,7 +388,7 @@ async function notifyArtisan(
   try {
     const { data: org } = await admin
       .from('organizations')
-      .select('name, email, email_from_address')
+      .select('name, email, email_from_address, logo_url')
       .eq('id', orgId)
       .single()
 
@@ -407,7 +409,7 @@ async function notifyArtisan(
     const subject = `Facture récurrente à valider : ${data.invoiceTitle}`
     const bodyText = `Bonjour,\n\nUne facture récurrente a été préparée automatiquement et attend votre validation avant envoi.\n\nFacture : ${data.invoiceTitle}\nDate d'envoi prévue : ${fmtDate}\nMontant HT : ${fmtAmount}${autoSendNote}\n\nVous pouvez la vérifier ici :\n${appUrl}/finances/invoice-editor?id=${data.invoiceId}\n\nAu plaisir de vous simplifier le suivi,\n${APP_SIGNATURE}`
     const bodyHtml = escHtml(bodyText).replace(/\n/g, '<br>')
-    const html = renderOrganizationEmail({ subject, orgName: org.name, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
+    const html = renderOrganizationEmail({ subject, orgName: org.name, logoUrl: org.logo_url, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
 
     await sendEmail({
       organizationId: orgId,

@@ -116,7 +116,7 @@ export default function PricingTab({ featureUsageRows, modelUsageRows, pricingSi
           <div>
             <h2 className="text-lg font-bold text-primary font-display">Recommandations commerciales</h2>
             <p className="mt-1 text-sm text-secondary font-body">
-              Opportunités détectées automatiquement à partir des quotas, de la marge et des usages IA/WhatsApp.
+              Opportunités détectées automatiquement à partir des quotas, de la marge et des usages IA.
             </p>
           </div>
 

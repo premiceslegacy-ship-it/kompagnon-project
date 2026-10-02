@@ -252,7 +252,7 @@ export async function completeOnboarding(formData: FormData) {
   // Récupérer le profil de l'invitant et les infos org pour les emails
   const [{ data: profile }, { data: org }] = await Promise.all([
     supabase.from('profiles').select('full_name').eq('id', user.id).single(),
-    admin.from('organizations').select('name, email_from_address').eq('id', organizationId!).single(),
+    admin.from('organizations').select('name, email_from_address, logo_url').eq('id', organizationId!).single(),
   ])
 
   let i = 0
@@ -301,6 +301,7 @@ export async function completeOnboarding(formData: FormData) {
     // Envoyer l'email brandé via Resend
     const { subject, html } = buildInviteEmail({
       orgName: org?.name,
+      logoUrl: org?.logo_url,
       inviterName: profile?.full_name || user.email || 'Votre responsable',
       inviteUrl: linkData.properties.action_link,
     })
@@ -310,6 +311,7 @@ export async function completeOnboarding(formData: FormData) {
       to: email,
       subject,
       html,
+      allowAtelierReplyTo: true, // invitation de compte : une réponse peut aller au support Atelier
     })
 
     if (sendError) {

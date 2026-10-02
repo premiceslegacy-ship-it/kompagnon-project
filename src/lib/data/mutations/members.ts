@@ -314,7 +314,7 @@ export async function sendMemberSpaceInviteUnchecked(memberId: string): Promise<
 
   const { data: member } = await admin
     .from('chantier_equipe_membres')
-    .select('id, prenom, email, organization_id, organizations:organizations!chantier_equipe_membres_organization_id_fkey(name)')
+    .select('id, prenom, email, organization_id, organizations:organizations!chantier_equipe_membres_organization_id_fkey(name, logo_url)')
     .eq('id', memberId)
     .single()
 
@@ -322,6 +322,8 @@ export async function sendMemberSpaceInviteUnchecked(memberId: string): Promise<
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orgName: string = (member as any).organizations?.name ?? 'Votre organisation'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const orgLogoUrl: string | null = (member as any).organizations?.logo_url ?? null
 
   const { raw, hash, expiresAt } = generateMagicToken()
   const { error: insertError } = await admin
@@ -338,6 +340,7 @@ export async function sendMemberSpaceInviteUnchecked(memberId: string): Promise<
 
   const { subject, html } = buildMemberSpaceInviteEmail({
     orgName,
+    logoUrl: orgLogoUrl,
     memberFirstName: member.prenom ?? null,
     spaceUrl,
   })
@@ -366,7 +369,7 @@ export async function sendMemberSpaceTokenReminder(oldTokenId: string, memberId:
 
   const { data: member } = await admin
     .from('chantier_equipe_membres')
-    .select('id, prenom, email, organization_id, organizations:organizations!chantier_equipe_membres_organization_id_fkey(name)')
+    .select('id, prenom, email, organization_id, organizations:organizations!chantier_equipe_membres_organization_id_fkey(name, logo_url)')
     .eq('id', memberId)
     .single()
 
@@ -378,6 +381,8 @@ export async function sendMemberSpaceTokenReminder(oldTokenId: string, memberId:
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orgName: string = (member as any).organizations?.name ?? 'Votre organisation'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const orgLogoUrl: string | null = (member as any).organizations?.logo_url ?? null
 
   const { raw, hash, expiresAt } = generateMagicToken()
   const { error: insertError } = await admin
@@ -394,6 +399,7 @@ export async function sendMemberSpaceTokenReminder(oldTokenId: string, memberId:
 
   const { subject, html } = buildMemberSpaceInviteReminderEmail({
     orgName,
+    logoUrl: orgLogoUrl,
     memberFirstName: member.prenom ?? null,
     spaceUrl,
   })
@@ -715,6 +721,7 @@ export async function sendMemberHoursReport(
 
   const { subject, html } = buildMemberMonthlyReportEmail({
     orgName: org.name,
+    logoUrl: org.logo_url,
     orgEmail: (org as any).email ?? null,
     memberFirstName: member.prenom ?? null,
     periodLabel,

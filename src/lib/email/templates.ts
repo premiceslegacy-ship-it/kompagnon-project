@@ -14,7 +14,7 @@ import {
   renderAlertBanner,
   escHtml,
 } from './layout'
-import { APP_NAME, APP_SIGNATURE, absoluteBrandAssetUrl, wordmarkForTheme } from '@/lib/brand'
+import { APP_NAME } from '@/lib/brand'
 
 const H1 = `margin:0 0 12px;font-size:22px;font-weight:750;color:#080807;line-height:1.3;letter-spacing:-0.04em;font-family:'Geist','Inter',Arial,sans-serif;`
 const BODY_P = `margin:0 0 28px;font-size:15px;color:#6E6A62;line-height:1.6;font-family:'Geist','Inter',Arial,sans-serif;`
@@ -25,10 +25,12 @@ const LABEL_P = `margin:0 0 8px;font-size:11px;font-weight:800;color:#8F4600;tex
 
 export function buildInviteEmail({
   orgName,
+  logoUrl,
   inviterName,
   inviteUrl,
 }: {
   orgName: string
+  logoUrl?: string | null
   inviterName: string
   inviteUrl: string
 }): { subject: string; html: string } {
@@ -55,6 +57,7 @@ ${renderCTA(`Rejoindre ${escHtml(orgName)} →`, inviteUrl)}
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     bodyHtml: body,
     fallbackLinkHtml: fallback,
   })
@@ -88,7 +91,6 @@ ${renderCodeBlock(otp)}
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
-    headerLogoUrl: orgName === APP_SIGNATURE ? absoluteBrandAssetUrl(wordmarkForTheme('dark')) : null,
     bodyHtml: body,
   })
 
@@ -100,9 +102,11 @@ ${renderCodeBlock(otp)}
 export function buildPasswordResetOtpEmail({
   otp,
   orgName,
+  logoUrl,
 }: {
   otp: string
   orgName: string
+  logoUrl?: string | null
 }): { subject: string; html: string } {
   const subject = `Réinitialisation de votre mot de passe · ${orgName}`
 
@@ -121,7 +125,7 @@ ${renderCodeBlock(otp)}
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
-    headerLogoUrl: orgName === APP_SIGNATURE ? absoluteBrandAssetUrl(wordmarkForTheme('dark')) : null,
+    headerLogoUrl: logoUrl,
     bodyHtml: body,
   })
 
@@ -132,6 +136,7 @@ ${renderCodeBlock(otp)}
 
 export function buildQuoteSentEmail({
   orgName,
+  logoUrl,
   orgEmail,
   clientName,
   quoteNumber,
@@ -143,6 +148,7 @@ export function buildQuoteSentEmail({
   emailSignature,
 }: {
   orgName: string
+  logoUrl?: string | null
   orgEmail: string
   clientName: string
   quoteNumber: string | null
@@ -198,6 +204,7 @@ ${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#6E6A62;line-
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     bodyHtml: body,
     fallbackLinkHtml: fallback,
   })
@@ -209,6 +216,7 @@ ${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#6E6A62;line-
 
 export function buildQuoteAcceptedClientEmail({
   orgName,
+  logoUrl,
   orgEmail,
   clientName,
   quoteNumber,
@@ -218,6 +226,7 @@ export function buildQuoteAcceptedClientEmail({
   signedAt,
 }: {
   orgName: string
+  logoUrl?: string | null
   orgEmail?: string | null
   clientName: string
   quoteNumber: string | null
@@ -270,6 +279,7 @@ ${orgEmail ? `<p style="margin:14px 0 0;font-size:13px;color:#6E6A62;line-height
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     headerColor: '#16a34a',
     extraHeaderHtml: extraHeader,
     bodyHtml: body,
@@ -282,11 +292,13 @@ ${orgEmail ? `<p style="margin:14px 0 0;font-size:13px;color:#6E6A62;line-height
 
 export function buildOrganizationExportReadyEmail({
   orgName,
+  logoUrl,
   downloadUrl,
   expiresAt,
   summary,
 }: {
   orgName: string
+  logoUrl?: string | null
   downloadUrl: string
   expiresAt: string
   summary: {
@@ -344,6 +356,7 @@ ${renderTextBox(
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     bodyHtml: body,
     fallbackLinkHtml: fallback,
   })
@@ -355,6 +368,7 @@ ${renderTextBox(
 
 export function buildQuoteAcceptedProfessionalEmail({
   orgName,
+  logoUrl,
   clientName,
   clientEmail,
   quoteNumber,
@@ -365,6 +379,7 @@ export function buildQuoteAcceptedProfessionalEmail({
   quoteEditorUrl,
 }: {
   orgName: string
+  logoUrl?: string | null
   clientName: string
   clientEmail: string
   quoteNumber: string | null
@@ -412,6 +427,7 @@ ${renderCTA(`Voir le devis dans ${APP_NAME} →`, quoteEditorUrl)}
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     alertHtml: alert,
     bodyHtml: body,
   })
@@ -423,6 +439,7 @@ ${renderCTA(`Voir le devis dans ${APP_NAME} →`, quoteEditorUrl)}
 
 export function buildInvoicePaidEmail({
   orgName,
+  logoUrl,
   orgEmail,
   clientName,
   invoiceNumber,
@@ -433,6 +450,7 @@ export function buildInvoicePaidEmail({
   emailSignature,
 }: {
   orgName: string
+  logoUrl?: string | null
   orgEmail: string
   clientName: string
   invoiceNumber: string | null
@@ -482,6 +500,7 @@ ${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#6E6A62;line-
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     bodyHtml: body,
   })
 
@@ -492,6 +511,7 @@ ${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#6E6A62;line-
 
 export function buildDepositInvoiceEmail({
   orgName,
+  logoUrl,
   orgEmail,
   clientName,
   invoiceNumber,
@@ -504,6 +524,7 @@ export function buildDepositInvoiceEmail({
   emailSignature,
 }: {
   orgName: string
+  logoUrl?: string | null
   orgEmail: string
   clientName: string
   invoiceNumber: string | null
@@ -560,6 +581,7 @@ ${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#6E6A62;line-
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     bodyHtml: body,
   })
 
@@ -570,6 +592,7 @@ ${emailSignature ? `<p style="margin:24px 0 0;font-size:13px;color:#6E6A62;line-
 
 export function buildQuoteRequestNotificationEmail({
   orgName,
+  logoUrl,
   name,
   email,
   phone,
@@ -578,6 +601,7 @@ export function buildQuoteRequestNotificationEmail({
   description,
 }: {
   orgName: string
+  logoUrl?: string | null
   name: string
   email: string
   phone?: string | null
@@ -609,6 +633,7 @@ ${renderTextBox(description, 'Message du client')}
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     bodyHtml: body,
   })
 
@@ -619,10 +644,12 @@ ${renderTextBox(description, 'Message du client')}
 
 export function buildMemberSpaceInviteEmail({
   orgName,
+  logoUrl,
   memberFirstName,
   spaceUrl,
 }: {
   orgName: string
+  logoUrl?: string | null
   memberFirstName: string | null
   spaceUrl: string
 }): { subject: string; html: string } {
@@ -654,6 +681,7 @@ ${renderCTA('Ouvrir mon espace →', spaceUrl)}
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     bodyHtml: body,
     fallbackLinkHtml: fallback,
   })
@@ -665,10 +693,12 @@ ${renderCTA('Ouvrir mon espace →', spaceUrl)}
 
 export function buildMemberSpaceInviteReminderEmail({
   orgName,
+  logoUrl,
   memberFirstName,
   spaceUrl,
 }: {
   orgName: string
+  logoUrl?: string | null
   memberFirstName: string | null
   spaceUrl: string
 }): { subject: string; html: string } {
@@ -700,6 +730,7 @@ ${renderCTA('Ouvrir mon espace →', spaceUrl)}
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     bodyHtml: body,
     fallbackLinkHtml: fallback,
   })
@@ -711,6 +742,7 @@ ${renderCTA('Ouvrir mon espace →', spaceUrl)}
 
 export function buildMemberMonthlyReportEmail({
   orgName,
+  logoUrl,
   orgEmail,
   memberFirstName,
   periodLabel,
@@ -718,6 +750,7 @@ export function buildMemberMonthlyReportEmail({
   spaceUrl,
 }: {
   orgName: string
+  logoUrl?: string | null
   orgEmail?: string | null
   memberFirstName: string | null
   periodLabel: string
@@ -746,6 +779,7 @@ ${spaceUrl ? renderCTA('Voir mon espace →', spaceUrl) : ''}
   const html = renderEmailShell({
     title: subject,
     headerName: orgName,
+    headerLogoUrl: logoUrl,
     bodyHtml: body,
   })
 

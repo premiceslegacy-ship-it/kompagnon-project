@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
     const operatorEmail = process.env.OPERATOR_ALERT_EMAIL?.trim()
     if (operatorEmail) {
       const notification = buildAtelierNotificationEmail({
-        subject: `[Atelier] Nouvelle inscription — ${payload.company_name}`,
+        subject: `[Atelier] Nouvelle inscription : ${payload.company_name}`,
         title: 'Nouvelle inscription',
         body: `${payload.company_name} vient de terminer son inscription. Préférence : ${payload.preferred_tier}. Source : ${payload.signup_source ?? 'direct'}.`,
       })

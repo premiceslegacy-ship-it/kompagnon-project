@@ -93,7 +93,7 @@ export function ActivationPlansCarousel({
 
       <div className={styles.revealHeading}>
         <p className={styles.eyebrow}>{trialAvailable ? 'Commencez sans risque' : 'Votre bureau reprend sa place'}</p>
-        <h3>{trialAvailable ? 'Pro offert pendant 14 jours.' : 'Le système qui suit vos chantiers.'}</h3>
+        <h3>{trialAvailable ? 'Pro offert pendant 7 jours.' : 'Le système qui suit vos chantiers.'}</h3>
         <p>
           {trialAvailable
             ? 'Sans carte bancaire. Sans prélèvement automatique à la fin. Testez Pro gratuitement ou choisissez Expert et passez au paiement sécurisé Stripe.'
@@ -114,7 +114,7 @@ export function ActivationPlansCarousel({
                     <p className={styles.cardEyebrow}>{plan.name}</p>
                     <div className={styles.priceRow}><strong>{plan.price} €</strong><span>HT / mois</span></div>
                     <p className={styles.cardTrial}>
-                      {trialAvailable && tier === 'pro' ? 'Pro offert 14 jours · aucune carte demandée' : `Paiement sécurisé via Stripe · abonnement ${plan.name}`}
+                      {trialAvailable && tier === 'pro' ? 'Pro offert 7 jours · aucune carte demandée' : `Paiement sécurisé via Stripe · abonnement ${plan.name}`}
                     </p>
                     <h3>{plan.promise}</h3>
                     <p className={styles.cardAudience}>{plan.audience}</p>
@@ -135,7 +135,7 @@ export function ActivationPlansCarousel({
 
                   <form action={trialAvailable && tier === 'pro' && startTrialAction ? startTrialAction : checkoutAction}>
                     {!(trialAvailable && tier === 'pro' && startTrialAction) && <input type="hidden" name="tier" value={tier} />}
-                    <CheckoutSubmitButton label={trialAvailable && tier === 'pro' ? 'Essayer Pro gratuitement 14 jours' : 'Passer au checkout Stripe'} featured={featured} />
+                    <CheckoutSubmitButton label={trialAvailable && tier === 'pro' ? 'Essayer Pro gratuitement 7 jours' : 'Passer au checkout Stripe'} featured={featured} />
                   </form>
                 </article>
               </div>

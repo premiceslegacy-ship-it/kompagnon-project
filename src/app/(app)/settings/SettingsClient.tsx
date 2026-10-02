@@ -20,14 +20,12 @@ import { deactivateCompanyMemory } from '@/lib/data/mutations/company-memory';
 import { updateEmailSettings } from '@/lib/data/mutations/email-settings';
 import { updateProfile, updatePassword } from '@/lib/data/mutations/profile';
 import { updatePublicFormSettings } from '@/lib/data/mutations/quote-requests';
-import { saveWhatsAppConfig, deleteWhatsAppConfig } from '@/lib/data/mutations/whatsapp';
 import { createOrganizationExport } from '@/lib/data/mutations/organization-exports'
 import { requestAccountDeletion, cancelAccountDeletion } from '@/lib/data/mutations/account-deletion';
 import SignaturePad from '@/components/SignaturePad'
 import ExportComptableModal from '@/components/ExportComptableModal';
 import { upsertEmailTemplate, resetEmailTemplate } from '@/lib/data/mutations/email-templates';
 import type { EmailTemplate, EmailTemplateSlug } from '@/lib/data/queries/emailTemplates';
-import type { WhatsAppConfig } from '@/lib/data/mutations/whatsapp';
 import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids';
 import MetalPriceGridsSettings from '@/components/settings/MetalPriceGridsSettings';
 import ClauseTemplatesSettings from '@/components/settings/ClauseTemplatesSettings';
@@ -94,12 +92,10 @@ type Props = {
     organization: Organization | null;
     appUrl: string;
     supabaseUrl: string;
-    sharedWabaDisplayNumber: string | null;
     catalogMaterials: CatalogMaterial[];
     catalogLaborRates: CatalogLaborRate[];
     catalogPrestationTypes: PrestationType[];
     suppliers: Supplier[];
-    whatsappConfig: WhatsAppConfig | null;
     catalogContext: ResolvedCatalogContext;
     currentRoleSlug: string | null;
     organizationExports: OrganizationExportListItem[];
@@ -218,11 +214,8 @@ function SecondaryActivitiesSelector({
     )
 }
 
-export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, sharedWabaDisplayNumber, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, whatsappConfig, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkPro, stripeLinkExpert, selfService, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt, einvoicingConfig, canConfigureEinvoicing, companyMemories, oauthResult, oauthDetail }: Props) {
+export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkPro, stripeLinkExpert, selfService, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt, einvoicingConfig, canConfigureEinvoicing, companyMemories, oauthResult, oauthDetail }: Props) {
     const router = useRouter()
-    const webhookUrl = supabaseUrl
-        ? `${supabaseUrl}/functions/v1/whatsapp-webhook`
-        : 'https://[ref].supabase.co/functions/v1/whatsapp-webhook'
     const [activeTab, setActiveTab] = useState(initialTab);
     useEffect(() => {
         const hash = window.location.hash.slice(1)
@@ -460,20 +453,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     const [deletionError, setDeletionError] = useState<string | null>(null)
     const [cancelDeletionStatus, setCancelDeletionStatus] = useState<'idle' | 'pending' | 'done'>('idle')
 
-    // ─── WhatsApp ─────────────────────────────────────────────────────────────
-    const [waPhoneNumberId, setWaPhoneNumberId] = useState(whatsappConfig?.phone_number_id ?? '')
-    const [waWabaId, setWaWabaId] = useState(whatsappConfig?.waba_id ?? '')
-    const [waAccessToken, setWaAccessToken] = useState(whatsappConfig?.access_token ?? '')
-    const defaultVerifyToken = whatsappConfig?.verify_token ?? crypto.randomUUID().replace(/-/g, '')
-    const [waVerifyToken, setWaVerifyToken] = useState(defaultVerifyToken)
-    const [waAuthorizedNumbers, setWaAuthorizedNumbers] = useState<string[]>(whatsappConfig?.authorized_numbers ?? [])
-    const [waAuthorizedContacts, setWaAuthorizedContacts] = useState<{ number: string; label: string }[]>(whatsappConfig?.authorized_contacts ?? [])
-    const [waUseSharedWaba, setWaUseSharedWaba] = useState(whatsappConfig?.use_shared_waba ?? false)
-    const [waIsActive, setWaIsActive] = useState(whatsappConfig?.is_active ?? true)
-    const [waSaveStatus, setWaSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
-    const [waNumberInput, setWaNumberInput] = useState('')
-    const [waLabelInput, setWaLabelInput] = useState('')
-    const [waShowAdvanced, setWaShowAdvanced] = useState(false)
     const currentBusinessSelection = resolveBusinessSelection({ activityId: companyDetails.business_activity })
     const deletionRequestHref = buildDeletionRequestMailto({
         requesterEmail: initialEmail,
@@ -2901,360 +2880,6 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             <ShieldCheck className="w-4 h-4" />
                             Lire la politique de suppression détaillée
                         </Link>
-                    </div>
-                </div>
-            )
-        }
-
-        if (activeTab === 'whatsapp') {
-            async function handleSaveWhatsApp() {
-                setWaSaveStatus('saving')
-                startTransition(async () => {
-                    const result = await saveWhatsAppConfig({
-                        phoneNumberId: waPhoneNumberId,
-                        wabaId: waWabaId,
-                        accessToken: waAccessToken,
-                        verifyToken: waVerifyToken,
-                        authorizedNumbers: waAuthorizedNumbers,
-                        authorizedContacts: waAuthorizedContacts,
-                        useSharedWaba: waUseSharedWaba,
-                        isActive: waIsActive,
-                    })
-                    setWaSaveStatus(result.error ? 'error' : 'saved')
-                    setTimeout(() => setWaSaveStatus('idle'), 3000)
-                })
-            }
-
-            async function handleDeleteWhatsApp() {
-                if (!confirm('Supprimer la configuration WhatsApp ?')) return
-                startTransition(async () => {
-                    await deleteWhatsAppConfig()
-                    setWaPhoneNumberId('')
-                    setWaAccessToken('')
-                    setWaAuthorizedNumbers([])
-                    setWaAuthorizedContacts([])
-                })
-            }
-
-            function addContact() {
-                const n = waNumberInput.trim()
-                if (!n) return
-                const alreadyExists = waAuthorizedContacts.some(c => c.number === n) || waAuthorizedNumbers.includes(n)
-                if (alreadyExists) return
-                setWaAuthorizedContacts(prev => [...prev, { number: n, label: waLabelInput.trim() }])
-                setWaNumberInput('')
-                setWaLabelInput('')
-            }
-
-            function removeContact(number: string) {
-                setWaAuthorizedContacts(prev => prev.filter(c => c.number !== number))
-                setWaAuthorizedNumbers(prev => prev.filter(n => n !== number))
-            }
-
-            const allContacts = [
-                ...waAuthorizedContacts,
-                ...waAuthorizedNumbers
-                    .filter(n => !waAuthorizedContacts.some(c => c.number === n))
-                    .map(n => ({ number: n, label: '' })),
-            ]
-
-            const canSave = waVerifyToken && (waUseSharedWaba || (waPhoneNumberId && waAccessToken))
-
-            return (
-                <div className="space-y-6">
-                    <div className="rounded-3xl card p-8 flex flex-col items-center justify-center gap-5 text-center min-h-[320px]">
-                        <div className="w-16 h-16 rounded-2xl flex items-center justify-center">
-                            <MessageSquare className="w-8 h-8 text-green-500" />
-                        </div>
-                        <div>
-                            <h2 className="text-2xl font-bold text-primary mb-2">Agent WhatsApp</h2>
-                            <p className="text-sm text-secondary max-w-sm">
-                                La connexion WhatsApp sera disponible prochainement. En attente de la vérification Meta et de la mise en place du numéro dédié.
-                            </p>
-                        </div>
-                        <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 text-sm font-semibold">
-                            Bientôt disponible
-                        </span>
-                    </div>
-                    <div className="bg-surface dark:bg-white/5 rounded-2xl p-6 border border-[var(--elevation-border)] space-y-6 hidden">
-                        {/* En-tête */}
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl flex items-center justify-center">
-                                <MessageSquare className="w-5 h-5 text-green-500" />
-                            </div>
-                            <div>
-                                <h2 className="text-xl font-bold text-primary">Agent WhatsApp IA</h2>
-                                <p className="text-secondary text-sm">Gérez vos chantiers et consultez vos données par message vocal ou texte.</p>
-                            </div>
-                            <div className="ml-auto">
-                                <button
-                                    onClick={() => setWaIsActive(v => !v)}
-                                    className={`flex items-center gap-2 px-4 py-2 rounded-full font-semibold text-sm transition-all ${waIsActive ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-base text-secondary border border-[var(--elevation-border)]'}`}
-                                >
-                                    {waIsActive ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
-                                    {waIsActive ? 'Activé' : 'Désactivé'}
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Mode mutualisé vs propre WABA */}
-                        <div className="bg-base rounded-xl border border-[var(--elevation-border)] overflow-hidden">
-                            <button
-                                onClick={() => setWaUseSharedWaba(v => !v)}
-                                className="w-full px-4 py-3 flex items-center gap-3 hover:bg-accent/5 transition-all text-left"
-                            >
-                                <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${waUseSharedWaba ? 'bg-accent border-accent' : 'border-secondary/40'}`}>
-                                    {waUseSharedWaba && <Check className="w-3 h-3 text-black" />}
-                                </div>
-                                <div>
-                                    <p className="text-sm font-semibold text-primary">Utiliser le numéro bot Atelier (recommandé)</p>
-                                    <p className="text-xs text-secondary">L&apos;agent répond depuis le numéro WhatsApp mutualisé Atelier - aucune configuration Meta requise de votre côté.</p>
-                                </div>
-                            </button>
-                        </div>
-
-                        {/* Mode propre WABA - affiché seulement si pas mutualisé */}
-                        {!waUseSharedWaba && (
-                            <div className="space-y-4">
-                                {/* URL webhook */}
-                                <div className="bg-base rounded-xl p-4 border border-[var(--elevation-border)]">
-                                    <p className="text-xs font-semibold text-secondary uppercase tracking-wider mb-2 flex items-center gap-2">
-                                        <Code2 className="w-3.5 h-3.5" /> URL Webhook Meta
-                                    </p>
-                                    <div className="flex items-center gap-2 mt-1">
-                                        <p className="text-xs text-secondary font-mono break-all flex-1">{webhookUrl}</p>
-                                        <CopyButton text={webhookUrl} />
-                                    </div>
-                                </div>
-
-                                {/* Guide pas-à-pas */}
-                                <div className="rounded-xl border border-[var(--elevation-border)] overflow-hidden">
-                                    <div className="bg-green-500/8 border-b border-green-500/15 px-4 py-3 flex items-center gap-2">
-                                        <MessageSquare className="w-4 h-4 text-green-500 flex-shrink-0" />
-                                        <p className="font-bold text-primary text-sm">Configuration de votre propre numéro Meta</p>
-                                    </div>
-                                    <div className="divide-y divide-[var(--elevation-border)]">
-
-                                        {/* Étape 1 */}
-                                        <div className="px-4 py-4 flex gap-3">
-                                            <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
-                                                <span className="text-xs font-bold text-black">1</span>
-                                            </div>
-                                            <div className="space-y-1.5 flex-1">
-                                                <p className="font-semibold text-primary text-sm">Créer votre application Meta</p>
-                                                <p className="text-xs text-secondary leading-relaxed">
-                                                    Rendez-vous sur <strong className="text-primary">developers.facebook.com</strong> → <strong className="text-primary">Mes apps</strong> → <strong className="text-primary">Créer une app</strong>.<br/>
-                                                    Choisissez le type <strong className="text-primary">« Entreprise »</strong>, puis <strong className="text-primary">Ajouter un produit → WhatsApp → Configurer</strong>.
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        {/* Étape 2 - Phone Number ID */}
-                                        <div className="px-4 py-4 flex gap-3">
-                                            <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
-                                                <span className="text-xs font-bold text-black">2</span>
-                                            </div>
-                                            <div className="space-y-2 flex-1">
-                                                <p className="font-semibold text-primary text-sm">Phone Number ID</p>
-                                                <p className="text-xs text-secondary">Dans votre app Meta → <strong className="text-primary">WhatsApp → Configuration de l&apos;API</strong>, menu déroulant <em>De</em> → icône ℹ️ → copiez le <strong className="text-primary">Phone Number ID</strong>.</p>
-                                                <input
-                                                    type="text"
-                                                    value={waPhoneNumberId}
-                                                    onChange={e => setWaPhoneNumberId(e.target.value)}
-                                                    placeholder="123456789012345"
-                                                    className="w-full px-3 py-2 rounded-lg bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:border-accent font-mono"
-                                                />
-                                            </div>
-                                        </div>
-
-                                        {/* Étape 3 - Token permanent */}
-                                        <div className="px-4 py-4 flex gap-3">
-                                            <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
-                                                <span className="text-xs font-bold text-black">3</span>
-                                            </div>
-                                            <div className="space-y-2 flex-1">
-                                                <p className="font-semibold text-primary text-sm">Token d&apos;accès <span className="text-red-500 font-normal text-xs">→ choisissez PERMANENT, pas temporaire</span></p>
-                                                <p className="text-xs text-secondary">Dans votre app Meta → <strong className="text-primary">WhatsApp → Configuration de l&apos;API</strong> → <strong className="text-primary">Générer un token d&apos;accès</strong>. Choisissez impérativement <strong className="text-primary">Token permanent</strong> (valide à vie). Le token temporaire expire en 24h et l&apos;agent s&apos;arrêtera.</p>
-                                                <div className="bg-amber-500/8 border border-amber-500/20 rounded-lg px-3 py-2 text-xs text-secondary">
-                                                    ⚠ Si le token commence par <code className="text-primary">EAAG</code> et fait moins de 200 caractères, c&apos;est un token temporaire - ne l&apos;utilisez pas.
-                                                </div>
-                                                <input
-                                                    type="password"
-                                                    value={waAccessToken}
-                                                    onChange={e => setWaAccessToken(e.target.value)}
-                                                    placeholder="EAAxxxxxxx... (token permanent, ~200 caractères)"
-                                                    className="w-full px-3 py-2 rounded-lg bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:border-accent font-mono"
-                                                />
-                                            </div>
-                                        </div>
-
-                                        {/* Étape 4 - Webhook */}
-                                        <div className="px-4 py-4 flex gap-3">
-                                            <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
-                                                <span className="text-xs font-bold text-black">4</span>
-                                            </div>
-                                            <div className="space-y-2 flex-1">
-                                                <p className="font-semibold text-primary text-sm">Configurer le webhook</p>
-                                                <p className="text-xs text-secondary">Dans votre app Meta → <strong className="text-primary">WhatsApp → Configuration → Webhooks → Configurer</strong>. Collez l&apos;URL et le Verify Token ci-dessous, puis cochez l&apos;abonnement <strong className="text-primary">messages</strong>.</p>
-                                                <div className="space-y-2">
-                                                    <div className="bg-base rounded-lg px-3 py-2 border border-[var(--elevation-border)]">
-                                                        <p className="text-xs text-secondary/60 mb-1">URL de rappel</p>
-                                                        <div className="flex items-center gap-2">
-                                                            <p className="text-xs font-mono text-primary break-all flex-1">{webhookUrl}</p>
-                                                            <CopyButton text={webhookUrl} />
-                                                        </div>
-                                                    </div>
-                                                    <div className="bg-base rounded-lg px-3 py-2 border border-[var(--elevation-border)]">
-                                                        <p className="text-xs text-secondary/60 mb-1.5">Verify Token (généré automatiquement - copiez-le dans Meta)</p>
-                                                        <div className="flex items-center gap-2">
-                                                            <input
-                                                                type="text"
-                                                                value={waVerifyToken}
-                                                                onChange={e => setWaVerifyToken(e.target.value)}
-                                                                className="flex-1 px-2 py-1.5 rounded-lg bg-surface dark:bg-white/[0.03] border border-[var(--elevation-border)] text-primary text-xs focus:outline-none focus:border-accent font-mono"
-                                                            />
-                                                            <CopyButton text={waVerifyToken} />
-                                                            <button
-                                                                onClick={() => setWaVerifyToken(crypto.randomUUID().replace(/-/g, ''))}
-                                                                className="w-8 h-8 flex items-center justify-center rounded-lg border border-[var(--elevation-border)] bg-base text-secondary hover:text-accent hover:border-accent transition-all"
-                                                                title="Régénérer"
-                                                            >
-                                                                <RefreshCw className="w-3.5 h-3.5" />
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Avancé - WABA ID */}
-                                        <div className="px-4 py-3">
-                                            <button
-                                                onClick={() => setWaShowAdvanced(v => !v)}
-                                                className="text-xs text-secondary hover:text-accent transition-colors flex items-center gap-1"
-                                            >
-                                                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${waShowAdvanced ? 'rotate-180' : ''}`} />
-                                                Paramètres avancés (WABA ID - optionnel)
-                                            </button>
-                                            {waShowAdvanced && (
-                                                <div className="mt-3">
-                                                    <input
-                                                        type="text"
-                                                        value={waWabaId}
-                                                        onChange={e => setWaWabaId(e.target.value)}
-                                                        placeholder="WhatsApp Business Account ID"
-                                                        className="w-full px-3 py-2 rounded-lg bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:border-accent font-mono"
-                                                    />
-                                                    <p className="text-xs text-secondary/60 mt-1">Optionnel - visible dans Meta Business Suite sous votre compte WABA.</p>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Numéro bot Atelier - affiché uniquement en mode mutualisé */}
-                        {waUseSharedWaba && sharedWabaDisplayNumber && (
-                            <div className="bg-green-500/8 border border-green-500/20 rounded-xl px-4 py-4 space-y-2">
-                                <p className="text-xs font-semibold text-secondary uppercase tracking-wider">Numéro de votre assistant WhatsApp</p>
-                                <div className="flex items-center gap-3">
-                                    <p className="text-xl font-bold text-primary font-mono tracking-wide">{sharedWabaDisplayNumber}</p>
-                                    <CopyButton text={sharedWabaDisplayNumber} />
-                                </div>
-                                <p className="text-xs text-secondary">Enregistrez ce numéro dans vos contacts WhatsApp (ex&nbsp;: &laquo;&nbsp;Mon assistant Atelier&nbsp;&raquo;) et envoyez-lui un message pour commencer.</p>
-                            </div>
-                        )}
-
-                        {/* Contacts autorisés (tous modes) */}
-                        <div>
-                            <label className="block text-sm font-semibold text-primary mb-1">
-                                {waUseSharedWaba ? 'Vos numéros et ceux de votre équipe' : 'Numéros autorisés'}
-                            </label>
-                            <p className="text-xs text-secondary/70 mb-3">
-                                {waUseSharedWaba
-                                    ? "L'agent répond uniquement à ces numéros depuis le bot Atelier. Ajoutez votre numéro et ceux de votre équipe."
-                                    : "Seuls ces numéros peuvent interroger l'agent. Laissez vide pour autoriser tous les numéros (déconseillé)."}
-                            </p>
-                            <div className="flex flex-wrap gap-2 mb-3">
-                                {allContacts.map(c => (
-                                    <span key={c.number} className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-sm">
-                                        <span className="font-mono text-xs">{c.number}</span>
-                                        {c.label && <span className="text-accent/70 text-xs">· {c.label}</span>}
-                                        <button onClick={() => removeContact(c.number)}>
-                                            <X className="w-3 h-3" />
-                                        </button>
-                                    </span>
-                                ))}
-                                {allContacts.length === 0 && (
-                                    <span className="text-xs text-amber-500 flex items-center gap-1">⚠ Aucun filtre : tous les numéros sont autorisés</span>
-                                )}
-                            </div>
-                            <div className="flex gap-2">
-                                <input
-                                    type="tel"
-                                    value={waNumberInput}
-                                    onChange={e => setWaNumberInput(e.target.value)}
-                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addContact() } }}
-                                    placeholder="+33612345678"
-                                    className="w-36 px-3 py-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:border-accent font-mono"
-                                />
-                                <input
-                                    type="text"
-                                    value={waLabelInput}
-                                    onChange={e => setWaLabelInput(e.target.value)}
-                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addContact() } }}
-                                    placeholder="Prénom (optionnel)"
-                                    className="flex-1 px-3 py-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:border-accent"
-                                />
-                                <button
-                                    onClick={addContact}
-                                    className="w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--elevation-border)] bg-base text-secondary hover:text-accent hover:border-accent transition-all flex-shrink-0"
-                                >
-                                    <Plus className="w-4 h-4" />
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Étape test (mode mutualisé) */}
-                        {waUseSharedWaba && (
-                            <div className="bg-green-500/8 border border-green-500/15 rounded-xl px-4 py-3 flex gap-3">
-                                <Check className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-                                <div>
-                                    <p className="text-sm font-semibold text-primary">Prêt à utiliser</p>
-                                    <p className="text-xs text-secondary mt-0.5">Sauvegardez, puis envoyez <strong className="text-primary">« bonjour »</strong> au numéro bot Atelier depuis un numéro ajouté ci-dessus. L&apos;agent répond en moins de 5 secondes.</p>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Actions */}
-                        <div className="flex items-center justify-between pt-2">
-                            {whatsappConfig && (
-                                <button
-                                    onClick={handleDeleteWhatsApp}
-                                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-red-500 border border-red-500/20 hover:bg-red-500/10 transition-all text-sm font-semibold"
-                                >
-                                    <Trash2 className="w-4 h-4" /> Supprimer la config
-                                </button>
-                            )}
-                            <div className="ml-auto">
-                                <button
-                                    onClick={handleSaveWhatsApp}
-                                    disabled={isPending || !canSave}
-                                    className={`px-8 py-3 rounded-full font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 ${
-                                        waSaveStatus === 'saved' ? 'bg-green-500 text-white shadow-green-500/20' :
-                                        waSaveStatus === 'error' ? 'bg-red-500 text-white shadow-red-500/20' :
-                                        'bg-accent text-black shadow-accent/20'
-                                    }`}
-                                >
-                                    {waSaveStatus === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                                    {waSaveStatus === 'saving' ? 'Enregistrement...' :
-                                     waSaveStatus === 'saved' ? 'Enregistré !' :
-                                     waSaveStatus === 'error' ? 'Erreur' :
-                                     'Sauvegarder'}
-                                </button>
-                            </div>
-                        </div>
                     </div>
                 </div>
             )

@@ -162,14 +162,12 @@ Cloudflare Workers — Atelier-Dupont
    registrar est disponible pour T2/T5.
 6. **Comment veut-il apparaître dans ses emails clients (devis, factures, relances) ?**
    → nom affiché + adresse d'expéditeur, remplit `Nom affiché email` / `Adresse email expéditeur`.
-7. **Veut-il un essai de 30 jours en Expert offert au démarrage ?** → remplit `Essai IA offert`.
+7. **Veut-il tester avant de s'engager ?** → le seul essai gratuit est Pro pendant 7 jours, sans carte bancaire (activable depuis le cockpit ou en self-service). Il n'existe plus d'essai Expert.
 8. **Pour la facturation électronique : rien pour l'instant (export PDF/XML Factur-X inclus
    d'office, sans surcoût), ou passer directement en mode Super PDP (transmission/réception
    pilotées par Orsayn) ?** → remplit `Facturation électronique`. Aucun compte ni secret à créer
    pour ce choix : le mode se change en un clic dans le cockpit, c'est ensuite l'artisan qui
    autorise la connexion Super PDP depuis son propre Atelier.
-9. **WhatsApp : le client en a-t-il besoin dès maintenant ?** (rappeler que le canal mutualisé
-   est encore en attente de vérification Meta) → remplit `WhatsApp activé`.
 
 **Ce que Claude ne demande jamais** (dérivé automatiquement ou déjà dans `.env.local`) :
 `Worker name` (slugifié depuis le nom d'entreprise), `Project ref Supabase` / clés (créés
@@ -194,7 +192,7 @@ demande confirmation avant de lancer T1-T7 / C1-C9.
 > - `OPERATOR_INGEST_URL` + `OPERATOR_ALLOWED_EMAILS` + `OPERATOR_USD_TO_EUR_RATE`
 > - `OPERATOR_SOURCE_INSTANCE` — **déduit automatiquement du worker-name** fourni dans le protocole (ex: `atelier-weber`)
 > - `VAPID_PRIVATE_KEY` + `NEXT_PUBLIC_VAPID_PUBLIC_KEY` — paire partagée notifications push
-> - `OPENROUTER_API_KEY` — clé IA Atelier partagée pour le Worker (sauf si Client fournit la sienne). Couvre aussi la transcription vocale (Voxtral via OpenRouter depuis le 2026-08-22) — `MISTRAL_API_KEY` n'est plus nécessaire sur le Worker, seulement pour l'Edge Function `whatsapp-webhook` (voir étape 6)
+> - `OPENROUTER_API_KEY` — clé IA Atelier partagée pour le Worker (sauf si Client fournit la sienne). Couvre aussi la transcription vocale (Voxtral via OpenRouter depuis le 2026-08-22)
 > - `ELEVENLABS_API_KEY` + `ELEVENLABS_AGENT_ID` — compte ElevenLabs Orsayn centralisé (1 agent partagé, contexte injecté par org). Toujours lu depuis `.env.local`, jamais fourni par le client.
 > - `RESEND_API_KEY` Atelier partagée (sauf si client a son propre compte Resend)
 > - `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET` — générés par Claude si absents du protocole
@@ -242,10 +240,6 @@ Sarah vocale ElevenLabs : toujours compte Orsayn centralisé, 1 agent partagé p
     plus être proposé à un nouveau client
   → Ne pas oublier au déploiement Pro/Expert (ou setup_only + add-on vocal) : ajouter le domaine
     client dans ElevenLabs > Agent > Sécurité > Liste d'autorisation
-WhatsApp activé : oui / non
-  → Etat actuel : en attente de vérification Meta / routage central Orsayn non livré
-  → Mode mutualisé Twilio cible : rien à fournir côté client — routing via webhook central Orsayn
-  → Mode propre WABA : Phone Number ID + Access Token Meta/Graph-compatible, permanent
 Offre souscrite : [setup_only | pro | expert]
   → Starter n'est plus une offre commerciale active (retiré de la vente le 22 août 2026) —
     ne jamais le proposer à un nouveau client. Le tier reste géré techniquement en interne
@@ -257,16 +251,16 @@ Offre souscrite : [setup_only | pro | expert]
     fournit sa clé (ai_billing_mode = client_owned), Sarah texte et le reste des modules IA
     s'activent automatiquement au niveau Expert — sauf voice_live, toujours à false par défaut
     (voir section "Sarah vocale ElevenLabs" plus haut)
-  → pro : Sarah widget texte (120 appels/mois) + Sarah vocale ElevenLabs (60 min/mois) — WhatsApp suspendu
-  → expert : IA illimitée + Sarah widget texte illimitée + Sarah vocale (300 min/mois) — WhatsApp suspendu
+  → pro : Sarah widget texte (120 appels/mois) + Sarah vocale ElevenLabs (60 min/mois)
+  → expert : IA illimitée + Sarah widget texte illimitée + Sarah vocale (300 min/mois)
   → facturation électronique gérée séparément par le cockpit
-  → les modules WhatsApp (whatsapp_agent, whatsapp_ocr, whatsapp_proactive) restent à false sur tous les tiers jusqu'à réouverture du canal Meta
+  → les modules `whatsapp_*` hérités restent à false sur tous les tiers (WhatsApp abandonné le 2026-09-16)
 Overflow mode : block (défaut) | upgrade_prompt | charge
   → block : fonctionnalité coupée en fin de quota jusqu'au 1er du mois
   → upgrade_prompt : la fonc continue, email upgrade envoyé, bascule block si non-upgrade 48h
   → charge : usage supplémentaire facturé (+0,50€/tranche 50 msg WA)
-Essai IA offert : oui (30 jours Expert) / non
-  → Si oui : active tous les modules Expert + note trial_ends_at = today + 30j dans operator_client_subscriptions
+Essai gratuit : oui (Pro, 7 jours) / non
+  → Si oui : active les modules Pro + note trial_ends_at = today + 7j dans operator_client_subscriptions
 Facturation électronique : off | export_only (défaut) | super_pdp
   → export_only : Atelier génère PDF + XML Factur-X, envoi PDF/mail normal jusqu'au 31/08/2027 — aucun surcoût
   → super_pdp : Orsayn transmet et suit les statuts via Super PDP (immatriculé DGFiP, Peppol AP+SMP) —
@@ -295,7 +289,6 @@ Ces étapes nécessitent une interface web ou une action humaine irremplaçable.
 | T4a | Remplir `NEXT_PUBLIC_APP_URL=https://atelier-nomclient.mbebourasam.workers.dev` dans `.env.client-nomclient` puis lancer `--apply-all` | `npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-all` | 2 min | URL workers.dev provisoire — suffisant pour tester avant domaine custom |
 | T5 | Ajouter le domaine custom + pointer DNS | Cloudflare Workers → Domains & Routes | 3 min | Dépend de la propagation DNS |
 | T4b | *(Si domaine custom)* Mettre à jour `NEXT_PUBLIC_APP_URL=https://domaine-client.fr` dans `.env.client-nomclient` + relancer `--apply-all` | `npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-all` | 1 min | Sans ça les liens devis/factures/formulaires publics pointent vers workers.dev |
-| T6 | *(Si WhatsApp propre uniquement)* Créer l'app Meta, générer le token permanent | [developers.facebook.com](https://developers.facebook.com) | 20 min | Formulaire Meta, pas d'API publique |
 | T7 | Onboarding owner : créer le compte, remplir les infos entreprise | App en production | 10 min | Action du client final |
 
 **À faire une seule fois sur ta machine (déjà fait) :**
@@ -316,32 +309,6 @@ npm run preflight:client -- atelier-nomclient --with-open-next-build
 ```
 
 `--strict-env` transforme les secrets manquants en erreur. En production, `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` doivent être uniques par instance client. `RATE_LIMIT_SECRET` doit être distinct de `SUPABASE_SERVICE_ROLE_KEY` pour éviter de réutiliser une clé très sensible comme sel de hash.
-
-**WhatsApp mutualisé Twilio — à faire une seule fois avant le premier client WhatsApp :**
-Le numéro Twilio WhatsApp Atelier doit pointer vers un **webhook central Orsayn**. Les instances clientes ne sont pas appelées directement par Twilio.
-
-```
-Twilio WhatsApp Atelier
-  → webhook central Orsayn
-  → routing par numéro autorisé
-  → instance/Supabase du client concerné
-  → réponse via Twilio
-```
-
-Les credentials Twilio mutualisés vivent côté cockpit/routeur Orsayn, pas dans chaque Worker client. Les apps clientes ont seulement besoin du numéro public à afficher :
-
-```
-NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33...
-```
-
-**Clés WABA Meta mutualisées — ancien mode / Graph-compatible :**
-Si un fournisseur expose un `Phone Number ID` + `Access Token` compatibles Meta Cloud API, ajouter dans `.env.local` :
-```
-SHARED_WABA_PHONE_NUMBER_ID=<Phone Number ID du numéro bot Atelier>
-SHARED_WABA_ACCESS_TOKEN=<Token permanent Meta>
-NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33...
-```
-→ `deploy-edge-functions.sh` les lit automatiquement pour tous les clients présents et futurs. Ce n'est pas le mode cible pour Twilio classique.
 
 **Automatisation T4 :**
 ```bash
@@ -369,7 +336,7 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 | C2 | Créer les 4 buckets Storage + RLS (`logos`, `chantier-photos`, `quote-attachments`, `organization-exports`) | Supabase MCP | MCP connecté ✅ |
 | C3 | Configurer Auth Supabase (Site URL + Redirect URLs + OTP) | Supabase MCP | MCP connecté ✅ |
 | C4 | Générer `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` uniques si non fournis | Terminal (`openssl rand -hex 32`) | — |
-| C5 | Injecter les secrets partagés (`OPENROUTER`, `MISTRAL`, `RESEND`, `APP_URL`) — `whatsapp-webhook` n'est plus déployée (feature abandonnée, voir étape 6) | `./scripts/deploy-edge-functions.sh <ref> --resend-key ... --resend-from ... --app-url ...` | `supabase login` ✅ |
+| C5 | Secrets partagés (`OPENROUTER`, `RESEND`, `APP_URL`) : portés par les variables du Worker (`npm run cf:env`). Plus aucune Edge Function à déployer (WhatsApp abandonné) | — | — |
 | C6 | Déployer les Workers cron (auto-reminder + embeddings + data-retention) + injecter `APP_URL` + `CRON_SECRET` | `./scripts/deploy-cron-workers.sh atelier-nomclient --env-file=.env.client-nomclient` | `wrangler login` ✅ |
 | C7 | Peupler `company_memory` avec le contexte de l'entretien client + configurer `organization_modules` selon l'offre souscrite | Supabase MCP | MCP connecté ✅ |
 | C8 | Vérifier migrations, permissions, buckets, modules IA | Supabase MCP | MCP connecté ✅ |
@@ -392,9 +359,9 @@ Après avoir peuplé `company_memory`, je configure `organization_modules.module
 
 La facturation électronique est configurée séparément dans le cockpit après le tier : `off`, `export_only` ou `super_pdp`.
 
-Si "Essai IA offert : oui" :
-1. Activer tous les modules Expert côté instance cliente (config-sync)
-2. Écrire dans `operator_client_subscriptions` : `trial_tier = 'expert'`, `trial_ends_at = now() + 30 days`, `trial_converted = false`
+Si "Essai gratuit : oui" :
+1. Activer les modules Pro côté instance cliente (config-sync)
+2. Écrire dans `operator_client_subscriptions` : `trial_tier = 'pro'`, `trial_ends_at = now() + 7 days`, `trial_converted = false`
 3. Insérer un event dans `operator_client_events` : `event_type = 'trial_started'`, `event_category = 'trial'`
 4. Envoyer l'email `trial-start` via Resend cockpit au contact client
 
@@ -1110,11 +1077,6 @@ MEMBER_SESSION_SECRET=...              ← unique par client, signe le cookie de
 RATE_LIMIT_SECRET=...                   ← optionnel, unique par client ; fallback CRON_SECRET si absent
 AI_RATE_LIMIT_PER_HOUR=120              ← optionnel, limite appels IA par org/feature
 PUBLIC_FORM_RATE_LIMIT_PER_HOUR=5       ← optionnel, limite formulaire public par email+IP
-NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33700000000  ← Numéro affiché dans Settings → WhatsApp (format +33...)
-# Mode Twilio mutualisé : TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN et TWILIO_WHATSAPP_FROM restent côté cockpit/routeur Orsayn, pas dans le Worker client.
-# Mode Meta/Graph-compatible uniquement :
-# SHARED_WABA_PHONE_NUMBER_ID=...      ← Phone Number ID du numéro bot Atelier
-# SHARED_WABA_ACCESS_TOKEN=...         ← Token permanent du numéro bot Atelier
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=...            ← clé publique VAPID (partagée, identique sur toutes les instances)
 VAPID_PRIVATE_KEY=...                      ← clé privée VAPID (partagée, identique sur toutes les instances)
 OPERATOR_INGEST_URL=https://orsayn-cockpit.mbebourasam.workers.dev/api/operator/ingest  ← URL du cockpit Orsayn
@@ -1258,7 +1220,6 @@ CLOUDFLARE_API_TOKEN=<Token API — My Profile → API Tokens, scope "Edit Worke
 
 Les variables `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_SUPABASE_SERVICE_ROLE_KEY` et `OPERATOR_USD_TO_EUR_RATE` sont réservées au Worker cockpit. Ne pas les poser sur un Worker client.
 
-**Mapping Edge Functions Supabase :** l'app Worker utilise `RESEND_FROM_ADDRESS` et `NEXT_PUBLIC_APP_URL`; la fonction Supabase `whatsapp-webhook` reçoit les mêmes valeurs sous `RESEND_FROM_EMAIL` et `APP_URL` via `scripts/deploy-edge-functions.sh`. En mode Twilio mutualisé, le webhook entrant public reste centralisé côté Orsayn.
 
 > **Important :** déconnecter le repo GitHub du projet Cloudflare Pages après le premier déploiement manuel — sinon chaque push GitHub déclenche un build automatique qui échoue (next-on-pages n'est plus utilisé).
 
@@ -1398,20 +1359,9 @@ METALPRICEAPI_KEY=...   ← clé Atelier partagée (obtenir sur metalpriceapi.co
 
 **Lien catalogue (depuis cette version) :** si un article du catalogue (`materials`) est lié à une grille métal (`metal_price_grids.catalog_item_id`), sa fiche d'édition affiche un encart informatif avec le prix suggéré au cours du jour — sans jamais écraser `sale_price` automatiquement. Aucune action de déploiement requise, c'est un appel côté client à la même route `/api/metal-prices`.
 
-### 6. Edge Function WhatsApp — abandonnée (2026-09-16)
+### 6. Edge Functions Supabase : aucune
 
-**WhatsApp est abandonné comme feature** (intégration API Meta jugée trop coûteuse) : les modules `whatsapp_agent`, `whatsapp_ocr`, `whatsapp_proactive` restent à `false` sur tous les tiers. L'Edge Function `supabase/functions/whatsapp-webhook` a été retirée de `scripts/deploy-edge-functions.sh` (elle ne se déploie plus sur les nouveaux clients) et supprimée sur les instances où elle avait déjà été poussée — trouvée `ACTIVE` et **non signée** (aucune vérification `X-Hub-Signature-256` malgré `service_role` et des actions métier réelles) sur `pyxnmohknxmbpbcuvudg` lors de l'audit du 2026-09-16, supprimée le jour même. Détail du finding : sous-skill `cron-webhooks-integrations` du dossier `backend-orsayn`.
-
-Ne pas redéployer cette fonction sans avoir d'abord implémenté la vérification de signature — ni sans avoir revalidé que la feature est effectivement relancée côté produit.
-
-```bash
-# Déploiement : le bloc whatsapp-webhook a été retiré, cette commande ne
-# déploie plus que les secrets partagés (OpenRouter, Mistral, Resend, APP_URL).
-./scripts/deploy-edge-functions.sh <PROJECT_REF> \
-  --resend-key re_xxx \
-  --resend-from contact@client.fr \
-  --app-url https://client.fr
-```
+WhatsApp ayant été abandonné comme feature (2026-09-16), la fonction `whatsapp-webhook` et le script `deploy-edge-functions.sh` ont été supprimés du repo. Il n'y a plus de fonction Edge à déployer : les secrets partagés vivent dans les variables du Worker.
 
 ### 7. Company Memory — contexte IA (rempli par Claude après l'entretien)
 
@@ -1469,7 +1419,6 @@ Impact support appareils :
 - [ ] `SELECT count(*) FROM permissions` → count cohérent avec le projet de référence (voir note §1 — plus 48 depuis 062)
 - [ ] `SELECT count(*) FROM storage.buckets` → 4 buckets
 - [ ] Auth Supabase configurée (Site URL + Redirect URLs)
-- [ ] Edge Function `whatsapp-webhook` déployée
 - [ ] Worker Cloudflare déployé + cron actif
 - [ ] Variables d'env injectées dans Cloudflare Workers
 - [ ] `NEXT_PUBLIC_VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY` injectées (même paire pour toutes les instances)
@@ -1485,7 +1434,6 @@ Impact support appareils :
 - [ ] Upload photo chantier → visible dans la grille
 - [ ] Résumé "Ma semaine" → répond en < 3s
 - [ ] Relance IA → modal s'ouvre + brouillon généré
-- [ ] *(Si WhatsApp)* Envoyer "bonjour" → agent répond en < 5s
 - [ ] **Membre individuel** : Chantier → onglet Équipe → "Ajouter un membre" → renseigner email → vérifier réception du lien d'accès `/mon-espace?token=...`
 - [ ] **Espace membre** : ouvrir le lien → voir ses créneaux + pointer 4h → vérifier que le pointage apparaît dans l'onglet Heures du chantier (avec `member_id` rempli côté DB)
 - [ ] **Rapport heures à la demande** : depuis `/mon-espace/dashboard`, cliquer "M'envoyer le rapport" → vérifier réception PDF
@@ -1509,124 +1457,6 @@ Impact support appareils :
 - [ ] **TVA sur débits** : Settings → Organisation → activer "TVA sur débits" → vérifier que le rapport mensuel impute la TVA à la date de facturation
 - [ ] **Coût unitaire catalogue** : créer un article avec prix d'achat → générer un devis avec cet article → vérifier que `unit_cost_ht` est renseigné sur la ligne (via Supabase ou onglet Rentabilité si visible)
 - [ ] **Factures reçues** *(si `einvoicing_config.mode = 'super_pdp'` et `oauth_status = 'connected'`)* : Finances → Factures reçues → vérifier réception/statuts (reçue / à payer / payée)
-
-### Checklist onboarding WhatsApp client (mode mutualisé — en attente)
-
-> Le client n'a **aucun compte Meta à créer**. Tout passe par le numéro bot Atelier sur Twilio et par le webhook central Orsayn.
->
-> **Etat réel mai 2026 :** ne pas vendre cette checklist comme livrée. La vérification Meta est en attente et le routeur central `/api/whatsapp/twilio` n'existe pas encore dans `src/app/api`. Cette section décrit le flux cible à activer après validation Meta et implémentation du routage central.
-
-Architecture retenue :
-```
-Twilio WhatsApp Atelier
-  → webhook central Orsayn
-  → routing par numéro autorisé
-  → instance client concernée
-```
-
-**Toi (une fois le Worker déployé) :**
-- [ ] Activer le module WhatsApp dans Cockpit Orsayn ou directement en DB : `UPDATE organization_modules SET whatsapp_agent = true WHERE organization_id = '<id>'`
-- [ ] Ajouter/valider la route WhatsApp du client dans le cockpit Orsayn : numéro autorisé → `source_instance` / `organization_id`
-
-**Le client (dans son app → Settings → Agent WhatsApp) :**
-- [ ] Cocher "Utiliser le numéro Atelier mutualisé"
-- [ ] Ajouter ses numéros autorisés (lui + son équipe) au format +33...
-- [ ] Envoyer "bonjour" depuis un numéro autorisé → l'agent répond avec le contexte de son entreprise
-
-> Le numéro bot affiché dans Settings est `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER` injecté au déploiement.
-
----
-
-### Activation WhatsApp mutualisé Twilio une fois la vérification Atelier terminée
-
-> Cette section s'applique quand le numéro WhatsApp Atelier est validé chez Meta/Twilio et quand le routeur central Orsayn est livré. En attente au 2026-05-25.
-
-**Décision d'architecture : webhook central Orsayn obligatoire**
-
-Pour le mode mutualisé Twilio, ne pas configurer Twilio vers les Edge Functions Supabase des clients. Twilio appelle une seule URL, côté cockpit Orsayn.
-
-```
-Twilio
-  → https://<cockpit-orsayn>/api/whatsapp/twilio
-  → table de routes opérateur
-  → client Supabase/Worker concerné
-```
-
-Le routeur central à implémenter doit gérer :
-- parsing du webhook Twilio entrant (`From`, `To`, `Body`, médias)
-- résolution du client via le numéro autorisé
-- appel du traitement IA/métier de l'instance client
-- envoi de la réponse via Twilio
-- journalisation usage IA dans le cockpit Orsayn
-
-**Étape 1 — Récupérer les credentials Twilio du numéro bot**
-
-| Fournisseur | Ce qu'il faut récupérer |
-|-------------|------------------------|
-| **Twilio mutualisé** | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, WhatsApp Sender number (`whatsapp:+33...`) |
-| **Meta direct / WABA propre client** | `Phone Number ID` + token permanent Graph API |
-
-**Étape 2 — Renseigner les variables centralisées du cockpit Orsayn**
-
-```bash
-TWILIO_ACCOUNT_SID=AC...
-TWILIO_AUTH_TOKEN=...
-TWILIO_WHATSAPP_FROM=whatsapp:+33700000000
-NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER=+33700000000
-```
-
-Ces variables sont partagées entre tous les clients, mais les secrets Twilio doivent rester côté cockpit/routeur Orsayn. Les Workers clients n'ont besoin que de `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER` pour afficher le numéro dans Settings.
-
-**Étape 3 — Déployer ou mettre à jour le routeur central Orsayn**
-
-Le routeur central reçoit les messages Twilio et route vers le bon client. Prévoir une table opérateur dédiée, par exemple :
-
-```sql
-operator_whatsapp_routes (
-  id,
-  source_instance,
-  organization_id,
-  authorized_number,
-  label,
-  is_active,
-  created_at,
-  updated_at
-)
-```
-
-**Étape 4 — Configurer le webhook Twilio entrant**
-
-Dans Twilio, configurer le WhatsApp Sender pour appeler uniquement :
-
-```
-https://<cockpit-orsayn>/api/whatsapp/twilio
-```
-
-**Étape 5 — Redéployer l'app client si le numéro affiché change**
-
-Injecter/mettre à jour `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER` dans les variables Cloudflare Workers clients, puis redéployer si nécessaire.
-
-```bash
-./scripts/deploy-all-clients.sh
-```
-
-**Étape 6 — Activer les clients**
-
-Pour chaque client prêt à utiliser WhatsApp :
-```sql
-UPDATE organization_modules SET whatsapp_agent = true WHERE organization_id = '<id>';
-```
-Puis créer/mettre à jour la route centrale Orsayn pour chaque numéro autorisé. Le client peut aussi gérer ses numéros dans Settings → Agent WhatsApp, mais la source de vérité opérationnelle du routage Twilio mutualisé doit être disponible dans le cockpit central.
-
-**Cas séparé — WABA propre client**
-
-Si un client utilise son propre Meta/WABA Graph-compatible, il peut conserver le webhook Supabase client :
-
-```
-https://<PROJECT_REF>.supabase.co/functions/v1/whatsapp-webhook
-```
-
-Ce mode n'utilise pas le numéro Twilio mutualisé Atelier.
 
 ---
 
@@ -1740,7 +1570,7 @@ NEXT_PUBLIC_STRIPE_LINK_EXPERT=https://buy.stripe.com/...
 - [ ] Envoyer un appel IA de test depuis une instance cliente → vérifier que l'event apparaît dans le cockpit
 - [ ] Renseigner un `monthly_fee_ht` dans le cockpit → vérifier le calcul de marge
 - [ ] Choisir un mode e-facturation dans le cockpit → vérifier `organization_einvoicing_config` côté instance client après config-sync
-- [ ] Activer un essai 30j Expert sur un client test → vérifier `trial_tier` + `trial_ends_at` dans `operator_client_subscriptions`
+- [ ] Activer un essai Pro 7j sur un client test → vérifier `trial_tier` + `trial_ends_at` dans `operator_client_subscriptions`
 - [ ] Vérifier le journal cockpit : une ligne `trial_started` doit apparaître dans `operator_client_events`
 - [ ] Essais : tester les actions manuelles cockpit `activateOperatorTrial`, `convertOperatorTrial`, `expireOperatorTrial`
 - [ ] Crons commerciaux cockpit : non livrés aujourd'hui, à implémenter avant configuration cron-job.org (voir §Crons cockpit ci-dessous)
@@ -1783,10 +1613,10 @@ Un client peut être en mode `super_pdp`, un autre en `export_only`. Un client p
 
 | Niveau | Sert à quoi | Exemples | Où ça vit |
 |--------|-------------|----------|-----------|
-| **Flags produit** | Afficher/autoriser une fonctionnalité | `quote_ai`, `planning_ai`, `document_import_ai`, `catalog_ai`, `whatsapp_agent` | Table `organization_modules`, pilotée depuis Cockpit Orsayn |
+| **Flags produit** | Afficher/autoriser une fonctionnalité | `quote_ai`, `planning_ai`, `document_import_ai`, `catalog_ai` | Table `organization_modules`, pilotée depuis Cockpit Orsayn |
 | **Configuration orchestrée** | Appliquer un mode produit hors IA | `einvoicing_config.mode`, `einvoicing_config.provider`, `einvoicing_config.environment` | Cockpit Orsayn puis copie locale `organization_einvoicing_config` |
 | **Secrets infra** | Donner accès à un provider externe | `OPENROUTER_API_KEY`, `RESEND_API_KEY` | Variables/secrets du Worker client ou Edge Function |
-| **Paramètres métier** | Adapter l'usage client | tarifs, SIREN, IBAN, modules, numéros WhatsApp autorisés | Base Supabase client + cockpit |
+| **Paramètres métier** | Adapter l'usage client | tarifs, SIREN, IBAN, modules | Base Supabase client + cockpit |
 
 Un flag sans secret ne suffit pas : la fonctionnalité apparaît peut-être, mais l'appel provider échoue. Un secret sans flag ne suffit pas non plus : le provider est configuré, mais la fonctionnalité reste désactivée côté produit.
 
@@ -1802,7 +1632,6 @@ Chaque nouveau client est livré en V1 core :
 - IA selon le pack vendu
 - facturation électronique en mode `export_only`
 - Super PDP non connecté par défaut (`oauth_status = 'not_connected'`)
-- WhatsApp désactivé tant que le module n'est pas activé
 
 Le mode `export_only` est inclus comme socle conformité : PDF + XML/Factur-X téléchargeable, avec envoi PDF/email normal tant que l'obligation d'émission n'est pas active. L'app ne marque pas une facture comme déposée sur une PA tant que ce flux n'est pas réellement connecté.
 
@@ -1872,7 +1701,7 @@ Client B → clés IA du client, coût porté par le client
 
 Pour OpenRouter, le code lit toujours `OPENROUTER_API_KEY`. La différence vient seulement de la valeur injectée dans le Worker. Depuis le 2026-08-22, `OPENROUTER_API_KEY` couvre aussi la transcription vocale de l'app (Voxtral Mini Transcribe via l'endpoint unifié OpenRouter, `mistralai/voxtral-mini-transcribe`) — il n'y a donc plus qu'une seule clé à gérer pour tout le Worker.
 
-`MISTRAL_API_KEY` ne concerne plus le Worker. Elle reste utilisée uniquement par l'Edge Function `whatsapp-webhook` (transcription vocale WhatsApp, `whatsapp_transcription`), tant que ce canal reste sur un appel Mistral direct — voir §6 Edge Function WhatsApp.
+`MISTRAL_API_KEY` n'est plus utilisée nulle part : la seule fonction qui l'appelait (`whatsapp-webhook`) a été supprimée.
 
 Mode Atelier (Worker) :
 - `OPENROUTER_API_KEY` = clé Orsayn
@@ -1885,24 +1714,14 @@ Mode client (Worker) :
 - Orsayn voit quand même l'usage passé par Atelier via `usage_logs` et le cockpit
 - Orsayn ne voit pas les usages faits par le client hors Atelier
 
-#### Upgrade WhatsApp
-
-WhatsApp mutualisé Twilio est aussi activable client par client :
-1. Activer `whatsapp_agent`
-2. Ajouter les numéros autorisés dans le cockpit/routeur central
-3. Afficher le numéro bot Atelier via `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER`
-4. Tester "bonjour" depuis un numéro autorisé
-
-Un client sans WhatsApp garde l'app web inchangée.
-
 ### Matrice d'exemples
 
-| Client | IA | OpenRouter | Fact. élec. | WhatsApp |
-|--------|----|------------|-------------|----------|
-| Artisan setup_only | Devis IA (si client_owned) | Clé Atelier ou client | `export_only` | Non |
-| Client autonome IA | Devis + Documents | Clé client | `export_only` | Non |
-| Client conformité | Devis IA | Clé Atelier | `super_pdp` | Non |
-| Client premium terrain | Tous modules IA | Clé Atelier ou client | `super_pdp` | Oui |
+| Client | IA | OpenRouter | Fact. élec. |
+|--------|----|------------|-------------|
+| Artisan setup_only | Devis IA (si client_owned) | Clé Atelier ou client | `export_only` |
+| Client autonome IA | Devis + Documents | Clé client | `export_only` |
+| Client conformité | Devis IA | Clé Atelier | `super_pdp` |
+| Client premium terrain | Tous modules IA | Clé Atelier ou client | `super_pdp` |
 
 ### Procédure en cas de demande client spécifique
 
@@ -1976,14 +1795,6 @@ Dans le cockpit : `ai_billing_mode = 'orsayn_shared'`.
 
 Avantage : zéro gestion côté client. Inconvénient : si la clé est compromise, tous les clients sont touchés.
 
-Déploiement Edge Function :
-```bash
-./scripts/deploy-edge-functions.sh <PROJECT_REF> \
-  --resend-key re_xxx --resend-from contact@client.fr --app-url https://client.fr
-# OPENROUTER_API_KEY et MISTRAL_API_KEY lues automatiquement depuis .env.local
-# (MISTRAL_API_KEY sert uniquement à la transcription vocale WhatsApp ici)
-```
-
 Déploiement Worker Cloudflare : injecter `OPENROUTER_API_KEY` (clé Atelier) dans les variables du Worker. `MISTRAL_API_KEY` n'y est plus nécessaire.
 
 **Mode B — Clé propre au client**
@@ -1991,18 +1802,6 @@ Déploiement Worker Cloudflare : injecter `OPENROUTER_API_KEY` (clé Atelier) da
 Le client crée son compte sur [openrouter.ai](https://openrouter.ai), génère une clé API, et te la fournit dans le protocole de session. Il paye directement OpenRouter — texte et transcription vocale compris — tu n'es plus revendeur IA pour ce client sur le Worker. Risque isolé, facturation simplifiée.
 
 Dans le cockpit : `ai_billing_mode = 'client_owned'`. La consommation reste visible pour le pricing, mais elle n'est pas soustraite de la marge Orsayn.
-
-Pour Mistral (WhatsApp uniquement, Edge Function), deux choix indépendants du choix OpenRouter du Worker :
-- par défaut : garder `MISTRAL_API_KEY` Orsayn
-- autonomie complète : injecter une `MISTRAL_API_KEY` fournie par le client, si gros usage vocal WhatsApp
-
-Déploiement Edge Function :
-```bash
-./scripts/deploy-edge-functions.sh <PROJECT_REF> \
-  --openrouter-key sk-or-clientxxx \
-  --resend-key re_xxx --resend-from contact@client.fr --app-url https://client.fr
-# La clé Atelier dans .env.local est ignorée pour ce client
-```
 
 Déploiement Worker Cloudflare : injecter la clé client à la place de la clé Atelier dans `OPENROUTER_API_KEY` du Worker — couvre aussi la transcription vocale de l'app. Pas de `MISTRAL_API_KEY` à poser sur le Worker.
 
@@ -2016,7 +1815,7 @@ WHERE created_at > now() - interval '30 days'
 GROUP BY organization_id, feature;
 ```
 
-**Aujourd'hui :** clé Atelier partagée par défaut sur le Worker. `OPENROUTER_API_KEY` peut être remplacée par une clé client via `--openrouter-key` — couvre aussi la transcription vocale de l'app depuis le 2026-08-22. `MISTRAL_API_KEY` ne concerne plus que l'Edge Function WhatsApp, reste Atelier par défaut sauf client autonome vocal WhatsApp.
+**Aujourd'hui :** clé Atelier partagée par défaut sur le Worker. `OPENROUTER_API_KEY` peut être remplacée par une clé client renseignée dans `OPENROUTER_API_KEY` du `.env.client-nomclient` — couvre aussi la transcription vocale de l'app depuis le 2026-08-22. `MISTRAL_API_KEY` ne concerne plus que l'Edge Function WhatsApp, reste Atelier par défaut sauf client autonome vocal WhatsApp.
 
 #### Inventaire complet des appels IA
 
@@ -2034,8 +1833,6 @@ GROUP BY organization_id, feature;
 | Assistant chantier | `api/ai/chantier-assistant` | Claude Haiku 4.5 (`anthropic/claude-haiku-4-5`) | ~€0,002/req |
 | Import document PDF/image (finances) | `api/ai/parse-document-pdf` | Gemini 2.5 Flash Lite vision (`google/gemini-2.5-flash-lite`) + fallback Sonnet 4.6 | ~€0,002/doc |
 | Transcription vocale | `api/ai/transcribe-audio` | Voxtral Mini (Mistral direct) | ~€0,003/min |
-| WhatsApp agent (texte + outils) | `functions/whatsapp-webhook` | Gemini 2.5 Flash (`google/gemini-2.5-flash`) | ~€0,003/message |
-| Transcription vocale WhatsApp | `functions/whatsapp-webhook` | Voxtral Mini (Mistral direct) | ~€0,003/min |
 | IA Catalogue (saisie naturelle) | `api/ai/catalog-extract` | Gemini 2.5 Flash (`google/gemini-2.5-flash`) | ~€0,001/saisie |
 | Embeddings mémoire entreprise | `api/cron/embeddings` | Qwen3-Embedding-8B (OpenRouter, 4096 dims) | ~€0,0001/ligne |
 
@@ -2043,12 +1840,9 @@ GROUP BY organization_id, feature;
 
 | Profil | Hypothèses clés | Coût IA/mois |
 |--------|----------------|--------------|
-| **Démarrage** (pas WhatsApp) | 3 devis IA, 5 relances, 4 résumés semaine | ~€0,10 |
-| **Standard** (WhatsApp activé) | 10 devis, 15 relances, 50 messages WA | ~€0,25 |
-| **Actif + agents** (WA intensif) | 20 devis, 30 relances, 150 msg WA, 20 min vocal | ~€0,70 |
-| **Gros client** (équipe + WA quotidien) | 40 devis, 60 relances, 300 msg WA, 60 min vocal | ~€1,30 |
+| **Démarrage** | 3 devis IA, 5 relances, 4 résumés semaine | ~€0,10 |
 
-> WhatsApp agent : Gemini 2.5 Flash (~€0,003/message). Résumé semaine et planning migres vers Gemini 2.5 Flash Lite / DeepSeek V4 Flash (coût divisé par 5-10 vs Sonnet). Sans WhatsApp, le coût IA est inférieur à €0,10/mois. Levier restant si les marges se compriment : passer les relances auto de Haiku 4.5 → Gemini Flash Lite (divisé encore par 3).
+> Résumé semaine et planning migrés vers Gemini 2.5 Flash Lite / DeepSeek V4 Flash (coût divisé par 5-10 vs Sonnet).
 
 ### Marges selon le tier facturation électronique
 
@@ -2120,7 +1914,7 @@ n'a besoin d'une cohérence à la seconde près après une écriture.
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API | Non |
 | `NEXT_PUBLIC_APP_URL` | URL production client | Non |
 | `RESEND_API_KEY` | Compte Resend client | Non |
-| `RESEND_FROM_ADDRESS` | Email vérifié Resend (injecté en Edge Function sous `RESEND_FROM_EMAIL`) | Non |
+| `RESEND_FROM_ADDRESS` | Email vérifié Resend | Non |
 | `RESEND_FROM_NAME` | Nom affiché expéditeur | Non |
 | `RESEND_REPLY_TO_ADDRESS` | Adresse de réponse Atelier (`contact@orsayn.fr`) | Oui, Atelier |
 | `SHARED_EMAIL_DOMAIN` | Domaine fallback (`atelier-btp.fr`) pour l'offre SaaS mutualisée | Oui, SaaS |
@@ -2136,19 +1930,13 @@ n'a besoin d'une cohérence à la seconde près après une écriture.
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | Email support public | Non |
 | `NEXT_PUBLIC_PRIVACY_EMAIL` | Email confidentialité public | Non |
 | `NEXT_PUBLIC_LEGAL_EMAIL` | Email juridique public | Non |
-| `OPENROUTER_API_KEY` | Clé Atelier depuis `.env.local` (défaut) **ou** clé propre au client via `--openrouter-key` — couvre texte + transcription vocale de l'app (Voxtral via OpenRouter, migré le 2026-08-22) | **Selon client** (voir §IA), Worker uniquement |
-| `MISTRAL_API_KEY` | Non utilisée par le Worker depuis le 2026-08-22. Clé Atelier Mistral par défaut **ou** clé propre au client si autonomie vocale WhatsApp | **Selon client** (Atelier par défaut), Edge Function `whatsapp-webhook` uniquement |
+| `OPENROUTER_API_KEY` | Clé Atelier depuis `.env.local` (défaut) **ou** clé propre au client renseignée dans le `.env.client-nomclient` — couvre texte + transcription vocale de l'app (Voxtral via OpenRouter, migré le 2026-08-22) | **Selon client** (voir §IA), Worker uniquement |
+| `MISTRAL_API_KEY` | Plus utilisée (transcription sur OpenRouter depuis le 2026-08-22, fonction `whatsapp-webhook` supprimée) | Non |
 | `CRON_SECRET` | `openssl rand -hex 32` | Non (unique par client) |
 | `MEMBER_SESSION_SECRET` | `openssl rand -hex 32` — signe le cookie de session de l'espace membre `/mon-espace` (HMAC SHA-256) | Non (unique par client) |
 | `RATE_LIMIT_SECRET` | `openssl rand -hex 32` — salt de hash rate limit, optionnel si `CRON_SECRET` est présent | Non (unique par client) |
 | `AI_RATE_LIMIT_PER_HOUR` | Défaut conseillé `120` | Non |
 | `PUBLIC_FORM_RATE_LIMIT_PER_HOUR` | Défaut conseillé `5` | Non |
-| `SHARED_WABA_PHONE_NUMBER_ID` | Ancien mode Meta/Graph-compatible : Phone Number ID du numéro bot Atelier | **Seulement si fournisseur Graph-compatible** |
-| `SHARED_WABA_ACCESS_TOKEN` | Ancien mode Meta/Graph-compatible : token permanent du numéro bot Atelier | **Seulement si fournisseur Graph-compatible** |
-| `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER` | Numéro bot affiché dans Settings → WhatsApp (format +33...) | **Oui** (même valeur partout, non secret) |
-| `TWILIO_ACCOUNT_SID` | Compte Twilio du numéro WhatsApp mutualisé Atelier | **Oui, mais cockpit/routeur Orsayn uniquement** |
-| `TWILIO_AUTH_TOKEN` | Auth Token Twilio | **Oui, mais cockpit/routeur Orsayn uniquement** |
-| `TWILIO_WHATSAPP_FROM` | Sender WhatsApp Twilio (`whatsapp:+33...`) | **Oui, mais cockpit/routeur Orsayn uniquement** |
 | `OPERATOR_INGEST_URL` | URL du cockpit Orsayn | **Oui** (même URL partout) |
 | `OPERATOR_INGEST_SECRET` | `openssl rand -hex 32` (généré une fois) | **Oui** (même secret partout) |
 | `OPERATOR_CONFIG_SYNC_SECRET` | Secret HMAC pour `/api/operator/config-sync`; en V1 utiliser la même valeur que `OPERATOR_INGEST_SECRET` | **Oui** (même secret partout recommandé) |
@@ -2173,7 +1961,6 @@ Sentry n'est activé que **côté navigateur** (`src/instrumentation-client.ts`)
 2. L'appliquer sur tous les projets clients existants via Supabase MCP
 3. Tenir à jour le registre des projets actifs (ci-dessous)
 4. **Si la migration ajoute une table ou un champ exploitable par l'IA** (chantiers, devis, factures, acomptes, catalogue…) → mettre à jour les fichiers suivants :
-   - `supabase/functions/whatsapp-webhook/index.ts` — outils TOOLS + requêtes executeTool
    - `src/app/api/ai/analyze-quote/` — si ça touche l'analyse de devis
    - `src/app/api/ai/suggest-tasks/` — si ça touche les tâches chantier
    - `src/app/api/cron/auto-reminders/` — si ça touche la relance ou les acomptes
@@ -2205,13 +1992,7 @@ Ordre recommandé pour une release avec migration SQL :
 
 > **Note :** les déploiements sont séquentiels (pas en parallèle). Aujourd'hui, `deploy-all-clients.sh` appelle `deploy-client.sh` pour chaque client, donc `npm run deploy` et le build OpenNext repartent à chaque Worker. Optimisation future possible : build unique puis `wrangler deploy --name ...` par client.
 
-> **Périmètre de `deploy-all-clients.sh` :** couvre uniquement les apps Next.js clientes. Le cockpit, le Worker relances (`workers/auto-reminder`) et les Edge Functions Supabase doivent être redéployés séparément si leur code a changé (voir §Cockpit, §5 et §6).
-
-### Mise à jour Edge Function
-
-```bash
-for ref in <tous les refs clients>; do ./scripts/deploy-edge-functions.sh $ref; done
-```
+> **Périmètre de `deploy-all-clients.sh` :** couvre uniquement les apps Next.js clientes. Le cockpit, le Worker relances (`workers/auto-reminder`) doivent être redéployés séparément si leur code a changé (voir §Cockpit et §5).
 
 ### Supabase Free — anti-pause
 
@@ -2225,8 +2006,8 @@ Créer un cron-job.org gratuit → ping `https://<ref>.supabase.co/rest/v1/` tou
 
 > Mettre à jour à chaque nouveau client. Aucun client setup (per-client dédié) déployé à ce jour (2026-09-09) — seule l'instance SaaS mutualisée existe.
 
-| Instance | Project Ref | Domaine | Rôle | Migrations à jour au | WhatsApp | Fact. élec. |
-|--------|-------------|---------|------|------------|---------|------------|
-| `atelier-app` (SaaS mutualisé Pro/Expert, porte aussi le compte démo Weber Tôlerie) | `pyxnmohknxmbpbcuvudg` | app.atelier-btp.fr | Worker unique, N organisations self-service | 184 (vérifié 2026-09-09) | ❌ | export_only |
+| Instance | Project Ref | Domaine | Rôle | Migrations à jour au | Fact. élec. |
+|--------|-------------|---------|------|------------|------------|
+| `atelier-app` (SaaS mutualisé Pro/Expert, porte aussi le compte démo Weber Tôlerie) | `pyxnmohknxmbpbcuvudg` | app.atelier-btp.fr | Worker unique, N organisations self-service | 184 (vérifié 2026-09-09) | export_only |
 
 Client setup 3k (per-client dédié, 1 Supabase + 1 Worker par client) : aucune ligne pour l'instant, ce tableau grandit au premier déploiement via `DEPLOIEMENT_CLIENT.md` ci-dessus. Cockpit (`ghkacozmtvvmlbbwwnlp`) suivi séparément, pas dans ce registre.

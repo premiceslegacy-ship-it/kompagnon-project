@@ -101,7 +101,7 @@ export async function acceptQuoteByToken(input: AcceptQuoteInput): Promise<Accep
 
   // 4. Charger org + client pour les emails
   const [{ data: org }, { data: client }] = await Promise.all([
-    admin.from('organizations').select('id, name, email, email_from_address, email_from_name').eq('id', quote.organization_id).single(),
+    admin.from('organizations').select('id, name, email, email_from_address, email_from_name, logo_url').eq('id', quote.organization_id).single(),
     quote.client_id
       ? admin.from('clients').select('company_name, contact_name, first_name, last_name, email').eq('id', quote.client_id).single()
       : Promise.resolve({ data: null }),
@@ -114,6 +114,7 @@ export async function acceptQuoteByToken(input: AcceptQuoteInput): Promise<Accep
   if (clientEmail && org) {
     const { subject, html } = buildQuoteAcceptedClientEmail({
       orgName: org.name,
+      logoUrl: org.logo_url,
       orgEmail: org.email ?? null,
       clientName,
       quoteNumber: quote.number,
@@ -137,6 +138,7 @@ export async function acceptQuoteByToken(input: AcceptQuoteInput): Promise<Accep
 
     const { subject, html } = buildQuoteAcceptedProfessionalEmail({
       orgName: org.name,
+      logoUrl: org.logo_url,
       clientName,
       clientEmail: clientEmail ?? '',
       quoteNumber: quote.number,

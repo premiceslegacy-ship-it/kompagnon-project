@@ -17,7 +17,6 @@ const requiredFiles = [
   'scripts/run-production-deploy.sh',
   'scripts/deploy-client.sh',
   'scripts/deploy-all-clients.sh',
-  'scripts/deploy-edge-functions.sh',
   'supabase/migrations',
 ]
 

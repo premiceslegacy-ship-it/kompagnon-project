@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { QUOTA_DEFINITIONS } from '@/lib/quota-catalog'
+import { ATELIER_SENDER_NAME } from '@/lib/brand'
 import { verifyCronSecret } from '@/lib/cron-auth'
-import { expireTrialForInstance, TRIAL_DURATION_DAYS } from '@/lib/operator/trial-lifecycle'
-import { buildAtelierCommercialEmail } from '@/lib/email/commercial'
+import { expireTrialForInstance } from '@/lib/operator/trial-lifecycle'
+import {
+  buildAtelierCommercialEmail,
+  buildAtelierTrialEndedEmail,
+  buildAtelierTrialReminderEmail,
+} from '@/lib/email/commercial'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,28 +36,33 @@ async function collectPages<T>(fetchPage: (from: number, to: number) => PromiseL
   }
 }
 
-async function sendEmail(to: string, subject: string, bodyLines: string[]): Promise<{ status: 'sent' | 'failed' | 'skipped'; error: string | null }> {
+type BuiltEmail = { subject: string; html: string }
+
+async function deliverEmail(to: string, built: BuiltEmail): Promise<{ status: 'sent' | 'failed' | 'skipped'; error: string | null }> {
   const apiKey = process.env.RESEND_API_KEY?.trim()
   const fromAddress = process.env.RESEND_FROM_ADDRESS?.trim()
-  const fromName = process.env.RESEND_FROM_NAME?.trim() || 'Atelier BTP'
+  const fromName = ATELIER_SENDER_NAME
   if (!apiKey || !fromAddress) return { status: 'skipped', error: 'RESEND non configuré' }
 
   const resend = new Resend(apiKey)
-  const built = buildAtelierCommercialEmail({
-    subject,
-    eyebrow: 'Atelier BTP',
-    title: subject,
-    paragraphs: bodyLines,
-  })
   const { error } = await resend.emails.send({
     from: `${fromName} <${fromAddress}>`,
     to,
-    subject,
+    subject: built.subject,
     html: built.html,
     replyTo: process.env.RESEND_REPLY_TO_ADDRESS?.trim() || 'contact@orsayn.fr',
   })
   if (error) return { status: 'failed', error: error.message }
   return { status: 'sent', error: null }
+}
+
+async function sendEmail(to: string, subject: string, bodyLines: string[]) {
+  return deliverEmail(to, buildAtelierCommercialEmail({
+    subject,
+    eyebrow: 'Atelier BTP',
+    title: subject,
+    paragraphs: bodyLines,
+  }))
 }
 
 export async function POST(req: NextRequest) {
@@ -99,12 +109,9 @@ export async function POST(req: NextRequest) {
           .eq('source_instance', row.source_instance)
           .eq('organization_id', row.organization_id)
           .maybeSingle()
-        const trialLabel = row.trial_tier === 'expert' ? 'Expert' : 'Pro'
-        if (setting?.contact_email) await sendEmail(setting.contact_email, 'Votre essai Atelier est terminé', [
-          `Vos ${TRIAL_DURATION_DAYS} jours ${trialLabel} sont terminés. Aucun prélèvement n’a été effectué.`,
-          `Votre espace vous attend : ${setting.app_url ?? ''}/activation`,
-          'Choisissez Pro ou Expert pour reprendre là où vous vous êtes arrêté.',
-        ])
+        if (setting?.contact_email) {
+          await deliverEmail(setting.contact_email, buildAtelierTrialEndedEmail({ appUrl: setting.app_url ?? '' }))
+        }
       }
     } catch (error) {
       trialsFailed++
@@ -129,7 +136,7 @@ export async function POST(req: NextRequest) {
   let trialRemindersSent = 0
   for (const trial of activeTrials) {
     const daysLeft = Math.ceil((new Date(trial.trial_ends_at).getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
-    const marker = daysLeft <= 2 ? 'j-2' : daysLeft <= 7 ? 'j-7' : null
+    const marker = daysLeft <= 2 ? 'j-2' : daysLeft <= 4 ? 'j-4' : null
     if (!marker || trial.trial_reminders_sent?.includes(marker)) continue
     const { data: setting } = await operator.from('operator_client_settings')
       .select('contact_email, app_url')
@@ -137,13 +144,7 @@ export async function POST(req: NextRequest) {
       .eq('organization_id', trial.organization_id)
       .maybeSingle()
     if (!setting?.contact_email) continue
-    const trialLabel = trial.trial_tier === 'expert' ? 'Expert' : 'Pro'
-    const trialOfferLabel = trialLabel === 'Expert' ? 'd’Expert' : 'de Pro'
-    const sent = await sendEmail(setting.contact_email, `Plus que ${daysLeft} jour${daysLeft > 1 ? 's' : ''} ${trialOfferLabel} offert`, [
-      `Votre essai ${trialLabel} se termine dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}.`,
-      'Vos devis, vos chantiers et votre suivi de marge restent en place.',
-      `Choisissez votre formule ici : ${setting.app_url ?? ''}/settings?tab=abonnement`,
-    ])
+    const sent = await deliverEmail(setting.contact_email, buildAtelierTrialReminderEmail({ appUrl: setting.app_url ?? '', daysLeft }))
     if (sent.status === 'sent') {
       const reminders = [...(trial.trial_reminders_sent ?? []), marker]
       await operator.from('operator_client_subscriptions').update({ trial_reminders_sent: reminders }).eq('source_instance', trial.source_instance).eq('organization_id', trial.organization_id)
@@ -242,14 +243,14 @@ export async function POST(req: NextRequest) {
       delivery_status: 'pending_review',
       auto_send_after: autoSendAfter,
       email_template: 'quota-alert',
-      subject_preview: `Atelier : quota ${candidate.featureLabel} atteint ${pctLabel} — ${label}`,
+      subject_preview: `Atelier : quota ${candidate.featureLabel} atteint ${pctLabel} (${label})`,
       body_text: [
         `Bonjour,`,
         `Je vous contacte car l'usage de ${label} sur la fonctionnalité "${candidate.featureLabel}" approche de la limite mensuelle (${pctLabel} consomme actuellement).`,
         `Votre offre actuelle est ${tier}. Pour continuer à utiliser cette fonctionnalité sans interruption, un passage au palier supérieur peut être utile.`,
         `Je reste disponible pour en discuter et ajuster votre offre si besoin.`,
       ].join('\n'),
-      notes: `Alerte automatique — ${pctLabel} de "${candidate.featureLabel}" consomme`,
+      notes: `Alerte automatique : ${pctLabel} de "${candidate.featureLabel}" consomme`,
       metadata: { quota_feature: candidate.feature, pct: Math.round(candidate.pct * 100), client_label: label },
     })
     created++

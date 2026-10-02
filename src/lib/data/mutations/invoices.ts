@@ -44,9 +44,9 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;')
 }
 
-function wrapHtml(orgName: string, bodyText: string): string {
+function wrapHtml(orgName: string, bodyText: string, logoUrl?: string | null): string {
   const bodyHtml = escapeHtml(bodyText).replace(/\n/g, '<br>')
-  return renderOrganizationEmail({ subject: orgName, orgName, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
+  return renderOrganizationEmail({ subject: orgName, orgName, logoUrl, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
 }
 
 type ProratedInvoiceRow = {
@@ -290,7 +290,7 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
   if (invoice?.client_id) {
     const [{ data: client }, { data: org }, { data: customTpl }] = await Promise.all([
       supabase.from('clients').select('company_name, contact_name, first_name, last_name, email').eq('id', invoice.client_id).single(),
-      supabase.from('organizations').select('name, email, email_from_address, email_signature').eq('id', orgId).single(),
+      supabase.from('organizations').select('name, email, email_from_address, email_signature, logo_url').eq('id', orgId).single(),
       supabase.from('email_templates').select('subject, body_text').eq('organization_id', orgId).eq('slug', 'invoice_paid').eq('is_active', true).maybeSingle(),
     ])
 
@@ -310,10 +310,11 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
         }
         const interpolate = (t: string) => Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), t)
         subject = interpolate(customTpl.subject ?? '')
-        html = wrapHtml(org.name, interpolate(customTpl.body_text))
+        html = wrapHtml(org.name, interpolate(customTpl.body_text), org.logo_url)
       } else {
         const built = buildInvoicePaidEmail({
           orgName: org.name,
+          logoUrl: org.logo_url,
           orgEmail: org.email,
           clientName,
           invoiceNumber: invoice.number,
@@ -327,12 +328,13 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
         html = built.html
       }
 
-      await sendEmail({
+      const paidMail = await sendEmail({
         organizationId: orgId,
         to: (client as any).email,
         subject,
         html,
-      }).catch(err => console.error('[markInvoicePaid] email error:', err))
+      }).catch((err): { error: string | null } => ({ error: String(err) }))
+      if (paidMail.error) console.error('[markInvoicePaid] email error:', paidMail.error)
     }
   }
 
@@ -563,6 +565,7 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
 
     const built = buildDepositInvoiceEmail({
       orgName: organization.name,
+      logoUrl: organization.logo_url,
       orgEmail: organization.email ?? '',
       clientName,
       invoiceNumber: invoice.number,
@@ -604,7 +607,7 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
     }
 
     subject = interpolate(tpl.subject, vars)
-    html = wrapHtml(organization.name, interpolate(tpl.body_text, vars))
+    html = wrapHtml(organization.name, interpolate(tpl.body_text, vars), organization.logo_url)
   }
 
   // Générer le PDF
@@ -643,8 +646,13 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
 
   // Envoyer l'email
   if (clientEmail) {
-    await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
-      .catch(err => console.error('[sendInvoice] email error:', err))
+    const mail = await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
+      .catch((err): { error: string | null } => {
+        console.error('[sendInvoice] email error:', err)
+        return { error: "Impossible d'envoyer l'email." }
+      })
+    // Une facture dont l'email n'est pas parti ne doit pas passer en « envoyée ».
+    if (mail.error) return { error: mail.error }
   }
 
   // Marquer comme envoyée

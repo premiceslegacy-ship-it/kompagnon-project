@@ -27,7 +27,9 @@ export type TrialState = {
   trial_converted?: boolean | null
 }
 
-export const TRIAL_DURATION_DAYS = 14
+/** Le seul essai gratuit proposé : Pro, 7 jours, sans carte bancaire. */
+export const TRIAL_TIER = 'pro' as const satisfies SubscriptionTier
+export const TRIAL_DURATION_DAYS = 7
 
 export function getEffectiveTier(subscription: TrialState): SubscriptionTier {
   if (

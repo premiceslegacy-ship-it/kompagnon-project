@@ -21,6 +21,7 @@ import { dateParis, todayParis } from '@/lib/utils'
 import { Resend } from 'resend'
 import { APP_SIGNATURE, defaultBrandedSenderName } from '@/lib/brand'
 import { renderOrganizationEmail } from '@/lib/email/organization'
+import { MISSING_ORGANIZATION_EMAIL_ERROR } from '@/lib/email/resolver'
 
 export type SarahActionRisk = 'low' | 'medium' | 'high'
 export type SarahActionStatus = 'pending' | 'executed' | 'dismissed' | 'expired' | 'failed'
@@ -299,6 +300,7 @@ function resolveClientGreeting(client: {
 
 function buildSarahEmailHtml(opts: {
   orgName: string
+  logoUrl?: string | null
   contactEmail: string
   body: string
   orgSignature: string | null
@@ -314,6 +316,7 @@ function buildSarahEmailHtml(opts: {
   return renderOrganizationEmail({
     subject: opts.orgName,
     orgName: opts.orgName,
+    logoUrl: opts.logoUrl,
     bodyHtml: `<p style="font-size:15px;line-height:1.7">${bodyHtml}</p>`,
     replyTo: opts.contactEmail,
     signature: opts.orgSignature || `${opts.orgName}\n${opts.contactEmail}`,
@@ -343,7 +346,7 @@ async function sendSarahDraftEmail(orgId: string, payload: Record<string, unknow
   const admin = createAdminClient()
   const { data: org } = await admin
     .from('organizations')
-    .select('name, slug, email, email_from_name, email_from_address, email_signature')
+    .select('name, slug, email, email_from_name, email_from_address, email_signature, logo_url')
     .eq('id', orgId)
     .single()
 
@@ -353,6 +356,9 @@ async function sendSarahDraftEmail(orgId: string, payload: Record<string, unknow
 
   if (!org || !orgFromAddress) {
     throw new Error("L'adresse email expéditeur n'est pas configurée. Allez dans Paramètres > Email.")
+  }
+  if (!org.email?.trim()) {
+    throw new Error(MISSING_ORGANIZATION_EMAIL_ERROR)
   }
 
   const filter = (payload.recipient_filter && typeof payload.recipient_filter === 'object'
@@ -413,9 +419,9 @@ async function sendSarahDraftEmail(orgId: string, payload: Record<string, unknow
     .single()
 
   const resend = new Resend(apiKey)
-  const fromName = defaultBrandedSenderName(org.email_from_name || org.name || APP_SIGNATURE)
+  const fromName = defaultBrandedSenderName(org.email_from_name || org.name)
   const from = `${fromName} <${orgFromAddress}>`
-  const contactEmail = org.email || orgFromAddress
+  const contactEmail = org.email
   let sent = 0
   let errors = 0
   const logs: Array<{ broadcast_id: string; client_id: string; email: string; status: string; error_message?: string }> = []
@@ -423,6 +429,7 @@ async function sendSarahDraftEmail(orgId: string, payload: Record<string, unknow
   for (const client of clients) {
     const html = buildSarahEmailHtml({
       orgName: org.name ?? APP_SIGNATURE,
+      logoUrl: org.logo_url,
       contactEmail,
       body,
       orgSignature: org.email_signature ?? null,

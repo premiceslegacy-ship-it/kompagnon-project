@@ -28,6 +28,7 @@ type Org = {
   email: string | null
   email_from_name: string | null
   email_from_address: string | null
+  logo_url: string | null
   auto_reminder_enabled: boolean
   invoice_reminder_days: number[] | null
   quote_reminder_days: number[] | null
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest) {
   // 1. Toutes les orgs avec relances auto activées
   const { data: orgs } = await supabase
     .from('organizations')
-    .select('id, name, slug, email, email_from_name, email_from_address, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_first_delay_days')
+    .select('id, name, slug, email, email_from_name, email_from_address, logo_url, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_first_delay_days')
     .eq('auto_reminder_enabled', true)
 
   if (!orgs?.length) {
@@ -95,6 +96,11 @@ export async function POST(req: NextRequest) {
       deploymentAddress: process.env.RESEND_FROM_ADDRESS,
     })
     if (!fromAddress) continue
+    // Sans email de contact, la réponse d'un client partirait chez Atelier : on ne relance pas.
+    if (!org.email?.trim()) {
+      errors.push(`[org ${org.id}]: email de contact manquant, relances automatiques ignorées`)
+      continue
+    }
     const baseInvoiceDays = org.invoice_reminder_days ?? [3, 7]
     const invoiceDays = org.reminder_first_delay_days != null
       ? [Math.max(3, org.reminder_first_delay_days), ...baseInvoiceDays.slice(1)]
@@ -143,8 +149,8 @@ export async function POST(req: NextRequest) {
             from: `${fromName} <${fromAddress}>`,
             to: item.clientEmail,
             subject,
-            html: wrapHtml(org.name, escHtml(body).replace(/\n/g, '<br>'), signUrl),
-            replyTo: org.email || process.env.RESEND_REPLY_TO_ADDRESS?.trim() || 'contact@orsayn.fr',
+            html: wrapHtml(org.name, escHtml(body).replace(/\n/g, '<br>'), signUrl, org.logo_url),
+            replyTo: org.email,
             ...(attachments?.length ? { attachments } : {}),
           })
           if (emailError) throw new Error(`Resend: ${emailError.message}`)
@@ -386,10 +392,10 @@ Objet: [sujet]
 
 // ─── HTML wrapper ─────────────────────────────────────────────────────────────
 
-function wrapHtml(orgName: string, bodyHtml: string, signUrl: string | null = null): string {
+function wrapHtml(orgName: string, bodyHtml: string, signUrl: string | null = null, logoUrl?: string | null): string {
   const signatureCallToAction = signUrl
     ? `${renderCTA('Consulter et signer le devis', signUrl)}<p style="margin:12px 0 0;color:#6E6A62;font-size:12px;word-break:break-all">Si le bouton ne fonctionne pas : <a href="${escHtml(signUrl)}" style="color:#080807">${escHtml(signUrl)}</a></p>`
     : ''
 
-  return renderOrganizationEmail({ subject: orgName, orgName, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}${signatureCallToAction}</div>` })
+  return renderOrganizationEmail({ subject: orgName, orgName, logoUrl, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}${signatureCallToAction}</div>` })
 }

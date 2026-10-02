@@ -1,4 +1,4 @@
-import { APP_NAME, APP_SIGNATURE, absoluteBrandAssetUrl, wordmarkForTheme } from '@/lib/brand'
+import { APP_NAME, APP_SIGNATURE, absoluteBrandAssetUrl, emailWordmarkUrl } from '@/lib/brand'
 
 /**
  * HTML email theme derived from the Atelier LP design system.
@@ -37,7 +37,7 @@ export function atelierEmailBrand(overrides: Partial<EmailBrand> = {}): EmailBra
   return {
     kind: 'atelier',
     name: 'Atelier BTP',
-    logoUrl: absoluteBrandAssetUrl(wordmarkForTheme('dark')),
+    logoUrl: null,
     signature: null,
     replyTo: process.env.RESEND_REPLY_TO_ADDRESS?.trim() || 'contact@orsayn.fr',
     showPoweredBy: false,
@@ -61,6 +61,19 @@ export function organizationEmailBrand(input: {
     replyTo: input.replyTo ?? null,
     showPoweredBy: true,
   }
+}
+
+/**
+ * Un logo d'entreprise n'est utilisable dans un email que s'il est joignable en
+ * HTTPS et dans un format que Gmail et Outlook savent afficher (pas de SVG ni
+ * d'AVIF). Sinon on retombe sur le logo Atelier.
+ */
+export function emailSafeLogoUrl(value?: string | null): string | null {
+  const url = value?.trim()
+  if (!url || !/^https:\/\//i.test(url)) return null
+  const path = url.split(/[?#]/)[0].toLowerCase()
+  if (path.endsWith('.svg') || path.endsWith('.avif')) return null
+  return url
 }
 
 function safeColor(value?: string | null): boolean {
@@ -205,14 +218,21 @@ export function renderEmailShell({
       : organizationEmailBrand({ name: headerName })
   )
   const accent = safeColor(resolvedBrand.primaryColor) ? resolvedBrand.primaryColor! : EMAIL_COLORS.orange
-  const logo = headerLogoUrl ?? resolvedBrand.logoUrl
   const headerBackground = headerColor ?? EMAIL_COLORS.ink
+  // Logo entier : blanc sur en-tête sombre, noir sur en-tête clair. Une entreprise
+  // qui fournit son propre logo garde le sien ; sinon l'email porte celui d'Atelier.
+  const onDarkHeader = readableTextOn(headerBackground) === '#FFFFFF'
+  const headerText = onDarkHeader ? '#FFFFFF' : EMAIL_COLORS.ink
+  const ownLogo = emailSafeLogoUrl(headerLogoUrl ?? resolvedBrand.logoUrl)
+  const logo = ownLogo ?? emailWordmarkUrl(onDarkHeader ? 'dark' : 'light')
+  const showsAtelierLogo = !ownLogo && Boolean(logo)
   const footer = footerName ?? resolvedBrand.name
   const poweredBy = resolvedBrand.kind === 'organization' && resolvedBrand.showPoweredBy !== false
     ? `<br/><span style="color:#9A948A;">Propulsé par Atelier BTP</span>`
     : ''
   const signature = includeSignature ? renderSignature(resolvedBrand) : ''
-  const supportLine = resolvedBrand.kind === 'atelier'
+  // La signature de Samuel contient déjà l'adresse de contact : pas de second rappel dessous.
+  const supportLine = resolvedBrand.kind === 'atelier' && !includeSignature
     ? `<p style="margin:10px 0 0;color:${EMAIL_COLORS.muted};font-family:${FONT_STACK};font-size:12px;line-height:1.5;">Une question ? <a href="mailto:${escHtml(resolvedBrand.replyTo || 'contact@orsayn.fr')}" style="color:${EMAIL_COLORS.ink};text-decoration:underline;">${escHtml(resolvedBrand.replyTo || 'contact@orsayn.fr')}</a></p>`
     : ''
 
@@ -236,7 +256,8 @@ export function renderEmailShell({
           <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="border:1px solid rgba(255,255,255,.22);border-radius:21px;overflow:hidden;">
             <tr><td class="atelier-hero" style="background:${headerBackground};padding:32px;">
               ${extraHeaderHtml}
-              ${logo ? `<img src="${escHtml(logo)}" alt="${escHtml(resolvedBrand.name)}" style="display:block;width:auto;max-width:220px;height:30px;" />` : `<span style="color:#FFFFFF;font-family:${FONT_STACK};font-size:20px;font-weight:750;letter-spacing:-.03em;">${escHtml(resolvedBrand.name)}</span>`}
+              ${ownLogo ? `<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#FFFFFF;border-radius:12px;padding:10px 14px;"><img src="${escHtml(ownLogo)}" alt="${escHtml(resolvedBrand.name)}" style="display:block;width:auto;height:auto;max-width:220px;max-height:48px;color:${EMAIL_COLORS.ink};font-family:${FONT_STACK};font-size:18px;font-weight:750;" /></td></tr></table>` : logo ? `<img src="${escHtml(logo)}" alt="Atelier BTP" width="265" height="30" style="display:block;width:auto;max-width:265px;height:30px;color:${headerText};font-family:${FONT_STACK};font-size:20px;font-weight:750;" />` : `<span style="color:${headerText};font-family:${FONT_STACK};font-size:20px;font-weight:750;letter-spacing:-.03em;">${escHtml(resolvedBrand.name)}</span>`}
+              ${showsAtelierLogo && resolvedBrand.kind === 'organization' ? `<p style="margin:16px 0 0;color:${headerText};font-family:${FONT_STACK};font-size:15px;font-weight:650;letter-spacing:-.01em;line-height:1.3;">${escHtml(resolvedBrand.name)}</p>` : ''}
               ${resolvedBrand.kind === 'organization' && accent !== EMAIL_COLORS.orange ? `<div style="margin-top:18px;width:42px;height:4px;border-radius:999px;background:${accent};"></div>` : ''}
             </td></tr>
             ${alertHtml}

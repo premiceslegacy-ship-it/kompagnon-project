@@ -17,10 +17,6 @@ export type AIFeature =
   | 'receipt_ocr'
   | 'weekly_summary'
   | 'planning_ai'
-  | 'whatsapp_reply'
-  | 'whatsapp_transcription'
-  | 'whatsapp_proactive'
-  | 'whatsapp_document_ocr'
   | 'voice_transcription'
   | 'reminder_draft'
   | 'auto_reminder_draft'
@@ -75,10 +71,6 @@ const MODULE_BY_FEATURE: Record<AIFeature, OrganizationModuleKey> = {
   receipt_ocr: 'receipt_ocr',
   weekly_summary: 'weekly_summary',
   planning_ai: 'planning_ai',
-  whatsapp_reply: 'whatsapp_agent',
-  whatsapp_transcription: 'whatsapp_agent',
-  whatsapp_proactive: 'whatsapp_proactive',
-  whatsapp_document_ocr: 'whatsapp_ocr',
   voice_transcription: 'voice_input',
   reminder_draft: 'relances_ai',
   auto_reminder_draft: 'relances_ai',

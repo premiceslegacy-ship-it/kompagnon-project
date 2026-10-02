@@ -173,9 +173,6 @@ export const MODULE_LABELS: Record<string, string> = {
   receipt_ocr: 'Lecture des tickets',
   voice_input: 'Saisie vocale',
   voice_live: 'Vocal live Sarah',
-  whatsapp_agent: 'Assistant WhatsApp',
-  whatsapp_ocr: 'Lecture des documents WhatsApp',
-  whatsapp_proactive: 'WhatsApp proactif',
 }
 
 export function getLatestQuotaRows(quotas: OperatorClientQuota[]): OperatorClientQuota[] {

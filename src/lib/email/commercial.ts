@@ -50,11 +50,11 @@ export function buildAtelierCommercialEmail(input: AtelierCommercialEmailInput):
 
 export function buildAtelierTrialStartedEmail({ appUrl, companyName }: { appUrl: string; companyName: string }) {
   return buildAtelierCommercialEmail({
-    subject: 'Bienvenue dans Atelier — vos 14 jours Pro commencent maintenant',
+    subject: 'Bienvenue dans Atelier : vos 7 jours Pro commencent maintenant',
     eyebrow: 'Votre espace est prêt',
     title: `${companyName}, votre atelier peut commencer à travailler.`,
     paragraphs: [
-      'Pendant 14 jours, vous disposez de la formule Pro : devis, factures, chantiers, suivi de marge et assistants métier.',
+      'Pendant 7 jours, vous disposez de la formule Pro : devis, factures, chantiers, suivi de marge et assistants métier.',
       'Aucune carte bancaire n’a été demandée et aucun prélèvement ne sera lancé automatiquement à la fin de l’essai.',
     ],
     cta: { label: 'Ouvrir Atelier →', url: `${appUrl}/dashboard` },
@@ -81,7 +81,7 @@ export function buildAtelierTrialEndedEmail({ appUrl }: { appUrl: string }) {
     eyebrow: 'Votre espace est conservé',
     title: 'Vos données sont toujours là.',
     paragraphs: [
-      'Vos 14 jours Pro sont terminés. Aucun prélèvement n’a été effectué.',
+      'Vos 7 jours Pro sont terminés. Aucun prélèvement n’a été effectué.',
       'Choisissez Pro ou Expert pour reprendre là où vous vous êtes arrêté, ou exportez vos données quand vous le souhaitez.',
     ],
     cta: { label: 'Choisir ma formule →', url: `${appUrl}/activation` },

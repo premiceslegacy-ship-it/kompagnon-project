@@ -45,14 +45,6 @@ function stripSensitiveOrganizationFields(row: Record<string, unknown> | null): 
   }
 }
 
-function stripSensitiveWhatsappFields(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-  return rows.map((row) => ({
-    ...row,
-    access_token: row.access_token ? '[redacted]' : null,
-    verify_token: row.verify_token ? '[redacted]' : null,
-  }))
-}
-
 function stripCompanyMemoryEmbeddings(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
   return rows.map((row) => {
     const { embedding: _embedding, ...rest } = row
@@ -302,23 +294,6 @@ async function fetchCompanyMemoryRows(
   return stripCompanyMemoryEmbeddings((data ?? []) as Array<Record<string, unknown>>)
 }
 
-async function fetchWhatsappConfigRows(
-  admin: AdminClient,
-  organizationId: string,
-): Promise<Array<Record<string, unknown>>> {
-  const { data, error } = await admin
-    .from('whatsapp_configs')
-    .select('id, organization_id, phone_number_id, waba_id, access_token, verify_token, authorized_numbers, is_active, created_at, updated_at')
-    .eq('organization_id', organizationId)
-
-  if (error) {
-    console.error('[organization-exports] whatsapp_configs:', error.message)
-    return []
-  }
-
-  return stripSensitiveWhatsappFields((data ?? []) as Array<Record<string, unknown>>)
-}
-
 async function fetchPdfArtifacts(
   zip: JSZip,
   organizationId: string,
@@ -446,8 +421,6 @@ export async function buildOrganizationExportBundle({
     activityLog,
     companyMemory,
     goals,
-    whatsappConfigs,
-    whatsappMessages,
     receivedInvoices,
     paStatusEvents,
     teamMembers,
@@ -474,8 +447,6 @@ export async function buildOrganizationExportBundle({
     fetchOrgRows(admin, 'activity_log', organizationId, 'created_at'),
     fetchCompanyMemoryRows(admin, organizationId),
     fetchOrgRows(admin, 'goals', organizationId, 'created_at'),
-    fetchWhatsappConfigRows(admin, organizationId),
-    fetchOrgRows(admin, 'whatsapp_messages', organizationId, 'created_at'),
     fetchOrgRows(admin, 'received_invoices', organizationId, 'created_at'),
     fetchOrgRows(admin, 'pa_status_events', organizationId, 'created_at'),
     fetchTeamMembers(admin, organizationId),
@@ -553,8 +524,6 @@ export async function buildOrganizationExportBundle({
   addCsvFile(zip, 'csv/activity_log.csv', activityLog, summary)
   addCsvFile(zip, 'csv/company_memory.csv', companyMemory, summary)
   addCsvFile(zip, 'csv/goals.csv', goals, summary)
-  addCsvFile(zip, 'csv/whatsapp_configs.csv', whatsappConfigs, summary)
-  addCsvFile(zip, 'csv/whatsapp_messages.csv', whatsappMessages, summary)
   addCsvFile(zip, 'csv/received_invoices.csv', receivedInvoices, summary)
   addCsvFile(zip, 'csv/pa_status_events.csv', paStatusEvents, summary)
 

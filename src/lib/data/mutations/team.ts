@@ -101,7 +101,7 @@ export async function sendTeamInvite(email: string, roleId: string): Promise<{ e
 
   const { data: org } = await admin
     .from('organizations')
-    .select('name')
+    .select('name, logo_url')
     .eq('id', organizationId)
     .single()
 
@@ -156,6 +156,7 @@ export async function sendTeamInvite(email: string, roleId: string): Promise<{ e
   // Envoyer l'email brandé via Resend
   const { subject, html } = buildInviteEmail({
     orgName: org.name,
+    logoUrl: org.logo_url,
     inviterName: profile?.full_name || user.email || 'Votre responsable',
     inviteUrl,
   })
@@ -165,6 +166,7 @@ export async function sendTeamInvite(email: string, roleId: string): Promise<{ e
     to: email,
     subject,
     html,
+    allowAtelierReplyTo: true, // invitation de compte : une réponse peut aller au support Atelier
   })
 
   if (sendError) {

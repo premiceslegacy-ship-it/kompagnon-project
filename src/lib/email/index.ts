@@ -1,7 +1,12 @@
 import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { APP_SIGNATURE, defaultBrandedSenderName } from '@/lib/brand'
-import { resolveOrganizationFromAddress, resolveOrganizationReplyTo } from './resolver'
+import { defaultBrandedSenderName } from '@/lib/brand'
+import {
+  MISSING_ORGANIZATION_EMAIL_ERROR,
+  resolveClientFacingReplyTo,
+  resolveOrganizationFromAddress,
+  resolveOrganizationReplyTo,
+} from './resolver'
 
 /**
  * Envoie un email d'authentification (signup OTP, etc.) via Resend
@@ -27,7 +32,7 @@ export async function sendAuthEmail({
 }): Promise<{ error: string | null }> {
   const apiKey = process.env.RESEND_API_KEY
   const fromAddress = process.env.RESEND_FROM_ADDRESS
-  const fromName = defaultBrandedSenderName(process.env.RESEND_FROM_NAME || APP_SIGNATURE)
+  const fromName = defaultBrandedSenderName(process.env.RESEND_FROM_NAME)
 
   if (!apiKey || !fromAddress) {
     console.error('[sendAuthEmail] RESEND_API_KEY ou RESEND_FROM_ADDRESS manquants dans .env.local')
@@ -69,6 +74,7 @@ export async function sendEmail({
   text,
   replyTo,
   attachments,
+  allowAtelierReplyTo = false,
 }: {
   organizationId: string
   to: string
@@ -77,6 +83,13 @@ export async function sendEmail({
   text?: string
   replyTo?: string | null
   attachments?: Array<{ filename: string; content: Buffer }>
+  /**
+   * Par défaut, un envoi au nom d'une entreprise est bloqué si elle n'a pas
+   * d'email de contact : la réponse du client partirait chez Atelier. Mettre à
+   * `true` pour un email de compte (code de connexion, invitation d'équipe) où
+   * une réponse au support Atelier est acceptable.
+   */
+  allowAtelierReplyTo?: boolean
 }): Promise<{ error: string | null }> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
@@ -110,7 +123,11 @@ export async function sendEmail({
     }
   }
 
-  const fromName = defaultBrandedSenderName(org.email_from_name || org.name || APP_SIGNATURE)
+  if (!allowAtelierReplyTo && !resolveClientFacingReplyTo({ explicitReplyTo: replyTo, organizationEmail: org.email })) {
+    return { error: MISSING_ORGANIZATION_EMAIL_ERROR }
+  }
+
+  const fromName = defaultBrandedSenderName(org.email_from_name || org.name)
   const from = `${fromName} <${fromAddress}>`
   const resolvedReplyTo = resolveOrganizationReplyTo({
     explicitReplyTo: replyTo,

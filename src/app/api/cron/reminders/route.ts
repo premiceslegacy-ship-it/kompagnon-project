@@ -16,9 +16,9 @@ function interpolate(template: string, vars: Record<string, string>): string {
   return Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), template)
 }
 
-function wrapHtml(orgName: string, bodyText: string): string {
+function wrapHtml(orgName: string, bodyText: string, logoUrl?: string | null): string {
   const bodyHtml = escHtml(bodyText).replace(/\n/g, '<br>')
-  return renderOrganizationEmail({ subject: orgName, orgName, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
+  return renderOrganizationEmail({ subject: orgName, orgName, logoUrl, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
 }
 
 // ─── GET /api/cron/reminders ───────────────────────────────────────────────────
@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
 
   const { data: orgs } = await admin
     .from('organizations')
-    .select('id, name, email, email_from_address, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, reminder_first_delay_days')
+    .select('id, name, email, email_from_address, logo_url, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, reminder_first_delay_days')
     .eq('auto_reminder_enabled', true)
 
   if (!orgs || orgs.length === 0) {
@@ -151,10 +151,11 @@ export async function GET(req: NextRequest) {
 
         const tpl = getTemplate(slug)
         const subject = interpolate(tpl.subject, vars)
-        const html = wrapHtml(org.name, interpolate(tpl.body_text, vars))
+        const html = wrapHtml(org.name, interpolate(tpl.body_text, vars), org.logo_url)
 
         try {
-          await sendEmail({ organizationId: org.id, to: clientEmail, subject, html })
+          const mail = await sendEmail({ organizationId: org.id, to: clientEmail, subject, html })
+          if (mail.error) throw new Error(mail.error)
           await admin.from('reminders').insert({
             organization_id: org.id,
             invoice_id: invoice.id,
@@ -235,10 +236,11 @@ export async function GET(req: NextRequest) {
 
         const tpl = getTemplate('quote_sent')
         const subject = interpolate(tpl.subject, vars)
-        const html = wrapHtml(org.name, interpolate(tpl.body_text, vars))
+        const html = wrapHtml(org.name, interpolate(tpl.body_text, vars), org.logo_url)
 
         try {
-          await sendEmail({ organizationId: org.id, to: clientEmail, subject, html })
+          const mail = await sendEmail({ organizationId: org.id, to: clientEmail, subject, html })
+          if (mail.error) throw new Error(mail.error)
           await admin.from('reminders').insert({
             organization_id: org.id,
             quote_id: quote.id,
