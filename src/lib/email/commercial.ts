@@ -99,8 +99,9 @@ function formatParisDate(iso?: string | null): string | null {
 
 /**
  * Carte de message : scène = premier jour dans un espace neuf ; progrès =
- * juger Atelier sur de vrais dossiers ; mécanisme = Sarah prépare, la personne
- * valide ; condition = aucune carte, rien prélevé ; action = ouvrir Atelier.
+ * juger Atelier sur de vrais dossiers ; mécanisme = préparer un devis, le faire
+ * signer et suivre le chantier dans le même espace ; condition = aucune carte,
+ * rien prélevé ; action = ouvrir Atelier.
  */
 export function buildAtelierTrialStartedEmail({
   appUrl,
@@ -118,7 +119,7 @@ export function buildAtelierTrialStartedEmail({
     title: `${companyName}, votre espace Atelier est prêt.`,
     paragraphs: [
       `Pendant ${TRIAL_DURATION_DAYS} jours, vous disposez de la formule Pro sur vos vrais devis, vos chantiers et vos relances.`,
-      'Pour juger sur pièces, le plus simple est de préparer un devis réel avec Sarah, de l’envoyer à signer, puis de suivre la marge du chantier. Sarah prépare, vous validez.',
+      'Pour juger sur pièces, le plus simple est de partir d’un devis réel, de le faire signer, puis de suivre la marge du chantier dans le même espace.',
       'Aucune carte bancaire n’a été demandée et rien ne sera prélevé à la fin de l’essai.',
     ],
     facts: [
@@ -169,8 +170,8 @@ export function buildAtelierTrialReminderEmail({
   }
 
   const guidance = preferredTier === 'expert'
-    ? 'Vous aviez indiqué Expert à l’inscription : c’est la formule qui lève les limites si vous comptez beaucoup utiliser Sarah. Vous pouvez aussi commencer par Pro et passer à Expert plus tard depuis vos paramètres.'
-    : 'Pro convient à un usage quotidien de Sarah. Expert devient utile quand vous approchez régulièrement des limites, et vous pourrez y passer plus tard depuis vos paramètres.'
+    ? 'Vous aviez indiqué Expert à l’inscription : c’est la formule qui lève les limites si vous comptez beaucoup utiliser les fonctions d’IA. Vous pouvez aussi commencer par Pro et passer à Expert plus tard depuis vos paramètres.'
+    : 'Pro convient à un usage quotidien. Expert devient utile quand vous approchez régulièrement des limites IA, et vous pourrez y passer plus tard depuis vos paramètres.'
 
   return buildAtelierCommercialEmail({
     subject,
