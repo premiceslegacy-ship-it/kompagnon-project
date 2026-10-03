@@ -221,7 +221,7 @@ export async function POST(req: NextRequest) {
     metadata: { preferred_tier: payload.preferred_tier, trial_ends_at: trialEnd.toISOString(), sync_status: sync.status },
   })
   const appUrl = payload.app_url.replace(/\/$/, '')
-  const customerEmail = buildAtelierTrialStartedEmail({ appUrl, companyName: payload.company_name })
+  const customerEmail = buildAtelierTrialStartedEmail({ appUrl, companyName: payload.company_name, trialEndsAt: trialEnd.toISOString() })
   const operatorEmail = buildAtelierNotificationEmail({
     subject: `[Atelier] Nouvel essai : ${payload.company_name}`,
     title: 'Nouvel essai démarré',
