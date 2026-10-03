@@ -5,8 +5,9 @@ import { normalizeEinvoicingConfigFromDb, DEFAULT_EINVOICING_CONFIG } from '@/li
 import { isOverflowMode } from '@/lib/quota-catalog'
 import { recordOperatorClientEvent, syncClientQuotaConfig } from '@/lib/operator/trial-lifecycle'
 import { isSellableTier, type EntitlementSyncPayload } from '@/lib/subscription-access'
+import { CANCELLATION_NOTICE_DAYS } from '@/lib/subscription-terms'
 import { sendAuthEmail } from '@/lib/email'
-import { buildAtelierLifecycleEmail, buildAtelierNotificationEmail } from '@/lib/email/commercial'
+import { buildAtelierNotificationEmail, buildAtelierSubscriptionEmail } from '@/lib/email/commercial'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, cancel_at: subscription.cancel_at, idempotent: true })
   }
 
-  const cancelAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+  const cancelAt = new Date(Date.now() + CANCELLATION_NOTICE_DAYS * 24 * 60 * 60 * 1000)
   const stripeResponse = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(subscription.stripe_subscription_id)}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${stripeKey}`, 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -113,13 +114,10 @@ export async function POST(req: NextRequest) {
     metadata: { reason, cancel_at: cancelAt.toISOString(), proration_behavior: 'create_prorations' },
   })
   const displayDate = cancelAt.toLocaleDateString('fr-FR')
-  const customerEmail = buildAtelierLifecycleEmail({
-    subject: 'Résiliation Atelier confirmée',
-    title: 'Votre résiliation est programmée.',
-    body: `Votre accès reste actif jusqu’au ${displayDate}. Stripe calculera la dernière période au prorata.`,
+  const customerEmail = buildAtelierSubscriptionEmail({
+    kind: 'cancellation_scheduled',
     appUrl: settings.app_url,
-    ctaLabel: 'Gérer mon abonnement',
-    ctaPath: '/settings?tab=abonnement',
+    endsAt: cancelAt.toISOString(),
   })
   const operatorEmail = buildAtelierNotificationEmail({
     subject: `[Cockpit Atelier] Résiliation programmée au ${displayDate}`,

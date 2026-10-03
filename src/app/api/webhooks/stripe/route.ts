@@ -11,7 +11,8 @@ import { DEFAULT_EINVOICING_CONFIG, normalizeEinvoicingConfigFromDb } from '@/li
 import { isOverflowMode, isSubscriptionTier, type SubscriptionTier } from '@/lib/quota-catalog'
 import { isSellableTier, type AccessStatus, type EntitlementSyncPayload } from '@/lib/subscription-access'
 import { sendAuthEmail } from '@/lib/email'
-import { buildAtelierLifecycleEmail, buildAtelierNotificationEmail } from '@/lib/email/commercial'
+import { buildAtelierNotificationEmail, buildAtelierSubscriptionEmail, type AtelierSubscriptionEmailKind } from '@/lib/email/commercial'
+import { ATELIER_PRICING } from '@/lib/pricing'
 
 export const dynamic = 'force-dynamic'
 
@@ -115,30 +116,30 @@ function isoFromUnix(value: unknown): string | null {
   return typeof value === 'number' && Number.isFinite(value) ? new Date(value * 1000).toISOString() : null
 }
 
-async function notifyLifecycle(to: string | null, eventType: string, tier: SubscriptionTier, appUrl: string) {
-  const messages: Record<string, { subject: string; body: string }> = {
-    payment_succeeded: { subject: 'Votre accès Atelier est activé', body: `Votre formule ${tier === 'expert' ? 'Expert' : 'Pro'} est active. Toute votre équipe peut reprendre le travail.` },
-    payment_failed: { subject: 'Votre paiement Atelier doit être régularisé', body: 'Stripe va retenter le paiement. Votre accès reste ouvert pendant cette phase ; mettez votre moyen de paiement à jour pour éviter une interruption.' },
-    payment_recovered: { subject: 'Paiement régularisé : accès Atelier maintenu', body: 'Votre paiement a bien été récupéré. Vous pouvez continuer à utiliser Atelier normalement.' },
-    subscription_cancelled: { subject: 'Votre accès Atelier est arrivé à son terme', body: 'Votre abonnement est terminé. Vos données restent exportables depuis le hall d’activation.' },
-  }
-  const message = messages[eventType]
-  if (!message) return
-  const customerEmail = buildAtelierLifecycleEmail({
-    subject: message.subject,
-    title: message.subject,
-    body: message.body,
-    appUrl,
-    ctaLabel: eventType === 'subscription_cancelled' ? 'Ouvrir le hall d’activation' : undefined,
-    ctaPath: eventType === 'subscription_cancelled' ? '/activation' : '/dashboard',
-    notice: eventType === 'payment_succeeded' || eventType === 'payment_recovered'
-      ? { text: 'Votre accès est prêt à être utilisé.', theme: 'success' }
-      : undefined,
-  })
+/**
+ * Fin de la période en cours. Les versions récentes de l'API Stripe ne portent
+ * plus `current_period_end` sur l'abonnement mais sur chacune de ses lignes.
+ */
+function periodEndOf(subscription: StripeObject): string | null {
+  return isoFromUnix(subscription.current_period_end)
+    ?? isoFromUnix(subscription.items?.data?.[0]?.current_period_end)
+}
+
+const LIFECYCLE_EMAIL_KIND: Record<string, AtelierSubscriptionEmailKind> = {
+  payment_succeeded: 'activated',
+  payment_failed: 'payment_failed',
+  payment_recovered: 'payment_recovered',
+  subscription_cancelled: 'ended',
+}
+
+async function notifyLifecycle(to: string | null, eventType: string, tier: SubscriptionTier, appUrl: string, renewsAt: string | null) {
+  const kind = LIFECYCLE_EMAIL_KIND[eventType]
+  if (!kind) return
+  const customerEmail = buildAtelierSubscriptionEmail({ kind, appUrl, tier, renewsAt })
   const operatorMessage = buildAtelierNotificationEmail({
-    subject: `[Cockpit Atelier] ${message.subject}`,
-    title: message.subject,
-    body: `${message.body} Formule : ${tier}. Événement : ${eventType}.`,
+    subject: `[Cockpit Atelier] ${customerEmail.subject}`,
+    title: customerEmail.subject,
+    body: `Formule : ${tier}. Événement : ${eventType}.`,
   })
   const deliveries = []
   if (to) deliveries.push(sendAuthEmail({
@@ -160,6 +161,8 @@ async function applySubscriptionState(input: {
   subscription: StripeObject
   forcedStatus?: AccessStatus
   eventType: string
+  /** Motif de la facture Stripe (`subscription_create`, `subscription_cycle`, ...). */
+  billingReason?: string | null
 }) {
   const operator = createOperatorAdminClient()
   const { sourceInstance, organizationId } = input.tenant
@@ -203,7 +206,8 @@ async function applySubscriptionState(input: {
   const now = new Date().toISOString()
   const mrr = accessStatus === 'expired'
     ? 0
-    : tier === 'pro' ? 69 : tier === 'expert' ? 169 : previous?.mrr_ht ?? 0
+    : tier === 'pro' ? ATELIER_PRICING.pro.amountEur : tier === 'expert' ? ATELIER_PRICING.expert.amountEur : previous?.mrr_ht ?? 0
+  const renewsAt = periodEndOf(input.subscription)
   const stripeCustomerId = typeof input.subscription.customer === 'string' ? input.subscription.customer : previous?.stripe_customer_id
   const stripeSubscriptionId = String(input.subscription.id || previous?.stripe_subscription_id || '')
   const { error } = await operator.from('operator_client_subscriptions').upsert({
@@ -219,8 +223,11 @@ async function applySubscriptionState(input: {
     stripe_subscription_id: stripeSubscriptionId || null,
     mrr_ht: mrr,
     is_active: ['active', 'past_due', 'canceling', 'trialing'].includes(accessStatus),
-    renews_at: isoFromUnix(input.subscription.current_period_end),
-    trial_converted: ['active', 'past_due', 'canceling'].includes(accessStatus),
+    renews_at: renewsAt,
+    // Une fois converti en abonné, on ne redevient jamais « essai non converti » :
+    // sinon le cron d'expiration d'essai traiterait un abonné résilié ou impayé
+    // comme un essai terminé et lui enverrait « aucun prélèvement n'a été effectué ».
+    trial_converted: previous?.trial_converted === true || ['active', 'past_due', 'canceling'].includes(accessStatus),
     payment_failed_at: accessStatus === 'past_due' || accessStatus === 'unpaid' ? previous?.payment_failed_at || now : null,
     updated_at: now,
   }, { onConflict: 'source_instance,organization_id' })
@@ -259,7 +266,15 @@ async function applySubscriptionState(input: {
     actorEmail: 'stripe@webhook',
     metadata: { tier: syncedTier, access_status: accessStatus, stripe_status: stripeStatus, subscription_id: stripeSubscriptionId },
   })
-  await notifyLifecycle(settings.contact_email, effectiveEventType, syncedTier, settings.app_url)
+  // Le premier paiement ouvre l'accès : un seul email « formule active ». Un
+  // renouvellement mensuel (`subscription_cycle`) ne doit pas renvoyer ce message.
+  const isRenewalPayment = effectiveEventType === 'payment_succeeded'
+    && (input.billingReason
+      ? input.billingReason !== 'subscription_create'
+      : ['active', 'canceling'].includes(previous?.access_status))
+  if (!isRenewalPayment) {
+    await notifyLifecycle(settings.contact_email, effectiveEventType, syncedTier, settings.app_url, renewsAt)
+  }
 }
 
 async function subscriptionForObject(object: StripeObject): Promise<StripeObject | null> {
@@ -362,7 +377,13 @@ export async function POST(req: NextRequest) {
           await applySubscriptionState({ tenant, subscription, forcedStatus: subscription.status === 'unpaid' ? 'unpaid' : 'past_due', eventType: 'payment_failed' })
         } else if (event.type === 'invoice.paid') {
           const previousStatus = String(subscription.status || '') === 'past_due'
-          await applySubscriptionState({ tenant, subscription, forcedStatus: subscription.cancel_at ? 'canceling' : 'active', eventType: previousStatus ? 'payment_recovered' : 'payment_succeeded' })
+          await applySubscriptionState({
+            tenant,
+            subscription,
+            forcedStatus: subscription.cancel_at ? 'canceling' : 'active',
+            eventType: previousStatus ? 'payment_recovered' : 'payment_succeeded',
+            billingReason: typeof object.billing_reason === 'string' ? object.billing_reason : null,
+          })
         } else if (event.type === 'customer.subscription.deleted') {
           await applySubscriptionState({ tenant, subscription, forcedStatus: 'expired', eventType: 'subscription_cancelled' })
         } else if (event.type === 'checkout.session.completed') {

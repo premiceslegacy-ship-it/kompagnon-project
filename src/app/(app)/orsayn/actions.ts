@@ -2,7 +2,8 @@
 
 import { revalidatePath } from 'next/cache'
 import { Resend } from 'resend'
-import { buildAtelierCommercialEmail } from '@/lib/email/commercial'
+import { buildAtelierCommercialEmail, formatTierLabel } from '@/lib/email/commercial'
+import { resolveAlertCta } from '@/lib/operator/alert-email'
 import { ATELIER_SENDER_NAME } from '@/lib/brand'
 import { getOperatorUser } from '@/lib/operator-auth'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
@@ -144,13 +145,12 @@ function getCommercialTemplate(input: {
 }) {
   return {
     template: 'upgrade-prompt-quota',
-    subject: `Atelier : point usage IA pour ${input.clientLabel}`,
+    subject: `Un point sur l'usage de l'IA dans ${input.clientLabel}`,
     body: [
       `Bonjour,`,
-      `Je vous fais un point rapide sur l'usage IA de ${input.clientLabel}.`,
-      `Ce mois-ci, l'usage indicatif représente ${input.usageCostLabel}. Votre offre actuelle est ${input.tier}.`,
-      `Si ce rythme continue, le palier ${input.suggestedTier} peut être plus adapté pour garder une expérience fluide et éviter les limites.`,
-      `On peut faire le point ensemble quand vous voulez.`,
+      `Ce mois-ci, l'usage de l'IA dans ${input.clientLabel} représente environ ${input.usageCostLabel} (donnée indicative). Votre formule actuelle est ${formatTierLabel(input.tier)}.`,
+      `Si ce rythme se maintient, la formule ${formatTierLabel(input.suggestedTier)} vous évite de rencontrer les limites en cours de mois.`,
+      `Rien à changer si la formule actuelle vous convient : je voulais simplement que vous soyez informé. Pour en parler, répondez à cet email.`,
     ],
   }
 }
@@ -879,7 +879,7 @@ export async function validateQuotaAlert(formData: FormData) {
   const operator = createOperatorAdminClient()
   const { data: alert } = await operator
     .from('operator_commercial_events')
-    .select('id, source_instance, subject_preview, body_text, metadata')
+    .select('id, source_instance, organization_id, subject_preview, body_text, metadata')
     .eq('id', alertId)
     .eq('delivery_status', 'pending_review')
     .maybeSingle()
@@ -929,7 +929,8 @@ export async function validateQuotaAlert(formData: FormData) {
 
   if (apiKey && fromAddress) {
     const resend = new Resend(apiKey)
-    const html = buildAtelierCommercialEmail({ subject, title: subject, paragraphs: bodyLines }).html
+    const cta = await resolveAlertCta(operator, alert)
+    const html = buildAtelierCommercialEmail({ subject, title: subject, paragraphs: bodyLines, cta }).html
     const { error } = await resend.emails.send({
       from: `${fromName} <${fromAddress}>`,
       to: recipientEmail,

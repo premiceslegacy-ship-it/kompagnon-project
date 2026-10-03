@@ -83,7 +83,7 @@ describe('essai gratuit unique : Pro 7 jours', () => {
     expect(started.html).toContain('Pendant 7 jours')
     expect(ended.html).toContain('Vos 7 jours Pro sont terminés')
     for (const { subject, html } of [started, ended, buildAtelierTrialReminderEmail({ appUrl: APP_URL, daysLeft: 2 })]) {
-      expect(`${subject}${html}`).not.toMatch(/14 jours|30 jours|essai Expert|Expert 30/i)
+      expect(`${subject}${html}`).not.toMatch(/14 jours|30 jours d.essai|essai de 30 jours|essai Expert|Expert 30/i)
     }
   })
 

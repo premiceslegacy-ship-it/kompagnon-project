@@ -9,7 +9,9 @@ import {
   buildAtelierCommercialEmail,
   buildAtelierTrialEndedEmail,
   buildAtelierTrialReminderEmail,
+  buildQuotaAlertContent,
 } from '@/lib/email/commercial'
+import { resolveAlertCta } from '@/lib/operator/alert-email'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,7 +25,7 @@ type QuotaRow = { source_instance: string; organization_id: string; quota_featur
 type SubscriptionRow = { source_instance: string; organization_id: string; tier: string }
 type SettingRow = { source_instance: string; organization_id: string; label: string | null }
 type ExistingAlertRow = { source_instance: string; organization_id: string | null }
-type PendingAlertRow = { id: string; source_instance: string; subject_preview: string | null; body_text: string | null; metadata: Record<string, unknown> | null }
+type PendingAlertRow = { id: string; source_instance: string; organization_id: string | null; subject_preview: string | null; body_text: string | null; metadata: Record<string, unknown> | null }
 
 async function collectPages<T>(fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
   const rows: T[] = []
@@ -56,12 +58,13 @@ async function deliverEmail(to: string, built: BuiltEmail): Promise<{ status: 's
   return { status: 'sent', error: null }
 }
 
-async function sendEmail(to: string, subject: string, bodyLines: string[]) {
+async function sendEmail(to: string, subject: string, bodyLines: string[], cta?: { label: string; url: string }) {
   return deliverEmail(to, buildAtelierCommercialEmail({
     subject,
     eyebrow: 'Atelier BTP',
     title: subject,
     paragraphs: bodyLines,
+    cta,
   }))
 }
 
@@ -87,6 +90,7 @@ export async function POST(req: NextRequest) {
     .not('trial_tier', 'is', null)
     .not('trial_ends_at', 'is', null)
     .eq('trial_converted', false)
+    .is('stripe_subscription_id', null)
     .lt('trial_ends_at', now.toISOString())
     .range(from, to))
 
@@ -126,11 +130,13 @@ export async function POST(req: NextRequest) {
     organization_id: string
     trial_ends_at: string
     trial_tier: string | null
+    preferred_tier: string | null
     trial_reminders_sent: string[] | null
   }>((from, to) => operator.from('operator_client_subscriptions')
-    .select('source_instance, organization_id, trial_ends_at, trial_tier, trial_reminders_sent')
+    .select('source_instance, organization_id, trial_ends_at, trial_tier, preferred_tier, trial_reminders_sent')
     .not('trial_tier', 'is', null)
     .eq('trial_converted', false)
+    .is('stripe_subscription_id', null)
     .gt('trial_ends_at', now.toISOString())
     .range(from, to))
   let trialRemindersSent = 0
@@ -144,7 +150,12 @@ export async function POST(req: NextRequest) {
       .eq('organization_id', trial.organization_id)
       .maybeSingle()
     if (!setting?.contact_email) continue
-    const sent = await deliverEmail(setting.contact_email, buildAtelierTrialReminderEmail({ appUrl: setting.app_url ?? '', daysLeft }))
+    const sent = await deliverEmail(setting.contact_email, buildAtelierTrialReminderEmail({
+      appUrl: setting.app_url ?? '',
+      daysLeft,
+      trialEndsAt: trial.trial_ends_at,
+      preferredTier: trial.preferred_tier,
+    }))
     if (sent.status === 'sent') {
       const reminders = [...(trial.trial_reminders_sent ?? []), marker]
       await operator.from('operator_client_subscriptions').update({ trial_reminders_sent: reminders }).eq('source_instance', trial.source_instance).eq('organization_id', trial.organization_id)
@@ -231,6 +242,7 @@ export async function POST(req: NextRequest) {
     const tier = tierByOrg.get(key) ?? 'setup_only'
     const label = labelByOrg.get(key) ?? candidate.sourceInstance
     const pctLabel = `${Math.round(candidate.pct * 100)}%`
+    const content = buildQuotaAlertContent({ featureLabel: candidate.featureLabel, feature: candidate.feature, pct: candidate.pct, tier })
     const autoSendAfter = new Date(now.getTime() + AUTO_SEND_DELAY_DAYS * 24 * 60 * 60 * 1000).toISOString()
 
     await operator.from('operator_commercial_events').insert({
@@ -243,15 +255,10 @@ export async function POST(req: NextRequest) {
       delivery_status: 'pending_review',
       auto_send_after: autoSendAfter,
       email_template: 'quota-alert',
-      subject_preview: `Atelier : quota ${candidate.featureLabel} atteint ${pctLabel} (${label})`,
-      body_text: [
-        `Bonjour,`,
-        `Je vous contacte car l'usage de ${label} sur la fonctionnalité "${candidate.featureLabel}" approche de la limite mensuelle (${pctLabel} consomme actuellement).`,
-        `Votre offre actuelle est ${tier}. Pour continuer à utiliser cette fonctionnalité sans interruption, un passage au palier supérieur peut être utile.`,
-        `Je reste disponible pour en discuter et ajuster votre offre si besoin.`,
-      ].join('\n'),
-      notes: `Alerte automatique : ${pctLabel} de "${candidate.featureLabel}" consomme`,
-      metadata: { quota_feature: candidate.feature, pct: Math.round(candidate.pct * 100), client_label: label },
+      subject_preview: content.subject,
+      body_text: content.bodyLines.join('\n'),
+      notes: `Alerte automatique : ${pctLabel} de "${candidate.featureLabel}" utilisé (${label})`,
+      metadata: { quota_feature: candidate.feature, pct: Math.round(candidate.pct * 100), client_label: label, cta: content.cta },
     })
     created++
   }
@@ -260,7 +267,7 @@ export async function POST(req: NextRequest) {
 
   const pendingAlerts = await collectPages<PendingAlertRow>((from, to) => operator
     .from('operator_commercial_events')
-    .select('id, source_instance, subject_preview, body_text, metadata')
+    .select('id, source_instance, organization_id, subject_preview, body_text, metadata')
     .eq('delivery_status', 'pending_review')
     .lt('auto_send_after', now.toISOString())
     .range(from, to))
@@ -277,7 +284,8 @@ export async function POST(req: NextRequest) {
 
     if (recipientEmail && alert.body_text && alert.subject_preview) {
       const bodyLines = alert.body_text.split('\n').filter(Boolean)
-      const result = await sendEmail(recipientEmail, alert.subject_preview, bodyLines)
+      const cta = await resolveAlertCta(operator, alert)
+      const result = await sendEmail(recipientEmail, alert.subject_preview, bodyLines, cta)
       deliveryStatus = result.status
       deliveryError = result.error
     }

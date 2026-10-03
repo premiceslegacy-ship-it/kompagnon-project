@@ -16,6 +16,7 @@ import {
   type EinvoicingConfig,
 } from '@/lib/einvoicing-config'
 import type { EntitlementSyncPayload } from '@/lib/subscription-access'
+import { TRIAL_DURATION_DAYS, TRIAL_TIER } from '@/lib/subscription-terms'
 
 const AI_BILLING_MODES = new Set(['orsayn_shared', 'client_owned'])
 export type AIBillingMode = 'orsayn_shared' | 'client_owned'
@@ -27,9 +28,10 @@ export type TrialState = {
   trial_converted?: boolean | null
 }
 
-/** Le seul essai gratuit proposé : Pro, 7 jours, sans carte bancaire. */
-export const TRIAL_TIER = 'pro' as const satisfies SubscriptionTier
-export const TRIAL_DURATION_DAYS = 7
+// Source unique : src/lib/subscription-terms.ts (le seul essai gratuit : Pro, 7 jours).
+export { TRIAL_TIER, TRIAL_DURATION_DAYS }
+const _trialTierIsSellable: SubscriptionTier = TRIAL_TIER
+void _trialTierIsSellable
 
 export function getEffectiveTier(subscription: TrialState): SubscriptionTier {
   if (
