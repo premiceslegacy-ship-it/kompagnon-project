@@ -69,6 +69,7 @@ describe('essai : bienvenue', () => {
     expect(body).toContain('Aucune carte bancaire')
     expect(body).toContain('rien ne sera prélevé')
     expect(body).toContain('mis en pause')
+    expect(body).not.toContain('Sarah')
   })
 
   it('reste valable sans date de fin connue', () => {
@@ -84,6 +85,7 @@ describe('essai : rappels', () => {
     expect(body).toContain('120 échanges IA et 60 analyses de devis')
     expect(body).toContain('mardi 13 octobre à 14 h 30')
     expect(body).toContain('aucun prélèvement')
+    expect(body).not.toContain('Sarah')
   })
 
   it('personnalise le conseil quand Expert était visé à l’inscription', () => {

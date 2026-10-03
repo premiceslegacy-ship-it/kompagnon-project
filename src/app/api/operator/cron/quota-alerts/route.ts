@@ -1,31 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
-import { QUOTA_DEFINITIONS } from '@/lib/quota-catalog'
 import { ATELIER_SENDER_NAME } from '@/lib/brand'
 import { verifyCronSecret } from '@/lib/cron-auth'
 import { expireTrialForInstance } from '@/lib/operator/trial-lifecycle'
 import {
-  buildAtelierCommercialEmail,
   buildAtelierTrialEndedEmail,
   buildAtelierTrialReminderEmail,
-  buildQuotaAlertContent,
 } from '@/lib/email/commercial'
-import { resolveAlertCta } from '@/lib/operator/alert-email'
 
 export const dynamic = 'force-dynamic'
 
-// Seuil d'alerte : 85% du quota mensuel
-const ALERT_THRESHOLD = 0.85
-// Délai avant envoi automatique si pas d'action : 2 jours
-const AUTO_SEND_DELAY_DAYS = 2
 const PAGE_SIZE = 500
-
-type QuotaRow = { source_instance: string; organization_id: string; quota_feature: string; quota_monthly: number | string; current_quantity: number | string }
-type SubscriptionRow = { source_instance: string; organization_id: string; tier: string }
-type SettingRow = { source_instance: string; organization_id: string; label: string | null }
-type ExistingAlertRow = { source_instance: string; organization_id: string | null }
-type PendingAlertRow = { id: string; source_instance: string; organization_id: string | null; subject_preview: string | null; body_text: string | null; metadata: Record<string, unknown> | null }
 
 async function collectPages<T>(fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
   const rows: T[] = []
@@ -58,16 +44,6 @@ async function deliverEmail(to: string, built: BuiltEmail): Promise<{ status: 's
   return { status: 'sent', error: null }
 }
 
-async function sendEmail(to: string, subject: string, bodyLines: string[], cta?: { label: string; url: string }) {
-  return deliverEmail(to, buildAtelierCommercialEmail({
-    subject,
-    eyebrow: 'Atelier BTP',
-    title: subject,
-    paragraphs: bodyLines,
-    cta,
-  }))
-}
-
 export async function POST(req: NextRequest) {
   if (process.env.OPERATOR_MODE !== 'true') {
     return NextResponse.json({ error: 'Not available' }, { status: 404 })
@@ -78,7 +54,6 @@ export async function POST(req: NextRequest) {
 
   const operator = createOperatorAdminClient()
   const now = new Date()
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
 
   // ── 0. Expirer automatiquement les essais dépassés ────────────────────────────
   // Un essai non converti garde ses droits indéfiniment si personne ne clique
@@ -173,137 +148,14 @@ export async function POST(req: NextRequest) {
     .select('source_instance', { count: 'exact', head: true })
     .eq('config_sync_status', 'pending_manual')
 
-  // ── 1. Créer des alertes pour les clients qui dépassent le seuil ──────────────
+  // Les alertes de quotas IA ne sont pas activées automatiquement. Le suivi
+  // reste disponible dans le cockpit et pourra être réintroduit avec une
+  // adresse destinataire et une décision commerciale explicite.
+  const created = 0
+  const autoSent = 0
+  const autoFailed = 0
 
-  const quotas = await collectPages<QuotaRow>((from, to) => operator
-    .from('operator_client_quotas')
-    .select('source_instance, organization_id, quota_feature, quota_monthly, current_quantity')
-    .eq('period_start', monthStart)
-    .range(from, to))
-
-  const subscriptions = await collectPages<SubscriptionRow>((from, to) => operator
-    .from('operator_client_subscriptions')
-    .select('source_instance, organization_id, tier')
-    .range(from, to))
-
-  const settings = await collectPages<SettingRow>((from, to) => operator
-    .from('operator_client_settings')
-    .select('source_instance, organization_id, label')
-    .range(from, to))
-
-  // Clé composite : une instance mutualisée porte plusieurs organisations, chacune
-  // avec son propre tier/label/quotas — une clé source_instance seule les fusionnerait.
-  const orgKey = (sourceInstance: string, organizationId: string) => `${sourceInstance}::${organizationId}`
-
-  const tierByOrg = new Map(subscriptions.map((s) => [orgKey(s.source_instance, s.organization_id), s.tier]))
-  const labelByOrg = new Map(settings.map((s) => [orgKey(s.source_instance, s.organization_id), s.label ?? s.source_instance]))
-
-  // Quota le plus chargé par organisation
-  type AlertCandidate = { sourceInstance: string; organizationId: string; feature: string; pct: number; featureLabel: string }
-  const candidatesByOrg = new Map<string, AlertCandidate>()
-
-  for (const quota of quotas) {
-    const monthly = Number(quota.quota_monthly)
-    const current = Number(quota.current_quantity)
-    if (monthly <= 0) continue
-    const pct = current / monthly
-    if (pct < ALERT_THRESHOLD) continue
-    const key = orgKey(quota.source_instance, quota.organization_id)
-    const tier = tierByOrg.get(key)
-    if (tier === 'expert') continue // illimité en pratique
-
-    const existing = candidatesByOrg.get(key)
-    if (!existing || pct > existing.pct) {
-      candidatesByOrg.set(key, {
-        sourceInstance: quota.source_instance,
-        organizationId: quota.organization_id,
-        feature: quota.quota_feature,
-        pct,
-        featureLabel: QUOTA_DEFINITIONS[quota.quota_feature as keyof typeof QUOTA_DEFINITIONS]?.label ?? quota.quota_feature,
-      })
-    }
-  }
-
-  // Ne pas créer de doublon si une alerte pending_review existe déjà ce mois
-  const existingAlerts = await collectPages<ExistingAlertRow>((from, to) => operator
-    .from('operator_commercial_events')
-    .select('source_instance, organization_id')
-    .eq('delivery_status', 'pending_review')
-    .eq('event_type', 'quota_alert_auto')
-    .gte('sent_at', `${monthStart}T00:00:00Z`)
-    .range(from, to))
-
-  const alreadyAlerted = new Set(existingAlerts.map((e) => orgKey(e.source_instance, e.organization_id ?? '')))
-
-  let created = 0
-  for (const candidate of candidatesByOrg.values()) {
-    const key = orgKey(candidate.sourceInstance, candidate.organizationId)
-    if (alreadyAlerted.has(key)) continue
-    const tier = tierByOrg.get(key) ?? 'setup_only'
-    const label = labelByOrg.get(key) ?? candidate.sourceInstance
-    const pctLabel = `${Math.round(candidate.pct * 100)}%`
-    const content = buildQuotaAlertContent({ featureLabel: candidate.featureLabel, feature: candidate.feature, pct: candidate.pct, tier })
-    const autoSendAfter = new Date(now.getTime() + AUTO_SEND_DELAY_DAYS * 24 * 60 * 60 * 1000).toISOString()
-
-    await operator.from('operator_commercial_events').insert({
-      source_instance: candidate.sourceInstance,
-      organization_id: candidate.organizationId,
-      event_type: 'quota_alert_auto',
-      tier_context: tier,
-      sent_by: 'cron_auto',
-      actor_email: 'cron@orsayn',
-      delivery_status: 'pending_review',
-      auto_send_after: autoSendAfter,
-      email_template: 'quota-alert',
-      subject_preview: content.subject,
-      body_text: content.bodyLines.join('\n'),
-      notes: `Alerte automatique : ${pctLabel} de "${candidate.featureLabel}" utilisé (${label})`,
-      metadata: { quota_feature: candidate.feature, pct: Math.round(candidate.pct * 100), client_label: label, cta: content.cta },
-    })
-    created++
-  }
-
-  // ── 2. Envoyer les alertes qui ont dépassé auto_send_after ───────────────────
-
-  const pendingAlerts = await collectPages<PendingAlertRow>((from, to) => operator
-    .from('operator_commercial_events')
-    .select('id, source_instance, organization_id, subject_preview, body_text, metadata')
-    .eq('delivery_status', 'pending_review')
-    .lt('auto_send_after', now.toISOString())
-    .range(from, to))
-
-  let autoSent = 0
-  let autoFailed = 0
-
-  for (const alert of pendingAlerts) {
-    const meta = (alert.metadata ?? {}) as Record<string, unknown>
-    const recipientEmail = meta.recipient_email as string | undefined
-
-    let deliveryStatus: 'sent' | 'failed' | 'skipped' = 'skipped'
-    let deliveryError: string | null = null
-
-    if (recipientEmail && alert.body_text && alert.subject_preview) {
-      const bodyLines = alert.body_text.split('\n').filter(Boolean)
-      const cta = await resolveAlertCta(operator, alert)
-      const result = await sendEmail(recipientEmail, alert.subject_preview, bodyLines, cta)
-      deliveryStatus = result.status
-      deliveryError = result.error
-    }
-
-    await operator
-      .from('operator_commercial_events')
-      .update({
-        delivery_status: deliveryStatus === 'sent' ? 'sent' : 'failed',
-        sent_at: now.toISOString(),
-        metadata: { ...(meta as object), delivery_status: deliveryStatus, delivery_error: deliveryError, auto_sent: true },
-      })
-      .eq('id', alert.id)
-
-    if (deliveryStatus === 'sent') autoSent++
-    else autoFailed++
-  }
-
-  console.log(`[operator/cron/quota-alerts] trials_expired=${trialsExpired} trials_failed=${trialsFailed} trial_reminders=${trialRemindersSent} pending_manual=${pendingManualCount ?? 0} created=${created} auto_sent=${autoSent} auto_failed=${autoFailed}`)
+  console.log(`[operator/cron/quota-alerts] trials_expired=${trialsExpired} trials_failed=${trialsFailed} trial_reminders=${trialRemindersSent} pending_manual=${pendingManualCount ?? 0} quota_alerts=disabled`)
   return NextResponse.json({
     trials_expired: trialsExpired,
     trials_failed: trialsFailed,
