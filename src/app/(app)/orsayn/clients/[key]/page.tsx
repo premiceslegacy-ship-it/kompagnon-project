@@ -2,7 +2,8 @@ import { notFound } from 'next/navigation'
 import { getCockpitData } from '../../data'
 import ClientDetail from '../../ClientDetail'
 
-export default async function ClientPage({ params }: { params: { key: string } }) {
+export default async function ClientPage({ params: paramsPromise }: { params: Promise<{ key: string }> }) {
+  const params = await paramsPromise
   const data = await getCockpitData()
   if (!data) notFound()
 

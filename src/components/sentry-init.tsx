@@ -1,6 +1,6 @@
 'use client'
 
-import * as Sentry from '@sentry/nextjs'
+import * as Sentry from '@sentry/browser'
 import { useEffect } from 'react'
 
 // Suivi d'erreurs côté navigateur uniquement (React, error.tsx, interactions
@@ -8,9 +8,8 @@ import { useEffect } from 'react'
 // bug non résolu (AsyncLocalStorage) sur OpenNext/Cloudflare Workers rend le
 // suivi serveur instable — voir docs/backend-audit-2026-07.md.
 //
-// Monté comme composant (pas src/instrumentation-client.ts, convention Next
-// 15.3+ non supportée par Next 14.2 — le fichier était silencieusement ignoré)
-// pour garantir l'exécution sur ce projet.
+// Import du SDK navigateur explicite : le rendu SSR des composants client
+// ne doit pas charger l'entrée Node de @sentry/nextjs sur Workers.
 export function SentryInit() {
   useEffect(() => {
     const dsn = document.documentElement.dataset.sentryDsn || process.env.NEXT_PUBLIC_SENTRY_DSN

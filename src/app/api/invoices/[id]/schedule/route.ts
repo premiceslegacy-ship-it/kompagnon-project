@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(_req: Request, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return NextResponse.json({ error: 'Non authentifié.' }, { status: 401 })

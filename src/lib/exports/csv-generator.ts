@@ -134,11 +134,17 @@ export function generateCsv(invoices: CsvInvoice[], isVatSubject: boolean, inclu
     return row
   })
 
+  // Excel/LibreOffice interprètent une cellule commençant par = + - @ (ou
+  // tab/CR) comme une formule. Les noms de clients viennent d'un formulaire
+  // public : sans apostrophe de tête, un `=HYPERLINK(...)` s'exécute à
+  // l'ouverture de l'export comptable.
+  const FORMULA_START = /^[=+\-@\t\r]/
   const escapeCell = (v: string): string => {
-    if (v.includes(';') || v.includes('"') || v.includes('\n')) {
-      return `"${v.replace(/"/g, '""')}"`
+    const guarded = FORMULA_START.test(v) ? `'${v}` : v
+    if (guarded.includes(';') || guarded.includes('"') || guarded.includes('\n') || guarded.includes('\r')) {
+      return `"${guarded.replace(/"/g, '""')}"`
     }
-    return v
+    return guarded
   }
 
   const headerLine = headers.map(escapeCell).join(';')

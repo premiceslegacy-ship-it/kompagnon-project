@@ -1,5 +1,5 @@
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
-import { signOperatorPayload } from '@/lib/operator'
+import { getOperatorSigningSecret, signOperatorRequest, OPERATOR_TIMESTAMP_HEADER } from '@/lib/operator'
 import {
   getModulesForTier,
   getQuotaConfigForTier,
@@ -163,10 +163,9 @@ export async function syncClientQuotaConfig(
     return { status: 'pending_manual', error: errorMessage }
   }
 
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
+  const secret = getOperatorSigningSecret(sourceInstance)
   if (!secret) {
-    const errorMessage = 'OPERATOR_CONFIG_SYNC_SECRET/OPERATOR_INGEST_SECRET manquant'
+    const errorMessage = 'OPERATOR_MASTER_SECRET/OPERATOR_CONFIG_SYNC_SECRET manquant'
     await operator
       .from('operator_client_settings')
       .update({
@@ -202,7 +201,7 @@ export async function syncClientQuotaConfig(
     einvoicing_config: einvoicingConfig,
     ...(entitlement ? { entitlement } : {}),
   })
-  const signature = signOperatorPayload(body, secret)
+  const { signature, timestamp } = signOperatorRequest(body, secret)
 
   try {
     const response = await fetch(`${appUrl.replace(/\/$/, '')}/api/operator/config-sync`, {
@@ -210,6 +209,7 @@ export async function syncClientQuotaConfig(
       headers: {
         'Content-Type': 'application/json',
         'x-operator-signature': signature,
+        [OPERATOR_TIMESTAMP_HEADER]: timestamp,
       },
       body,
     })

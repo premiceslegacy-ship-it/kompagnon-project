@@ -110,6 +110,72 @@
   line-height: 1.7;
 }
 
+.expiredSummary {
+  width: min(100%, 590px);
+  margin: 30px auto 0;
+  padding: 20px;
+  border: 1px solid rgba(8, 8, 7, .16);
+  border-radius: 22px;
+  background: rgba(255, 253, 249, .9);
+  box-shadow: inset 0 1px 0 #fff, 0 4px 0 #c9c0b3, 0 18px 45px rgba(43, 34, 20, .1);
+  text-align: left;
+}
+
+.expiredStatus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #6b3900;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.expiredStatus svg { width: 16px; height: 16px; color: #4f7f24; }
+
+.expiredFacts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.expiredFacts span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #514d46;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.expiredFacts svg { width: 16px; height: 16px; flex: none; color: #8f4600; }
+
+.expiredCta {
+  display: flex;
+  min-height: 50px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 20px;
+  border: 1px solid #d57806;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffc56f, #ffa51f 30%, #f38b08);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 760;
+  text-align: center;
+  box-shadow: inset 0 1px #fffc, 0 4px #a95800, 0 12px 28px rgba(255,137,0,.22);
+  transition: transform .16s, box-shadow .16s;
+}
+
+.expiredCta:hover { transform: translateY(-1px); }
+.expiredCta:active { transform: translateY(3px); box-shadow: inset 0 1px rgba(255,255,255,.75), 0 1px #a95800; }
+.expiredCta svg { width: 17px; height: 17px; flex: none; }
+
 .notice {
   max-width: 640px;
   margin: 26px auto 0;
@@ -149,9 +215,14 @@
 .revealHeading h3 { margin: 0; font-size: clamp(27px, 4vw, 43px); font-weight: 650; letter-spacing: -.05em; line-height: 1.12; }
 .revealHeading p:last-child { max-width: 540px; margin: 15px auto 0; color: rgba(255,255,255,.56); font-size: 13px; line-height: 1.65; }
 
-.carouselViewport { padding: 16px 2px 8px; overflow: hidden; }
+.carouselShell { position: relative; }
+.carouselViewport { padding: 16px 70px 8px 2px; overflow: hidden; }
 .carouselTrack { display: flex; align-items: stretch; transition: transform .3s cubic-bezier(.2,.8,.2,1); }
 .carouselSlide { min-width: 100%; padding: 0 1px 6px; }
+.carouselNext { position: absolute; top: 50%; right: 5px; z-index: 3; display: flex; min-width: 52px; height: 52px; align-items: center; justify-content: center; gap: 7px; transform: translateY(-50%); cursor: pointer; padding: 0 14px; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: linear-gradient(160deg, #302e29, #151412); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; box-shadow: inset 0 1px rgba(255,255,255,.12), 0 4px #000, 0 16px 32px rgba(0,0,0,.45); transition: transform .16s, border-color .16s; }
+.carouselNext:hover { transform: translateY(calc(-50% - 2px)); border-color: var(--orange); }
+.carouselNext:active { transform: translateY(calc(-50% + 2px)); }
+.carouselNext svg { width: 18px; height: 18px; color: var(--orange); }
 
 .pricingCard {
   position: relative;
@@ -296,7 +367,12 @@
   .securePill { min-height: 36px; padding: 0 11px; font-size: 9px; }
   .hero { padding-top: 75px; }
   .hero h1 { max-width: 14ch; font-size: clamp(42px, 12vw, 58px); }
+  .expiredSummary { padding: 18px; }
+  .expiredFacts { grid-template-columns: 1fr; }
   .plansSection { width: calc(100% - 10px); padding: 76px 20px 64px; border-radius: 22px; }
+  .carouselViewport { padding-right: 48px; }
+  .carouselNext { right: -3px; min-width: 44px; width: 44px; height: 44px; padding: 0; }
+  .carouselNext span { display: none; }
   .sectionHeading { margin-bottom: 36px; }
   .sectionHeading h2 { font-size: clamp(34px, 10vw, 48px); }
   .pricingCard { min-height: 0; padding: 28px 22px; }
@@ -311,5 +387,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .carouselTrack, .carouselControls > button { transition: none; }
+  .carouselTrack, .carouselControls > button, .carouselNext { transition: none; }
 }

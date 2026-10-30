@@ -12,7 +12,9 @@ import { isSellableTier } from '@/lib/subscription-access'
 export async function startTrialAction() {
   const result = await activateTrialForCurrentOrganization()
   if ('error' in result) {
-    const code = result.error === 'trial_already_used' ? 'trial_already_used' : 'trial_activation_failed'
+    const code = result.error === 'trial_already_used'
+      ? result.reason === 'siret' ? 'trial_siret_already_used' : 'trial_email_already_used'
+      : 'trial_activation_failed'
     redirect(`/activation?error=${code}`)
   }
   redirect('/dashboard?welcome=trial')

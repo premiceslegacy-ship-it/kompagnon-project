@@ -6,10 +6,11 @@ import { getOrganization } from '@/lib/data/queries/organization'
 import RecurringClient from './RecurringClient'
 
 export default async function RecurringPage({
-  searchParams,
+  searchParams: searchParamsPromise,
 }: {
-  searchParams: { from_invoice?: string }
+  searchParams: Promise<{ from_invoice?: string }>
 }) {
+  const searchParams = await searchParamsPromise
   const [clients, recurringInvoices, pendingSchedules, materials, laborRates, prestationTypes, organization] = await Promise.all([
     getClients(),
     getRecurringInvoices(),

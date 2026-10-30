@@ -15,10 +15,14 @@ function timingSafeEqualHex(a: string, b: string): boolean {
 
 const COOKIE_NAME = 'member_session'
 const COOKIE_MAX_AGE_S = 8 * 60 * 60 // 8h
-const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30j
+// 7 jours : un lien d'espace membre est une capacité, 30 jours laissaient une
+// fenêtre très large à un lien fuité.
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
+// Plus de repli sur la service_role : un oubli de MEMBER_SESSION_SECRET
+// signait les sessions avec la clé qui contourne la RLS, sans aucun signal.
 function getSecret(): string {
-  const s = process.env.MEMBER_SESSION_SECRET || process.env.NEXTAUTH_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY
+  const s = process.env.MEMBER_SESSION_SECRET
   if (!s) throw new Error('MEMBER_SESSION_SECRET non configuré.')
   return s
 }

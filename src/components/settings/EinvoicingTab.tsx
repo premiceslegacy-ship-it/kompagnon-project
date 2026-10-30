@@ -82,9 +82,21 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
       <div>
         <h2 className="text-xl font-bold text-primary">Facturation électronique</h2>
         <p className="text-secondary text-sm mt-1">
-          Connectez votre compte Super PDP pour transmettre et recevoir vos factures électroniques directement depuis Atelier.
+          Cette option reste votre choix dans Atelier. Vous pourrez l’activer séparément ici lorsque vous souhaiterez transmettre et recevoir vos factures électroniques.
         </p>
       </div>
+
+      {config.environment === 'sandbox' && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
+          <AlertTriangle className="h-5 w-5 flex-shrink-0 text-amber-700 dark:text-amber-400" />
+          <div>
+            <p className="text-sm font-semibold text-amber-900 dark:text-amber-100">Super PDP est encore en mode test</p>
+            <p className="mt-1 text-sm leading-relaxed text-amber-800 dark:text-amber-200">
+              Aucune transmission vers l’environnement de production n’est activée. Les réglages ci-dessous servent uniquement aux essais techniques.
+            </p>
+          </div>
+        </div>
+      )}
 
       {oauthResult === 'success' && (
         <div className="flex items-start gap-3 rounded-xl border border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-500/30 dark:bg-emerald-500/10">
@@ -134,7 +146,7 @@ export default function EinvoicingTab({ config, canConfigure, oauthResult, oauth
               className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-black hover:opacity-90 disabled:opacity-50"
             >
               {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Activer la facturation électronique
+              {config.environment === 'production' ? 'Activer la facturation électronique' : 'Tester la connexion Super PDP'}
             </button>
           </div>
         )}

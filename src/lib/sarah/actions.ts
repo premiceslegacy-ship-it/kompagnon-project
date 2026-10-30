@@ -58,6 +58,42 @@ export type SarahActionProposal = {
 
 const SARAH_EMAIL_MAX_RECIPIENTS = 50
 
+/**
+ * Types dont l'auto-exécution est sûre : effet local, réversible, sans envoi
+ * externe ni écriture comptable. Tout le reste exige un clic humain, quel que
+ * soit le `risk` déclaré par le modèle (qui est une donnée non fiable).
+ * `client_create` / `member_create` en sont volontairement absents : une
+ * hallucination de nom ou d'email ne doit pas créer de fiche.
+ */
+const SARAH_AUTO_EXECUTE_TYPES = new Set([
+  'task_create',
+  'chantier_note_add',
+  'brief_chloe',
+  'brief_nora',
+  'brief_marco',
+  'open_url',
+  'open_quote_editor',
+  'open_invoice_editor',
+  'open_client',
+  'open_chantier',
+  'quote_duplicate',
+])
+
+/**
+ * Décide si une proposition peut s'exécuter sans clic. Le type est normalisé
+ * avant comparaison : un alias (`send_invoice`) ne doit pas contourner la
+ * liste, et un `risk` absent ne doit pas valoir « low ».
+ */
+export function resolveSarahActionRisk(type: string, declaredRisk: unknown): SarahActionRisk {
+  const normalized = normalizeSarahActionType(type)
+  const risk: SarahActionRisk = declaredRisk === 'high' || declaredRisk === 'medium' || declaredRisk === 'low'
+    ? declaredRisk
+    : 'medium'
+
+  if (!SARAH_AUTO_EXECUTE_TYPES.has(normalized)) return risk === 'low' ? 'medium' : risk
+  return risk
+}
+
 export function normalizeSarahDeepLink(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
@@ -66,7 +102,7 @@ export function normalizeSarahDeepLink(value: unknown): string | null {
   return trimmed
 }
 
-function normalizeSarahActionType(type: string): string {
+export function normalizeSarahActionType(type: string): string {
   const normalized = type.trim().toLowerCase()
   if (['create_quote', 'quote_create', 'quote_draft', 'create_draft_quote', 'devis_create', 'create_devis', 'draft_devis'].includes(normalized)) {
     return 'draft_quote'
@@ -775,6 +811,7 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
 
   switch (proposal.type) {
     case 'task_complete': {
+      if (!(await hasPermission('chantiers.edit'))) throw new Error('Permission chantiers.edit requise.')
       const tacheId = typeof p.tache_id === 'string' ? p.tache_id : null
       if (!tacheId) throw new Error('Identifiant de tâche manquant.')
       const supabase = await createClient()
@@ -950,6 +987,7 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
     }
 
     case 'pointage_reminder_prepare': {
+      if (!(await hasPermission('chantiers.manage_pointages'))) throw new Error('Permission chantiers.manage_pointages requise.')
       const memberId = typeof p.memberId === 'string' ? p.memberId : null
       const memberName = typeof p.memberName === 'string' ? p.memberName : 'ce membre'
       await saveAIBriefFromSarah(orgId, 'planning', { kind: 'info', description: `Rappel de pointage préparé par Sarah pour ${memberName}.`, original_payload: p })
@@ -1218,6 +1256,7 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
     }
 
     case 'catalog_item_create': {
+      if (!(await hasPermission('catalog.edit'))) throw new Error('Permission catalog.edit requise.')
       const kind = p.kind === 'labor' ? 'labor' : 'material'
       const name = typeof p.name === 'string' ? p.name.trim() : typeof p.designation === 'string' ? p.designation.trim() : ''
       if (!name) throw new Error('Le nom de l\'article est requis.')
@@ -1390,9 +1429,15 @@ export async function confirmSarahActionAuto(proposalId: string): Promise<{ ok: 
   const admin = createAdminClient()
   const { data: current } = await admin
     .from('sarah_action_proposals')
-    .select('payload')
+    .select('payload, type')
     .eq('id', proposalId)
     .maybeSingle()
+
+  // Défense en profondeur : un appelant qui oublierait la garde ne doit pas
+  // pouvoir auto-exécuter un envoi externe ou une écriture comptable.
+  if (current && !SARAH_AUTO_EXECUTE_TYPES.has(normalizeSarahActionType(current.type))) {
+    return { ok: false, message: 'Confirmation humaine requise.', error: 'confirmation_required' }
+  }
   if (current) {
     await admin
       .from('sarah_action_proposals')

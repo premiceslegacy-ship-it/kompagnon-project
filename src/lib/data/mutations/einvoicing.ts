@@ -3,13 +3,12 @@
 import { revalidatePath } from 'next/cache'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
-import { getOperatorSourceInstance, signOperatorPayload } from '@/lib/operator'
+import { getOperatorSigningSecret, getOperatorSourceInstance, signOperatorRequest, OPERATOR_TIMESTAMP_HEADER } from '@/lib/operator'
 import { signOauthState } from '@/lib/super-pdp/oauth-state'
 import { getOrganizationEinvoicingConfig } from '@/lib/data/queries/einvoicing'
 import { normalizeEinvoicingConfig } from '@/lib/einvoicing-config'
-import { getFacturXmlForInvoice } from '@/lib/pdf/server'
+import { getFacturXmlForInvoice, InvoiceIssuanceAuthorityError, type FacturXInvoicePayload } from '@/lib/pdf/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient } from '@/lib/supabase/server'
 
 // Notifie le cockpit en best-effort qu'un client a active la facturation
 // electronique en self-service (connexion OAuth ou toggle emission) --
@@ -24,8 +23,7 @@ async function notifyOperatorEinvoicingActivate(input: {
   receptionEnabled?: boolean
 }): Promise<void> {
   const ingestUrl = process.env.OPERATOR_INGEST_URL?.trim()
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
+  const secret = getOperatorSigningSecret(input.sourceInstance)
   if (!ingestUrl || !secret) return
   const cockpitBase = new URL(ingestUrl).origin
   const body = JSON.stringify({
@@ -36,10 +34,10 @@ async function notifyOperatorEinvoicingActivate(input: {
     ...(input.emissionEnabled !== undefined ? { emission_enabled: input.emissionEnabled } : {}),
     ...(input.receptionEnabled !== undefined ? { reception_enabled: input.receptionEnabled } : {}),
   })
-  const signature = signOperatorPayload(body, secret)
+  const { signature, timestamp } = signOperatorRequest(body, secret)
   await fetch(`${cockpitBase}/api/operator/self-service/einvoicing-activate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-operator-signature': signature },
+    headers: { 'Content-Type': 'application/json', 'x-operator-signature': signature, [OPERATOR_TIMESTAMP_HEADER]: timestamp },
     body,
   })
 }
@@ -233,26 +231,20 @@ export async function transmitInvoiceViaSuperPdp(invoiceId: string): Promise<Tra
     return { error: 'Configuration opérateur manquante.' }
   }
 
-  // Facturation électronique B2B uniquement (obligation légale 2026-2027) : ne
-  // fait jamais confiance au seul masquage du bouton côté UI, revérifie ici que
-  // le client de la facture est bien une entreprise avec un SIRET renseigné.
-  const supabase = await createClient()
-  const { data: invoiceRow } = await supabase
-    .from('invoices')
-    .select('client:clients(type, siret)')
-    .eq('id', invoiceId)
-    .eq('organization_id', organizationId)
-    .maybeSingle()
-  const rawClient = invoiceRow?.client as { type: string | null; siret: string | null } | { type: string | null; siret: string | null }[] | null
-  const invoiceClient = Array.isArray(rawClient) ? rawClient[0] ?? null : rawClient
-  if (invoiceClient?.type !== 'company' || !invoiceClient.siret?.trim()) {
+  // Eligibility and transmitted XML both come from the immutable issued snapshot.
+  let payload: FacturXInvoicePayload | null
+  try {
+    payload = await getFacturXmlForInvoice(invoiceId, organizationId)
+  } catch (err) {
+    if (err instanceof InvoiceIssuanceAuthorityError) return { error: err.message }
+    console.error('[transmitInvoiceViaSuperPdp] fiscal authority load failed', err)
+    return { error: 'Impossible de préparer le document fiscal.' }
+  }
+  if (!payload) return { error: 'Facture introuvable ou pas encore émise.' }
+  if (payload.buyerType !== 'company' || !payload.buyerSiret?.trim()) {
     return { error: 'La transmission Super PDP est réservée aux clients professionnels (SIRET requis).' }
   }
-
-  const xml = await getFacturXmlForInvoice(invoiceId, organizationId)
-  if (!xml) {
-    return { error: 'Facture introuvable.' }
-  }
+  const xml = payload.xml
 
   const cockpitBase = new URL(ingestUrl).origin
   const body = JSON.stringify({
@@ -261,13 +253,13 @@ export async function transmitInvoiceViaSuperPdp(invoiceId: string): Promise<Tra
     invoice_id: invoiceId,
     xml,
   })
-  const signature = signOperatorPayload(body, secret)
+  const { signature, timestamp } = signOperatorRequest(body, secret)
 
   let response: Response
   try {
     response = await fetch(`${cockpitBase}/api/einvoicing/invoices/submit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-operator-signature': signature },
+      headers: { 'Content-Type': 'application/json', 'x-operator-signature': signature, [OPERATOR_TIMESTAMP_HEADER]: timestamp },
       body,
     })
   } catch (err) {

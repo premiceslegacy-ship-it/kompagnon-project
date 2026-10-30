@@ -13,10 +13,11 @@ import { getMetalPriceSnapshotsForQuote } from '@/lib/data/queries/metal-price-s
 import QuoteEditorClient from './QuoteEditorClient'
 
 export default async function QuoteEditorPage({
-  searchParams,
+  searchParams: searchParamsPromise,
 }: {
-  searchParams: { id?: string; client?: string; returnTo?: string }
+  searchParams: Promise<{ id?: string; client?: string; returnTo?: string }>
 }) {
+  const searchParams = await searchParamsPromise
   const [clients, materials, laborRates, prestationTypes, organization, modules, allQuotes, metalPriceGrids, clauseTemplates, allSuppliers] = await Promise.all([
     getClients(),
     getMaterials(),

@@ -2,13 +2,13 @@
 
 import Link from 'next/link'
 import { useMemo, useState } from 'react'
-import { Archive, CheckCircle2, Plus, Search, UserRound } from 'lucide-react'
+import { Archive, CheckCircle2, Clock3, Plus, Search, UserRound } from 'lucide-react'
 import { upsertOperatorClientSettings } from './actions'
 import ActionForm from './ActionForm'
 import type { CockpitData } from './data'
-import { clientPath, formatDate, formatMoney, formatPercent, formatSyncStatus, formatTier, getSyncBadge, isActiveTrial } from './utils'
+import { clientPath, formatClientOffer, formatDate, formatMoney, formatOnboardingStatus, formatPercent, formatSyncStatus, getSyncBadge, isActiveTrial } from './utils'
 
-type Filter = 'active' | 'archived' | 'all' | 'sync' | 'trial' | 'payment'
+type Filter = 'active' | 'archived' | 'all' | 'onboarding' | 'sync' | 'trial' | 'payment'
 type Sort = 'name' | 'margin' | 'usage' | 'recent'
 
 const inputClass = 'cockpit-input w-full'
@@ -33,6 +33,7 @@ function AddClientForm() {
 const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: 'active', label: 'Actifs' },
   { value: 'archived', label: 'Archivés' },
+  { value: 'onboarding', label: 'Onboarding' },
   { value: 'sync', label: 'Configuration' },
   { value: 'trial', label: 'Essais' },
   { value: 'payment', label: 'Paiements' },
@@ -42,6 +43,7 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
 function matchesFilter(row: CockpitData['clientRows'][number], filter: Filter): boolean {
   if (filter === 'active') return row.isActive && !row.isArchived
   if (filter === 'archived') return row.isArchived
+  if (filter === 'onboarding') return row.isActive && !row.isArchived && row.onboardingStatus === 'pending'
   if (filter === 'sync') return row.isActive && !row.isArchived && ['failed', 'pending_manual'].includes(row.configSyncStatus ?? '')
   if (filter === 'trial') return row.isActive && !row.isArchived && !row.trialConverted && isActiveTrial(row.trialEndsAt)
   if (filter === 'payment') return row.isActive && !row.isArchived && (Boolean(row.paymentFailedAt) || ['past_due', 'unpaid'].includes(row.stripeStatus ?? ''))
@@ -84,8 +86,13 @@ export default function ClientsList({ data, initialFilter = 'active' }: { data: 
           <label className="relative block min-w-0 flex-1 sm:max-w-md"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" /><input value={query} onChange={(event) => setQuery(event.target.value)} className={`${inputClass} pl-9`} placeholder="Rechercher un client…" /></label>
           <div className="flex flex-wrap items-center gap-2"><div className="flex flex-wrap rounded border border-[var(--cockpit-line)] p-0.5">{FILTERS.map(({ value, label }) => <button key={value} type="button" onClick={() => setFilter(value)} className={`px-3 py-1.5 text-xs font-medium ${filter === value ? 'bg-[rgb(var(--ink))] text-white' : 'text-secondary hover:text-primary'}`}>{label}</button>)}</div><label className="cockpit-sort-label" htmlFor="sort-clients">Trier par</label><select id="sort-clients" aria-label="Trier les clients" value={sort} onChange={(event) => setSort(event.target.value as Sort)} className="cockpit-input text-xs"><option value="name">Nom</option><option value="margin">Marge la plus faible</option><option value="usage">Consommation</option><option value="recent">Dernière activité</option></select></div>
         </div>
-        <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm"><thead><tr className="border-b border-[var(--cockpit-line)]"><th className="cockpit-th">Client</th><th className="cockpit-th">Formule</th><th className="cockpit-th">Consommation</th><th className="cockpit-th">Marge</th><th className="cockpit-th">Configuration</th><th className="cockpit-th">Dernière activité</th><th className="cockpit-th"><span className="sr-only">Ouvrir</span></th></tr></thead><tbody>
-          {rows.length === 0 ? <tr><td colSpan={7} className="py-12 text-center text-sm text-secondary">Aucun client ne correspond à ta recherche.</td></tr> : rows.map((row) => { const sync = getSyncBadge(row.lastSeenAt, row.lastStatus); return <tr key={`${row.sourceInstance}:${row.organizationId}`} className="border-b border-[var(--cockpit-line)] last:border-0 hover:bg-[var(--cockpit-paper)]"><td className="px-5 py-4"><Link href={clientPath(row.sourceInstance, row.organizationId)} className="group flex items-center gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[rgb(var(--ink)/.08)] text-secondary"><UserRound className="h-4 w-4" /></span><span className="min-w-0"><span className="block truncate font-semibold text-primary group-hover:text-accent">{row.label}</span><span className="mt-0.5 block truncate text-xs text-secondary">{row.contactEmail ?? 'Aucun contact renseigné'}</span></span></Link></td><td className="px-5 py-4"><span className="block font-medium text-primary">{formatTier(row.tier)}</span><span className="mt-0.5 block text-xs text-secondary">{row.monthlyFee === null ? 'Forfait à compléter' : formatMoney(row.monthlyFee, row.billingCurrency)}</span></td><td className="px-5 py-4"><span className="block tabular-nums text-primary">{formatMoney(row.monthUsageCostEur)}</span><span className="mt-0.5 block text-xs text-secondary">{row.monthEventCount} appel{row.monthEventCount > 1 ? 's' : ''}</span></td><td className="px-5 py-4"><span className="block tabular-nums text-primary">{formatPercent(row.marginPct)}</span><span className="mt-0.5 block text-xs text-secondary">{row.grossMarginEur === null ? 'À compléter' : formatMoney(row.grossMarginEur)}</span></td><td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 text-xs font-medium ${sync.className}`}><CheckCircle2 className="h-3.5 w-3.5" />{row.isArchived ? 'Archivé' : formatSyncStatus(row.configSyncStatus)}</span></td><td className="px-5 py-4 text-xs text-secondary">{formatDate(row.lastSeenAt)}</td><td className="px-5 py-4 text-right"><Link href={clientPath(row.sourceInstance, row.organizationId)} className="text-xs font-semibold text-accent hover:underline">Ouvrir</Link></td></tr> })}
+        <div className="overflow-x-auto"><table className="w-full min-w-[940px] text-left text-sm"><thead><tr className="border-b border-[var(--cockpit-line)]"><th className="cockpit-th">Client</th><th className="cockpit-th">Onboarding</th><th className="cockpit-th">Formule</th><th className="cockpit-th">Consommation</th><th className="cockpit-th">Marge</th><th className="cockpit-th">Configuration</th><th className="cockpit-th">Dernière activité</th><th className="cockpit-th"><span className="sr-only">Ouvrir</span></th></tr></thead><tbody>
+          {rows.length === 0 ? <tr><td colSpan={8} className="py-12 text-center text-sm text-secondary">Aucun client ne correspond à ta recherche.</td></tr> : rows.map((row) => {
+            const sync = getSyncBadge(row.lastSeenAt, row.lastStatus)
+            const OnboardingIcon = row.onboardingStatus === 'pending' ? Clock3 : CheckCircle2
+            const onboardingClass = row.onboardingStatus === 'pending' ? 'text-warning' : row.onboardingStatus === 'completed' ? 'text-success' : 'text-secondary'
+            return <tr key={`${row.sourceInstance}:${row.organizationId}`} className="border-b border-[var(--cockpit-line)] last:border-0 hover:bg-[var(--cockpit-paper)]"><td className="px-5 py-4"><Link href={clientPath(row.sourceInstance, row.organizationId)} className="group flex items-center gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[rgb(var(--ink)/.08)] text-secondary"><UserRound className="h-4 w-4" /></span><span className="min-w-0"><span className="block truncate font-semibold text-primary group-hover:text-accent">{row.label}</span><span className="mt-0.5 block truncate text-xs text-secondary">{row.contactEmail ?? 'Aucun contact renseigné'}</span></span></Link></td><td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 text-xs font-medium ${onboardingClass}`}><OnboardingIcon className="h-3.5 w-3.5" />{formatOnboardingStatus(row.onboardingStatus)}</span><span className="mt-1 block text-xs text-secondary">{row.onboardingCompletedAt ? formatDate(row.onboardingCompletedAt) : row.onboardingStartedAt ? `Commencé ${formatDate(row.onboardingStartedAt)}` : 'Statut historique'}</span></td><td className="px-5 py-4"><span className="block font-medium text-primary">{formatClientOffer(row)}</span><span className="mt-0.5 block text-xs text-secondary">{row.monthlyFee === null ? 'Forfait à compléter' : formatMoney(row.monthlyFee, row.billingCurrency)}</span></td><td className="px-5 py-4"><span className="block tabular-nums text-primary">{formatMoney(row.monthUsageCostEur)}</span><span className="mt-0.5 block text-xs text-secondary">{row.monthEventCount} appel{row.monthEventCount > 1 ? 's' : ''}</span></td><td className="px-5 py-4"><span className="block tabular-nums text-primary">{formatPercent(row.marginPct)}</span><span className="mt-0.5 block text-xs text-secondary">{row.grossMarginEur === null ? 'À compléter' : formatMoney(row.grossMarginEur)}</span></td><td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 text-xs font-medium ${sync.className}`}><CheckCircle2 className="h-3.5 w-3.5" />{row.isArchived ? 'Archivé' : formatSyncStatus(row.configSyncStatus)}</span></td><td className="px-5 py-4 text-xs text-secondary">{formatDate(row.lastSeenAt)}</td><td className="px-5 py-4 text-right"><Link href={clientPath(row.sourceInstance, row.organizationId)} className="text-xs font-semibold text-accent hover:underline">Ouvrir</Link></td></tr>
+          })}
         </tbody></table></div>
       </section>
 

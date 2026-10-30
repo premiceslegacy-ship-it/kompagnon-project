@@ -3,7 +3,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentMembershipContext } from '@/lib/data/queries/membership'
-import { signOperatorPayload } from '@/lib/operator'
+import { getOperatorSigningSecret, signOperatorRequest, OPERATOR_TIMESTAMP_HEADER } from '@/lib/operator'
 import {
   entitlementFromDb,
   isSellableTier,
@@ -12,13 +12,12 @@ import {
 } from '@/lib/subscription-access'
 import { isSelfServiceMode } from '@/lib/data/queries/subscription-access'
 
-type OperatorError = { error: string }
+type OperatorError = { error: string; reason?: string }
 
 function operatorConfig(): { baseUrl: string; secret: string; sourceInstance: string } | null {
   const ingestUrl = process.env.OPERATOR_INGEST_URL?.trim()
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
   const sourceInstance = process.env.OPERATOR_SOURCE_INSTANCE?.trim()
+  const secret = sourceInstance ? getOperatorSigningSecret(sourceInstance) : null
   if (!ingestUrl || !secret || !sourceInstance) return null
   return { baseUrl: new URL(ingestUrl).origin, secret, sourceInstance }
 }
@@ -27,16 +26,19 @@ async function postOperator<T>(path: string, payload: Record<string, unknown>): 
   const config = operatorConfig()
   if (!config) return { error: 'Configuration opérateur manquante' }
   const body = JSON.stringify({ source_instance: config.sourceInstance, ...payload })
-  const signature = signOperatorPayload(body, config.secret)
+  const { signature, timestamp } = signOperatorRequest(body, config.secret)
   try {
     const response = await fetch(`${config.baseUrl}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-operator-signature': signature },
+      headers: { 'Content-Type': 'application/json', 'x-operator-signature': signature, [OPERATOR_TIMESTAMP_HEADER]: timestamp },
       body,
       cache: 'no-store',
     })
     const data = await response.json().catch(() => ({})) as T & OperatorError
-    if (!response.ok) return { error: data.error || `Erreur ${response.status}` }
+    if (!response.ok) return {
+      error: data.error || `Erreur ${response.status}`,
+      ...(typeof data.reason === 'string' ? { reason: data.reason } : {}),
+    }
     return data
   } catch (error) {
     console.error(`[postOperator ${path}]`, error)
@@ -72,6 +74,38 @@ export async function ensureLockedEntitlement(
     updated_at: new Date().toISOString(),
   }, { onConflict: 'organization_id', ignoreDuplicates: true })
   return error ? { error: error.message } : {}
+}
+
+export async function registerPendingSelfServiceSignup(input: {
+  userId: string
+  organizationId?: string | null
+  email: string
+  fullName?: string | null
+  preferredTier?: SellableTier
+  signupSource?: string | null
+}): Promise<{ ok: true } | OperatorError> {
+  if (!isSelfServiceMode()) return { ok: true }
+  const admin = createAdminClient()
+  let organizationId = input.organizationId ?? null
+  if (!organizationId) {
+    const { data: membership, error } = await admin.from('memberships')
+      .select('organization_id')
+      .eq('user_id', input.userId)
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle()
+    if (error || !membership?.organization_id) return { error: error?.message ?? 'Organisation introuvable' }
+    organizationId = membership.organization_id
+  }
+
+  return postOperator<{ ok: true }>('/api/operator/self-service/signup', {
+    organization_id: organizationId,
+    app_url: process.env.NEXT_PUBLIC_APP_URL,
+    contact_email: input.email,
+    full_name: input.fullName ?? null,
+    preferred_tier: input.preferredTier ?? 'pro',
+    signup_source: input.signupSource ?? 'direct',
+  })
 }
 
 export async function registerSelfServiceOrganization(): Promise<{ ok: true } | OperatorError> {

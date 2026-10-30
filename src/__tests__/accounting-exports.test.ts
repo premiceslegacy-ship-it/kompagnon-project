@@ -5,7 +5,6 @@ import { generateFec, type FecInvoice, type FecOrgProfile, type FecReceivedInvoi
 const orgProfile: FecOrgProfile = {
   siren: '123456789',
   is_vat_subject: true,
-  tva_sur_debits: true,
   business_profile: 'btp',
 }
 
@@ -20,6 +19,8 @@ const standardInvoice: FecInvoice = {
   total_paid: 120,
   paid_at: '2026-01-20',
   is_vat_subject: true,
+  tva_sur_debits: true,
+  business_profile: 'btp',
   pa_message_id: null,
   client: {
     id: 'client-0001',

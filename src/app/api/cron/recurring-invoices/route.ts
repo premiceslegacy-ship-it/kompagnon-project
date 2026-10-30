@@ -9,7 +9,7 @@ import type { RecurringFrequency } from '@/lib/data/recurring-utils'
 import { APP_SIGNATURE } from '@/lib/brand'
 import { dateParis } from '@/lib/utils'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
-import { renderInvoicePdf } from '@/lib/pdf/documents/invoice'
+import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
 import { renderOrganizationEmail } from '@/lib/email/organization'
 import { escHtml } from '@/lib/email/layout'
 
@@ -44,8 +44,8 @@ export async function POST(req: NextRequest) {
       custom_interval_days, next_send_date, requires_confirmation,
       confirmation_delay_days, auto_send_delay_days, currency,
       client:clients(payment_terms_days),
-      organization:organizations(payment_terms_days),
-      items:recurring_invoice_items(description, quantity, unit, unit_price, vat_rate, position)
+      organization:organizations(payment_terms_days, is_vat_subject),
+      items:recurring_invoice_items(description, quantity, unit, unit_price, vat_rate, position, is_internal)
     `)
     .eq('is_active', true)
     .is('cancelled_at', null)
@@ -77,17 +77,20 @@ export async function POST(req: NextRequest) {
       if ((count ?? 0) > 0) continue
 
       // Créer le brouillon facture
-      const totalHt = (model.items ?? []).reduce(
+      const client = Array.isArray(model.client) ? model.client[0] : model.client
+      const organization = Array.isArray(model.organization) ? model.organization[0] : model.organization
+      const clientItems = (model.items ?? []).filter((i: { is_internal?: boolean | null }) => !i.is_internal)
+      const totalHt = clientItems.reduce(
         (sum: number, i: { quantity: number; unit_price: number }) => sum + i.quantity * i.unit_price,
         0,
       )
-      const totalTva = (model.items ?? []).reduce(
-        (sum: number, i: { quantity: number; unit_price: number; vat_rate: number }) =>
-          sum + i.quantity * i.unit_price * (i.vat_rate / 100),
-        0,
-      )
-      const client = Array.isArray(model.client) ? model.client[0] : model.client
-      const organization = Array.isArray(model.organization) ? model.organization[0] : model.organization
+      const totalTva = organization?.is_vat_subject === false
+        ? 0
+        : clientItems.reduce(
+            (sum: number, i: { quantity: number; unit_price: number; vat_rate: number }) =>
+              sum + i.quantity * i.unit_price * (i.vat_rate / 100),
+            0,
+          )
       const paymentTermsDays = normalizePaymentTermsDays(
         client?.payment_terms_days,
         organization?.payment_terms_days,
@@ -115,7 +118,7 @@ export async function POST(req: NextRequest) {
       if (!invoiceRow) { errors++; continue }
 
       if ((model.items ?? []).length > 0) {
-        await admin.from('invoice_items').insert(
+        const { error: itemsError } = await admin.from('invoice_items').insert(
           (model.items as any[]).map((i: any) => ({
             invoice_id: invoiceRow.id,
             description: i.description,
@@ -124,19 +127,34 @@ export async function POST(req: NextRequest) {
             unit_price: i.unit_price,
             vat_rate: i.vat_rate,
             position: i.position,
+            is_internal: i.is_internal ?? false,
           })),
         )
+        if (itemsError) {
+          console.error('[cron/recurring] items insert:', itemsError.message)
+          await admin.from('invoices').delete().eq('id', invoiceRow.id)
+          errors++
+          continue
+        }
       }
 
-      await admin.from('invoice_schedules').insert({
+      const { error: scheduleError } = await admin.from('invoice_schedules').insert({
         organization_id: model.organization_id,
         recurring_invoice_id: model.id,
         scheduled_date: model.next_send_date,
         status: model.requires_confirmation ? 'pending_confirmation' : 'confirmed',
         invoice_id: invoiceRow.id,
         amount_ht: totalHt,
-        notified_at: new Date().toISOString(),
+        // Renseigné après la notification : un `notified_at` posé d'avance
+        // déclenchait l'auto-envoi sans que l'artisan ait jamais été prévenu.
+        notified_at: null,
       })
+      if (scheduleError) {
+        console.error('[cron/recurring] schedule insert:', scheduleError.message)
+        await admin.from('invoices').delete().eq('id', invoiceRow.id)
+        errors++
+        continue
+      }
 
       // Calculer et enregistrer la prochaine occurrence
       const nextDate = computeNextSendDate(
@@ -182,7 +200,7 @@ export async function POST(req: NextRequest) {
 
       // Notifier l'artisan si confirmation requise
       if (model.requires_confirmation) {
-        await notifyArtisan(admin, model.organization_id, {
+        const notified = await notifyArtisan(admin, model.organization_id, {
           invoiceId: invoiceRow.id,
           invoiceTitle: model.title,
           scheduledDate: model.next_send_date,
@@ -190,6 +208,14 @@ export async function POST(req: NextRequest) {
           currency: model.currency ?? 'EUR',
           autoSendDelayDays: model.auto_send_delay_days ?? null,
         })
+        if (notified) {
+          await admin
+            .from('invoice_schedules')
+            .update({ notified_at: new Date().toISOString() })
+            .eq('recurring_invoice_id', model.id)
+            .eq('scheduled_date', model.next_send_date)
+            .is('notified_at', null)
+        }
       }
 
       created++
@@ -223,17 +249,28 @@ export async function POST(req: NextRequest) {
         const notifiedAt = schedule.notified_at ? new Date(schedule.notified_at) : null
         if (!notifiedAt) continue
 
-        const daysSinceCreation = Math.floor((today.getTime() - notifiedAt.getTime()) / 86400000)
-        if (daysSinceCreation < autoSendDelay) continue
+        // Comparaison en durée réelle : `today` est ramené à minuit, donc
+        // `minuit - notified_at` valait 0 le lendemain pour un délai de 1 jour
+        // et l'envoi n'arrivait qu'au deuxième passage.
+        const dueAt = notifiedAt.getTime() + autoSendDelay * 86_400_000
+        if (Date.now() < dueAt) continue
 
         // Délai écoulé - envoyer la facture au client avec PDF
         const sent = await autoSendInvoice(admin, schedule.organization_id, schedule.invoice_id!)
         if (sent) {
-          await admin
+          const { data: closedSchedule, error: closeError } = await admin
             .from('invoice_schedules')
             .update({ status: 'sent', confirmed_at: new Date().toISOString() })
             .eq('id', schedule.id)
-          autoSent++
+            .eq('status', 'pending_confirmation')
+            .select('id')
+            .maybeSingle()
+          if (closeError) {
+            console.error('[cron/recurring] close schedule:', closeError.message)
+            errors++
+          } else if (closedSchedule) {
+            autoSent++
+          }
         } else {
           errors++
         }
@@ -255,47 +292,44 @@ async function autoSendInvoice(
   orgId: string,
   invoiceId: string,
 ): Promise<boolean> {
-  try {
-    // Charger la facture avec toutes les données nécessaires au PDF
-    const { data: invoice } = await admin
+  // Revendication AVANT toute lecture : le PDF doit être rendu sur l'état
+  // figé. Revendiquer après le rendu laissait une sauvegarde concurrente
+  // modifier la facture entre le rendu et l'envoi.
+  const { data: claimed } = await admin
+    .from('invoices')
+    .update({ status: 'sending' })
+    .eq('id', invoiceId)
+    .eq('organization_id', orgId)
+    .eq('status', 'draft')
+    .select('id')
+    .maybeSingle()
+  if (!claimed) {
+    // A previous attempt may have sent the provider email but failed while
+    // closing its schedule. Close that schedule on retry without resending.
+    const { data: existingInvoice } = await admin
       .from('invoices')
-      .select(`
-        id, number, title, status, invoice_type, total_ht, total_tva, total_ttc,
-        currency, issue_date, due_date, notes_client, notes_internal,
-        client:clients(id, company_name, contact_name, first_name, last_name, email,
-          address_line1, address_line2, postal_code, city, country, siren),
-        items:invoice_items(
-          id, description, quantity, unit, unit_price, vat_rate, position, is_internal,
-          material_id, width_m, height_m, length_m, area_m2, volume_m3, linear_m, resolved_unit_price
-        )
-      `)
+      .select('status')
       .eq('id', invoiceId)
       .eq('organization_id', orgId)
-      .single()
+      .maybeSingle()
+    return existingInvoice?.status === 'sent'
+  }
 
-    if (!invoice || invoice.status !== 'draft') return false
-
-    const client = invoice.client as any
+  let deliveryAttempted = false
+  try {
+    // The first-send claim transactionally created the issuance snapshot. Render
+    // it through the shared PDF/A-3 + Factur-X path; never dispatch an invoice
+    // email without its fiscal attachment.
+    const rendered = await renderInvoicePdfBufferById(invoiceId, orgId)
+    if (!rendered) throw new Error('Facture introuvable après revendication')
+    const invoice = rendered.authority.invoice
+    const client = invoice.client
     const clientEmail: string | null = client?.email ?? null
-    if (!clientEmail) return false
+    if (!clientEmail) throw new Error('Adresse email client absente de l’autorité d’émission')
 
-    // Charger l'organisation
-    const { data: org } = await admin
-      .from('organizations')
-      .select(`
-        id, name, email, email_from_address, email_from_name,
-        address_line1, address_line2, postal_code, city, country,
-        phone, website, siren, siret, vat_number, logo_url,
-        default_vat_rate, currency, payment_terms_days,
-        iban, bic, bank_name, legal_form, capital, rcs_city
-      `)
-      .eq('id', orgId)
-      .single()
-
-    if (!org) return false
-
+    const org = rendered.authority.organization
     const fromAddress = org.email_from_address ?? org.email
-    if (!fromAddress) return false
+    if (!fromAddress) throw new Error('Adresse email expéditeur absente de l’autorité d’émission')
 
     // Template email
     const { data: customTpl } = await admin
@@ -323,7 +357,7 @@ async function autoSendInvoice(
     }
     function wrapHtml(orgName: string, bodyText: string, logoUrl?: string | null): string {
       const bodyHtml = escHtml(bodyText).replace(/\n/g, '<br>')
-      return renderOrganizationEmail({ subject: orgName, orgName, logoUrl, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
+      return renderOrganizationEmail({ subject: orgName, orgName, logoUrl, bodyHtml: `<div style=\"line-height:1.7;color:#3b3935;font-size:14px\">${bodyHtml}</div>` })
     }
 
     const vars: Record<string, string> = {
@@ -336,37 +370,60 @@ async function autoSendInvoice(
     const subject = interpolate(tpl.subject, vars)
     const html = wrapHtml(org.name, interpolate(tpl.body_text, vars), org.logo_url)
 
-    // Générer le PDF
-    let attachments: Array<{ filename: string; content: Buffer }> | undefined
-    try {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL
-      if (!appUrl) throw new Error('NEXT_PUBLIC_APP_URL manquant')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const pdfBuffer = await renderInvoicePdf({ invoice: invoice as any, organization: org as any }, appUrl)
-      attachments = [{ filename: `facture-${invoice.number ?? invoiceId}.pdf`, content: Buffer.from(pdfBuffer) }]
-    } catch (pdfErr) {
-      console.error('[cron/recurring] PDF generation error:', pdfErr)
-    }
-
+    deliveryAttempted = true
     const mail = await sendEmail({
       organizationId: orgId,
       to: clientEmail,
       subject,
       html,
-      attachments,
+      attachments: [{ filename: rendered.fileName, content: rendered.buffer }],
     })
-    // Une facture dont l'email n'est pas parti ne doit pas passer en « envoyée ».
-    if (mail.error) throw new Error(mail.error)
+    // A provider-returned rejection is definitive, so release the claim.
+    // A thrown transport error is ambiguous and must keep `sending` to avoid
+    // issuing a duplicate email if Resend accepted it before the connection broke.
+    if (mail.error) {
+      if (mail.delivery === 'rejected' || mail.delivery === 'not_sent') {
+        deliveryAttempted = false
+        const { data: released, error: releaseError } = await admin.from('invoices')
+          .update({ status: 'draft' })
+          .eq('id', invoiceId)
+          .eq('status', 'sending')
+          .select('id')
+          .maybeSingle()
+        if (releaseError || !released) console.error('[cron/recurring] release rejected send:', releaseError?.message ?? 'claim not released')
+      } else {
+        console.error('[cron/recurring] leaving ambiguous email claim in sending state', invoiceId)
+      }
+      return false
+    }
 
-    // Marquer comme envoyée
-    await admin
+    const { data: sentInvoice, error: sentError } = await admin
       .from('invoices')
       .update({ status: 'sent', sent_at: new Date().toISOString() })
       .eq('id', invoiceId)
+      .eq('status', 'sending')
+      .select('id')
+      .maybeSingle()
+
+    if (sentError || !sentInvoice) {
+      console.error('[cron/recurring] mark sent:', sentError?.message ?? 'claim not updated after delivery')
+      return false
+    }
 
     return true
   } catch (err) {
     console.error('[cron/recurring] autoSendInvoice error:', err)
+    if (!deliveryAttempted) {
+      const { error: releaseError } = await admin.from('invoices')
+        .update({ status: 'draft' })
+        .eq('id', invoiceId)
+        .eq('status', 'sending')
+      if (releaseError) console.error('[cron/recurring] rollback send claim:', releaseError.message)
+    } else {
+      // Provider outcome is unknown; keeping `sending` is safer than retrying
+      // and possibly sending the same invoice twice.
+      console.error('[cron/recurring] leaving ambiguous email claim in sending state', invoiceId)
+    }
     return false
   }
 }
@@ -392,7 +449,7 @@ async function notifyArtisan(
       .eq('id', orgId)
       .single()
 
-    if (!org?.email) return
+    if (!org?.email) return false
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.example.com'
     const fmtDate = new Date(data.scheduledDate).toLocaleDateString('fr-FR', {
@@ -411,13 +468,19 @@ async function notifyArtisan(
     const bodyHtml = escHtml(bodyText).replace(/\n/g, '<br>')
     const html = renderOrganizationEmail({ subject, orgName: org.name, logoUrl: org.logo_url, bodyHtml: `<div style="line-height:1.7;color:#3b3935;font-size:14px">${bodyHtml}</div>` })
 
-    await sendEmail({
+    const { error: sendError } = await sendEmail({
       organizationId: orgId,
       to: org.email,
       subject,
       html,
     })
+    if (sendError) {
+      console.error('[cron/recurring] notifyArtisan send:', sendError)
+      return false
+    }
+    return true
   } catch (err) {
     console.error('[cron/recurring] notifyArtisan error:', err)
+    return false
   }
 }

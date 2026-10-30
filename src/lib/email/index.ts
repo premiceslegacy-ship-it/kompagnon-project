@@ -66,6 +66,23 @@ export async function sendAuthEmail({
  * - RESEND_API_KEY dans .env.local
  * - email_from_name + email_from_address configurés dans organizations (via Settings > Email)
  */
+export type EmailDeliveryOutcome = 'accepted' | 'rejected' | 'unknown' | 'not_sent'
+
+export type SendEmailResult = {
+  error: string | null
+  delivery: EmailDeliveryOutcome
+}
+
+function classifyResendError(error: unknown): EmailDeliveryOutcome {
+  if (!error || typeof error !== 'object' || !('statusCode' in error)) return 'unknown'
+  const statusCode = error.statusCode
+  // A 4xx is a definitive provider rejection; 5xx and transport errors may
+  // follow acceptance and must remain claimed instead of being retried.
+  return typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500
+    ? 'rejected'
+    : 'unknown'
+}
+
 export async function sendEmail({
   organizationId,
   to,
@@ -90,11 +107,11 @@ export async function sendEmail({
    * une réponse au support Atelier est acceptable.
    */
   allowAtelierReplyTo?: boolean
-}): Promise<{ error: string | null }> {
+}): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
     console.error('[sendEmail] RESEND_API_KEY manquante dans .env.local')
-    return { error: 'Configuration email manquante (clé API).' }
+    return { error: 'Configuration email manquante (clé API).', delivery: 'not_sent' }
   }
 
   // Récupérer les paramètres from de l'organisation
@@ -118,13 +135,13 @@ export async function sendEmail({
 
   if (!org || !fromAddress) {
     return {
-      error:
-        "L'adresse email expéditeur n'est pas configurée. Rendez-vous dans Paramètres > Email.",
+      error: "L'adresse email expéditeur n'est pas configurée. Rendez-vous dans Paramètres > Email.",
+      delivery: 'not_sent',
     }
   }
 
   if (!allowAtelierReplyTo && !resolveClientFacingReplyTo({ explicitReplyTo: replyTo, organizationEmail: org.email })) {
-    return { error: MISSING_ORGANIZATION_EMAIL_ERROR }
+    return { error: MISSING_ORGANIZATION_EMAIL_ERROR, delivery: 'not_sent' }
   }
 
   const fromName = defaultBrandedSenderName(org.email_from_name || org.name)
@@ -148,8 +165,11 @@ export async function sendEmail({
 
   if (error) {
     console.error('[sendEmail] Resend error:', error.message)
-    return { error: "Impossible d'envoyer l'email. Vérifiez la configuration Resend." }
+    return {
+      error: "Impossible d'envoyer l'email. Vérifiez la configuration Resend.",
+      delivery: classifyResendError(error),
+    }
   }
 
-  return { error: null }
+  return { error: null, delivery: 'accepted' }
 }

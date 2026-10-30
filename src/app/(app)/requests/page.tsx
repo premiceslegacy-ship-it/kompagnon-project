@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import RequestsClient from './RequestsClient'
+import { safeQuoteAttachmentFilename } from '@/lib/quote-attachments'
 
 export type CatalogRequestItem = {
   id: string
@@ -12,11 +13,8 @@ export type CatalogRequestItem = {
 }
 
 export type RequestAttachment = {
-  storage_path?: string
   filename?: string
   size?: number
-  content_type?: string | null
-  public_url?: string
 }
 
 export type QuoteRequest = {
@@ -29,8 +27,8 @@ export type QuoteRequest = {
   description: string
   prestation_type: string | null
   dimensions: string | null
-  attachment_url: string | null
-  attachments: RequestAttachment[] | null
+  has_attachment: boolean
+  attachments: RequestAttachment[]
   type: string
   catalog_items: CatalogRequestItem[] | null
   freeform_notes: string | null
@@ -59,7 +57,24 @@ async function getQuoteRequests(): Promise<QuoteRequest[]> {
     console.error('[getQuoteRequests]', error)
     return []
   }
-  return (data ?? []) as QuoteRequest[]
+  return (data ?? []).map((row) => {
+    const { attachment_url, attachments: rawAttachments, ...requestFields } = row
+    const attachmentRows = Array.isArray(rawAttachments) ? rawAttachments : []
+    const hasAttachment = Boolean(attachment_url) || attachmentRows.some((attachment: unknown) => {
+      if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) return false
+      const metadata = attachment as Record<string, unknown>
+      return typeof metadata.storage_path === 'string' || typeof metadata.public_url === 'string'
+    })
+    const attachments = attachmentRows.flatMap((attachment: unknown) => {
+      if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) return []
+      const metadata = attachment as Record<string, unknown>
+      return [{
+        filename: typeof metadata.filename === 'string' ? safeQuoteAttachmentFilename(metadata.filename) : undefined,
+        size: typeof metadata.size === 'number' ? metadata.size : undefined,
+      }]
+    })
+    return { ...requestFields, has_attachment: hasAttachment, attachments }
+  }) as QuoteRequest[]
 }
 
 export default async function RequestsPage() {

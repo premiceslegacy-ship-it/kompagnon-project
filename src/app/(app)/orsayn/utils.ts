@@ -64,10 +64,15 @@ export function getTrialLabel(value: string | null, converted: boolean): string 
 
 export function getEventLabel(eventType: string): string {
   const labels: Record<string, string> = {
+    signup_created: 'Inscription créée',
+    self_service_signup: 'Onboarding terminé',
     subscription_updated: 'Offre appliquée',
     trial_started: 'Essai activé',
     trial_converted: 'Essai converti',
     trial_ended: 'Essai terminé',
+    trial_ended_auto: 'Essai terminé automatiquement',
+    trial_rejected_already_used: 'Essai refusé (déjà utilisé)',
+    trial_duplicate_guidance_sent: 'Conseil de rejoindre l’équipe envoyé',
     config_resync_requested: 'Config resynchronisée',
     modules_updated: 'Modules appliqués',
     client_archived: 'Fiche archivée',
@@ -83,8 +88,11 @@ export function getCommercialEventLabel(eventType: string): string {
     upgrade_prompt_quota: 'Proposition de montée en gamme',
     manual_email: 'Email manuel',
     trial_expiry_7d: 'Relance essai J-7',
+    trial_expiry_4d: 'Relance essai J-4',
     trial_expiry_2d: 'Relance essai J-2',
     trial_expired: 'Essai expiré',
+    trial_post_expiry_3d: 'Relance après essai J+3',
+    trial_post_expiry_10d: 'Relance après essai J+10',
     subscription_activated: 'Abonnement activé',
   }
 
@@ -126,6 +134,24 @@ export function formatAIBillingMode(value: AIBillingMode): string {
 export function formatCommercialStatus(row: Pick<ClientRow, 'tier' | 'aiBillingMode'>): string {
   if (row.aiBillingMode === 'client_owned') return 'Le client paie l’IA'
   return formatTier(row.tier)
+}
+
+export function formatClientOffer(
+  row: Pick<ClientRow, 'tier' | 'trialTier' | 'trialEndsAt' | 'trialConverted' | 'accessStatus'>,
+): string {
+  if (
+    row.accessStatus === 'trialing'
+    && !row.trialConverted
+    && isActiveTrial(row.trialEndsAt)
+  ) {
+    return `Essai ${formatTier(row.trialTier ?? 'pro')}`
+  }
+  if (row.accessStatus === 'locked') return 'Accès à activer'
+  return formatTier(row.tier)
+}
+
+export function formatOnboardingStatus(status: ClientRow['onboardingStatus']): string {
+  return { pending: 'À terminer', completed: 'Terminé', unknown: 'Non suivi' }[status]
 }
 
 export function formatTier(tier: import('@/lib/quota-catalog').SubscriptionTier): string {

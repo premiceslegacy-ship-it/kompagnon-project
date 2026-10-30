@@ -1,4 +1,4 @@
-import type { Organization } from '@/lib/data/queries/organization'
+import type { PdfOrganizationData } from '@/lib/pdf/document-types'
 import type { MonthlyReport, AnnualReport, HoursReport, TopClientEntry, TopChantierEntry, AnnualObjectives, MonthlyObjectives } from '@/lib/data/queries/reporting'
 import { pdfText } from '@/lib/pdf/pdf-design-system'
 import { PdfDoc } from '../engine/doc'
@@ -29,7 +29,7 @@ export type RapportKpiPdfData = {
   vue: 'mois' | 'annee'
   year: number
   month: number
-  organization: Organization & { logo_url: string | null }
+  organization: Pick<PdfOrganizationData, 'name' | 'logo_url' | 'siret'>
   monthlyReport: MonthlyReport | null
   annualReport: AnnualReport | null
   hoursReport: HoursReport | null
@@ -57,10 +57,9 @@ export async function renderRapportKpiPdfWithFonts(data: RapportKpiPdfData, font
   const projectedMargin = r?.projectedMarginHt ?? ar?.projectedMarginHt ?? 0
   const projectedMarginPct = r?.projectedMarginPct ?? ar?.projectedMarginPct ?? 0
   const hasProjectedMargin = r?.hasProjectedCostData ?? ar?.hasProjectedCostData ?? false
-  const isVatSubject = organization.is_vat_subject
-  const billedLabel = isVatSubject ? 'CA HT' : 'Facturé'
-  const billedSub = isVatSubject ? `${fmt(r?.caTtc ?? ar?.caTtc ?? 0)} TTC` : 'TVA non applicable'
-  const collectedLabel = isVatSubject ? 'Encaissé TTC' : 'Encaissé'
+  const billedLabel = 'CA HT'
+  const billedSub = `${fmt(r?.caTtc ?? ar?.caTtc ?? 0)} TTC`
+  const collectedLabel = 'Encaissé TTC'
 
   const logoImg = organization.logo_url ? await embedImage(doc.doc, organization.logo_url) : null
 
@@ -116,7 +115,7 @@ export async function renderRapportKpiPdfWithFonts(data: RapportKpiPdfData, font
   const kpiRow1: KpiItem[] = [
     { label: billedLabel, value: fmt(r?.caHt ?? ar?.caHt ?? 0), sub: billedSub, accent: true },
     { label: collectedLabel, value: fmt(r?.encaisse ?? ar?.encaisse ?? 0) },
-    { label: isVatSubject ? 'TVA facturée' : 'TVA non applicable', value: isVatSubject ? fmt(r?.tvaDue ?? ar?.tvaDue ?? 0) : '-' },
+    { label: 'TVA facturée', value: fmt(r?.tvaDue ?? ar?.tvaDue ?? 0) },
     { label: 'Bénéfice estimé', value: fmt(actualMargin), sub: `${fmtPct(actualMarginPct)} · avant impôts et charges fixes`, valueColor: actualMargin >= 0 ? GREEN : RED },
   ]
   drawKpiRow(doc, kpiRow1, F)

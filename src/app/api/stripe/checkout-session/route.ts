@@ -1,5 +1,6 @@
+import { createHash } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyOperatorSignature } from '@/lib/operator'
+import { hasOperatorMasterSecret, readOperatorRequest } from '@/lib/operator'
 import { createOperatorAdminClient, isOperatorModeEnabled } from '@/lib/supabase/operator'
 import { isSellableTier } from '@/lib/subscription-access'
 
@@ -8,15 +9,12 @@ export const dynamic = 'force-dynamic'
 export async function POST(req: NextRequest) {
   if (!isOperatorModeEnabled()) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const stripeKey = process.env.STRIPE_SECRET_KEY?.trim()
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim() || process.env.OPERATOR_INGEST_SECRET?.trim()
-  if (!stripeKey || !secret) return NextResponse.json({ error: 'Configuration Stripe manquante' }, { status: 500 })
+  if (!stripeKey || !hasOperatorMasterSecret()) return NextResponse.json({ error: 'Configuration Stripe manquante' }, { status: 500 })
 
   const rawBody = await req.text()
-  if (!verifyOperatorSignature(rawBody, secret, req.headers.get('x-operator-signature'))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-  let body: Record<string, unknown>
-  try { body = JSON.parse(rawBody) } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
+  const check = readOperatorRequest<Record<string, unknown>>(rawBody, req.headers, { requireMaster: true })
+  if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status })
+  const body = check.body
   const sourceInstance = typeof body.source_instance === 'string' ? body.source_instance : ''
   const organizationId = typeof body.organization_id === 'string' ? body.organization_id : ''
   const returnUrl = typeof body.return_url === 'string' ? body.return_url : ''
@@ -71,7 +69,11 @@ export async function POST(req: NextRequest) {
 
   const stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${stripeKey}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      Authorization: `Bearer ${stripeKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Idempotency-Key': `checkout-${createHash('sha256').update(JSON.stringify([sourceInstance, organizationId, tier])).digest('hex')}`,
+    },
     body: params.toString(),
   })
   const stripeData = await stripeResponse.json() as { id?: string; url?: string; error?: { message?: string } }

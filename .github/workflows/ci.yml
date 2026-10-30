@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -13,12 +16,16 @@ jobs:
   test:
     name: Typecheck, lint, unit + isolation tests
     runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          node-version: '20'
+          fetch-depth: 0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
@@ -33,9 +40,34 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - uses: supabase/setup-cli@v1
+      # Aucun audit de dépendances ni scan de secrets n'existait.
+      - name: Audit des dépendances de production
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Scan de secrets (historique complet)
+        run: |
+          archive="$RUNNER_TEMP/gitleaks-8.30.1-linux-x64.tar.gz"
+          curl --fail --location --silent --show-error --max-time 60 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output "$archive"
+          printf '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  %s\n' "$archive" | sha256sum --check -
+          mkdir -p "$RUNNER_TEMP/gitleaks-8.30.1"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/gitleaks-8.30.1" gitleaks
+          "$RUNNER_TEMP/gitleaks-8.30.1/gitleaks" git . --log-opts=--all --redact=100 \
+            --report-format=json --report-path="$RUNNER_TEMP/gitleaks-history.json"
+
+      - name: SBOM
+        run: npm run sbom
+
+      - name: Publier le SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          version: latest
+          name: sbom
+          path: sbom.json
+
+      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1
+        with:
+          version: 2.117.0
 
       - name: Start local Supabase (applies all migrations)
         run: supabase start
@@ -47,3 +79,34 @@ jobs:
           export SUPABASE_ANON_KEY="$ANON_KEY"
           export SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY"
           npm run test:isolation
+          for smoke in \
+            tests/isolation/account-deletion-fk-erasure.sql \
+            tests/isolation/account-deletion-scope.sql \
+            tests/isolation/invoice-issuance-authority.sql \
+            tests/isolation/invoice-resend-claims.sql \
+            tests/isolation/quote-document-authority.sql \
+            tests/isolation/legacy-legal-retention.sql \
+            tests/isolation/historical-document-import.sql \
+            tests/isolation/contract-publication-authority.sql \
+            tests/isolation/account-deletion-identity-claim.sql \
+            tests/isolation/account-deletion-logo-claim.sql \
+            tests/isolation/quote-attachment-identity.sql \
+            tests/isolation/invoice-paid-transaction.sql; do
+            if [[ "$smoke" == tests/isolation/quote-attachment-identity.sql ]]; then
+              # Disposable legacy-restore fixture alone needs the Storage owner.
+              storage_fixture_db_url="$(node -e 'const u = new URL(process.env.DB_URL); u.username = "supabase_admin"; process.stdout.write(u.href)')"
+              psql "$storage_fixture_db_url" -v ON_ERROR_STOP=1 -f "$smoke"
+            else
+              psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$smoke"
+            fi
+          done
+
+      - name: Operator schema and submission-ledger smoke
+        run: |
+          eval "$(supabase status -o env | grep -E '^[A-Z_]+=' | sed 's/^/export /')"
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE atelier_operator_ci'
+          operator_db_url="${DB_URL%/*}/atelier_operator_ci"
+          for migration in supabase/operator-migrations/*.sql; do
+            psql "$operator_db_url" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+          psql "$operator_db_url" -v ON_ERROR_STOP=1 -f tests/isolation/operator-019-smoke.sql

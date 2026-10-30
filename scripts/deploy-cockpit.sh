@@ -42,7 +42,7 @@ restore_wrangler_name() {
 trap restore_wrangler_name EXIT
 sed_inplace "s/\"name\":[[:space:]]*\"[^\"]*\"/\"name\": \"$WORKER_NAME\"/" "$WRANGLER"
 
-npm run deploy
+WORKER_NAME="$WORKER_NAME" PREFLIGHT_ENV_FILE=".env.cockpit" npm run deploy
 
 trap - EXIT
 restore_wrangler_name

@@ -221,7 +221,7 @@ if [[ "$WORKER_NAME" == "atelier-app" ]]; then
   sed_inplace "s/\"NEXT_TAG_CACHE_KV\", \"id\": \"[^\"]*\"/\"NEXT_TAG_CACHE_KV\", \"id\": \"$ATELIER_APP_TAG_CACHE_KV_ID\"/" "$WRANGLER"
 fi
 
-npm run deploy
+WORKER_NAME="$WORKER_NAME" PREFLIGHT_ENV_FILE="$ENV_FILE" npm run deploy
 
 trap - EXIT
 restore_wrangler_config

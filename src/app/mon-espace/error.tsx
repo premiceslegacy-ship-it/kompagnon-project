@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { AlertTriangle } from 'lucide-react'
-import * as Sentry from '@sentry/nextjs'
+import * as Sentry from '@sentry/browser'
 
 /**
  * Filet de sécurité pour l'espace membre (intervenants terrain, souvent sur

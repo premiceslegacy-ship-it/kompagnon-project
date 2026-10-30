@@ -2,12 +2,11 @@
 # scripts/deploy-cron-workers.sh — Déploie les Workers cron pour UN client
 #
 # Usage :
-#   ./scripts/deploy-cron-workers.sh <worker-name> --env-file=.env.client-nomclient
-#   ./scripts/deploy-cron-workers.sh <worker-name> --app-url=https://... --cron-secret=...
+#   ./scripts/deploy-cron-workers.sh <worker-name> --env-file=.env.client-<worker-name>
+#   Les éventuelles valeurs explicites doivent correspondre au fichier ciblé.
 #
-# Exemples :
-#   ./scripts/deploy-cron-workers.sh atelier-weber --env-file=.env.client-weber
-#   ./scripts/deploy-cron-workers.sh atelier-weber --app-url=https://weber-tolerie.fr --cron-secret=abc123
+# Exemple :
+#   ./scripts/deploy-cron-workers.sh atelier-weber --env-file=.env.client-atelier-weber
 #
 # Ce que fait ce script :
 #   Pour chaque Worker cron (auto-reminder, embeddings, data-retention) :
@@ -23,7 +22,11 @@ set -euo pipefail
 WORKER_NAME="${1:-}"
 if [[ -z "$WORKER_NAME" ]]; then
   echo "Usage : $0 <worker-name> [--env-file=.env.client-xxx] [--app-url=https://...] [--cron-secret=...]"
-  echo "Exemple : $0 atelier-weber --env-file=.env.client-weber"
+  echo "Exemple : $0 atelier-weber --env-file=.env.client-atelier-weber"
+  exit 1
+fi
+if ! [[ "$WORKER_NAME" =~ ^[a-z0-9][a-z0-9-]{1,62}$ ]] || [[ "$WORKER_NAME" == "orsayn-cockpit" ]]; then
+  echo "Nom de Worker client invalide." >&2
   exit 1
 fi
 
@@ -42,43 +45,55 @@ for arg in "${@:2}"; do
     --env-file=*) ENV_FILE="${arg#--env-file=}" ;;
     --app-url=*)  APP_URL="${arg#--app-url=}" ;;
     --cron-secret=*) CRON_SECRET="${arg#--cron-secret=}" ;;
+    *) echo "Argument cron non pris en charge." >&2; exit 1 ;;
   esac
 done
 
-# Lire depuis le fichier env si fourni
-if [[ -n "$ENV_FILE" ]]; then
-  ENV_PATH="$ROOT_DIR/$ENV_FILE"
-  if [[ ! -f "$ENV_PATH" ]]; then
-    echo "Fichier env introuvable : $ENV_PATH"
-    exit 1
-  fi
-  if [[ -z "$APP_URL" ]]; then
-    APP_URL=$(grep -E '^NEXT_PUBLIC_APP_URL=' "$ENV_PATH" | head -1 | cut -d= -f2- | tr -d '"'"'" | tr -d "'")
-  fi
-  if [[ -z "$CRON_SECRET" ]]; then
-    CRON_SECRET=$(grep -E '^CRON_SECRET=' "$ENV_PATH" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
-  fi
-fi
-
-# Fallback sur .env.local pour CRON_SECRET si toujours vide
-if [[ -z "$CRON_SECRET" ]] && [[ -f "$ROOT_DIR/.env.local" ]]; then
-  CRON_SECRET=$(grep -E '^CRON_SECRET=' "$ROOT_DIR/.env.local" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
-fi
-
-if [[ -z "$APP_URL" ]]; then
-  echo "APP_URL manquant — fournir via --app-url= ou NEXT_PUBLIC_APP_URL dans le fichier env"
+# Une seule configuration fait autorité pour la base contrôlée, l'URL et le secret.
+CUTOVER_WORKER="$WORKER_NAME"
+CUTOVER_ENV_FILE=".env.client-${WORKER_NAME}"
+if [[ -n "$ENV_FILE" && "$ENV_FILE" != "$CUTOVER_ENV_FILE" ]]; then
+  echo "Schema gate requires the exact target file $CUTOVER_ENV_FILE." >&2
   exit 1
 fi
-if [[ -z "$CRON_SECRET" ]]; then
-  echo "CRON_SECRET manquant — fournir via --cron-secret= ou CRON_SECRET dans le fichier env"
+ENV_PATH="$ROOT_DIR/$CUTOVER_ENV_FILE"
+CONFIG_VALUES="$(node --input-type=module - "$ENV_PATH" <<'NODE'
+import { lstatSync, readFileSync } from 'node:fs'
+import { parseEnv } from 'node:util'
+try {
+  const file = process.argv[2]
+  if (!lstatSync(file).isFile()) throw new Error('Invalid target file')
+  const config = parseEnv(readFileSync(file, 'utf8'))
+  const url = new URL(config.NEXT_PUBLIC_APP_URL ?? '')
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash
+      || (url.pathname !== '/' && url.pathname !== '')) throw new Error('Invalid app origin')
+  const secret = config.CRON_SECRET
+  if (typeof secret !== 'string' || !/^[a-f0-9]{64}$/i.test(secret)) throw new Error('Invalid cron secret')
+  process.stdout.write(`${url.origin}\n${secret}`)
+} catch {
+  console.error('Configuration cron ciblée invalide ou inaccessible.')
+  process.exit(1)
+}
+NODE
+)"
+CONFIG_APP_URL="${CONFIG_VALUES%%$'\n'*}"
+CONFIG_CRON_SECRET="${CONFIG_VALUES#*$'\n'}"
+if [[ -n "$APP_URL" && "${APP_URL%/}" != "$CONFIG_APP_URL" ]]; then
+  echo "APP_URL ne correspond pas à la configuration ciblée." >&2
   exit 1
 fi
+if [[ -n "$CRON_SECRET" && "$CRON_SECRET" != "$CONFIG_CRON_SECRET" ]]; then
+  echo "CRON_SECRET ne correspond pas à la configuration ciblée." >&2
+  exit 1
+fi
+APP_URL="$CONFIG_APP_URL"
+CRON_SECRET="$CONFIG_CRON_SECRET"
+node "$ROOT_DIR/scripts/quote-attachment-cutover.mjs" "$CUTOVER_WORKER" --check
 
-APP_URL="${APP_URL%/}"  # Supprimer slash final
 
 echo "Déploiement Workers cron pour $WORKER_NAME"
 echo "  APP_URL     : $APP_URL"
-echo "  CRON_SECRET : ${CRON_SECRET:0:8}..."
+echo "  CRON_SECRET : configuré (valeur masquée)"
 echo ""
 
 deploy_cron_worker() {
@@ -134,6 +149,6 @@ deploy_cron_worker "$ROOT_DIR/workers/data-retention" "atelier-data-retention"
 
 echo ""
 echo "Workers cron déployés pour $WORKER_NAME :"
-echo "  auto-reminder-${CLIENT_SUFFIX}           — relances + factures récurrentes (8h UTC)"
+echo "  auto-reminder-${CLIENT_SUFFIX}           — rattrapage horaire + relances et factures quotidiennes"
 echo "  atelier-embeddings-${CLIENT_SUFFIX}      — indexation IA (toutes les heures)"
 echo "  atelier-data-retention-${CLIENT_SUFFIX}  — recyclage données + keep-alive Supabase (4h30 UTC)"

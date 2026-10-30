@@ -5,6 +5,7 @@ import { ATELIER_SENDER_NAME } from '@/lib/brand'
 import { verifyCronSecret } from '@/lib/cron-auth'
 import { expireTrialForInstance } from '@/lib/operator/trial-lifecycle'
 import {
+  buildAtelierPostTrialReminderEmail,
   buildAtelierTrialEndedEmail,
   buildAtelierTrialReminderEmail,
 } from '@/lib/email/commercial'
@@ -25,6 +26,32 @@ async function collectPages<T>(fetchPage: (from: number, to: number) => PromiseL
 }
 
 type BuiltEmail = { subject: string; html: string }
+
+async function recordCommercialEmail(input: {
+  sourceInstance: string
+  organizationId: string
+  recipientEmail: string
+  eventType: string
+  template: string
+  email: BuiltEmail
+  delivery: { status: 'sent' | 'failed' | 'skipped'; error: string | null }
+}) {
+  const operator = createOperatorAdminClient()
+  const { error } = await operator.from('operator_commercial_events').insert({
+    source_instance: input.sourceInstance,
+    organization_id: input.organizationId,
+    event_type: input.eventType,
+    tier_context: 'pro',
+    sent_by: 'operator_cron',
+    email_template: input.template,
+    subject_preview: input.email.subject,
+    recipient_email: input.recipientEmail,
+    delivery_status: input.delivery.status === 'sent' ? 'sent' : 'failed',
+    notes: input.delivery.error,
+    metadata: {},
+  })
+  if (error) console.error('[operator/cron/quota-alerts.commercial-event]', error)
+}
 
 async function deliverEmail(to: string, built: BuiltEmail): Promise<{ status: 'sent' | 'failed' | 'skipped'; error: string | null }> {
   const apiKey = process.env.RESEND_API_KEY?.trim()
@@ -89,7 +116,17 @@ export async function POST(req: NextRequest) {
           .eq('organization_id', row.organization_id)
           .maybeSingle()
         if (setting?.contact_email) {
-          await deliverEmail(setting.contact_email, buildAtelierTrialEndedEmail({ appUrl: setting.app_url ?? '' }))
+          const email = buildAtelierTrialEndedEmail({ appUrl: setting.app_url ?? '' })
+          const delivery = await deliverEmail(setting.contact_email, email)
+          await recordCommercialEmail({
+            sourceInstance: row.source_instance,
+            organizationId: row.organization_id,
+            recipientEmail: setting.contact_email,
+            eventType: 'trial_expired',
+            template: 'trial_ended',
+            email,
+            delivery,
+          })
         }
       }
     } catch (error) {
@@ -125,16 +162,76 @@ export async function POST(req: NextRequest) {
       .eq('organization_id', trial.organization_id)
       .maybeSingle()
     if (!setting?.contact_email) continue
-    const sent = await deliverEmail(setting.contact_email, buildAtelierTrialReminderEmail({
+    const email = buildAtelierTrialReminderEmail({
       appUrl: setting.app_url ?? '',
       daysLeft,
       trialEndsAt: trial.trial_ends_at,
       preferredTier: trial.preferred_tier,
-    }))
-    if (sent.status === 'sent') {
+    })
+    const delivery = await deliverEmail(setting.contact_email, email)
+    await recordCommercialEmail({
+      sourceInstance: trial.source_instance,
+      organizationId: trial.organization_id,
+      recipientEmail: setting.contact_email,
+      eventType: marker === 'j-2' ? 'trial_expiry_2d' : 'trial_expiry_4d',
+      template: marker,
+      email,
+      delivery,
+    })
+    if (delivery.status === 'sent') {
       const reminders = [...(trial.trial_reminders_sent ?? []), marker]
       await operator.from('operator_client_subscriptions').update({ trial_reminders_sent: reminders }).eq('source_instance', trial.source_instance).eq('organization_id', trial.organization_id)
       trialRemindersSent++
+    }
+  }
+
+  // Deux suivis après l'essai (J+3 puis J+10). Ils sont distincts de l'email
+  // envoyé au moment exact de l'expiration et restent idempotents grâce au même
+  // tableau de marqueurs que les rappels pré-essai.
+  const postTrialCandidates = await collectPages<{
+    source_instance: string
+    organization_id: string
+    trial_ends_at: string
+    trial_reminders_sent: string[] | null
+  }>((from, to) => operator.from('operator_client_subscriptions')
+    .select('source_instance, organization_id, trial_ends_at, trial_reminders_sent')
+    .eq('access_status', 'expired')
+    .eq('trial_converted', false)
+    .is('stripe_subscription_id', null)
+    .not('trial_ends_at', 'is', null)
+    .lte('trial_ends_at', now.toISOString())
+    .gte('trial_ends_at', new Date(now.getTime() - 45 * 24 * 60 * 60 * 1000).toISOString())
+    .range(from, to))
+
+  let postTrialRemindersSent = 0
+  for (const trial of postTrialCandidates) {
+    const daysSinceEnd = Math.floor((now.getTime() - new Date(trial.trial_ends_at).getTime()) / (24 * 60 * 60 * 1000))
+    const marker = daysSinceEnd >= 10 ? 'post-10' : daysSinceEnd >= 3 ? 'post-3' : null
+    if (!marker || trial.trial_reminders_sent?.includes(marker)) continue
+    const { data: setting } = await operator.from('operator_client_settings')
+      .select('contact_email, app_url')
+      .eq('source_instance', trial.source_instance)
+      .eq('organization_id', trial.organization_id)
+      .maybeSingle()
+    if (!setting?.contact_email) continue
+    const stage = marker === 'post-10' ? 'final' : 'first'
+    const email = buildAtelierPostTrialReminderEmail({ appUrl: setting.app_url ?? '', stage })
+    const delivery = await deliverEmail(setting.contact_email, email)
+    await recordCommercialEmail({
+      sourceInstance: trial.source_instance,
+      organizationId: trial.organization_id,
+      recipientEmail: setting.contact_email,
+      eventType: marker === 'post-10' ? 'trial_post_expiry_10d' : 'trial_post_expiry_3d',
+      template: marker,
+      email,
+      delivery,
+    })
+    if (delivery.status === 'sent') {
+      await operator.from('operator_client_subscriptions')
+        .update({ trial_reminders_sent: [...(trial.trial_reminders_sent ?? []), marker] })
+        .eq('source_instance', trial.source_instance)
+        .eq('organization_id', trial.organization_id)
+      postTrialRemindersSent++
     }
   }
 
@@ -155,11 +252,12 @@ export async function POST(req: NextRequest) {
   const autoSent = 0
   const autoFailed = 0
 
-  console.log(`[operator/cron/quota-alerts] trials_expired=${trialsExpired} trials_failed=${trialsFailed} trial_reminders=${trialRemindersSent} pending_manual=${pendingManualCount ?? 0} quota_alerts=disabled`)
+  console.log(`[operator/cron/quota-alerts] trials_expired=${trialsExpired} trials_failed=${trialsFailed} trial_reminders=${trialRemindersSent} post_trial_reminders=${postTrialRemindersSent} pending_manual=${pendingManualCount ?? 0} quota_alerts=disabled`)
   return NextResponse.json({
     trials_expired: trialsExpired,
     trials_failed: trialsFailed,
     trial_reminders_sent: trialRemindersSent,
+    post_trial_reminders_sent: postTrialRemindersSent,
     pending_manual: pendingManualCount ?? 0,
     created,
     auto_sent: autoSent,

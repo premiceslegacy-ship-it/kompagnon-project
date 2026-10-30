@@ -1,4 +1,4 @@
-import type { Organization } from '@/lib/data/queries/organization'
+import type { PdfOrganizationData } from '@/lib/pdf/document-types'
 import { fmtCapitalSocial, pdfText } from '@/lib/pdf/pdf-design-system'
 import { PdfDoc } from '../engine/doc'
 import type { FontBytes } from '../engine/fonts'
@@ -7,6 +7,26 @@ import { drawImageContained, embedImage } from '../engine/image'
 import { textLineHeight, wrapText, type TextStyle } from '../engine/text'
 import { COLOR, CONTENT_WIDTH, PAGE, SIZE, SPACE } from '../engine/theme'
 import { rgb } from 'pdf-lib'
+
+type DgdPdfOrganization = Pick<
+  PdfOrganizationData,
+  | 'name'
+  | 'postal_code'
+  | 'city'
+  | 'siret'
+  | 'rcs'
+  | 'rcs_ville'
+  | 'is_vat_subject'
+  | 'vat_number'
+  | 'forme_juridique'
+  | 'capital_social'
+  | 'insurance_info'
+  | 'decennale_enabled'
+  | 'logo_url'
+  | 'address_line1'
+  | 'phone'
+  | 'signatory_name'
+>
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,7 +54,7 @@ export type DgdPdfData = {
   totalNetHt: number
   receptionDate?: string | null
   receptionStatus?: string | null
-  organization: Organization
+  organization: DgdPdfOrganization
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

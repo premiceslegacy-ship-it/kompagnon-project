@@ -28,6 +28,7 @@ import {
 import { LEGAL_VAT_RATES } from '@/lib/utils'
 import { isSelfServiceMode } from '@/lib/data/queries/subscription-access'
 import { isSellableTier } from '@/lib/subscription-access'
+import { trackServerEvent } from '@/lib/analytics-server'
 import {
   activateTrialForCurrentOrganization,
   ensureLockedEntitlement,
@@ -192,7 +193,10 @@ async function finalizeSelfServiceAccess(user: { user_metadata?: Record<string, 
   const trial = await activateTrialForCurrentOrganization()
   if ('error' in trial) {
     console.error('[onboarding.trial-activation]', trial.error)
-    return { destination: `/activation?error=${trial.error === 'trial_already_used' ? 'trial_already_used' : 'trial_activation_failed'}` }
+    const errorCode = trial.error === 'trial_already_used'
+      ? trial.reason === 'siret' ? 'trial_siret_already_used' : 'trial_email_already_used'
+      : 'trial_activation_failed'
+    return { destination: `/activation?error=${errorCode}` }
   }
   return { destination: '/dashboard' }
 }
@@ -331,6 +335,12 @@ export async function completeOnboarding(formData: FormData) {
   await setOnboardedCookie(user.id)
   revalidatePath('/', 'layout')
 
+  await trackServerEvent(user.id, 'onboarding_completed', {
+    organization_id: organizationId,
+    flow: 'create_company',
+    invited_teammates: i,
+  })
+
   const access = await finalizeSelfServiceAccess(user, organizationId)
 
   if (inviteErrors.length > 0) {
@@ -387,7 +397,16 @@ export async function skipInvites(formData: FormData) {
 
   await setOnboardedCookie(user.id)
   revalidatePath('/', 'layout')
+  await trackServerEvent(user.id, 'onboarding_completed', {
+    organization_id: organizationId,
+    flow: 'quick_create_company',
+    invited_teammates: 0,
+  })
   const access = await finalizeSelfServiceAccess(user, organizationId)
+  const requestedDestination = formString(formData, 'onboarding_destination')
+  if (requestedDestination === 'atelier-ia' && access.destination === '/dashboard') {
+    redirect('/atelier-ia?source=onboarding')
+  }
   redirect(access.destination)
 }
 
@@ -464,5 +483,9 @@ export async function joinViaCode(formData: FormData) {
 
   await setOnboardedCookie(user.id)
   revalidatePath('/', 'layout')
+  await trackServerEvent(user.id, 'onboarding_completed', {
+    organization_id: targetOrg.id,
+    flow: 'join_company',
+  })
   redirect('/dashboard')
 }

@@ -9,9 +9,11 @@ import { AIModuleDisabledError, callAI } from '@/lib/ai/callAI'
 import { getSupabaseRuntimeConfig } from '@/lib/supabase/config'
 import { verifyCronSecret } from '@/lib/cron-auth'
 import { renderInvoicePdfBufferById, renderQuotePdfBufferById } from '@/lib/pdf/server'
+import type { InvoicePdfResult } from '@/lib/pdf/server'
 import { renderOrganizationEmail } from '@/lib/email/organization'
 import { renderCTA, escHtml } from '@/lib/email/layout'
 import { resolveOrganizationFromAddress } from '@/lib/email/resolver'
+import { invoiceReminderTiming } from '@/lib/invoice-reminder-timing'
 
 // ─── Sécurité ─────────────────────────────────────────────────────────────────
 // Appelé par Cloudflare Worker (ou cron-job.org) avec le header X-Cron-Secret
@@ -112,11 +114,47 @@ export async function POST(req: NextRequest) {
 
       for (const item of items) {
         if (item.rank > MAX_RANK) continue
-        if (!item.clientEmail) continue
-
+        if (item.type === 'quote' && !item.clientEmail) continue
         try {
+
+          let invoicePdf: InvoicePdfResult | null = null
+          let reminderItem = item
+          let reminderOrgName = org.name
+          let reminderOrgEmail = org.email ?? null
+          let reminderLogoUrl = org.logo_url
+          let reminderFromName = org.email_from_name || org.name
+          if (item.type === 'invoice') {
+            invoicePdf = await renderInvoicePdfBufferById(item.id, org.id)
+            if (!invoicePdf) throw new Error('Facture introuvable pour la relance')
+            const seller = invoicePdf.authority.organization
+            reminderOrgName = seller.name
+            reminderOrgEmail = seller.email
+            reminderLogoUrl = seller.logo_url
+            reminderFromName = seller.email_from_name || seller.name
+            const invoice = invoicePdf.authority.invoice
+            const client = invoice.client
+            if (!client?.email) throw new Error('Adresse email absente de l’autorité d’émission')
+            const timing = invoiceReminderTiming(invoice.sent_at, invoice.due_date, todayStr)
+            if (!timing) throw new Error('Date de référence absente de l’autorité d’émission')
+            reminderItem = {
+              ...item,
+              number: invoice.number,
+              clientName: getClientGreetingName(client),
+              clientEmail: client.email,
+              clientId: client.id,
+              amount: invoice.total_ttc,
+              currency: invoice.currency ?? item.currency,
+              dueOrSentDate: timing.referenceDate,
+              invoiceReminderReason: timing.reason,
+              daysLate: timing.daysLate,
+              invoiceType: invoice.invoice_type,
+            }
+          }
+
+          const recipient = reminderItem.clientEmail
+          if (!recipient) throw new Error('Adresse email absente de l’autorité d’émission')
           const { subject, body } = await generateEmail(
-            org.name, item, appUrl, org.id, org.email ?? null,
+            reminderOrgName, reminderItem, appUrl, org.id, reminderOrgEmail,
           )
 
           let attachments: Array<{ filename: string; content: Buffer }> | undefined
@@ -135,31 +173,28 @@ export async function POST(req: NextRequest) {
             } catch (pdfError) {
               console.error(`[auto-reminders] PDF devis ${item.id}:`, pdfError)
             }
-          } else {
-            try {
-              const pdf = await renderInvoicePdfBufferById(item.id, org.id)
-              if (pdf) attachments = [{ filename: pdf.fileName, content: pdf.buffer }]
-            } catch (pdfError) {
-              console.error(`[auto-reminders] PDF facture ${item.id}:`, pdfError)
-            }
+          } else if (invoicePdf) {
+            attachments = [{ filename: invoicePdf.fileName, content: invoicePdf.buffer }]
           }
 
-          const fromName = org.email_from_name || org.name
+          const fromName = reminderFromName
           const { error: emailError } = await resend.emails.send({
             from: `${fromName} <${fromAddress}>`,
-            to: item.clientEmail,
+            to: recipient,
             subject,
-            html: wrapHtml(org.name, escHtml(body).replace(/\n/g, '<br>'), signUrl, org.logo_url),
+            html: wrapHtml(reminderOrgName, escHtml(body).replace(/\n/g, '<br>'), signUrl, reminderLogoUrl),
             replyTo: org.email,
             ...(attachments?.length ? { attachments } : {}),
           })
           if (emailError) throw new Error(`Resend: ${emailError.message}`)
 
-          // Log relance
-          await supabase.from('reminders').insert({
+          // Log relance : l'index unique (invoice_id|quote_id, rank) WHERE is_auto
+          // absorbe la double exécution concurrente. L'erreur est lue pour ne
+          // pas perdre silencieusement l'état de dédup.
+          const { error: reminderError } = await supabase.from('reminders').insert({
             organization_id: org.id,
             ...(item.type === 'invoice' ? { invoice_id: item.id } : { quote_id: item.id }),
-            client_id: item.clientId,
+            client_id: reminderItem.clientId,
             type: item.type === 'invoice' ? 'payment_reminder' : 'quote_followup',
             rank: item.rank,
             sent_at: new Date().toISOString(),
@@ -167,6 +202,11 @@ export async function POST(req: NextRequest) {
             email_subject: subject,
             email_body: body,
           })
+          // 23505 = relance déjà enregistrée par une exécution concurrente :
+          // l'email est parti deux fois, mais l'état de dédup reste correct.
+          if (reminderError && reminderError.code !== '23505') {
+            errors.push(`[${org.id}] reminder log ${item.id}: ${reminderError.message}`)
+          }
 
           // Log activité
           await supabase.from('activity_log').insert({
@@ -174,7 +214,7 @@ export async function POST(req: NextRequest) {
             action: 'auto_reminder_sent',
             entity_type: item.type,
             entity_id: item.id,
-            metadata: { rank: item.rank, client: item.clientName, amount: item.amount },
+            metadata: { rank: item.rank, client: reminderItem.clientName, amount: reminderItem.amount },
           })
 
           totalSent++
@@ -254,26 +294,23 @@ async function collectItems(
     const rank = info ? info.maxRank + 1 : 1
     const threshold = invoiceReminderDays[rank - 1]
     if (threshold === undefined) continue // plus de palier configuré
-    const referenceDate = inv.sent_at?.split('T')[0] ?? inv.due_date
-    if (!referenceDate) continue
-    const daysSinceReference = Math.floor((today.getTime() - new Date(referenceDate).getTime()) / 86400000)
-    if (daysSinceReference < threshold) continue // pas encore atteint le seuil
-    const isOverdue = Boolean(inv.due_date && inv.due_date < todayStr)
+    const timing = invoiceReminderTiming(inv.sent_at, inv.due_date, todayStr)
+    if (!timing || timing.daysSinceSent < threshold) continue
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = inv.client as any
     items.push({
       id: inv.id,
       type: 'invoice',
       invoiceType: inv.invoice_type ?? null,
-      invoiceReminderReason: isOverdue ? 'overdue' : 'sent_unpaid',
+      invoiceReminderReason: timing.reason,
       number: inv.number,
       clientName: getClientGreetingName(client),
       clientEmail: client?.email ?? null,
       clientId: inv.client_id,
       amount: inv.total_ttc,
       currency: inv.currency ?? 'EUR',
-      dueOrSentDate: referenceDate,
-      daysLate: daysSinceReference,
+      dueOrSentDate: timing.referenceDate,
+      daysLate: timing.daysLate,
       rank,
     })
   }

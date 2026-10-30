@@ -17,7 +17,7 @@ function WhatsappIcon() {
   )
 }
 
-const PLAN_ORDER: Tier[] = ['expert', 'pro']
+const PLAN_ORDER: Tier[] = ['pro', 'expert']
 
 const PLAN_COPY: Record<Tier, {
   name: string
@@ -30,13 +30,13 @@ const PLAN_COPY: Record<Tier, {
   expert: {
     name: 'Expert',
     price: 169,
-    promise: 'Plus aucune limite sur l’IA, à mesure que vous grandissez.',
+    promise: 'Une assistance IA sans limite pour accompagner votre croissance.',
     audience: 'Pour les équipes qui veulent piloter sans angle mort.',
     benefits: [
       'Devis, relances et analyses par IA sans quota mensuel',
       'Conversation vocale en direct avec l’assistante : 5x plus de minutes qu’en Pro',
       'Pensé pour une équipe qui utilise l’IA tous les jours, sans surveiller un compteur',
-      'Facturation électronique incluse, conforme à la réforme 2026-2027',
+      'Facturation électronique au choix dans l’app, à activer séparément lorsqu’elle sera ouverte en production',
     ],
     quotas: [
       'Échanges et analyses de devis illimités',
@@ -47,13 +47,13 @@ const PLAN_COPY: Record<Tier, {
   pro: {
     name: 'Pro',
     price: 69,
-    promise: 'Une secrétaire IA qui répond à votre place.',
+    promise: 'Une assistance IA pour gagner du temps, chaque jour.',
     audience: 'Pour l’artisan actif et les petites équipes.',
     benefits: [
-      'Sarah, l’assistante IA, répond sur vos clients, chantiers et planning',
+      'Sarah vous aide à retrouver l’information et à avancer sur vos clients, chantiers et planning',
       'Vous pouvez lui parler à la voix, y compris en direct au téléphone',
       'Devis préparés par IA à partir d’un texte, d’un plan ou d’une photo',
-      'Facturation électronique incluse, conforme à la réforme 2026-2027',
+      'Facturation électronique au choix dans l’app, à activer séparément lorsqu’elle sera ouverte en production',
     ],
     quotas: [
       '120 échanges avec l’assistante IA / mois',
@@ -67,16 +67,18 @@ export function ActivationPlansCarousel({
   checkoutAction,
   trialAvailable = false,
   startTrialAction,
+  preferredTier = 'pro',
   setupWhatsappUrl,
   setupAmount,
 }: {
   checkoutAction: CheckoutAction
   trialAvailable?: boolean
   startTrialAction?: StartTrialAction
+  preferredTier?: Tier
   setupWhatsappUrl?: string | null
   setupAmount: number
 }) {
-  const [activeIndex, setActiveIndex] = useState(0)
+  const [activeIndex, setActiveIndex] = useState(() => Math.max(0, PLAN_ORDER.indexOf(preferredTier)))
   const activeTier = PLAN_ORDER[activeIndex]
 
   function move(direction: -1 | 1) {
@@ -101,47 +103,56 @@ export function ActivationPlansCarousel({
         </p>
       </div>
 
-      <div className={styles.carouselViewport} aria-live="polite">
-        <div className={styles.carouselTrack} style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
-          {PLAN_ORDER.map((tier) => {
-            const plan = PLAN_COPY[tier]
-            const featured = tier === 'expert'
-            return (
-              <div key={tier} className={styles.carouselSlide}>
-                <article className={`${styles.pricingCard} ${featured ? styles.pricingCardFeatured : ''}`}>
-                  {featured && <span className={styles.badge}>Le plus complet</span>}
-                  <div className={styles.cardTop}>
-                    <p className={styles.cardEyebrow}>{plan.name}</p>
-                    <div className={styles.priceRow}><strong>{plan.price} €</strong><span>HT / mois</span></div>
-                    <p className={styles.cardTrial}>
-                      {trialAvailable && tier === 'pro' ? 'Pro offert 7 jours · aucune carte demandée' : `Paiement sécurisé via Stripe · abonnement ${plan.name}`}
-                    </p>
-                    <h3>{plan.promise}</h3>
-                    <p className={styles.cardAudience}>{plan.audience}</p>
-                  </div>
+      <div className={styles.carouselShell}>
+        <div className={styles.carouselViewport} aria-live="polite">
+          <div className={styles.carouselTrack} style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
+            {PLAN_ORDER.map((tier) => {
+              const plan = PLAN_COPY[tier]
+              const featured = trialAvailable ? tier === 'pro' : tier === preferredTier
+              const ctaLabel = trialAvailable && tier === 'pro'
+                ? 'Essayer Pro gratuitement 7 jours'
+                : `Reprendre avec ${plan.name} · ${plan.price} € HT / mois`
+              return (
+                <div key={tier} className={styles.carouselSlide}>
+                  <article className={`${styles.pricingCard} ${featured ? styles.pricingCardFeatured : ''}`}>
+                    {featured && <span className={styles.badge}>{trialAvailable ? '7 jours offerts' : 'Recommandé pour reprendre'}</span>}
+                    <div className={styles.cardTop}>
+                      <p className={styles.cardEyebrow}>{plan.name}</p>
+                      <div className={styles.priceRow}><strong>{plan.price} €</strong><span>HT / mois</span></div>
+                      <p className={styles.cardTrial}>
+                        {trialAvailable && tier === 'pro' ? 'Pro offert 7 jours · aucune carte demandée' : `Paiement sécurisé via Stripe · abonnement ${plan.name}`}
+                      </p>
+                      <h3>{plan.promise}</h3>
+                      <p className={styles.cardAudience}>{plan.audience}</p>
+                    </div>
 
-                  <ul className={styles.benefits}>
-                    {plan.benefits.map((benefit) => (
-                      <li key={benefit}><Check aria-hidden="true" /> <span>{benefit}</span></li>
-                    ))}
-                  </ul>
-
-                  <details className={styles.quotas}>
-                    <summary>Voir les quotas <ChevronDown aria-hidden="true" /></summary>
-                    <ul className={styles.quotaList}>
-                      {plan.quotas.map((quota) => <li key={quota}>{quota}</li>)}
+                    <ul className={styles.benefits}>
+                      {plan.benefits.map((benefit) => (
+                        <li key={benefit}><Check aria-hidden="true" /> <span>{benefit}</span></li>
+                      ))}
                     </ul>
-                  </details>
 
-                  <form action={trialAvailable && tier === 'pro' && startTrialAction ? startTrialAction : checkoutAction}>
-                    {!(trialAvailable && tier === 'pro' && startTrialAction) && <input type="hidden" name="tier" value={tier} />}
-                    <CheckoutSubmitButton label={trialAvailable && tier === 'pro' ? 'Essayer Pro gratuitement 7 jours' : 'Passer au checkout Stripe'} featured={featured} />
-                  </form>
-                </article>
-              </div>
-            )
-          })}
+                    <details className={styles.quotas}>
+                      <summary>Voir les quotas <ChevronDown aria-hidden="true" /></summary>
+                      <ul className={styles.quotaList}>
+                        {plan.quotas.map((quota) => <li key={quota}>{quota}</li>)}
+                      </ul>
+                    </details>
+
+                    <form action={trialAvailable && tier === 'pro' && startTrialAction ? startTrialAction : checkoutAction}>
+                      {!(trialAvailable && tier === 'pro' && startTrialAction) && <input type="hidden" name="tier" value={tier} />}
+                      <CheckoutSubmitButton label={ctaLabel} featured={featured} />
+                    </form>
+                  </article>
+                </div>
+              )
+            })}
+          </div>
         </div>
+        <button type="button" onClick={() => move(1)} className={styles.carouselNext} aria-label={`Voir la formule ${PLAN_COPY[PLAN_ORDER[(activeIndex + 1) % PLAN_ORDER.length]].name}`}>
+          <span>{PLAN_COPY[PLAN_ORDER[(activeIndex + 1) % PLAN_ORDER.length]].name}</span>
+          <ArrowRight aria-hidden="true" />
+        </button>
       </div>
 
       <div className={styles.carouselControls}>

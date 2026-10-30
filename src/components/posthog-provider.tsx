@@ -4,6 +4,8 @@ import { useEffect, useState, Suspense } from 'react'
 import { usePathname, useSearchParams } from 'next/navigation'
 import posthog from 'posthog-js'
 import { PostHogProvider as PHProvider } from 'posthog-js/react'
+import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js'
+import { createClient } from '@/lib/supabase/client'
 
 function PostHogPageview({ enabled }: { enabled: boolean }) {
   const pathname = usePathname()
@@ -38,6 +40,17 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
     })
     posthog.register({ client_instance: window.location.host })
     setEnabled(true)
+
+    const supabase = createClient()
+    void supabase.auth.getUser().then((result: { data: { user: User | null } }) => {
+      if (result.data.user) posthog.identify(result.data.user.id)
+    })
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
+      if (session?.user) posthog.identify(session.user.id)
+      else posthog.reset()
+    })
+
+    return () => authListener.subscription.unsubscribe()
   }, [])
 
   return (

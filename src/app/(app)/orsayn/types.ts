@@ -46,9 +46,11 @@ export type OperatorClientSetting = {
   is_active: boolean
   app_url: string | null
   contact_email: string | null
+  company_siret: string | null
   config_sync_status: string | null
   config_synced_at: string | null
   config_sync_error: string | null
+  updated_at: string
 }
 
 export type OperatorClientSubscription = {
@@ -141,10 +143,14 @@ export type ClientRow = {
   isArchived: boolean
   isActive: boolean
   renewsAt: string | null
+  trialTier: SubscriptionTier | null
   trialEndsAt: string | null
   trialConverted: boolean
   preferredTier: SellableTier
   accessStatus: AccessStatus | null
+  onboardingStatus: 'pending' | 'completed' | 'unknown'
+  onboardingStartedAt: string | null
+  onboardingCompletedAt: string | null
   accessEndsAt: string | null
   cancelAt: string | null
   stripeStatus: string | null

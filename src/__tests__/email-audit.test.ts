@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { APP_SIGNATURE, ATELIER_SENDER_NAME, defaultBrandedSenderName } from '@/lib/brand'
 import {
   buildAtelierCommercialEmail,
+  buildAtelierExistingCompanyEmail,
   buildAtelierLifecycleEmail,
   buildAtelierNotificationEmail,
+  buildAtelierOnboardingReminderEmail,
+  buildAtelierPostTrialReminderEmail,
   buildAtelierTrialEndedEmail,
   buildAtelierTrialReminderEmail,
   buildAtelierTrialStartedEmail,
@@ -44,6 +47,9 @@ function atelierEmails(): Array<[string, Built]> {
     ['cycle de vie', buildAtelierLifecycleEmail({ subject: 'Votre accès Atelier est activé', title: 'Accès activé', body: 'Votre formule Pro est active.', appUrl: APP_URL, ctaLabel: 'Ouvrir', ctaPath: '/dashboard' })],
     ['notification interne', buildAtelierNotificationEmail({ subject: '[Atelier] Nouvel essai : Weber', title: 'Nouvel essai démarré', body: 'Weber vient de démarrer un essai Pro de 7 jours.' })],
     ['message cockpit', buildAtelierCommercialEmail({ subject: 'Un point sur votre usage', title: 'Un point sur votre usage', paragraphs: ['Bonjour,', 'Voici un message du support.'] })],
+    ['entreprise existante', buildAtelierExistingCompanyEmail({ appUrl: APP_URL, companyName: ORG })],
+    ['onboarding incomplet', buildAtelierOnboardingReminderEmail({ appUrl: APP_URL, firstName: 'Céline', stage: 'first' })],
+    ['après essai', buildAtelierPostTrialReminderEmail({ appUrl: APP_URL, stage: 'first' })],
     ['code d’inscription', buildSignupOtpEmail({ otp: '123456', orgName: APP_SIGNATURE })],
     ['code mot de passe', buildPasswordResetOtpEmail({ otp: '654321', orgName: APP_SIGNATURE })],
   ]

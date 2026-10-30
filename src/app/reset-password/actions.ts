@@ -44,6 +44,9 @@ export async function resetPassword(
     return { error: 'Impossible de mettre à jour le mot de passe. Réessayez ou redemandez un lien.' }
   }
 
+  // Un mot de passe volé ne doit pas survivre à sa rotation : on coupe les
+  // autres sessions.
+  await supabase.auth.signOut({ scope: 'others' })
   revalidatePath('/', 'layout')
   redirect('/dashboard')
 }

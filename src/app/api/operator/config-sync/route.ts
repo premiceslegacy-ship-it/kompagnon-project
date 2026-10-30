@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyOperatorSignature } from '@/lib/operator'
+import { hasOperatorSigningSecret, readOperatorRequest } from '@/lib/operator'
 import { normalizeOrganizationModules } from '@/lib/organization-modules'
 import { isOverflowMode } from '@/lib/quota-catalog'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -60,25 +60,16 @@ function normalizeQuotaConfig(input: Record<string, unknown>): Record<string, nu
 }
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
-
-  if (!secret) {
+  if (!hasOperatorSigningSecret()) {
     return NextResponse.json({ error: 'Operator config sync secret missing' }, { status: 500 })
   }
 
   const rawBody = await req.text()
-  const signature = req.headers.get('x-operator-signature')
-  if (!verifyOperatorSignature(rawBody, secret, signature)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const check = readOperatorRequest<ConfigSyncPayload>(rawBody, req.headers)
+  if (!check.ok) {
+    return NextResponse.json({ error: check.error }, { status: check.status })
   }
-
-  let payload: unknown
-  try {
-    payload = JSON.parse(rawBody)
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
+  const payload: unknown = check.body
 
   if (!isValidPayload(payload)) {
     return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })

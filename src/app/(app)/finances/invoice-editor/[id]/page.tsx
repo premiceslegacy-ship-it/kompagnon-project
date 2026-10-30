@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation'
 
-export default function InvoiceEditorLegacyRedirectPage({
+export default async function InvoiceEditorLegacyRedirectPage({
   params,
 }: {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }) {
-  redirect(`/finances/invoice-editor?id=${params.id}`)
+  const { id } = await params
+  redirect(`/finances/invoice-editor?id=${id}`)
 }

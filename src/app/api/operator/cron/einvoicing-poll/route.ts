@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { verifyCronSecret } from '@/lib/cron-auth'
-import { signOperatorPayload } from '@/lib/operator'
+import { getOperatorSigningSecret, hasOperatorMasterSecret, signOperatorRequest, OPERATOR_TIMESTAMP_HEADER } from '@/lib/operator'
 import { listReceivedInvoices, getInvoiceDetail } from '@/lib/super-pdp/client'
 import type { SuperPdpInvoice } from '@/lib/super-pdp/types'
 
@@ -104,6 +104,7 @@ async function pollOneClient(
   }
 
   let synced = 0
+  let syncError: string | null = null
   let cursor = state?.last_synced_invoice_id ?? null
 
   // order=desc : on retraite du plus ancien au plus récent pour avancer le
@@ -140,18 +141,29 @@ async function pollOneClient(
       total_tva: fields.totalTva,
       total_ttc: fields.totalTtc,
     })
-    const signature = signOperatorPayload(body, secret)
+    // Un POST signé par requête : l'horodatage est dans la chaîne signée et
+    // l'instance le rejette au-delà de ±5 min.
+    const { signature, timestamp } = signOperatorRequest(body, secret)
 
     try {
       const resp = await fetch(`${appUrl}/api/einvoicing/received/sync`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-operator-signature': signature },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-operator-signature': signature,
+          [OPERATOR_TIMESTAMP_HEADER]: timestamp,
+        },
         body,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(15_000),
       })
+      await resp.body?.cancel()
       if (!resp.ok) {
+        syncError = `instance sync HTTP ${resp.status}`
         break
       }
-    } catch {
+    } catch (err) {
+      syncError = err instanceof Error ? err.message : 'instance sync failed'
       break
     }
 
@@ -159,18 +171,22 @@ async function pollOneClient(
     synced++
   }
 
+  // Un échec d'instance ne doit pas être enregistré comme un succès : le
+  // curseur n'avance que sur ce qui a été livré, mais l'erreur reste visible
+  // (last_error / consecutive_errors) pour l'opérateur.
+  const nowIso = new Date().toISOString()
   await operator.from('super_pdp_reception_state').upsert({
     source_instance: client.source_instance,
     organization_id: client.organization_id,
     last_synced_invoice_id: cursor,
-    last_polled_at: new Date().toISOString(),
-    last_success_at: new Date().toISOString(),
-    last_error: null,
-    consecutive_errors: 0,
-    updated_at: new Date().toISOString(),
+    last_polled_at: nowIso,
+    ...(syncError
+      ? { last_error: syncError, consecutive_errors: (state?.consecutive_errors ?? 0) + 1 }
+      : { last_success_at: nowIso, last_error: null, consecutive_errors: 0 }),
+    updated_at: nowIso,
   }, { onConflict: 'source_instance,organization_id' })
 
-  return { synced, error: null }
+  return { synced, error: syncError }
 }
 
 export async function POST(req: NextRequest) {
@@ -181,10 +197,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
-  if (!secret) {
-    return NextResponse.json({ error: 'Operator config sync secret missing' }, { status: 500 })
+  // Le cockpit signe avec le secret dérivé de chaque instance : sans master,
+  // il retomberait sur un secret partagé identique pour toutes.
+  if (!hasOperatorMasterSecret()) {
+    return NextResponse.json({ error: 'OPERATOR_MASTER_SECRET missing' }, { status: 500 })
   }
 
   const operator = createOperatorAdminClient()
@@ -222,6 +238,8 @@ export async function POST(req: NextRequest) {
 
     polled++
     try {
+      const secret = getOperatorSigningSecret(client.source_instance)
+      if (!secret) throw new Error('signing secret unavailable')
       const result = await pollOneClient(operator, client, appUrl, secret, stateByOrg.get(key))
       if (result.error) {
         failed++
@@ -229,7 +247,7 @@ export async function POST(req: NextRequest) {
         await operator.from('super_pdp_reception_state').upsert({
           source_instance: client.source_instance,
           organization_id: client.organization_id,
-          last_synced_invoice_id: state?.last_synced_invoice_id ?? null,
+          // curseur déjà enregistré par pollOneClient : ne pas le réécrire avec l'ancien
           last_polled_at: new Date().toISOString(),
           last_error: result.error,
           consecutive_errors: (state?.consecutive_errors ?? 0) + 1,

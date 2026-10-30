@@ -1,23 +1,21 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { useFormStatus } from 'react-dom'
 import { useSearchParams } from 'next/navigation'
 import {
   Building2, ArrowRight, Loader2,
-  AlertCircle, Plus, Trash2, Copy, Check, KeyRound, Upload, ImageIcon,
-  ChevronDown, ShieldAlert,
+  AlertCircle, Plus, Trash2, Copy, Check, KeyRound,
+  ChevronDown, ShieldAlert, Mic, ClipboardPaste, FileUp,
 } from 'lucide-react'
 import { completeOnboarding, skipInvites, joinViaCode } from './actions'
 import { Switch } from '@/components/ui/Switch'
 import { Modal } from '@/components/ui/Modal'
 import { IconFrame, IconBienvenue, IconEntreprise, IconCoordonnees, IconConformite, IconEquipe, IconCode } from './OnboardingIcons'
 import type { OrgRole } from '@/lib/data/queries/roles'
-import { createClient } from '@/lib/supabase/client'
 import {
   BUSINESS_ACTIVITIES_BY_PROFILE,
   getBusinessActivityById,
-  getSecondaryActivityOptions,
   normalizeSecondaryActivityIds,
   resolveBusinessSelection,
   type BusinessActivityId,
@@ -36,6 +34,7 @@ import {
   type OrganizationFieldErrors,
 } from '@/lib/validations/organization'
 import { LEGAL_VAT_RATES } from '@/lib/utils'
+import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
 
 const inputCls =
   'w-full px-4 py-3 bg-white/[0.06] border border-white/[0.08] focus:border-accent/50 focus:ring-1 focus:ring-accent/20 rounded-xl text-white text-sm outline-none transition-all placeholder:text-white/20'
@@ -94,7 +93,7 @@ type InviteRow = { email: string; roleId: string }
 // — aucun n'est bloquant techniquement (colonnes nullable, gérées en conditionnel dans
 // les PDF/Factur-X), seul le SIRET reste requis pour démarrer l'essai self-service.
 // Étape joiner : 0=welcome, 'join'=code
-type Step = 0 | 1 | 2 | 3 | 4 | 'join'
+type Step = 0 | 1 | 2 | 3 | 4 | 'launch' | 'join'
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus()
@@ -134,6 +133,33 @@ function SkipButton({ label }: { label: string }) {
       {pending && <Loader2 className="w-3 h-3 animate-spin" />}
       {label}
     </button>
+  )
+}
+
+function LaunchButtons({ selfService }: { selfService: boolean }) {
+  const { pending } = useFormStatus()
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <button
+        type="submit"
+        name="onboarding_destination"
+        value="atelier-ia"
+        disabled={pending}
+        className="flex min-h-12 items-center justify-center gap-2 whitespace-nowrap rounded-pill bg-accent px-3 text-xs font-bold text-black shadow-glow-accent transition-all hover:opacity-90 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60 sm:text-sm"
+      >
+        Créer mon premier devis
+        {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+      </button>
+      <button
+        type="submit"
+        name="onboarding_destination"
+        value="dashboard"
+        disabled={pending}
+        className="flex min-h-12 items-center justify-center whitespace-nowrap rounded-pill border border-white/15 bg-white/[0.06] px-3 text-xs font-bold text-white transition-all hover:bg-white/[0.10] active:scale-[0.99] disabled:cursor-wait disabled:opacity-60 sm:text-sm"
+      >
+        {selfService ? 'Accéder à mon essai' : `Accéder à ${APP_NAME}`}
+      </button>
+    </div>
   )
 }
 
@@ -180,33 +206,6 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
   const [fieldErrors, setFieldErrors] = useState<OrganizationFieldErrors>({})
   const defaultRoleId = roles[0]?.id ?? ''
   const [invites, setInvites] = useState<InviteRow[]>([{ email: '', roleId: defaultRoleId }])
-
-  // Logo state
-  const [logoUrl, setLogoUrl] = useState('')
-  const [logoPreview, setLogoPreview] = useState('')
-  const [logoUploading, setLogoUploading] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  async function handleLogoSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setLogoPreview(URL.createObjectURL(file))
-    setLogoUploading(true)
-    try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const ext = file.name.split('.').pop()
-      const path = `${user.id}/logo.${ext}`
-      const { error } = await supabase.storage.from('logos').upload(path, file, { upsert: true })
-      if (!error) {
-        const { data } = supabase.storage.from('logos').getPublicUrl(path)
-        setLogoUrl(data.publicUrl)
-      }
-    } finally {
-      setLogoUploading(false)
-    }
-  }
 
   // Joiner state
   const [codeInput, setCodeInput] = useState('')
@@ -435,44 +434,6 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
     )
   }
 
-  function SecondaryActivitiesPicker({
-    currentActivityId,
-    selected,
-    onChange,
-  }: {
-    currentActivityId: BusinessActivityId
-    selected: BusinessActivityId[]
-    onChange: (next: BusinessActivityId[]) => void
-  }) {
-    const others = getSecondaryActivityOptions(currentActivityId)
-    return (
-      <div className="space-y-2">
-        <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
-          Vous faites aussi
-        </label>
-        <div className="flex flex-wrap gap-2">
-          {others.map((a) => {
-            const checked = selected.includes(a.id)
-            const cls = checked
-              ? 'bg-accent/15 border-accent/40 text-accent'
-              : 'bg-white/[0.04] border-white/[0.08] text-white/40 hover:text-white/60 hover:border-white/20'
-            return (
-              <button
-                key={a.id}
-                type="button"
-                onClick={() => onChange(checked ? selected.filter((id) => id !== a.id) : [...selected, a.id])}
-                className={'px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ' + cls}
-              >
-                {a.label}
-              </button>
-            )
-          })}
-        </div>
-        <p className="text-xs text-white/30">Optionnel. Aide Sarah à mieux contextualiser vos devis.</p>
-      </div>
-    )
-  }
-
   return (
     <div className="fixed inset-0 flex flex-col items-center justify-start sm:justify-center bg-[#050505] text-white overflow-y-auto font-body p-4 sm:p-6 pt-8 sm:pt-6">
       {/* Glows */}
@@ -482,9 +443,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
       {/* Logo */}
       <div className="relative z-10 flex items-center gap-3 mb-10">
         <div className="w-10 h-10 bg-accent rounded-xl flex items-center justify-center shadow-glow-accent overflow-hidden">
-          {logoPreview ? (
-            <img src={logoPreview} alt="Logo" className="w-full h-full object-cover" />
-          ) : companyName ? (
+          {companyName ? (
             <span className="text-black font-extrabold text-sm">
               {companyName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()}
             </span>
@@ -499,8 +458,8 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
 
       {/* Step dots */}
       <div className="relative z-10 flex items-center gap-2 mb-8">
-        {(step === 'join' ? [0, 1] : [0, 1, 2, 3, 4]).map((_, i) => {
-          const currentIdx = step === 'join' ? 1 : (step as number)
+        {(step === 'join' ? [0, 1] : [0, 1, 2, 3]).map((_, i) => {
+          const currentIdx = step === 'join' ? 1 : step === 'launch' ? 3 : Math.min(step as number, 3)
           return (
             <div
               key={i}
@@ -576,33 +535,6 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
 
               <div className="space-y-5">
 
-                {/* Logo upload */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
-                    Logo <span className="ml-1 normal-case tracking-normal text-white/25 font-normal">(optionnel)</span>
-                  </label>
-                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoSelect} />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={logoUploading}
-                    className="flex items-center gap-3 px-4 py-3 w-full rounded-xl bg-white/[0.04] border border-white/[0.08] hover:border-accent/40 hover:bg-white/[0.07] transition-all disabled:opacity-50"
-                  >
-                    <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-white/[0.06] flex items-center justify-center">
-                      {logoPreview ? (
-                        <img src={logoPreview} alt="Logo" className="w-full h-full object-cover" />
-                      ) : (
-                        <ImageIcon className="w-5 h-5 text-white/30" />
-                      )}
-                    </div>
-                    <span className="text-sm text-white/50 flex items-center gap-2">
-                      {logoUploading ? <><Loader2 className="w-4 h-4 animate-spin" />Envoi en cours…</> :
-                       logoPreview ? <><Upload className="w-4 h-4" />Changer le logo</> :
-                       <><Upload className="w-4 h-4" />Importer un logo</>}
-                    </span>
-                  </button>
-                </div>
-
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
                     Nom de l&apos;entreprise <span className="text-accent">*</span>
@@ -634,14 +566,6 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                   </p>
                 </div>
 
-                {selectedActivity && (
-                  <SecondaryActivitiesPicker
-                    currentActivityId={selectedActivity}
-                    selected={selectedSecondaryActivities}
-                    onChange={setSelectedSecondaryActivities}
-                  />
-                )}
-
                 <div className="pt-1">
                   <button
                     type="button"
@@ -672,18 +596,50 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
               <div className="flex items-center gap-3 mb-6">
                 <IconFrame><IconCoordonnees /></IconFrame>
                 <div>
-                  <h2 className="text-xl font-bold font-display">Coordonnées</h2>
-                  <p className="text-xs text-white/40">Ces infos seront reprises sur vos devis et factures.</p>
+                  <h2 className="text-xl font-bold font-display">Ouvrons votre espace</h2>
+                  <p className="text-xs text-white/40">Deux informations, puis vous pourrez obtenir votre premier résultat avec Chloé.</p>
                 </div>
               </div>
 
-              <div className="space-y-5">
+              <form
+                className="space-y-5"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  if (validateContactStep()) setStep('launch')
+                }}
+              >
+                <input type="hidden" name="company_name" value={companyName} />
+                <input type="hidden" name="business_activity" value={selectedActivity} />
+                <input type="hidden" name="secondary_activity_ids" value={JSON.stringify(selectedSecondaryActivities)} />
+                <input type="hidden" name="business_profile" value={resolvedSelection?.businessProfile ?? ''} />
+                <input type="hidden" name="sector" value={resolvedSelection?.sectorLabel ?? ''} />
+                <input type="hidden" name="phone" value="" />
+                <input type="hidden" name="address_line1" value="" />
+                <input type="hidden" name="postal_code" value="" />
+                <input type="hidden" name="city" value="" />
+                <input type="hidden" name="vat_number" value="" />
+                <input type="hidden" name="forme_juridique" value="" />
+                <input type="hidden" name="capital_social" value="" />
+                <input type="hidden" name="rcs" value="" />
+                <input type="hidden" name="rcs_ville" value="" />
+                <input type="hidden" name="is_vat_subject" value="true" />
+                <input type="hidden" name="default_vat_rate" value="20" />
+                <input type="hidden" name="iban" value="" />
+                <input type="hidden" name="bic" value="" />
+                <input type="hidden" name="bank_name" value="" />
+                <input type="hidden" name="payment_terms_days" value="30" />
+                <input type="hidden" name="late_penalty_rate" value="3" />
+                <input type="hidden" name="court_competent" value="" />
+                <input type="hidden" name="logo_url" value="" />
+                <input type="hidden" name="einvoicing_intent" value="later" />
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
                     Email de contact <span className="text-accent">*</span>
                   </label>
                   <input
                     type="email"
+                    name="email"
+                    required
                     autoComplete="email"
                     placeholder="contact@entreprise.fr"
                     value={email}
@@ -696,96 +652,94 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                   <FieldError field="email" />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Adresse</label>
-                  <input type="text" autoComplete="street-address" placeholder="12 rue de la Paix" value={addressLine1} onChange={(e) => setAddressLine1(e.target.value)} className={inputCls} />
+                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">SIRET{selfService ? ' *' : ''}</label>
+                  <input
+                    type="text"
+                    name="siret"
+                    required={selfService}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    placeholder="123 456 789 00012"
+                    value={siret}
+                    onChange={(e) => {
+                      setSiret(formatSiretInput(e.target.value))
+                      setFieldError('siret')
+                    }}
+                    className={`${inputCls} tabular-nums`}
+                  />
+                  <FieldError field="siret" />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Code postal</label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="postal-code"
-                      placeholder="69007"
-                      value={postalCode}
-                      onChange={(e) => {
-                        setPostalCode(formatPostalCodeInput(e.target.value))
-                        setFieldError('postal_code')
-                      }}
-                      className={`${inputCls} tabular-nums`}
-                    />
-                    <FieldError field="postal_code" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Ville</label>
-                    <input type="text" autoComplete="address-level2" placeholder="Lyon" value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} />
-                  </div>
+                <div className="rounded-xl border border-accent/20 bg-accent/[0.07] px-4 py-3 text-xs leading-relaxed text-white/55">
+                  Le logo, l’adresse, la TVA, le RIB, la signature, l’équipe et la facturation électronique restent disponibles dans les réglages. Une bannière discrète vous permettra d’y revenir plus tard.
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">SIRET{selfService ? ' *' : ''}</label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      placeholder="123 456 789 00012"
-                      value={siret}
-                      onChange={(e) => {
-                        setSiret(formatSiretInput(e.target.value))
-                        setFieldError('siret')
-                      }}
-                      className={`${inputCls} tabular-nums`}
-                    />
-                    <FieldError field="siret" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">TVA intracom.</label>
-                    <input
-                      type="text"
-                      autoComplete="off"
-                      placeholder="FR12 123 456 789"
-                      value={vatNumber}
-                      onChange={(e) => {
-                        setVatNumber(formatVatNumberInput(e.target.value))
-                        setFieldError('vat_number')
-                      }}
-                      className={`${inputCls} tabular-nums`}
-                      disabled={!isVatSubject}
-                    />
-                    <FieldError field="vat_number" />
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">Régime TVA</label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <button type="button" onClick={() => setIsVatSubject(true)} className={`p-3 rounded-xl border text-left ${isVatSubject ? 'bg-accent/15 border-accent/40 text-accent' : 'bg-white/[0.04] border-white/[0.08] text-white/50'}`}>Assujetti à la TVA</button>
-                    <button type="button" onClick={() => setIsVatSubject(false)} className={`p-3 rounded-xl border text-left ${!isVatSubject ? 'bg-accent/15 border-accent/40 text-accent' : 'bg-white/[0.04] border-white/[0.08] text-white/50'}`}>Franchise en base</button>
-                  </div>
-                  {isVatSubject && (
-                    <select value={defaultVatRate} onChange={(e) => setDefaultVatRate(Number(e.target.value))} className={inputCls}>
-                      <option className="bg-[#111]" value={20}>20 % : taux normal</option>
-                      <option className="bg-[#111]" value={10}>10 % : rénovation</option>
-                      <option className="bg-[#111]" value={5.5}>5,5 % : énergétique</option>
-                    </select>
-                  )}
-                </div>
-                <p className="text-xs text-white/30">
-                  Téléphone, RIB, mentions légales détaillées : vous pourrez les compléter dans vos réglages, quand vous aurez ces infos sous la main.
-                </p>
                 <div className="pt-1">
                   <button
-                    type="button"
-                    onClick={() => {
-                      if (validateContactStep()) setStep(3)
-                    }}
-                    className="w-full py-3.5 rounded-pill bg-accent text-black font-bold text-sm hover:opacity-90 active:scale-[0.99] transition-all shadow-glow-accent flex items-center justify-center gap-2"
+                    type="submit"
+                    className="flex w-full items-center justify-center gap-2 rounded-pill bg-accent py-3.5 text-sm font-bold text-black shadow-glow-accent transition-all hover:opacity-90 active:scale-[0.99]"
                   >
                     Continuer
-                    <ArrowRight className="w-4 h-4" />
+                    <ArrowRight className="h-4 w-4" />
                   </button>
                 </div>
-              </div>
+              </form>
               <button onClick={() => setStep(1)} className="mt-4 w-full text-center text-xs text-white/25 hover:text-white/50 transition-colors">Retour</button>
+            </div>
+          )}
+
+          {/* ── LANCEMENT : premier résultat ou accès direct ── */}
+          {step === 'launch' && (
+            <div>
+              <div className="flex items-start gap-4">
+                <AssistantAvatar assistant="chloe" size={54} />
+                <div className="min-w-0 pt-0.5">
+                  <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-accent">Votre espace est prêt</p>
+                  <h2 className="mt-1 text-2xl font-bold leading-tight font-display">On prépare votre premier devis&nbsp;?</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-white/55">
+                    Donnez simplement la demande client à Chloé. Elle structure les postes et vous laisse la validation finale.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-2.5 sm:grid-cols-3">
+                {[
+                  { icon: Mic, title: 'Dicter', detail: 'Parlez comme sur le chantier.' },
+                  { icon: ClipboardPaste, title: 'Coller', detail: 'Un email ou un message client.' },
+                  { icon: FileUp, title: 'Importer', detail: 'PDF, photo, plan ou CCTP.' },
+                ].map(({ icon: Icon, title, detail }) => (
+                  <div
+                    key={title}
+                    className="rounded-2xl border border-white/10 bg-white/[0.035] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]"
+                  >
+                    <Icon className="h-4 w-4 text-accent" />
+                    <p className="mt-3 text-sm font-bold text-white">{title}</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-white/40">{detail}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 rounded-xl border border-white/8 bg-black/20 px-4 py-3 text-xs leading-relaxed text-white/45">
+                Comptez environ 2 minutes. Le logo, le RIB, la signature et le reste pourront être complétés plus tard dans les réglages.
+              </div>
+
+              <form action={skipInvites} className="mt-6">
+                <input type="hidden" name="company_name" value={companyName} />
+                <input type="hidden" name="business_activity" value={selectedActivity} />
+                <input type="hidden" name="secondary_activity_ids" value={JSON.stringify(selectedSecondaryActivities)} />
+                <input type="hidden" name="business_profile" value={resolvedSelection?.businessProfile ?? ''} />
+                <input type="hidden" name="sector" value={resolvedSelection?.sectorLabel ?? ''} />
+                <input type="hidden" name="email" value={email} />
+                <input type="hidden" name="siret" value={siret} />
+                <input type="hidden" name="is_vat_subject" value="true" />
+                <input type="hidden" name="default_vat_rate" value="20" />
+                <input type="hidden" name="payment_terms_days" value="30" />
+                <input type="hidden" name="late_penalty_rate" value="3" />
+                <input type="hidden" name="einvoicing_intent" value="later" />
+                <LaunchButtons selfService={selfService} />
+              </form>
+
+              <button onClick={() => setStep(2)} className="mt-4 w-full text-center text-xs text-white/30 transition-colors hover:text-white/60">
+                Modifier mes informations
+              </button>
             </div>
           )}
 
@@ -948,7 +902,7 @@ export default function OnboardingClient({ firstName, initialEmail, roles, joinC
                 <input type="hidden" name="payment_terms_days" value={paymentTermsDays} />
                 <input type="hidden" name="late_penalty_rate" value={latePenaltyRate} />
                 <input type="hidden" name="court_competent" value={courtCompetent} />
-                <input type="hidden" name="logo_url" value={logoUrl} />
+                <input type="hidden" name="logo_url" value="" />
                 <input type="hidden" name="einvoicing_intent" value={einvoicingWantsReception || einvoicingWantsEmission ? 'activate' : 'later'} />
 
                 {roles.length > 0 && (

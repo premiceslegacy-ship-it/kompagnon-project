@@ -9,7 +9,7 @@ import { dateParis, todayParis } from '@/lib/utils'
 import { fetchRAGContext } from '@/lib/ai/rag'
 import { generateEmbedding } from '@/lib/ai/embeddings'
 import { hasPermission } from '@/lib/data/queries/membership'
-import { deepLinkForSarahAction, proposeSarahAction, findClientIdForSarahDraft, confirmSarahActionAuto } from '@/lib/sarah/actions'
+import { deepLinkForSarahAction, proposeSarahAction, findClientIdForSarahDraft, confirmSarahActionAuto, resolveSarahActionRisk } from '@/lib/sarah/actions'
 import { findReplacementCandidates, findPlanningConflicts, findMissingPointages } from '@/lib/data/mutations/planning-agent'
 import { getMemberAbsences } from '@/lib/data/mutations/absences'
 import { getDashboardStats } from '@/lib/data/queries/dashboard'
@@ -899,13 +899,11 @@ async function attachPersistentProposal(
   const payload = (act.payload && typeof act.payload === 'object' ? act.payload : {}) as Record<string, unknown>
   const label = typeof act.label === 'string' && act.label.trim() ? act.label.trim() : 'Action Sarah'
   const description = typeof act.description === 'string' && act.description.trim() ? act.description.trim() : label
-  const modelRisk = act.risk === 'high' || act.risk === 'medium' || act.risk === 'low' ? act.risk : 'low'
-  // Garde-fou serveur : la création d'une fiche (client, membre) ne doit
-  // jamais s'auto-exécuter, même si le modèle la classe "low". Le risque
-  // n'est pas la sensibilité de l'action mais celle d'une hallucination
-  // (nom/email/téléphone inventés) exécutée sans clic humain.
-  const NEVER_AUTO_EXECUTE = new Set(['client_create', 'member_create'])
-  const risk = NEVER_AUTO_EXECUTE.has(type) && modelRisk === 'low' ? 'medium' : modelRisk
+  // Le `risk` est déclaré par le modèle, donc non fiable : la décision
+  // d'auto-exécution vient d'une allowlist serveur de types (voir
+  // resolveSarahActionRisk), pas du champ. Un alias de type (`send_invoice`)
+  // ne doit pas contourner la liste, et un `risk` absent ne vaut plus « low ».
+  const risk = resolveSarahActionRisk(type, act.risk)
 
   // Garde-fou serveur : un nom de client mentionné mais introuvable ne doit
   // jamais donner lieu à une carte d'action. On résout ici plutôt que de

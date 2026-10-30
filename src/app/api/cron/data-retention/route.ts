@@ -65,6 +65,8 @@ export async function POST(req: NextRequest) {
   // notifications). Les actions sensibles (audit.*) sont exemptées de cette purge :
   // elles servent de piste d'audit (qui a supprimé/payé/changé un rôle), à conserver
   // durablement, pas seulement pour l'affichage court terme.
+  // Le trigger `audit_append_only` ne bloque que les lignes audit.*, et ce
+  // filtre les exclut : aucune levée de drapeau n'est nécessaire ici.
   await purge('activity_log', () =>
     admin.from('activity_log')
       .delete({ count: 'exact' })
@@ -118,6 +120,56 @@ export async function POST(req: NextRequest) {
     admin.from('import_jobs')
       .delete({ count: 'exact' })
       .lt('created_at', daysAgo(60)))
+
+  // Conversations Sarah : contenu client, jamais purgé jusqu'ici.
+  await purge('sarah_messages', () =>
+    admin.from('sarah_conversation_messages')
+      .delete({ count: 'exact' })
+      .lt('created_at', daysAgo(90)))
+
+  // Invitations et capacités d'accès expirées.
+  await purge('invitations', () =>
+    admin.from('invitations')
+      .delete({ count: 'exact' })
+      .lt('expires_at', daysAgo(30)))
+
+  await purge('member_space_tokens', () =>
+    admin.from('member_space_tokens')
+      .delete({ count: 'exact' })
+      .lt('expires_at', daysAgo(30)))
+
+  // Demandes de devis publiques archivées : un an.
+  await purge('quote_requests_archived', () =>
+    admin.from('quote_requests')
+      .delete({ count: 'exact' })
+      .eq('status', 'archived')
+      .lt('created_at', daysAgo(365)))
+
+  // Exports d'organisation : le ZIP contient toute la base client, et
+  // `expires_at` n'était appliqué par personne. On supprime l'objet Storage
+  // avant la ligne, sinon le fichier devient orphelin.
+  await purge('organization_exports', async () => {
+    const { data: expired } = await admin
+      .from('organization_exports')
+      .select('id, bundle_path')
+      .lt('expires_at', new Date().toISOString())
+      .limit(100)
+    if (!expired?.length) return { count: 0, error: null }
+
+    const rows = expired as Array<{ id: string; bundle_path: string | null }>
+    const paths = rows.map((row) => row.bundle_path).filter((path): path is string => Boolean(path))
+    if (paths.length > 0) {
+      await admin.storage.from('organization-exports').remove(paths)
+    }
+    return admin.from('organization_exports').delete({ count: 'exact' }).in('id', rows.map((row) => row.id))
+  })
+
+  // Réservations de quota orphelines (settlement interrompu) : au-delà de
+  // 30 minutes, un appel n'est plus « en vol ».
+  await purge('quota_reservations_expired', async () => {
+    const { data, error } = await admin.rpc('expire_stale_quota_reservations')
+    return { count: typeof data === 'number' ? data : 0, error: error ? { message: error.message } : null }
+  })
 
   // Note : pa_status_events est un audit trail légal immuable, jamais purgé.
 

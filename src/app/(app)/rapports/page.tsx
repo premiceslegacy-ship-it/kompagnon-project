@@ -20,10 +20,11 @@ function currentYM() {
 }
 
 export default async function RapportsPage({
-  searchParams,
+  searchParams: searchParamsPromise,
 }: {
-  searchParams?: { vue?: string; periode?: string }
+  searchParams: Promise<{ vue?: string; periode?: string }>
 }) {
+  const searchParams = await searchParamsPromise
   const perms = await getUserPermissions()
   if (!perms.has('*') && !perms.has('dashboard.view_ca')) {
     redirect('/dashboard')

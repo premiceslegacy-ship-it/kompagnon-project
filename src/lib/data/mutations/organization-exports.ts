@@ -89,11 +89,13 @@ export async function createOrganizationExport(): Promise<{ error: string | null
       .from(ORGANIZATION_EXPORT_BUCKET)
       .createSignedUrl(built.bundlePath, ORGANIZATION_EXPORT_LINK_TTL_SECONDS)
 
-    let warning: string | null = null
+    let warning: string | null = finalSummary.invoice_documents_complete
+      ? null
+      : 'L’export est incomplet : un ou plusieurs PDF de facture historiques n’ont pas pu être vérifiés ou inclus.'
     if (signedError || !signedData?.signedUrl) {
-      warning = "L'export a ete genere, mais le lien securise n'a pas pu etre prepare."
+      warning = [warning, "L'export a ete genere, mais le lien securise n'a pas pu etre prepare."].filter(Boolean).join(' ')
     } else if (!membership.email) {
-      warning = "L'export a ete genere, mais aucun email owner n'est disponible pour l'envoi."
+      warning = [warning, "L'export a ete genere, mais aucun email owner n'est disponible pour l'envoi."].filter(Boolean).join(' ')
     } else {
       const { subject, html } = buildOrganizationExportReadyEmail({
         orgName: organization.name,
@@ -110,7 +112,7 @@ export async function createOrganizationExport(): Promise<{ error: string | null
       })
 
       if (emailResult.error) {
-        warning = "L'export a ete genere, mais l'email de notification n'a pas pu etre envoye."
+        warning = [warning, "L'export a ete genere, mais l'email de notification n'a pas pu etre envoye."].filter(Boolean).join(' ')
       }
     }
 

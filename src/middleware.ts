@@ -42,6 +42,7 @@ const publicExactRoutes = [
   '/terms',
   '/api/manifest',
   '/api/app-icon',
+  '/api/public/quote-attachments',
   // Appels serveur-à-serveur signés par l'instance mutualisée. Le portail
   // Stripe reste volontairement absent : il exige la session utilisateur.
   '/api/stripe/checkout-session',
@@ -63,8 +64,40 @@ function isPathOrChild(pathname: string, prefix: string) {
 }
 
 export async function middleware(request: NextRequest) {
+  // Le layout racine est dynamique : Next lit ce header de requête et ajoute
+  // le nonce aux scripts SSR. Ne jamais accepter un nonce fourni par le client.
+  const nonce = btoa(crypto.randomUUID())
+  const isDevelopment = process.env.NODE_ENV === 'development'
+  const supabaseOrigin = new URL(getSupabaseRuntimeConfig().supabaseUrl).origin
+  const supabaseWebSocketOrigin = supabaseOrigin.replace(/^http/, 'ws')
+  // Le widget annoncé dans les réglages intègre seulement ce formulaire public.
+  const isEmbeddableQuoteForm = /^\/demande\/[^/]+\/?$/.test(request.nextUrl.pathname)
+  const policy = [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}'${isDevelopment ? " 'unsafe-eval'" : ''} blob: https://*.i.posthog.com`,
+    // Styles inline nécessaires à Motion, Leaflet et aux graphiques ; distincts
+    // des scripts inline, qui sont interdits sans nonce.
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    `img-src 'self' data: blob: ${supabaseOrigin} https://a.tile.openstreetmap.org https://b.tile.openstreetmap.org https://c.tile.openstreetmap.org`,
+    `connect-src 'self' ${supabaseOrigin} ${supabaseWebSocketOrigin} https://api.resend.com https://openrouter.ai https://api.elevenlabs.io wss://api.elevenlabs.io https://api-adresse.data.gouv.fr https://*.sentry.io https://*.ingest.us.sentry.io https://*.posthog.com https://*.i.posthog.com`,
+    "object-src 'none'",
+    isEmbeddableQuoteForm ? 'frame-ancestors *' : "frame-ancestors 'none'",
+    "form-action 'self'",
+    "base-uri 'self'",
+    ...(isDevelopment ? [] : ['upgrade-insecure-requests']),
+  ].join('; ')
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.set('x-nonce', nonce)
+  requestHeaders.set('Content-Security-Policy', policy)
+  const response = await updateSession(request, requestHeaders)
+  response.headers.set('Content-Security-Policy', policy)
+  return response
+}
+
+async function updateSession(request: NextRequest, requestHeaders: Headers) {
   let supabaseResponse = NextResponse.next({
-    request,
+    request: { headers: requestHeaders },
   })
   const { supabaseUrl, supabaseAnonKey } = getSupabaseRuntimeConfig()
 
@@ -80,8 +113,9 @@ export async function middleware(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           )
+          requestHeaders.set('cookie', request.cookies.toString())
           supabaseResponse = NextResponse.next({
-            request,
+            request: { headers: requestHeaders },
           })
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)

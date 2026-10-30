@@ -1,13 +1,16 @@
 import { NextResponse } from 'next/server'
+import { pdfResponse } from '@/lib/pdf/response'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
+import { InvoiceIssuanceAuthorityError, renderInvoicePdfBufferById } from '@/lib/pdf/server'
+import type { InvoicePdfResult } from '@/lib/pdf/server'
 import { isValidUuid } from '@/lib/security'
 
 export async function GET(
   req: Request,
-  { params }: { params: { id: string } },
+  { params: paramsPromise }: { params: Promise<{ id: string }> },
 ) {
+  const params = await paramsPromise
   if (!isValidUuid(params.id)) return new NextResponse('Facture introuvable', { status: 404 })
 
   const supabase = await createClient()
@@ -31,23 +34,19 @@ export async function GET(
   if (!inv) return new NextResponse('Facture introuvable', { status: 404 })
   if (inv.organization_id !== orgId) return new NextResponse('Accès refusé', { status: 403 })
 
-  let result
+  let result: InvoicePdfResult | null
   try {
     result = await renderInvoicePdfBufferById(params.id, orgId)
   } catch (err) {
+    if (err instanceof InvoiceIssuanceAuthorityError) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: 409 })
+    }
     console.error('[GET /api/pdf/invoice] render error:', err)
     return new NextResponse('Erreur génération PDF', { status: 500 })
   }
-  if (!result) return new NextResponse('Erreur génération PDF', { status: 500 })
+  if (!result) return new NextResponse('Facture introuvable', { status: 404 })
 
   const download = new URL(req.url).searchParams.get('download') === '1'
 
-  return new NextResponse(result.buffer, {
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': download
-        ? `attachment; filename="${result.fileName}"`
-        : `inline; filename="${result.fileName}"`,
-    },
-  })
+  return pdfResponse(result.buffer, result.fileName, { download })
 }

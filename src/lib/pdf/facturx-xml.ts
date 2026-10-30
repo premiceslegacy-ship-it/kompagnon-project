@@ -2,8 +2,7 @@
 // Spécification : Factur-X 1.0 / ZUGFeRD 2.3 / norme EN 16931
 // Validateur officiel : https://services.fnfe-mpe.org
 
-import type { Organization } from '@/lib/data/queries/organization'
-import type { InvoiceWithItems } from '@/lib/data/queries/invoices'
+import type { InvoiceDocumentClient, InvoiceDocumentRecord, PdfOrganizationData } from '@/lib/pdf/document-types'
 
 const INVOICE_SECTION_UNIT = '__section__'
 import { facturxGuidelineId } from '@/lib/pdf/facturx-profile'
@@ -49,15 +48,15 @@ function siretFrom(value: string | null | undefined): string | null {
   return digits.length === 14 ? digits : null
 }
 
-function sellerSiren(org: Organization): string | null {
+function sellerSiren(org: PdfOrganizationData): string | null {
   return sirenFrom(org.siren) ?? sirenFrom(org.siret)
 }
 
-function buyerSiren(client: NonNullable<InvoiceWithItems['client']>): string | null {
+function buyerSiren(client: InvoiceDocumentClient): string | null {
   return sirenFrom(client.siren) ?? sirenFrom(client.siret)
 }
 
-function buyerSiret(client: NonNullable<InvoiceWithItems['client']>): string | null {
+function buyerSiret(client: InvoiceDocumentClient): string | null {
   return siretFrom(client.siret)
 }
 
@@ -121,7 +120,7 @@ function xmlAddress(fields: {
   ].filter(Boolean).join('\n        ')
 }
 
-function xmlSeller(org: Organization): string {
+function xmlSeller(org: PdfOrganizationData): string {
   const siren = sellerSiren(org)
   const fiscalId = partyFiscalId(org.siret, org.siren)
   const siret = siretFrom(org.siret)
@@ -161,7 +160,7 @@ function xmlSeller(org: Organization): string {
     </ram:SellerTradeParty>`
 }
 
-function xmlBuyer(client: NonNullable<InvoiceWithItems['client']>): string {
+function xmlBuyer(client: InvoiceDocumentClient): string {
   const name = client.company_name
     || [client.first_name, client.last_name].filter(Boolean).join(' ')
     || client.email
@@ -201,12 +200,14 @@ function xmlBuyer(client: NonNullable<InvoiceWithItems['client']>): string {
     </ram:BuyerTradeParty>`
 }
 
-function xmlTradeLines(items: InvoiceWithItems['items']): string {
+function xmlTradeLines(items: InvoiceDocumentRecord['items']): string {
   return items
     .filter(item => !item.is_internal && item.unit !== INVOICE_SECTION_UNIT)
     .map((item, idx) => {
-      const lineHt = (item.quantity * item.unit_price).toFixed(2)
-      const isVatExempt = item.vat_rate === 0
+      const quantity = item.quantity ?? 0
+      const vatRate = item.vat_rate ?? 0
+      const lineHt = (quantity * item.unit_price).toFixed(2)
+      const isVatExempt = vatRate === 0
       const taxCategoryCode = isVatExempt ? 'E' : 'S'
 
       return `<ram:IncludedSupplyChainTradeLineItem>
@@ -240,13 +241,13 @@ function xmlTradeLines(items: InvoiceWithItems['items']): string {
     .join('\n  ')
 }
 
-function xmlVatBreakdown(items: InvoiceWithItems['items'], isVatSubject: boolean): string {
+function xmlVatBreakdown(items: InvoiceDocumentRecord['items'], isVatSubject: boolean): string {
   if (!isVatSubject) {
     return `<ram:ApplicableTradeTax>
       <ram:CalculatedAmount>0.00</ram:CalculatedAmount>
       <ram:TypeCode>VAT</ram:TypeCode>
       <ram:ExemptionReason>TVA non applicable, art. 293B du CGI</ram:ExemptionReason>
-      <ram:BasisAmount>${fmtAmount(items.filter(i => !i.is_internal && i.unit !== INVOICE_SECTION_UNIT).reduce((s, i) => s + i.quantity * i.unit_price, 0))}</ram:BasisAmount>
+      <ram:BasisAmount>${fmtAmount(items.filter(i => !i.is_internal && i.unit !== INVOICE_SECTION_UNIT).reduce((s, i) => s + (i.quantity ?? 0) * i.unit_price, 0))}</ram:BasisAmount>
       <ram:CategoryCode>E</ram:CategoryCode>
       <ram:RateApplicablePercent>0.00</ram:RateApplicablePercent>
     </ram:ApplicableTradeTax>`
@@ -254,11 +255,13 @@ function xmlVatBreakdown(items: InvoiceWithItems['items'], isVatSubject: boolean
 
   const vatMap: Record<number, { basis: number; amount: number }> = {}
   for (const item of items.filter(i => !i.is_internal && i.unit !== INVOICE_SECTION_UNIT)) {
-    const ht = item.quantity * item.unit_price
-    const vat = ht * (item.vat_rate / 100)
-    if (!vatMap[item.vat_rate]) vatMap[item.vat_rate] = { basis: 0, amount: 0 }
-    vatMap[item.vat_rate].basis += ht
-    vatMap[item.vat_rate].amount += vat
+    const quantity = item.quantity ?? 0
+    const vatRate = item.vat_rate ?? 0
+    const ht = quantity * item.unit_price
+    const vat = ht * (vatRate / 100)
+    if (!vatMap[vatRate]) vatMap[vatRate] = { basis: 0, amount: 0 }
+    vatMap[vatRate].basis += ht
+    vatMap[vatRate].amount += vat
   }
 
   return Object.entries(vatMap).map(([rate, { basis, amount }]) => {
@@ -281,7 +284,7 @@ function legalNote(subjectCode: 'PMT' | 'PMD' | 'AAB', content: string): string 
     </ram:IncludedNote>`
 }
 
-function invoiceNotes(invoice: InvoiceWithItems, organization: Organization, isClientPro: boolean): string {
+function invoiceNotes(invoice: InvoiceDocumentRecord, organization: PdfOrganizationData, isClientPro: boolean): string {
   const notes: string[] = []
   if (invoice.notes_client) notes.push(`<ram:IncludedNote><ram:Content>${esc(invoice.notes_client)}</ram:Content></ram:IncludedNote>`)
 
@@ -309,14 +312,14 @@ function invoiceNotes(invoice: InvoiceWithItems, organization: Organization, isC
 // ─── Export principal ──────────────────────────────────────────────────────────
 
 export function generateFacturXml(
-  invoice: InvoiceWithItems,
-  organization: Organization,
+  invoice: InvoiceDocumentRecord,
+  organization: PdfOrganizationData,
 ): string {
   const isVatSubject = organization.is_vat_subject !== false
   const visibleItems = invoice.items.filter(i => !i.is_internal && i.unit !== INVOICE_SECTION_UNIT)
 
-  const totalHt = invoice.total_ht ?? visibleItems.reduce((s, i) => s + i.quantity * i.unit_price, 0)
-  const totalTva = invoice.total_tva ?? (isVatSubject ? visibleItems.reduce((s, i) => s + i.quantity * i.unit_price * (i.vat_rate / 100), 0) : 0)
+  const totalHt = invoice.total_ht ?? visibleItems.reduce((s, i) => s + (i.quantity ?? 0) * i.unit_price, 0)
+  const totalTva = invoice.total_tva ?? (isVatSubject ? visibleItems.reduce((s, i) => s + (i.quantity ?? 0) * i.unit_price * ((i.vat_rate ?? 0) / 100), 0) : 0)
   const totalTtc = invoice.total_ttc ?? (totalHt + totalTva)
 
   const issueDate = fmtDate(invoice.issue_date ?? invoice.created_at)

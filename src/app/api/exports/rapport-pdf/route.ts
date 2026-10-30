@@ -10,7 +10,6 @@ import {
   getMonthlyObjectives,
 } from '@/lib/data/queries/reporting'
 import { renderRapportKpiPdf } from '@/lib/pdf/documents/rapport-kpi'
-import { assertSafeExternalFetchUrl } from '@/lib/security'
 
 function pdfOrigin(): string {
   const origin = process.env.NEXT_PUBLIC_APP_URL
@@ -20,21 +19,6 @@ function pdfOrigin(): string {
 
 export const dynamic = 'force-dynamic'
 
-async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
-  if (!url) return null
-  const safeUrl = assertSafeExternalFetchUrl(url)
-  if (!safeUrl) return null
-  try {
-    const res = await fetch(safeUrl, { signal: AbortSignal.timeout(5_000) })
-    if (!res.ok) return null
-    const buf = await res.arrayBuffer()
-    const ct = res.headers.get('content-type') ?? 'image/png'
-    if (ct.includes('svg')) return null
-    return `data:${ct};base64,${Buffer.from(buf).toString('base64')}`
-  } catch {
-    return null
-  }
-}
 
 function monthLabelForFileName(month: number): string | null {
   switch (month) {
@@ -115,7 +99,7 @@ export async function GET(req: Request) {
 
   const { data: orgData } = await supabase
     .from('organizations')
-    .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, is_vat_subject, default_vat_rate, primary_color, iban, bic, payment_terms_days, signatory_name, signatory_role, signature_image')
+    .select('name, siret, logo_url')
     .eq('id', orgId)
     .single()
 
@@ -130,8 +114,6 @@ export async function GET(req: Request) {
     vue === 'mois' ? getMonthlyObjectives(year, month) : getAnnualObjectives(year),
   ])
 
-  const logoDataUrl = await fetchLogoAsDataUrl(orgData.logo_url)
-  const orgWithLogo = { ...orgData, logo_url: logoDataUrl ?? orgData.logo_url }
 
   const fileName = vue === 'mois'
     ? `rapport-${monthLabel}-${year}.pdf`
@@ -141,7 +123,7 @@ export async function GET(req: Request) {
   try {
     buffer = await renderRapportKpiPdf({
       vue, year, month,
-      organization: orgWithLogo as any,
+      organization: orgData,
       monthlyReport,
       annualReport,
       hoursReport,

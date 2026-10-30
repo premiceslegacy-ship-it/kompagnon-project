@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyOperatorSignature } from '@/lib/operator'
+import { hasOperatorMasterSecret, readOperatorRequest } from '@/lib/operator'
 import { recordOperatorClientEvent } from '@/lib/operator/trial-lifecycle'
 import { createOperatorAdminClient, isOperatorModeEnabled } from '@/lib/supabase/operator'
 
@@ -34,16 +34,12 @@ function isValidPayload(value: unknown): value is Payload {
 
 export async function POST(req: NextRequest) {
   if (!isOperatorModeEnabled()) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
-  if (!secret) return NextResponse.json({ error: 'Operator secret missing' }, { status: 500 })
+  if (!hasOperatorMasterSecret()) return NextResponse.json({ error: 'Operator secret missing' }, { status: 500 })
 
   const rawBody = await req.text()
-  if (!verifyOperatorSignature(rawBody, secret, req.headers.get('x-operator-signature'))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-  let payload: unknown
-  try { payload = JSON.parse(rawBody) } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
+  const check = readOperatorRequest<Record<string, unknown>>(rawBody, req.headers, { requireMaster: true })
+  if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status })
+  const payload: unknown = check.body
   if (!isValidPayload(payload)) return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
 
   const allowedSource = process.env.OPERATOR_SELF_SERVICE_SOURCE_INSTANCE?.trim() || 'atelier-app'

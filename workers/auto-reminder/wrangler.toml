@@ -2,10 +2,10 @@ name = "auto-reminder"
 main = "index.ts"
 compatibility_date = "2024-01-01"
 
-# Cron : tous les jours à 7h UTC (8h Paris en hiver, 9h en été)
-# Ajuster selon le fuseau horaire cible — Workers Cron est toujours en UTC
+# Cron métier quotidien + rattrapages usage/onboarding à H:10 chaque heure.
+# Workers Cron est toujours en UTC.
 [triggers]
-crons = ["0 7 * * *"]
+crons = ["0 7 * * *", "10 * * * *"]
 
 # Variables d'environnement (valeurs à définir dans le Dashboard Cloudflare)
 # Ne pas mettre les vraies valeurs ici — utiliser `wrangler secret put`

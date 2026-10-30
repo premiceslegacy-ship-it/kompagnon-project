@@ -8,6 +8,8 @@ import {
   type QuotaUnit,
 } from '@/lib/quota-catalog'
 
+const QUOTA_USAGE_ROW_LIMIT = 10000
+
 export type QuotaCheckResult = {
   allowed: boolean
   aiBillingMode: AIBillingMode
@@ -19,6 +21,8 @@ export type QuotaCheckResult = {
   remaining: number | null
   overflowMode: OverflowMode
   overQuota: boolean
+  /** Ligne `usage_logs` réservée à clore (success/error) après l'appel. */
+  reservationId?: string | null
 }
 
 export type AIBillingMode = 'orsayn_shared' | 'client_owned'
@@ -121,6 +125,11 @@ export async function checkQuota(params: {
   technicalFeature: string
   quantity?: number
   now?: Date
+  /** Réserve atomiquement la quantité (appel IA facturant). */
+  reserve?: boolean
+  provider?: string
+  model?: string
+  inputKind?: string
 }): Promise<QuotaCheckResult> {
   const quotaFeature = getQuotaFeatureForTechnicalFeature(params.technicalFeature)
   if (!quotaFeature) {
@@ -149,8 +158,9 @@ export async function checkQuota(params: {
 
   if (modulesError) {
     console.error('[checkQuota.organization_modules]', modulesError)
+    // Poste de coût : une erreur de lecture ne doit pas lever la limite.
     return {
-      allowed: true,
+      allowed: false,
       aiBillingMode,
       quotaFeature,
       quotaUnit,
@@ -179,7 +189,11 @@ export async function checkQuota(params: {
     }
   }
 
-  const quotaMonthly = quotaConfig[quotaFeature] ?? -1
+  // Une feature absente de `quota_config` valait -1 (illimité) : un quota
+  // oublié dans la config cockpit ouvrait un usage non borné. En mode `block`
+  // on la traite comme 0 ; les modes facturants gardent l'illimité.
+  const quotaMonthly = quotaConfig[quotaFeature]
+    ?? (String(modules?.overflow_mode ?? 'block') === 'block' ? 0 : -1)
   const overflowMode = isOverflowMode(String(modules?.overflow_mode ?? 'block'))
     ? String(modules?.overflow_mode ?? 'block') as OverflowMode
     : 'block'
@@ -203,14 +217,34 @@ export async function checkQuota(params: {
     .select('quota_quantity')
     .eq('organization_id', params.organizationId)
     .eq('quota_feature', quotaFeature)
-    .eq('status', 'success')
+    // Même périmètre que `reserve_quota` : un `error` ambigu et un appel en vol
+    // (`reserved`) consomment réellement le quota.
+    .in('status', ['success', 'reserved', 'error'])
     .gte('created_at', monthStartIso(params.now))
-    .limit(10000)
+    .limit(QUOTA_USAGE_ROW_LIMIT)
 
   if (usageError) {
     console.error('[checkQuota.usage_logs]', usageError)
     return {
-      allowed: true,
+      allowed: false,
+      aiBillingMode,
+      quotaFeature,
+      quotaUnit,
+      quotaMonthly,
+      usedQuantity: 0,
+      requestedQuantity: params.quantity ?? 1,
+      remaining: null,
+      overflowMode,
+      overQuota: false,
+    }
+  }
+
+  // Somme tronquée = sous-comptage silencieux = quota levé : fail-closed. La
+  // réservation recompte côté SQL sans limite de lignes, elle n'en dépend pas.
+  if (!params.reserve && (usageRows?.length ?? 0) >= QUOTA_USAGE_ROW_LIMIT) {
+    console.error('[checkQuota.usage_logs] truncated at', QUOTA_USAGE_ROW_LIMIT)
+    return {
+      allowed: false,
       aiBillingMode,
       quotaFeature,
       quotaUnit,
@@ -227,6 +261,80 @@ export async function checkQuota(params: {
     const quantity = Number((row as { quota_quantity?: number | string | null }).quota_quantity ?? 1)
     return sum + (Number.isFinite(quantity) ? quantity : 1)
   }, 0)
+
+  // Réservation atomique : la lecture ci-dessus ne voit pas les appels déjà en
+  // vol (la ligne n'est écrite qu'après la réponse du fournisseur). Le RPC
+  // pose un verrou par (org, feature) et insère une ligne `reserved` qui
+  // compte dans la somme, ce qui ferme la fenêtre de course.
+  if (params.reserve) {
+    const requested = Math.max(1, params.quantity ?? 1)
+    const { data: reservation, error: reserveError } = await params.supabase.rpc('reserve_quota', {
+      p_org: params.organizationId,
+      p_feature: quotaFeature,
+      p_quantity: requested,
+      // Les modes facturants (`upgrade_prompt`, `charge`) laissent dépasser :
+      // le RPC ne doit refuser que sous `block`, sinon il bloque ce que
+      // `evaluateQuotaAllowance` autorise.
+      p_limit: overflowMode === 'block' ? quotaMonthly : -1,
+      p_month_start: monthStartIso(params.now),
+      p_provider: params.provider ?? 'openrouter',
+      p_model: params.model ?? 'unknown',
+      p_input_kind: params.inputKind ?? 'text',
+    })
+
+    const row = Array.isArray(reservation) ? reservation[0] : reservation
+    if (reserveError || !row) {
+      console.error('[checkQuota.reserve_quota]', reserveError)
+      return {
+        allowed: false,
+        aiBillingMode,
+        quotaFeature,
+        quotaUnit,
+        quotaMonthly,
+        usedQuantity,
+        requestedQuantity: requested,
+        remaining: null,
+        overflowMode,
+        overQuota: false,
+      }
+    }
+
+    const usedAfter = Number(row.used ?? usedQuantity)
+    const reservationId = typeof row.reservation_id === 'string' && row.reservation_id.length > 0
+      ? row.reservation_id
+      : null
+    // An "allowed" RPC response without a durable row id would let callAI
+    // proceed without the atomic reservation protecting concurrent requests.
+    if (!Number.isFinite(usedAfter) || (row.allowed === true && !reservationId)) {
+      console.error('[checkQuota.reserve_quota] invalid reservation response')
+      return {
+        allowed: false,
+        aiBillingMode,
+        quotaFeature,
+        quotaUnit,
+        quotaMonthly,
+        usedQuantity,
+        requestedQuantity: requested,
+        remaining: null,
+        overflowMode,
+        overQuota: false,
+      }
+    }
+
+    return {
+      allowed: row.allowed === true,
+      aiBillingMode,
+      quotaFeature,
+      quotaUnit,
+      quotaMonthly,
+      usedQuantity: usedAfter,
+      requestedQuantity: requested,
+      remaining: Math.max(quotaMonthly - usedAfter, 0),
+      overflowMode,
+      overQuota: usedAfter > quotaMonthly,
+      reservationId,
+    }
+  }
 
   return {
     ...evaluateQuotaAllowance({

@@ -30,6 +30,7 @@ type Props = {
   alreadySigned: boolean
   signedAt: string | null
   archived: boolean
+  publicationUnavailable: boolean
   linkedQuote: LinkedQuote | null
   linkedQuoteForDownload: LinkedQuoteForDownload | null
 }
@@ -47,7 +48,8 @@ const fmtCurrency = (n: number | null | undefined) =>
 
 export default function ContractSignClient({
   token, contractId, contractTitle, contractType, counterpartyName,
-  orgName, orgLogoUrl, orgEmail, pdfReady, alreadySigned, signedAt, archived, linkedQuote, linkedQuoteForDownload,
+  orgName, orgLogoUrl, orgEmail, pdfReady, alreadySigned, signedAt, archived,
+  publicationUnavailable, linkedQuote, linkedQuoteForDownload,
 }: Props) {
   const [isPending, startTransition] = useTransition()
   const [isDeclinePending, startDeclineTransition] = useTransition()
@@ -94,7 +96,7 @@ export default function ContractSignClient({
       setSigned(true)
       setSignedAtState(res.signedAt)
       setPdfReadyState(true)
-      setAcceptedQuote(mode === 'both' && !!linkedQuote)
+      setAcceptedQuote(res.quoteAccepted)
     })
   }
 
@@ -123,6 +125,23 @@ export default function ContractSignClient({
           </div>
           <h1 className="text-xl font-bold text-gray-900">Contrat indisponible</h1>
           <p className="text-sm text-gray-500">Ce contrat est archivé et n&apos;est plus disponible à la signature.</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (publicationUnavailable) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="bg-white rounded-3xl shadow max-w-md w-full p-10 text-center space-y-4">
+          <div className="w-16 h-16 bg-amber-100 flex items-center justify-center rounded-full mx-auto">
+            <AlertTriangle className="w-8 h-8 text-amber-600" />
+          </div>
+          <h1 className="text-xl font-bold text-gray-900">Document indisponible</h1>
+          <p className="text-sm text-gray-500">
+            Cette ancienne publication ne contient pas une archive vérifiable permettant de signer ou télécharger le contrat.
+            Contactez l&apos;organisation pour recevoir une nouvelle version.
+          </p>
         </div>
       </div>
     )

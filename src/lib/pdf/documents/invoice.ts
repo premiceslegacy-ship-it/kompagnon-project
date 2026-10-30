@@ -1,5 +1,4 @@
-import type { Organization } from '@/lib/data/queries/organization'
-import type { InvoiceWithItems } from '@/lib/data/queries/invoices'
+import type { InvoiceDocumentClient, InvoiceDocumentRecord, PdfOrganizationData } from '@/lib/pdf/document-types'
 import { fmtCapitalSocial, formatDimDetail, pdfText, splitItemDescription } from '@/lib/pdf/pdf-design-system'
 import { PdfDoc } from '../engine/doc'
 import type { FontBytes } from '../engine/fonts'
@@ -20,7 +19,7 @@ const fmt = (n: number, currency = 'EUR') =>
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 
-function clientDisplayName(client: NonNullable<InvoiceWithItems['client']>): string {
+function clientDisplayName(client: InvoiceDocumentClient): string {
   return client.company_name
     || [client.first_name, client.last_name].filter(Boolean).join(' ')
     || client.email
@@ -28,8 +27,9 @@ function clientDisplayName(client: NonNullable<InvoiceWithItems['client']>): str
 }
 
 export type InvoicePdfData = {
-  invoice: InvoiceWithItems
-  organization: Organization
+  invoice: InvoiceDocumentRecord
+  organization: PdfOrganizationData
+  useStoredTotals?: boolean
 }
 
 export async function renderInvoicePdf(data: InvoicePdfData, origin: string): Promise<Buffer> {
@@ -54,20 +54,23 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
     invoiceType === 'situation' ? `SITUATION DE TRAVAUX N°${invoice.situation_number ?? ''}` :
     'FACTURE'
 
-  const items = (invoice.items ?? []).filter(i => !i.is_internal)
+  const items = invoice.items.filter(i => !i.is_internal)
   const billableItems = items.filter(i => i.unit !== INVOICE_SECTION_UNIT)
   const currency = invoice.currency ?? 'EUR'
 
-  const totalHt = billableItems.reduce((s, i) => s + i.quantity * i.unit_price, 0)
+  const calculatedTotalHt = billableItems.reduce((s, i) => s + (i.quantity ?? 0) * i.unit_price, 0)
+  const totalHt = data.useStoredTotals ? invoice.total_ht ?? calculatedTotalHt : calculatedTotalHt
   const vatMap: Record<number, number> = {}
   if (isVatSubject) {
     for (const item of billableItems) {
-      const v = item.quantity * item.unit_price * (item.vat_rate / 100)
-      vatMap[item.vat_rate] = (vatMap[item.vat_rate] ?? 0) + v
+      const vatRate = item.vat_rate ?? 0
+      const v = (item.quantity ?? 0) * item.unit_price * (vatRate / 100)
+      vatMap[vatRate] = (vatMap[vatRate] ?? 0) + v
     }
   }
-  const totalTva = Object.values(vatMap).reduce((s, v) => s + v, 0)
-  const totalTtc = (isVatSubject && !isReverseCharge) ? totalHt + totalTva : totalHt
+  const calculatedTotalTva = Object.values(vatMap).reduce((s, v) => s + v, 0)
+  const calculatedTotalTtc = (isVatSubject && !isReverseCharge) ? calculatedTotalHt + calculatedTotalTva : calculatedTotalHt
+  const totalTtc = data.useStoredTotals ? invoice.total_ttc ?? calculatedTotalTtc : calculatedTotalTtc
 
   const orgStreet = organization.address_line1 ?? null
   const orgPostalCity = [organization.postal_code, organization.city].filter(Boolean).join(' ') || null
@@ -96,8 +99,7 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
     line1Parts.join(' · '),
     line2Parts.join(' · '),
     insuranceLine,
-    organization.certifications,
-    isReverseCharge ? 'Autoliquidation de la TVA (art. 283-2 nonies du CGI). La TVA est due par le preneur assujetti.' : null,
+    Array.isArray(organization.certifications) ? organization.certifications.join(' · ') : organization.certifications,
   ].filter((l): l is string => !!l && l.length > 0)
 
   const logoImg = organization.logo_url ? await embedImage(doc.doc, organization.logo_url) : null
@@ -280,7 +282,7 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
   const detailStyle: TextStyle = { font: F.regular, size: SIZE.xs, color: COLOR.muted }
   const headerStyle: TextStyle = { font: F.headingXBold, size: SIZE.xxs, color: COLOR.black }
 
-  function itemToRow(item: InvoiceWithItems['items'][number]): TableRow {
+  function itemToRow(item: InvoiceDocumentRecord['items'][number]): TableRow {
     const parts = splitItemDescription(item.description)
     const dimDetail = formatDimDetail(item)
     const detailLines = dimDetail
@@ -289,12 +291,12 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
 
     const cells: TableCell[] = [
       { value: parts.title, detailLines },
-      { value: String(item.quantity) },
+      { value: item.quantity == null ? '' : String(item.quantity) },
       { value: pdfText(item.unit) },
       { value: fmt(item.unit_price, currency) },
     ]
-    if (withVat) cells.push({ value: `${item.vat_rate}%` })
-    cells.push({ value: fmt(item.quantity * item.unit_price, currency) })
+    if (withVat) cells.push({ value: item.vat_rate == null ? '' : `${item.vat_rate}%` })
+    cells.push({ value: fmt((item.quantity ?? 0) * item.unit_price, currency) })
     return { cells }
   }
 

@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { hasPermission } from '@/lib/data/queries/membership'
 import { coerceLegalVatRate } from '@/lib/utils'
 import { normalizeDimensionSchema } from '@/lib/catalog-pricing'
 
@@ -520,6 +521,13 @@ export async function createLaborRateQuick(params: {
   purchase_price?: number | null
   lifetime_uses?: number | null
 }): Promise<{ error: string | null; laborRate: { id: string; designation: string; rate: number; unit: string } | null }> {
+  // Appelée aussi par Sarah : la permission doit être vérifiée ici, pas
+  // seulement dans l'UI (un tarif à 0,01 € fausse tous les devis suivants).
+  if (!(await hasPermission('catalog.edit'))) return { error: 'Permission refusée.', laborRate: null }
+  if (!Number.isFinite(params.rate) || params.rate <= 0 || params.rate >= 100_000) {
+    return { error: 'Tarif invalide.', laborRate: null }
+  }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.', laborRate: null }
@@ -887,6 +895,11 @@ export async function createMaterialQuick(params: {
   base_height_m?: number | null
   category?: string | null
 }): Promise<{ error: string | null; material: { id: string; name: string } | null }> {
+  if (!(await hasPermission('catalog.edit'))) return { error: 'Permission refusée.', material: null }
+  if (params.sale_price != null && (!Number.isFinite(params.sale_price) || params.sale_price < 0)) {
+    return { error: 'Prix de vente invalide.', material: null }
+  }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.', material: null }

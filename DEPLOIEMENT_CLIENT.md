@@ -4,7 +4,7 @@
 > Modèle décrit dans la majorité de ce document (encore le mode de livraison actif pour les clients déjà provisionnés ainsi) : **1 Supabase + 1 déploiement Cloudflare Workers + 1 domaine** par client — données totalement isolées.
 > **Trajectoire cible pour l'offre setup 3k, décidée le 2026-09-16** : basculer vers le modèle mutualisé (1 seul projet Supabase, N clients dedans) — voir section dédiée ci-dessous. Ce document reste la référence des deux modes tant que la bascule n'est pas terminée pour tout le parc.
 
-> **Etat réel mai 2026 :** le déploiement app client, les migrations, les Edge Functions et les Workers cron sont opérables. Les variables Cloudflare sont entièrement automatisables : `scripts/prepare-cloudflare-env.mjs` injecte les secrets via Wrangler (`--apply-secrets`) et les variables texte via l'API REST Cloudflare (`--apply-all`). `CLOUDFLARE_ACCOUNT_ID` et `CLOUDFLARE_API_TOKEN` requis dans `.env.local` pour `--apply-all`.
+> **Portée au 27/10/2026 :** ce guide décrit les procédures et prérequis présents dans le dépôt. Il ne certifie aucune publication en production, aucun projet distant à jour, ni qualification auprès de la PA, Sentry, Stripe ou d’un autre fournisseur. Pour `cf:env --apply-all`, `CLOUDFLARE_ACCOUNT_ID` et `CLOUDFLARE_API_TOKEN` restent des identifiants d’administration locaux, hors des fichiers client.
 > **Scopes séparées :** Stripe abonnements cockpit → `docs/scope-cockpit-stripe-abonnements.md`. Super PDP / facturation électronique → `docs/atelier-facturation-electronique.md`. Paiement en ligne des factures artisan → `docs/scope-paiement-en-ligne.md`. WhatsApp → abandonné (2026-09-16), voir section dédiée.
 
 ---
@@ -94,7 +94,7 @@ L'idée retenue : un opérateur humain (ou Hermes Agent / Claude) reçoit d'un c
 
 ## ─── 1 REPO GITHUB → N CLIENTS ────────────────────────────────────────────────
 
-**Principe fondamental : le code ne change jamais selon le client. Seules les variables d'environnement changent.**
+**Principe :** une seule source de code, une configuration exacte par cible, et un build distinct par Worker tant que l’artefact partagé n’a pas été prouvé neutre vis-à-vis des tenants.
 
 ```
 GitHub (1 seul repo)
@@ -106,10 +106,10 @@ GitHub (1 seul repo)
     └── Atelier-Demo     → compile le code + injecte vars Demo     → app démo
 ```
 
-**Ce que font les variables d'env :** Cloudflare injecte les variables propres à chaque Worker au runtime. Le code serveur et le navigateur lisent `SUPABASE_URL` et `SUPABASE_ANON_KEY` depuis la config runtime injectée par le layout. Un même bundle peut donc servir plusieurs clients sans rebuild spécifique.
+**Variables d’environnement :** le layout peut transmettre `SUPABASE_URL` et `SUPABASE_ANON_KEY` de la configuration Worker au navigateur au runtime. Les références `NEXT_PUBLIC_*` utilisées par Next sont aussi incorporées au bundle au build. Il faut donc construire pour chaque cible avec ses valeurs publiques exactes ; changer ces valeurs uniquement dans Cloudflare après compilation ne modifie pas le bundle.
 
 ```
-Cloudflare Workers — Atelier-Weber
+Exemples de configuration par cible, non preuve de déploiement :
   SUPABASE_URL               = https://weber-ref.supabase.co    ← données Weber
   SUPABASE_ANON_KEY          = anon_weber
   SUPABASE_SERVICE_ROLE_KEY   = clé_weber
@@ -129,7 +129,7 @@ Cloudflare Workers — Atelier-Dupont
 
 **Ce que tu ne fais jamais :** modifier le code "pour un seul client". La personnalisation par client se fait via des flags en base de données (`organizations` table), jamais dans le code.
 
-**Ton `.env.local` (sur ta machine)** n'est jamais pushé sur GitHub (bloqué par `.gitignore`). Il reste utile pour le dev local, mais il n'a plus besoin d'être modifié pour déployer un client ou le cockpit.
+**`.env.local`** est ignoré par Git et reste utile au développement ainsi qu’aux identifiants Cloudflare de `cf:env --apply-all`. Ce n’est pas le fichier de configuration cible d’un Worker : celui-ci utilise `.env.client-<nom-complet-du-worker>`, et le cockpit `.env.cockpit`.
 
 ---
 
@@ -186,8 +186,7 @@ demande confirmation avant de lancer T1-T7 / C1-C9.
 > donne-le **directement** à Claude en début de session, complété. Claude fait le reste.
 
 > **Ce que Claude lit automatiquement depuis ton `.env.local`** (ne pas répéter dans le protocole) :
-> - `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` — injection vars Cloudflare via `--apply-all`
-> - `OPERATOR_INGEST_SECRET` + `OPERATOR_CONFIG_SYNC_SECRET` — HMAC partagés cockpit ↔ instances
+> - `OPERATOR_MASTER_SECRET` (cockpit only) + `OPERATOR_INGEST_SECRET` / `OPERATOR_CONFIG_SYNC_SECRET` (client secrets derived per `OPERATOR_SOURCE_INSTANCE`)
 > - `OPERATOR_SUPABASE_URL` + `OPERATOR_SUPABASE_SERVICE_ROLE_KEY` — Supabase cockpit Orsayn
 > - `OPERATOR_INGEST_URL` + `OPERATOR_ALLOWED_EMAILS` + `OPERATOR_USD_TO_EUR_RATE`
 > - `OPERATOR_SOURCE_INSTANCE` — **déduit automatiquement du worker-name** fourni dans le protocole (ex: `atelier-weber`)
@@ -195,7 +194,8 @@ demande confirmation avant de lancer T1-T7 / C1-C9.
 > - `OPENROUTER_API_KEY` — clé IA Atelier partagée pour le Worker (sauf si Client fournit la sienne). Couvre aussi la transcription vocale (Voxtral via OpenRouter depuis le 2026-08-22)
 > - `ELEVENLABS_API_KEY` + `ELEVENLABS_AGENT_ID` — compte ElevenLabs Orsayn centralisé (1 agent partagé, contexte injecté par org). Toujours lu depuis `.env.local`, jamais fourni par le client.
 > - `RESEND_API_KEY` Atelier partagée (sauf si client a son propre compte Resend)
-> - `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET` — générés par Claude si absents du protocole
+> - `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` sont générés séparément, puis enregistrés dans le fichier privé de la cible. Le bloc de session ne contient pas leurs valeurs.
+> Pour toute configuration client, garder les valeurs dans les fichiers privés de la cible, chargés par les outils prévus. Ne jamais exécuter un fichier d’environnement avec `source` ou `eval`, ni recopier un secret ou son préfixe dans un journal.
 
 ```
 Client : [Nom de l'entreprise]
@@ -236,7 +236,7 @@ Sarah vocale ElevenLabs : toujours compte Orsayn centralisé, 1 agent partagé p
   → setup_only sans add-on vocal : widget Sarah texte présent si client_owned (voir ci-dessus),
     mais aucun appel ElevenLabs possible tant que voice_live n'est pas activé à la main
   → Starter n'est plus une offre commerciale active (seules setup_only / pro / expert sont vendues,
-    voir docs/STRATEGIE-COMMERCIALE.md) — le tier reste dans le code (quota-catalog.ts) mais ne doit
+    voir src/lib/quota-catalog.ts) — le tier historique reste géré dans le code mais ne doit
     plus être proposé à un nouveau client
   → Ne pas oublier au déploiement Pro/Expert (ou setup_only + add-on vocal) : ajouter le domaine
     client dans ElevenLabs > Agent > Sécurité > Liste d'autorisation
@@ -285,11 +285,11 @@ Ces étapes nécessitent une interface web ou une action humaine irremplaçable.
 |---|-------|----|-------|-----------------|
 | T1 | Créer le projet Supabase (région `eu-west-1`) + copier les 3 clés | [supabase.com](https://supabase.com) → New project | 5 min | Pas d'API de création projet |
 | T2 | Créer le compte Resend + ajouter le domaine + poser les records DNS chez le registrar | [resend.com](https://resend.com) → Domains | 15 min | DNS = action humaine chez le registrar |
-| T3 | Lancer `./scripts/deploy-client.sh atelier-nomclient` depuis le terminal → noter l'URL workers.dev générée | Terminal | 2 min | Crée le Worker automatiquement au premier déploiement — l'URL `NEXT_PUBLIC_APP_URL` n'est connue qu'après cette étape |
-| T4a | Remplir `NEXT_PUBLIC_APP_URL=https://atelier-nomclient.mbebourasam.workers.dev` dans `.env.client-nomclient` puis lancer `--apply-all` | `npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-all` | 2 min | URL workers.dev provisoire — suffisant pour tester avant domaine custom |
+| T3 | Renseigner `NEXT_PUBLIC_APP_URL` dans `.env.client-atelier-nomclient`, puis lancer `./scripts/deploy-client.sh atelier-nomclient` | Terminal | 2 min | Utiliser l’origine workers.dev attribuée au compte ou le domaine final. La valeur doit être exacte avant le build ; ne pas la remplacer par un placeholder |
+| T4a | Injecter les variables et secrets d’exécution de la même cible | `npm run cf:env -- atelier-nomclient --env-file=.env.client-atelier-nomclient --apply-all` | 2 min | `--apply-all` ne remplace pas le build requis pour modifier une valeur `NEXT_PUBLIC_*` |
 | T5 | Ajouter le domaine custom + pointer DNS | Cloudflare Workers → Domains & Routes | 3 min | Dépend de la propagation DNS |
-| T4b | *(Si domaine custom)* Mettre à jour `NEXT_PUBLIC_APP_URL=https://domaine-client.fr` dans `.env.client-nomclient` + relancer `--apply-all` | `npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-all` | 1 min | Sans ça les liens devis/factures/formulaires publics pointent vers workers.dev |
-| T7 | Onboarding owner : créer le compte, remplir les infos entreprise | App en production | 10 min | Action du client final |
+| T4b | *(Si le domaine custom devient l’URL canonique)* Remplacer `NEXT_PUBLIC_APP_URL` dans le fichier privé, reconstruire et redéployer la cible, puis réinjecter ses variables runtime | `./scripts/deploy-client.sh atelier-nomclient`, puis `npm run cf:env -- atelier-nomclient --env-file=.env.client-atelier-nomclient --apply-all` | 1 min | Une injection Cloudflare seule ne met pas à jour les valeurs `NEXT_PUBLIC_*` déjà compilées |
+| T7 | Onboarding owner : créer le compte, remplir les infos entreprise | Instance cliente, après autorisation de déploiement | 10 min | Action du client final |
 
 **À faire une seule fois sur ta machine (déjà fait) :**
 ```bash
@@ -308,18 +308,18 @@ npm run build
 npm run preflight:client -- atelier-nomclient --with-open-next-build
 ```
 
-`--strict-env` transforme les secrets manquants en erreur. En production, `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` doivent être uniques par instance client. `RATE_LIMIT_SECRET` doit être distinct de `SUPABASE_SERVICE_ROLE_KEY` pour éviter de réutiliser une clé très sensible comme sel de hash.
+`--strict-env` transforme les secrets manquants en erreur. Le déploiement vérifie la cible exacte : `.env.client-<nom-complet-du-worker>` ou `.env.cockpit`, sans repli sur `.env.local`. `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` sont trois secrets distincts de 32 octets encodés en 64 hexadécimaux, uniques par instance. `ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY` est une clé différente de 32 octets encodée en **base64**, pas en hexadécimal.
 
 **Automatisation T4 :**
 ```bash
 # Dry-run — affiche secrets + vars texte, n'écrit rien
-npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient
+ npm run cf:env -- atelier-nomclient --env-file=.env.client-atelier-nomclient
 
 # Secrets uniquement via wrangler secret put
-npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-secrets
+ npm run cf:env -- atelier-nomclient --env-file=.env.client-atelier-nomclient --apply-secrets
 
 # Tout d'un coup — secrets via Wrangler + vars texte via API REST Cloudflare
-npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-all
+ npm run cf:env -- atelier-nomclient --env-file=.env.client-atelier-nomclient --apply-all
 ```
 
 `--apply-all` requiert `CLOUDFLARE_ACCOUNT_ID` et `CLOUDFLARE_API_TOKEN` dans `.env.local` (jamais dans un `.env.client-xxx`). Ces deux variables s'obtiennent dans le dashboard Cloudflare → My Profile → API Tokens (token "Edit Workers" ou équivalent) et Account ID (barre latérale de la page Workers). `--apply-secrets` reste utile si tu ne veux injecter que les secrets sans toucher aux vars texte.
@@ -333,13 +333,13 @@ Dès que tu m'as donné les infos du protocole de session, je fais tout ça sans
 | # | Étape | Outil | Prérequis |
 |---|-------|-------|-----------|
 | C1 | Appliquer toutes les migrations SQL du repo dans l'ordre | `supabase db push` | `supabase login` ✅ |
-| C2 | Créer les 4 buckets Storage + RLS (`logos`, `chantier-photos`, `quote-attachments`, `organization-exports`) | Supabase MCP | MCP connecté ✅ |
+| C2 | Vérifier les buckets Storage (`logos`, `chantier-photos`, `quote-attachments`, `organization-exports`). Depuis la migration `193`, `chantier-photos` et `quote-attachments` (privé) sont créés et portés par les migrations : l'étape manuelle ne sert plus qu'au contrôle. | Supabase MCP | MCP connecté ✅ |
 | C3 | Configurer Auth Supabase (Site URL + Redirect URLs + OTP) | Supabase MCP | MCP connecté ✅ |
-| C4 | Générer `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` uniques si non fournis | Terminal (`openssl rand -hex 32`) | — |
+| C4 | Générer `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` uniques si non fournis. `OPERATOR_INGEST_SECRET` et `OPERATOR_CONFIG_SYNC_SECRET` sont **dérivés par instance** depuis `OPERATOR_MASTER_SECRET` du cockpit (`deriveInstanceSecret`). | Terminal (`openssl rand -hex 32`, puis HMAC de dérivation) | — |
 | C5 | Secrets partagés (`OPENROUTER`, `RESEND`, `APP_URL`) : portés par les variables du Worker (`npm run cf:env`). Plus aucune Edge Function à déployer (WhatsApp abandonné) | — | — |
-| C6 | Déployer les Workers cron (auto-reminder + embeddings + data-retention) + injecter `APP_URL` + `CRON_SECRET` | `./scripts/deploy-cron-workers.sh atelier-nomclient --env-file=.env.client-nomclient` | `wrangler login` ✅ |
+| C6 | Déployer les Workers cron (`auto-reminder`, `embeddings` et `data-retention`) depuis l’origine et le secret du fichier privé exact de la cible | `./scripts/deploy-cron-workers.sh atelier-nomclient --env-file=.env.client-atelier-nomclient` | `wrangler login` ✅ |
 | C7 | Peupler `company_memory` avec le contexte de l'entretien client + configurer `organization_modules` selon l'offre souscrite | Supabase MCP | MCP connecté ✅ |
-| C8 | Vérifier migrations, permissions, buckets, modules IA | Supabase MCP | MCP connecté ✅ |
+| C8 | Vérifier migrations, permissions, buckets et modules IA. Contrôles durs : `select * from pg_policies where schemaname='storage'`, `has_function_privilege('anon', …)` sur `match_company_memory` et `initialize_organization_for_user`, et `select count(*) from invoice_schedules group by recurring_invoice_id, scheduled_date having count(*)>1`. | Supabase MCP | MCP connecté ✅ |
 | C9 | Afficher récapitulatif final + URL app client + modules actifs | — | — |
 
 **Note C4/T4 (variables Cloudflare Workers) :** le script `cf:env --apply-all` injecte la liste complète — secrets via Wrangler et variables texte via l'API REST Cloudflare. Requiert `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` dans `.env.local`.
@@ -987,7 +987,7 @@ Impact déploiement :
 - `073` :
   - obligatoire avant d'utiliser : l'onglet Équipe → "Membre individuel", la planification d'un membre seul, l'espace `/mon-espace`, le formulaire de dépense enrichi (location secteur / transport carburant / lien catalogue) et le toggle Settings "Rapport mensuel auto"
   - **NOTICE bénin attendu** au push : `constraint "chantier_pointages_who" does not exist, skipping` — c'est le `DROP CONSTRAINT IF EXISTS` qui n'a rien à supprimer la 1ère fois (idempotent)
-  - **nouvelle variable d'env requise** : `MEMBER_SESSION_SECRET` (32 chars, signature HMAC du cookie `/mon-espace`) — voir §3
+  - **variable d'env requise** : `MEMBER_SESSION_SECRET` (32 octets encodés en 64 hexadécimaux, signature HMAC du cookie `/mon-espace`) — voir §3
   - **nouveau cron à brancher** : `POST /api/cron/monthly-member-reports` (1er du mois 6h UTC) — voir §5.c
   - **redéployer l'app après migration** (`./scripts/deploy-client.sh atelier-<client>`) pour propager les nouveaux composants UI et endpoints
 - obligatoire avant d'utiliser les nouveaux champs catalogue, les variantes tarifaires et le contexte par activité
@@ -1074,33 +1074,69 @@ OPENROUTER_API_KEY=sk-or-...          ← clé Atelier partagée (couvre aussi l
 METALPRICEAPI_KEY=...                  ← uniquement si has_metal_pricing activé (plan Basic 12$/mois, mutualisé entre tous les clients du module) — obtenir sur metalpriceapi.com
 CRON_SECRET=...                        ← unique par client (openssl rand -hex 32)
 MEMBER_SESSION_SECRET=...              ← unique par client, signe le cookie de session /mon-espace (openssl rand -hex 32)
-RATE_LIMIT_SECRET=...                   ← optionnel, unique par client ; fallback CRON_SECRET si absent
+RATE_LIMIT_SECRET=...                  ← requis en production, distinct des deux autres secrets (openssl rand -hex 32)
+ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY=... ← 32 octets en base64, clé distincte (openssl rand -base64 32)
 AI_RATE_LIMIT_PER_HOUR=120              ← optionnel, limite appels IA par org/feature
 PUBLIC_FORM_RATE_LIMIT_PER_HOUR=5       ← optionnel, limite formulaire public par email+IP
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=...            ← clé publique VAPID (partagée, identique sur toutes les instances)
 VAPID_PRIVATE_KEY=...                      ← clé privée VAPID (partagée, identique sur toutes les instances)
 OPERATOR_INGEST_URL=https://orsayn-cockpit.mbebourasam.workers.dev/api/operator/ingest  ← URL du cockpit Orsayn
-OPERATOR_INGEST_SECRET=...             ← secret HMAC partagé (identique sur toutes les instances + cockpit)
-OPERATOR_CONFIG_SYNC_SECRET=...        ← optionnel ; si absent, /api/operator/config-sync utilise OPERATOR_INGEST_SECRET
+OPERATOR_INGEST_SECRET=...             ← secret dérivé pour cette instance : HMAC-SHA256(MASTER, "operator-instance:v1:<source_instance>")
+OPERATOR_CONFIG_SYNC_SECRET=...        ← même valeur dérivée (facultatif : repli sur OPERATOR_INGEST_SECRET)
 # OPERATOR_SOURCE_INSTANCE=nom-client ← optionnel : si absent, utilise le host de NEXT_PUBLIC_APP_URL (ex: atelier-weber.workers.dev). Renommable dans le cockpit après.
 ```
 
 > **Facturation électronique — aucune variable Cloudflare côté instance client.** Contrairement au modèle B2Brouter précédent, Super PDP fonctionne en OAuth 2.1 multi-tenant : une seule app OAuth (sandbox + production) portée par Orsayn, dont les credentials vivent uniquement dans `.env.cockpit` (`SUPER_PDP_*`, jamais sur une instance cliente). Il n'y a ni compte, ni clé API, ni `account_id` à créer ou injecter par client. Passer `einvoicing_config.mode = 'super_pdp'` dans le cockpit suffit ; l'artisan connecte ensuite son propre compte via le flux OAuth déclenché depuis `/settings`. Voir `docs/atelier-facturation-electronique.md` §7.
 
-> **Note :** les variables `OPERATOR_*` sont optionnelles. Sans `OPERATOR_INGEST_URL/SECRET`, les appels IA fonctionnent normalement mais les coûts ne remontent pas au cockpit (`operator_sync_status = 'skipped'` dans `usage_logs`). Sans secret de config sync, le cockpit garde la configuration client en `skipped` et il faut peupler `organization_modules` / `organization_einvoicing_config` manuellement.
+> **Secrets par instance (audit du 26/10/2026).** Le cockpit exige `OPERATOR_MASTER_SECRET` pour les routes d'instance→cockpit ; il reste exclusivement sur le Worker cockpit. Chaque Worker client reçoit seulement `deriveInstanceSecret(MASTER, OPERATOR_SOURCE_INSTANCE)` comme `OPERATOR_INGEST_SECRET` et `OPERATOR_CONFIG_SYNC_SECRET`. `x-operator-timestamp` limite la validité d'une requête à ±5 minutes, mais ne bloque pas son rejeu dans cette fenêtre : les opérations à effets persistants ont leur propre déduplication.
 
-#### Variables cockpit à mettre sur chaque Worker client
+> **Schéma requis avant déploiement :** appliquer, sur chaque base cliente concernée, toutes les migrations principales manquantes dans l’ordre jusqu’à `214` inclus, soit le lot d’audit `193` à `214`. `213` rend atomique le marquage payé ; `214` vérifie une publication contre ses valeurs JSONB persistées sans recalculer son sceau depuis un aller-retour JSON susceptible de perdre l’échelle numérique. Aucun original ni sceau historique n’est réécrit. La migration cockpit `supabase/operator-migrations/019_operator_einvoicing_submissions.sql` s’applique séparément sur la base cockpit avant toute émission Super PDP. Revoir le projet distant exact, son historique de migrations et le plan de reprise avant toute application distante. Ces prérequis ne prouvent pas qu’une base distante a été mise à jour ni qu’un fournisseur a été qualifié.
+>
+> `197` ferme l’accès direct aux pièces jointes : utiliser les routes serveur. `198`, `200`, `203` et `210` permettent les reprises Storage/Auth après anonymisation, ferment les anciennes capacités publiques et sérialisent la suppression d’une identité avec son activation dans une autre organisation. `211` ajoute une revendication durable par objet logo, partagée avec les écritures de références : une identité partagée ou un actif encore référencé par une organisation active doit survivre. Une reprise ne doit pas dépendre d’une date de suppression qu’une annulation pourrait effacer.
+>
+> `199` révoque les anciens liens sans expiration ; `209` retire les anciennes publications de contrats non signés. Les republier explicitement pour créer un nouveau lien borné, sans effacer les signatures ni inventer un original historique. `201` refuse de migrer si un contrat référence déjà une autre organisation : réconcilier sa propriété avant le déploiement, jamais réécrire aveuglément un document signé.
+>
+> `204` à `209` séparent faits fiscaux figés, publication/signature et revendication de renvoi. Un renvoi ne doit pas changer le statut payé ou partiellement payé, les montants ni la date initiale. Un brouillon annulé n’est pas une émission. Les imports CSV historiques restent explicitement non vérifiés : leur statut ne fabrique ni paiement, ni PDF/XML original, ni signature. `207` conserve au besoin le dernier contexte légal connu avant anonymisation, avec provenance non vérifiée ; ce contexte ne remplace jamais une archive originale.
+>
+> **Historique sans archive vérifiable :** le PDF/XML ou la signature peut être refusé avec un état explicite d’autorité indisponible. Récupérer l’original auprès d’une source indépendante avant réconciliation. Ne pas « réparer » cet historique avec les coordonnées actuelles. Les fixtures SQL locales ne remplacent ni la qualification du Worker ni celle des parcours métier. Aucune qualification réelle de PA, Sentry, Stripe ou autre fournisseur n’est revendiquée.
+>
+> **Pièces jointes historiques — cutover `212` obligatoire :** les slugs modifiables ou réutilisables ne prouvent pas la propriété d’un objet. Les nouveaux objets utilisent `quote-requests/<UUID-organisation>/<nom-généré>` et un registre privé d’appartenance. Un ancien chemin contenant déjà un UUID n’est pas rétroactivement vérifié. Avant l’inventaire, suspendre et drainer les entrées publiques, les traitements en cours et les crons de l’instance ; maintenir cette fenêtre jusqu’à la qualification du déploiement.
+>
+> Le CLI `scripts/quote-attachment-cutover.mjs` lit **uniquement** `.env.client-<nom-complet-du-worker>`, jamais `.env.local`, un suffixe client ou les secrets du cockpit. Conserver ce fichier en mode `0600` et le dossier de réconciliation en mode `0700`, hors Git. Exemple pour `atelier-app`, à adapter à la cible effectivement autorisée :
+
+```bash
+mkdir -p .atelier-private
+chmod 700 .atelier-private
+node scripts/quote-attachment-cutover.mjs atelier-app --inventory --output .atelier-private/attachments-inventory.json
+# Dans une copie privée : vérifier chaque objet contre les dossiers fiables,
+# renseigner explicitement organization_id et action (move ou delete), puis reviewed=true.
+# `delete` est réservé aux objets d’une organisation déjà anonymisée.
+# Pour une organisation active ou seulement planifiée pour suppression, vérifier la propriété puis choisir `move`.
+# Les candidats affichés restent NON VÉRIFIÉS.
+node scripts/quote-attachment-cutover.mjs atelier-app --apply --mapping .atelier-private/attachments-reviewed.json --confirm-origin "https://<ref>.supabase.co"
+node scripts/quote-attachment-cutover.mjs atelier-app --check
+```
+
+> L’inventaire est en lecture seule et refuse d’écraser sa sortie `0600`. L’application vérifie les octets et les références, utilise le vrai déplacement ou la suppression Storage sans écrasement, puis réconcilie les références sous contrôle transactionnel. `delete` ne sert qu’aux objets d’une organisation déjà anonymisée ; les pièces d’une organisation active ou due mais pas encore anonymisée restent à déplacer après revue. Un nom historique sans extension reconnue est conservé comme fichier privé opaque `migrated-<hash>.bin`, téléchargé en pièce jointe ; il n’est pas présenté comme un PDF validé. Les tâches terminées effacent chemin source et empreinte de contenu ; leur reprise n’invente pas de source après un effacement ultérieur.
+>
+> Une source absente sans tâche durable, des références contradictoires ou un historique indécidable restent bloquants : récupérer une preuve indépendante, ne pas vider les métadonnées pour faire passer le contrôle. Le garde-fou précède aussi l’effacement dans le RPC d’anonymisation, pas seulement dans le cron. Le contrôle final `--check` est une condition de déploiement et d’effacement ; il ne remplace ni la revue humaine du mapping, ni les sauvegardes/reprises, ni la qualification des parcours métier. Les alias de domaine Storage ne sont pas automatiquement établis comme équivalents à l’origine configurée.
+
+> **Note :** l'URL de remontée d'usage peut être omise si la remontée cockpit n'est pas utilisée. Si `OPERATOR_INGEST_URL` est configurée, le cockpit doit avoir `OPERATOR_MASTER_SECRET` et le client son secret dérivé. Pour recevoir les configs du cockpit, le client doit aussi avoir `OPERATOR_CONFIG_SYNC_SECRET` dérivé (ou le même secret dérivé `OPERATOR_INGEST_SECRET`).
+
+#### Variables de liaison au cockpit à mettre sur chaque Worker client
 
 Pour qu'un client remonte ses consos IA au cockpit et reçoive les configs poussées depuis `/orsayn`, il suffit de mettre ces variables sur son Worker :
 
 | Variable | Obligatoire | Valeur |
 |---|---:|---|
-| `OPERATOR_INGEST_URL` | Oui pour la remontée conso | `https://<cockpit>/api/operator/ingest` |
-| `OPERATOR_INGEST_SECRET` | Oui pour la remontée conso | Ton secret HMAC partagé |
-| `OPERATOR_CONFIG_SYNC_SECRET` | Recommandé | Même valeur que `OPERATOR_INGEST_SECRET` en V1 |
-| `OPERATOR_SOURCE_INSTANCE` | Optionnel | Nom court stable du client, sinon fallback sur `NEXT_PUBLIC_APP_URL` |
+| `OPERATOR_INGEST_URL` | Optionnel si la remontée conso n'est pas utilisée | `https://<cockpit>/api/operator/ingest` |
+| `OPERATOR_INGEST_SECRET` | Requis avec l'URL | Secret dérivé du master cockpit pour cet `OPERATOR_SOURCE_INSTANCE` |
+| `OPERATOR_CONFIG_SYNC_SECRET` | Requis pour la réception de config ; sinon repli sur le secret dérivé `OPERATOR_INGEST_SECRET` | Même valeur dérivée pour cette instance |
+| `OPERATOR_SOURCE_INSTANCE` | Requis pour dériver le secret HMAC | Nom court stable du client ; doit correspondre à la source côté cockpit |
 
-Tu peux garder le même `OPERATOR_INGEST_SECRET` HMAC pour tous les clients : c'est le modèle V1 le plus simple. Il doit être identique côté cockpit et côté clients. Trade-off connu : si ce secret fuit sur une instance, il faut le faire tourner partout. Plus tard, on pourra passer à un secret par client si tu veux isoler davantage.
+Ne partage pas le master entre les clients : chaque Worker reçoit uniquement le secret dérivé de son identité.
+
+En mode self-service, le client envoie ses parcours (inscription, essai, checkout et portail) au cockpit par HMAC via l'origine de `OPERATOR_INGEST_URL` ; il ne reçoit donc ni le Supabase opérateur, ni le master cockpit, ni les secrets/IDs Stripe ou les secrets Super PDP. Pour ces intégrations, garder les secrets HMAC dérivés de l'instance ; les liens `NEXT_PUBLIC_STRIPE_LINK_*` et paramètres publics `SUPER_PDP_*` restent distincts. `scripts/prepare-cloudflare-env.mjs` réserve les bindings cockpit à la cible canonique `orsayn-cockpit` et refuse toute divergence avec `OPERATOR_MODE`.
 
 Ne mets jamais ces variables cockpit opérateur sur un Worker client :
 
@@ -1121,8 +1157,14 @@ et devront être reprises telles quelles sur la future landing pour garder un wo
 Fichiers clés dans le repo :
 - `open-next.config.ts` — config OpenNext 1.x (wrapper cloudflare-node, edge externals)
 - `wrangler.jsonc` — config Wrangler (name, main, assets, nodejs_compat)
-- `scripts/patch-worker.mjs` — retire l'import `cloudflare/images.js` du worker généré (requiert le plan Cloudflare payant, inutile pour cette app)
-- `next.config.mjs` — `images: { unoptimized: true }` (désactive l'optimisation Next.js, incompatible avec le plan gratuit)
+- `next.config.mjs` — `images: { unoptimized: true }` ; OpenNext gère l'absence du binding `IMAGES`, sans patch du Worker généré ni faux handler 501.
+
+Versions qualifiées par les contrôles locaux du lot : Node 24, Next **16.4.3**, React **19.2.9**, OpenNext Cloudflare **1.20.13**, Wrangler **4.153.0**. La qualification locale n’atteste pas une publication de production ni une qualification fournisseur. Installer le lockfile avec `npm ci` ; ne pas remplacer les overrides de minification sans exercer l’API réelle et reconstruire le Worker.
+La décision Next tient au calendrier de support publié, pas au nombre d’avis npm : Next 15 est sorti le 21 octobre 2024, et la politique publiée compte deux ans à partir de sa sortie. Au 27 octobre 2026, le tableau amont affiche encore `Maintenance`, mais ce libellé ne laisse plus de marge dans cette fenêtre de deux ans. Next **16.4.3** (`v16.4.3`) est le tag officiel stable retenu ; la version OpenNext Cloudflare utilisée déclare une peer range à partir de Next **16.4.1**. Le statut d’un paquet dans `npm audit` et sa période de support sont deux contrôles différents.
+Les scripts `npm run dev` et `npm run build` forcent explicitement `--webpack`. ESLint utilise sa configuration flat native dans `eslint.config.mjs`, avec `eslint-config-next/core-web-vitals` ; ne pas ajouter `FlatCompat` ni réenregistrer directement les plugins déjà fournis par cette configuration.
+`src/middleware.ts` conserve la convention Middleware Edge. Même si Next propose aussi Proxy sur Node, la documentation OpenNext actuelle ne prend pas en charge ce runtime Node pour Middleware/Proxy. Ne pas convertir le fichier en Proxy par codemod générique ; une migration attend un support documenté par l’adaptateur et une qualification du Worker.
+Les images PDF, téléchargements d’export et réponses du polling PA doivent rester qualifiés dans workerd : ce runtime refuse le mode Fetch `redirect: 'error'` accepté par Node. Les consommateurs concernés utilisent `manual` et rejettent les réponses non réussies ; les lecteurs d’images PDF et de fichiers d’export bornent aussi les flux avant accumulation. Un test qui refuse toutes les images ne suffit pas : conserver le cas positif qui incorpore réellement le PNG dans un PDF natif.
+Le formulaire public `/demande/[orgSlug]` est le seul document HTML intégrable dans une iframe tierce, conformément au code de widget proposé dans les réglages. Sa CSP autorise le framing et la règle `X-Frame-Options` l’exclut explicitement. Conserver `frame-ancestors 'none'` ailleurs ; ne pas étendre cette exception aux écrans authentifiés, signatures ou PDF pour réparer un widget.
 
 #### Prérequis outils (une fois sur ta machine)
 ```bash
@@ -1133,20 +1175,21 @@ wrangler login   # authentifie vers ton compte Cloudflare
 #### Créer le fichier env d'un nouveau client
 
 ```bash
-cp .env.client-template .env.client-nomclient
+cp .env.client-template .env.client-atelier-nomclient
 ```
 
-Remplir les `TODO` dans `.env.client-nomclient` :
+Remplir les `TODO` dans `.env.client-atelier-nomclient` :
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` — Supabase → Settings → API
-- `NEXT_PUBLIC_APP_URL` — URL du Worker (connue après T3, étape déploiement)
+- `NEXT_PUBLIC_APP_URL` — origine exacte workers.dev ou domaine final ; cette variable doit être définie avant le build et le premier déploiement.
 - `RESEND_FROM_ADDRESS`, `RESEND_FROM_NAME` — email expéditeur du client (domaine vérifié pour une instance setup ; fallback `slug@atelier-btp.fr` en SaaS)
 - `RESEND_REPLY_TO_ADDRESS`, `SHARED_EMAIL_DOMAIN` — valeurs Atelier du template (`contact@orsayn.fr`, `atelier-btp.fr`)
-- `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET` — `openssl rand -hex 32` (même valeur pour les 3 ou valeurs distinctes)
-- Variables partagées (`OPERATOR_INGEST_SECRET`, `VAPID_*`, `OPENROUTER_API_KEY`, etc.) — déjà pré-remplies avec les valeurs Orsayn dans le template
+- `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET` — exécuter `openssl rand -hex 32` séparément pour chacun ; trois valeurs distinctes, uniques par instance.
+- `ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY` — `openssl rand -base64 32` ; clé dédiée au chiffrement des credentials IA, à conserver pour pouvoir les déchiffrer. Une rotation nécessite leur rechiffrement, pas seulement le remplacement de la variable.
+- `OPERATOR_INGEST_SECRET` — secret propre à l'instance, dérivé de `OPERATOR_MASTER_SECRET` et `OPERATOR_SOURCE_INSTANCE` par le cockpit ; ne jamais copier le master dans un Worker client. Provisionner explicitement les clés fournisseur et VAPID nécessaires, sans réutiliser une configuration cliente ou supposer que le template contient des secrets prêts à déployer.
 
 Puis injecter dans le Worker :
 ```bash
-npm run cf:env -- atelier-nomclient --env-file=.env.client-nomclient --apply-all
+npm run cf:env -- atelier-nomclient --env-file=.env.client-atelier-nomclient --apply-all
 ```
 
 Ajouter le client dans `scripts/clients.txt` pour les mises à jour futures :
@@ -1156,18 +1199,28 @@ atelier-nomclient
 
 #### Déployer via GitHub Actions (recommandé — le build se fait sur GitHub, pas sur ta machine)
 
-Le build OpenNext consomme ~6-8 Go de RAM. Sur un Mac 8 Go, lancer le build en local sature la mémoire et peut crasher la machine. **La procédure normale est via GitHub Actions.**
+Le build OpenNext consomme ~6-8 Go de RAM. Sur un Mac 8 Go, lancer le build en local sature la mémoire et peut crasher la machine. **La procédure normale est via GitHub Actions.** Chaque build doit utiliser les valeurs `NEXT_PUBLIC_*` de sa cible exacte.
 
-Secrets à configurer une seule fois sur GitHub (Settings → Secrets → Actions) :
-- `CLOUDFLARE_API_TOKEN` — ton token Cloudflare "Edit Workers"
-- `CLOUDFLARE_ACCOUNT_ID` — ton Account ID Cloudflare
+Secrets à configurer dans l'environnement GitHub **Atelier CDF** (Settings → Environments), avec accès de déploiement restreint :
+- `CLOUDFLARE_API_TOKEN` — token Cloudflare limité aux Workers concernés.
+- `CLOUDFLARE_ACCOUNT_ID` — Account ID Cloudflare.
+- `ATELIER_APP_ENV` — contenu dotenv complet de `.env.client-atelier-app`, pour le build et le préflight de l'application mutualisée.
+- `COCKPIT_ENV` — contenu dotenv complet de `.env.cockpit`, avec `OPERATOR_MASTER_SECRET` et les credentials de la base opérateur ; ne pas y ajouter artificiellement les identités d'une instance cliente.
+
+Les workflows écrivent leur fichier cible avec mode privé, le chargent avec le parseur natif `node --env-file` (sans `source`/`eval`), puis l’effacent dans un step `always()`. Le workflow client réutilisable sélectionne `ATELIER_APP_ENV` pour `atelier-app`, `COCKPIT_ENV` pour `orsayn-cockpit`, sinon `CLIENT_ENV_<WORKER_EN_MAJUSCULES_AVEC_TIRETS_REMPLACÉS_PAR_UNDERSCORES>` ; par exemple `atelier-weber` utilise `CLIENT_ENV_ATELIER_WEBER`. Les valeurs `NEXT_PUBLIC_*` sont publiques, compilées dans le bundle navigateur au build et ne changent pas après une injection Cloudflare runtime. Construire chaque Worker depuis ses valeurs exactes. Les fichiers d’environnement ne sont jamais exécutés par `source` ou `eval`.
+
+Au contrôle du 26/10/2026, seuls les deux secrets Cloudflare existaient dans cet environnement ; **`ATELIER_APP_ENV` et `COCKPIT_ENV` restent à provisionner avant le prochain déploiement Actions**. Le préflight doit échouer si une configuration cible manque, pas réutiliser des secrets d'une autre instance.
 
 Workflows disponibles (onglet Actions sur GitHub) :
-- **Deploy — Cockpit Orsayn** : déclenché automatiquement à chaque push sur `main`, ou manuellement
-- **Deploy — Client Atelier** : déclenché manuellement, demande le nom du Worker (ex: `atelier-weber`)
-- **Deploy — Tous les clients** : déclenché manuellement, déploie tout `scripts/clients.txt`
+- **Deploy — Application Atelier** et **Deploy — Cockpit Orsayn** : après la réussite du workflow CI sur le commit de `main`, ou manuellement avec la même vérification.
+- **Deploy — Client Atelier** : manuel ou réutilisable, demande le nom exact du Worker.
+- **Deploy — Tous les clients** : manuel, matrice séquentielle issue de `scripts/clients.txt`, sans cockpit, avec la même politique que le workflow client.
 
-Les variables Cloudflare du client (clés Supabase, etc.) sont déjà injectées dans le Worker via `--apply-all` — le workflow ne les touche pas.
+Tous les déploiements Actions vérifient que le SHA visé est encore celui de `main` et possède un run CI réussi ; un ancien commit ou une CI absente/échouée bloque le déploiement. La CI inclut l'isolation SQL, les migrations opérateur, l'effacement des auteurs et un scan Gitleaks de tout l'historique. Au 26/10/2026, ce dernier reste bloquant : des caches `.next` historiques exposent des capacités de signature et du matériel Server Actions. Ne pas élargir les exclusions pour rendre cette gate verte.
+
+Les variables runtime restent conservées par `wrangler deploy --keep-vars`. Le chemin canonique exécute préflight ciblé, TypeScript, ESLint, tests unitaires, audit des dépendances de production puis build OpenNext avant Wrangler. Le script local ne consulte pas GitHub : il ne remplace pas l'autorisation de release ni la réussite des contrôles d'isolation et d'historique.
+
+Le contrôle GitHub du 26/10/2026 a également constaté un dépôt **public**, `main` sans protection et l'environnement **Atelier CDF** sans validation requise. Les gates dans le code ne remplacent pas ces réglages de gouvernance ; leur modification et toute réécriture d'historique demandent une décision explicite.
 
 #### Déployer en local (backup — déconseillé sur Mac 8 Go)
 
@@ -1184,7 +1237,7 @@ npm run preflight:client -- atelier-weber
 
 > Si le Mac crashe pendant un déploiement local, le `.env.local` est sauvegardé dans `.env.local.deploybak` — faire `cp .env.local.deploybak .env.local` pour le restaurer.
 
-- `deploy-client.sh` : patche temporairement `wrangler.jsonc` avec le bon `name`, lance `npm run deploy`, puis restaure. Pas besoin de modifier le fichier à la main.
+`deploy-client.sh` choisit la cible nommée, patche temporairement `wrangler.jsonc`, lance `npm run deploy` sans argument de remplacement, puis restaure la configuration. Le wrapper de production refuse les arguments et épingle le chemin `wrangler.jsonc` ainsi que le nom configuré ; ne pas lui passer `--name` ou `--config`. Pour choisir un client, utiliser le wrapper nommé ou l’input d’Actions.
 - `deploy-all-clients.sh` : lit `scripts/clients.txt` (un worker-name par ligne) et déploie chacun séquentiellement. Affiche un résumé succès/échec à la fin.
 - `preflight-client.mjs` : vérifie worker-name, scripts, migrations, variables attendues et peut lancer le build OpenNext.
 - `prepare-cloudflare-env.mjs` : prépare les variables Cloudflare en dry-run ; `--apply-secrets` injecte les secrets via Wrangler ; `--apply-all` injecte secrets + variables texte via l'API REST Cloudflare (requiert `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` dans `.env.local`).
@@ -1193,14 +1246,14 @@ npm run preflight:client -- atelier-weber
 #### Automatisation contrôlée des variables Cloudflare
 
 ```bash
-# Dry-run : affiche ce qui sera configuré, n'écrit rien
-npm run cf:env -- atelier-weber --env-file=.env.client-weber
+# Dry-run : affiche la configuration de cette cible, sans écriture Cloudflare
+npm run cf:env -- atelier-weber --env-file=.env.client-atelier-weber
 
-# Secrets uniquement via wrangler secret put
-npm run cf:env -- atelier-weber --env-file=.env.client-weber --apply-secrets
+# Secrets uniquement
+npm run cf:env -- atelier-weber --env-file=.env.client-atelier-weber --apply-secrets
 
-# Tout en une commande — secrets (Wrangler) + vars texte (API REST Cloudflare)
-npm run cf:env -- atelier-weber --env-file=.env.client-weber --apply-all
+# Secrets et variables runtime
+npm run cf:env -- atelier-weber --env-file=.env.client-atelier-weber --apply-all
 ```
 
 `--apply-all` requiert dans `.env.local` (jamais dans un `.env.client-xxx`) :
@@ -1215,10 +1268,11 @@ CLOUDFLARE_API_TOKEN=<Token API — My Profile → API Tokens, scope "Edit Worke
 
 | Type | Variables |
 |------|-----------|
-| **Secret** | `OPERATOR_INGEST_SECRET`, `OPERATOR_CONFIG_SYNC_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET`, `VAPID_PRIVATE_KEY`; `SHARED_WABA_ACCESS_TOKEN` seulement en mode Meta/Graph-compatible. `MISTRAL_API_KEY` n'est plus requise ici (transcription migrée sur OpenRouter) — seulement sur l'Edge Function `whatsapp-webhook`, voir §6. Aucune variable de facturation électronique ici : le mode `super_pdp` ne demande ni secret ni compte par client — les credentials OAuth Super PDP (`SUPER_PDP_*`) vivent uniquement dans `.env.cockpit`, jamais sur une instance cliente |
+| **Secret** | `OPERATOR_INGEST_SECRET`, `OPERATOR_CONFIG_SYNC_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OPENROUTER_API_KEY`, `CRON_SECRET`, `MEMBER_SESSION_SECRET`, `RATE_LIMIT_SECRET`, `ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY`, `VAPID_PRIVATE_KEY`; `SHARED_WABA_ACCESS_TOKEN` seulement en mode Meta/Graph-compatible. `MISTRAL_API_KEY` n'est plus requise ici (transcription migrée sur OpenRouter) — seulement sur l'Edge Function `whatsapp-webhook`, voir §6. Aucune variable de facturation électronique ici : le mode `super_pdp` ne demande ni secret ni compte par client — les credentials OAuth Super PDP (`SUPER_PDP_*`) vivent uniquement dans `.env.cockpit`, jamais sur une instance cliente |
 | **Text** | `SUPABASE_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `AI_RATE_LIMIT_PER_HOUR`, `PUBLIC_FORM_RATE_LIMIT_PER_HOUR`, `OPERATOR_INGEST_URL`, `OPERATOR_SOURCE_INSTANCE`, `NEXT_PUBLIC_SHARED_WABA_DISPLAY_NUMBER`; `SHARED_WABA_PHONE_NUMBER_ID` seulement en mode Meta/Graph-compatible; et toutes les `NEXT_PUBLIC_LEGAL_*` |
 
 Les variables `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL`, `OPERATOR_SUPABASE_SERVICE_ROLE_KEY` et `OPERATOR_USD_TO_EUR_RATE` sont réservées au Worker cockpit. Ne pas les poser sur un Worker client.
+Les valeurs `NEXT_PUBLIC_*` sont aussi consommées pendant le build. Si l’une change, mettre à jour le fichier de la cible puis reconstruire et redéployer ; `cf:env` seul ne met pas le bundle navigateur à jour.
 
 
 > **Important :** déconnecter le repo GitHub du projet Cloudflare Pages après le premier déploiement manuel — sinon chaque push GitHub déclenche un build automatique qui échoue (next-on-pages n'est plus utilisé).
@@ -1227,14 +1281,14 @@ Les variables `OPERATOR_MODE`, `OPERATOR_ALLOWED_EMAILS`, `OPERATOR_SUPABASE_URL
 
 Script de déploiement (lancé par Claude via terminal) :
 ```bash
-./scripts/deploy-cron-workers.sh atelier-weber --env-file=.env.client-weber
+./scripts/deploy-cron-workers.sh atelier-weber --env-file=.env.client-atelier-weber
 ```
 
-Le script déploie les deux Workers cron en une passe — `auto-reminder-weber` et `atelier-embeddings-weber` — en patchant temporairement le `name` dans chaque `wrangler.toml`, injectant `APP_URL` + `CRON_SECRET` via secrets, puis restaurant le fichier.
+Le script déploie `auto-reminder-weber`, `atelier-embeddings-weber` et `atelier-data-retention-weber`. Il lit `NEXT_PUBLIC_APP_URL` et `CRON_SECRET` dans le fichier privé exact `.env.client-atelier-weber`. Aucun repli vers `.env.local` n’est utilisé. Ne pas passer `--app-url` ni `--cron-secret` ; fournir uniquement `--env-file=.env.client-atelier-weber`. Le journal masque la valeur de `CRON_SECRET` ; ne jamais en afficher la valeur ni un préfixe.
 
-Crons : `auto-reminder` → `0 7 * * *` UTC (8h Paris hiver, 9h été) ; `embeddings` → `0 * * * *` (toutes les heures).
+Crons : `auto-reminder` — rattrapage horaire et relances/factures quotidiennes ; `embeddings` — toutes les heures ; `data-retention` — 4h30 UTC.
 
-> **Règle critique :** le `CRON_SECRET` des Workers cron doit être identique à celui injecté dans le Worker app via `--apply-all`. C'est garanti tant que tout passe par le même `.env.client-xxx`. Ne jamais modifier ce secret manuellement dans le dashboard d'un seul côté — toujours regénérer dans le fichier env et relancer `--apply-all` + `deploy-cron-workers.sh`.
+> **Règle critique :** la même valeur de `CRON_SECRET` doit être dans l’application et les Workers cron, chargés depuis `.env.client-<nom-complet-du-worker>`. Après toute rotation, modifier ce fichier privé, réinjecter les variables runtime de l’application et relancer `deploy-cron-workers.sh`. Ne pas copier la valeur dans `.env.local`, une option de remplacement ou un journal.
 
 Le Worker déclenche **séquentiellement deux routes** à chaque exécution :
 
@@ -1243,40 +1297,17 @@ Le Worker déclenche **séquentiellement deux routes** à chaque exécution :
 | `POST /api/cron/auto-reminders` | Relances devis/factures en retard — génère les emails via IA (Claude Haiku) |
 | `POST /api/cron/recurring-invoices` | **Passe 1** : crée les brouillons récurrents dont `next_send_date` est atteinte + notifie l'artisan. **Passe 2** : envoie automatiquement avec PDF les brouillons non validés dont le délai `auto_send_delay_days` est expiré |
 
-> **Prérequis critique :** `OPENROUTER_API_KEY` doit être injectée dans les variables Cloudflare Workers de l'app (voir §3). Le Worker appelle `/api/cron/auto-reminders` sur l'app, qui génère chaque email via l'IA. Si cette clé est absente ou invalide, **aucune relance ne part** (échec silencieux côté cron). C'est la clé Atelier partagée — elle est déjà dans ton `.env.local`.
+> **Prérequis critique :** `OPENROUTER_API_KEY` doit être configurée sur l’application Worker pour générer les relances. La valeur doit être fournie par le fichier privé exact de la cible, puis injectée avec l’outil prévu ; ne pas supposer qu’elle est disponible dans `.env.local`. Si la clé manque ou est invalide, aucune relance ne part.
 
-**Mise à jour code** (quand le Worker relances évolue) :
+**Mise à jour du code des crons :**
 
-> ⚠️ `deploy-all-clients.sh` **ne couvre pas** ce Worker — il déploie uniquement l'app Next.js principale. Le Worker relances doit être redéployé séparément si son code change.
+> `deploy-all-clients.sh` ne couvre pas les Workers cron ; il déploie uniquement l’application Next.js. Utiliser le wrapper canonique pour redéployer les trois crons de la cible :
 
 ```bash
-# Redéployer le Worker relances pour un client
-cd workers/auto-reminder
-# Les secrets APP_URL et CRON_SECRET sont déjà injectés — pas besoin de les re-saisir
-wrangler deploy --name auto-reminder-<nomclient>
-
-# Pour tous les clients (adapter la liste)
-for name in weber dupont; do
-  cd workers/auto-reminder
-  wrangler deploy --name auto-reminder-$name
-done
+./scripts/deploy-cron-workers.sh atelier-weber --env-file=.env.client-atelier-weber
 ```
 
-### 5.b Cron — génération des embeddings Qwen (mémoire entreprise)
-
-`POST /api/cron/embeddings` est un endpoint Next.js. Il vectorise les lignes `company_memory` dont `embedding IS NULL`.
-
-Deux options existent :
-- `workers/embeddings` est un Cloudflare Worker dédié avec cron horaire (`0 * * * *`).
-- cron-job.org peut aussi appeler directement l'endpoint si tu ne veux pas déployer ce Worker par client.
-
-Déploiement Worker dédié :
-```bash
-cd workers/embeddings
-wrangler secret put APP_URL          # → https://domaine-du-client.fr
-wrangler secret put CRON_SECRET      # → même valeur que dans l'app Workers
-wrangler deploy --name embeddings-<nomclient>
-```
+Le wrapper sélectionne l’URL et le secret depuis le fichier privé du Worker complet. Ne pas déployer ces crons avec une commande `wrangler deploy --name ...` isolée : elle ne remplace ni le contrôle de schéma ni le contrôle de cohérence de l’URL et du secret.
 
 Planification externe alternative — cron-job.org :
 
@@ -1490,8 +1521,9 @@ Impact support appareils :
 
 ```env
 OPERATOR_MODE=true
-OPERATOR_INGEST_SECRET=...                   ← même secret que sur les instances clientes
-OPERATOR_CONFIG_SYNC_SECRET=...              ← recommandé : même valeur que OPERATOR_INGEST_SECRET en V1
+OPERATOR_MASTER_SECRET=...                 ← requis par les routes cockpit ; jamais injecté sur un Worker client
+OPERATOR_INGEST_SECRET=...                 ← variable dérivée/fallback local ; ne remplace pas le master requis
+OPERATOR_CONFIG_SYNC_SECRET=...            ← variable dérivée/fallback local ; ne remplace pas le master requis
 OPERATOR_ALLOWED_EMAILS=mbebourasam@gmail.com
 OPERATOR_SUPABASE_URL=https://<operateur-ref>.supabase.co
 OPERATOR_SUPABASE_SERVICE_ROLE_KEY=eyJ...    ← service role du Supabase opérateur
@@ -1815,7 +1847,7 @@ WHERE created_at > now() - interval '30 days'
 GROUP BY organization_id, feature;
 ```
 
-**Aujourd'hui :** clé Atelier partagée par défaut sur le Worker. `OPENROUTER_API_KEY` peut être remplacée par une clé client renseignée dans `OPENROUTER_API_KEY` du `.env.client-nomclient` — couvre aussi la transcription vocale de l'app depuis le 2026-08-22. `MISTRAL_API_KEY` ne concerne plus que l'Edge Function WhatsApp, reste Atelier par défaut sauf client autonome vocal WhatsApp.
+**Aujourd'hui :** la clé Atelier peut être configurée pour le Worker. Une clé client peut être fournie dans le fichier privé `.env.client-atelier-nomclient` ; elle couvre aussi la transcription vocale de l'app depuis le 2026-08-22. `MISTRAL_API_KEY` ne concerne plus que l'Edge Function WhatsApp, reste Atelier par défaut sauf client autonome vocal WhatsApp.
 
 #### Inventaire complet des appels IA
 
@@ -1930,17 +1962,18 @@ n'a besoin d'une cohérence à la seconde près après une écriture.
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | Email support public | Non |
 | `NEXT_PUBLIC_PRIVACY_EMAIL` | Email confidentialité public | Non |
 | `NEXT_PUBLIC_LEGAL_EMAIL` | Email juridique public | Non |
-| `OPENROUTER_API_KEY` | Clé Atelier depuis `.env.local` (défaut) **ou** clé propre au client renseignée dans le `.env.client-nomclient` — couvre texte + transcription vocale de l'app (Voxtral via OpenRouter, migré le 2026-08-22) | **Selon client** (voir §IA), Worker uniquement |
+| `OPENROUTER_API_KEY` | Clé Atelier ou clé propre au client dans `.env.client-atelier-nomclient` ; couvre texte et transcription vocale de l'app | Selon client, Worker uniquement |
 | `MISTRAL_API_KEY` | Plus utilisée (transcription sur OpenRouter depuis le 2026-08-22, fonction `whatsapp-webhook` supprimée) | Non |
 | `CRON_SECRET` | `openssl rand -hex 32` | Non (unique par client) |
 | `MEMBER_SESSION_SECRET` | `openssl rand -hex 32` — signe le cookie de session de l'espace membre `/mon-espace` (HMAC SHA-256) | Non (unique par client) |
-| `RATE_LIMIT_SECRET` | `openssl rand -hex 32` — salt de hash rate limit, optionnel si `CRON_SECRET` est présent | Non (unique par client) |
+| `RATE_LIMIT_SECRET` | `openssl rand -hex 32` — requis en production, distinct de CRON/MEMBER | Non (unique par client) |
+| `ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY` | `openssl rand -base64 32` — 32 octets décodés ; rotation avec rechiffrement des credentials existants | Non (clé dédiée par instance) |
 | `AI_RATE_LIMIT_PER_HOUR` | Défaut conseillé `120` | Non |
 | `PUBLIC_FORM_RATE_LIMIT_PER_HOUR` | Défaut conseillé `5` | Non |
-| `OPERATOR_INGEST_URL` | URL du cockpit Orsayn | **Oui** (même URL partout) |
-| `OPERATOR_INGEST_SECRET` | `openssl rand -hex 32` (généré une fois) | **Oui** (même secret partout) |
-| `OPERATOR_CONFIG_SYNC_SECRET` | Secret HMAC pour `/api/operator/config-sync`; en V1 utiliser la même valeur que `OPERATOR_INGEST_SECRET` | **Oui** (même secret partout recommandé) |
-| `OPERATOR_SOURCE_INSTANCE` | Nom court du client (ex: `weber-demo`) — **optionnel**, fallback sur le host de `NEXT_PUBLIC_APP_URL` | Non (unique par client) |
+| `OPERATOR_INGEST_URL` | URL du cockpit Orsayn | **Oui si remontée d'usage activée** (même URL partout) |
+| `OPERATOR_INGEST_SECRET` | Dérivé du master cockpit pour `OPERATOR_SOURCE_INSTANCE` | Requis si l'ingest est activé ; valeur distincte par instance |
+| `OPERATOR_CONFIG_SYNC_SECRET` | Même secret dérivé que l'ingest (ou absent avec repli sur lui) | Requis pour la réception config ; valeur distincte par instance |
+| `OPERATOR_SOURCE_INSTANCE` | Nom court stable du client ; si absent, le fallback host doit correspondre à l'identité de dérivation | Optionnel techniquement, recommandé explicitement |
 | `NEXT_PUBLIC_SENTRY_DSN` | Projet Sentry → Settings → Client Keys (DSN) — **optionnel**, suivi désactivé si absent (aucun crash) | **Oui** — un seul compte/projet Sentry Orsayn pour tous les clients (comme VAPID) |
 | `SENTRY_AUTH_TOKEN` | Token d'upload sourcemaps (build time uniquement, jamais dans le Worker runtime) — **optionnel**, `withSentryConfig` ne s'active que si présent | Non (secret local/CI uniquement, jamais dans un `.env.client-xxx`) |
 | `SENTRY_ORG` / `SENTRY_PROJECT` | Slugs Sentry pour l'upload de sourcemaps | Communs (même organisation Sentry Orsayn) |
@@ -1990,7 +2023,7 @@ Ordre recommandé pour une release avec migration SQL :
 1. Appliquer la migration sur chaque Supabase client (`supabase link --project-ref <ref> && supabase db push`)
 2. Lancer `./scripts/deploy-all-clients.sh` pour déployer le code
 
-> **Note :** les déploiements sont séquentiels (pas en parallèle). Aujourd'hui, `deploy-all-clients.sh` appelle `deploy-client.sh` pour chaque client, donc `npm run deploy` et le build OpenNext repartent à chaque Worker. Optimisation future possible : build unique puis `wrangler deploy --name ...` par client.
+> **Note :** les déploiements sont séquentiels. `deploy-all-clients.sh` reconstruit l’application pour chaque Worker. Ne pas réutiliser un seul artefact entre plusieurs clients en le renommant avec `wrangler deploy --name` : les valeurs `NEXT_PUBLIC_*` sont compilées au build. L’artefact ne pourrait être partagé qu’après preuve qu’il est neutre vis-à-vis des tenants et qualification, pour chaque cible, de la CI, du schéma et de la configuration.
 
 > **Périmètre de `deploy-all-clients.sh` :** couvre uniquement les apps Next.js clientes. Le cockpit, le Worker relances (`workers/auto-reminder`) doivent être redéployés séparément si leur code a changé (voir §Cockpit et §5).
 

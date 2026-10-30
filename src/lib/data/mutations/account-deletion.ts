@@ -31,18 +31,22 @@ export async function requestAccountDeletion(): Promise<{ error?: string }> {
   const scheduled = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
 
   const admin = createAdminClient()
-  const { error } = await admin
+  const { data: scheduledOrg, error } = await admin
     .from('organizations')
     .update({
       deletion_requested_at: now.toISOString(),
       deletion_scheduled_at: scheduled.toISOString(),
     })
     .eq('id', membership.organization_id)
+    .is('anonymized_at', null)
+    .select('id')
+    .maybeSingle()
 
   if (error) {
     console.error('[requestAccountDeletion]', error)
     return { error: error.message }
   }
+  if (!scheduledOrg) return { error: 'La suppression de cette organisation a déjà commencé.' }
 
   revalidatePath('/settings')
   return {}
@@ -70,19 +74,22 @@ export async function cancelAccountDeletion(): Promise<{ error?: string }> {
   if (roleSlug !== 'owner') return { error: 'Réservé au propriétaire du compte' }
 
   const admin = createAdminClient()
-  const { error } = await admin
+  const { data: canceledOrg, error } = await admin
     .from('organizations')
     .update({
       deletion_requested_at: null,
       deletion_scheduled_at: null,
     })
     .eq('id', membership.organization_id)
+    .is('anonymized_at', null)
+    .select('id')
+    .maybeSingle()
 
   if (error) {
     console.error('[cancelAccountDeletion]', error)
     return { error: error.message }
   }
-
+  if (!canceledOrg) return { error: 'La suppression de cette organisation a déjà commencé.' }
   revalidatePath('/settings')
   return {}
 }

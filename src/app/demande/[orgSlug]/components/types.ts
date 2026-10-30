@@ -65,7 +65,6 @@ export type AttachmentMeta = {
   filename: string
   size: number
   content_type: string | null
-  public_url: string
 }
 
 export type { PublicLaborRate, PublicMaterial, PublicPrestationLine, PublicPrestationType }

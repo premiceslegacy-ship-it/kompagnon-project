@@ -45,7 +45,7 @@ export type ContractPdfSnapshot = {
     vat_number: string | null
     logo_url: string | null
     forme_juridique: string | null
-    capital_social: string | null
+    capital_social: string | number | null
     rcs: string | null
     rcs_ville: string | null
     insurance_info: string | null

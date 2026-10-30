@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState, useTransition } from 'react'
-import { createClient } from '@/lib/supabase/client'
+
 import { submitQuoteRequest } from '@/lib/data/mutations/quote-requests'
 import type { DimensionPricingMode } from '@/lib/catalog-pricing'
 import {
@@ -84,7 +84,6 @@ export default function PublicFormClient({
   const [chantierCity, setChantierCity] = useState('')
   const [extraNotes, setExtraNotes] = useState('')
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null)
-  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null)
   const [attachmentMeta, setAttachmentMeta] = useState<AttachmentMeta | null>(null)
   const [isUploading, setIsUploading] = useState(false)
 
@@ -525,30 +524,37 @@ export default function PublicFormClient({
     if (!file) return
     if (file.size > 10 * 1024 * 1024) {
       alert('Le fichier ne doit pas dépasser 10 Mo.')
+      e.target.value = ''
       return
     }
     setAttachmentFile(file)
+    setAttachmentMeta(null)
     setIsUploading(true)
     try {
-      const supabase = createClient()
-      const ext = file.name.split('.').pop()
-      const path = `quote-requests/${orgSlug}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-      const { data, error } = await supabase.storage.from('quote-attachments').upload(path, file, { upsert: false })
-      if (error) throw error
-      const { data: urlData } = supabase.storage.from('quote-attachments').getPublicUrl(data.path)
-      setAttachmentUrl(urlData.publicUrl)
-      setAttachmentMeta({
-        storage_path: data.path,
-        filename: file.name,
-        size: file.size,
-        content_type: file.type || null,
-        public_url: urlData.publicUrl,
+      const formData = new FormData()
+      formData.set('org_slug', orgSlug)
+      formData.set('_hp_website', honeypot)
+      formData.set('file', file)
+      const response = await fetch(`/api/public/quote-attachments?org_slug=${encodeURIComponent(orgSlug)}`, {
+        method: 'POST',
+        headers: { 'x-public-form-honeypot': honeypot },
+        body: formData,
       })
-    } catch {
-      alert('Erreur lors de l\'upload. Vous pouvez continuer sans fichier joint.')
+      const result = await response.json() as { attachment?: AttachmentMeta; ignored?: boolean; error?: string }
+      if (!response.ok) throw new Error(result.error ?? 'Erreur lors de l’upload.')
+      if (result.ignored) return
+      const attachment = result.attachment
+      if (!attachment || typeof attachment.storage_path !== 'string' || typeof attachment.filename !== 'string'
+        || !Number.isSafeInteger(attachment.size) || attachment.size < 1 || attachment.size > 10 * 1024 * 1024
+        || (attachment.content_type !== null && typeof attachment.content_type !== 'string')) {
+        throw new Error('Réponse d’upload invalide.')
+      }
+      setAttachmentMeta(attachment)
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Erreur lors de l’upload.')
       setAttachmentFile(null)
-      setAttachmentUrl(null)
       setAttachmentMeta(null)
+      e.target.value = ''
     } finally {
       setIsUploading(false)
     }
@@ -639,7 +645,6 @@ export default function PublicFormClient({
     if (chantierCity.trim()) fd.set('chantier_city', chantierCity.trim())
 
     // Fichier
-    if (attachmentUrl) fd.set('attachment_url', attachmentUrl)
     if (attachmentMeta) fd.set('attachments', JSON.stringify([attachmentMeta]))
 
     // Construction du catalogue et de la description
@@ -1241,7 +1246,7 @@ export default function PublicFormClient({
                       <>
                         <CheckCircle2 className={`${styles.dropzoneIcon} ${styles.dropzoneIconDone}`} />
                         <span className={styles.dropzoneTextDone}>{attachmentFile.name}</span>
-                        <button type="button" onClick={e => { e.stopPropagation(); setAttachmentFile(null); setAttachmentUrl(null); setAttachmentMeta(null) }} className={styles.dropzoneRemove}>
+                        <button type="button" onClick={e => { e.stopPropagation(); setAttachmentFile(null); setAttachmentMeta(null); if (fileInputRef.current) fileInputRef.current.value = '' }} className={styles.dropzoneRemove}>
                           <X />
                         </button>
                       </>

@@ -143,10 +143,11 @@ function prevMonthYM(ym: string): string {
 const COLLAB_ROLES = new Set(['employee', 'collaborateur', 'viewer'])
 
 export default async function DashboardPage({
-  searchParams,
+  searchParams: searchParamsPromise,
 }: {
-  searchParams?: { mois?: string }
+  searchParams: Promise<{ mois?: string }>
 }) {
+  const searchParams = await searchParamsPromise
   const selectedMonth = (searchParams?.mois && /^\d{4}-\d{2}$/.test(searchParams.mois))
     ? searchParams.mois
     : getCurrentMonthYM()
@@ -220,14 +221,13 @@ export default async function DashboardPage({
         <MonthNav currentMonth={selectedMonth} />
       </div>
 
-      <SetupChecklist readiness={setupReadiness} />
-
       {canViewCA && (
         <KPIRow stats={stats} prevStats={prevStats} chantiersEnCours={chantierStats.enCours} />
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-5 lg:grid-cols-12 gap-6 md:gap-8">
         <div className="md:col-span-3 lg:col-span-8 space-y-6 md:space-y-8">
+          <SetupChecklist readiness={setupReadiness} />
           <UrgentTasksClient initialItems={stats.urgentItems} facturesEnRetard={stats.facturesEnRetard} quoteAiEnabled={modules.quote_ai} />
         </div>
         <div className="md:col-span-2 lg:col-span-4 flex flex-col gap-6 md:gap-8">

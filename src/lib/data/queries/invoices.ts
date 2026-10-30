@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from './clients'
+import { isInvoiceIssuanceSnapshot, InvoiceIssuanceAuthorityError } from '@/lib/pdf/server'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -324,6 +325,11 @@ export type InvoiceForExport = {
   total_paid: number
   status: string
   chantier_id: string | null
+  is_vat_subject: boolean
+  tva_sur_debits: boolean
+  business_profile: string | null
+  seller_siren: string | null
+  seller_vat_number: string | null
   client: {
     id: string
     company_name: string | null
@@ -346,34 +352,81 @@ const EXPORTABLE_INVOICE_STATUSES = ['sent', 'viewed', 'partial', 'paid', 'overd
 export async function getInvoicesForExport(
   from: string,
   to: string,
+  selection: { includeInvoices: boolean; includeAvoirs: boolean },
 ): Promise<InvoiceForExport[]> {
+  if (!selection.includeInvoices && !selection.includeAvoirs) return []
+
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return []
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('invoices')
-    .select(`
-      id, number, invoice_type, issue_date, paid_at,
-      total_ht, total_tva, total_ttc, total_paid, status, chantier_id,
-      client:clients(id, company_name, contact_name, first_name, last_name, siret),
-      items:invoice_items(unit_price, quantity, vat_rate)
-    `)
+    .select('id, status, paid_at, total_paid, issuance_snapshot')
     .eq('organization_id', orgId)
     .eq('is_archived', false)
     .in('status', EXPORTABLE_INVOICE_STATUSES)
     .gte('issue_date', from)
     .lte('issue_date', to)
-    .order('issue_date', { ascending: true })
+  if (selection.includeInvoices !== selection.includeAvoirs) {
+    query = selection.includeInvoices
+      ? query.neq('invoice_type', 'avoir')
+      : query.eq('invoice_type', 'avoir')
+  }
+  const { data, error } = await query.order('issue_date', { ascending: true })
 
   if (error) {
     console.error('[getInvoicesForExport]', error)
-    return []
+    throw new Error('Impossible de vérifier les factures pour cet export comptable.')
   }
 
+  const invoices: InvoiceForExport[] = (data ?? []).map((row) => {
+    const snapshot: unknown = row.issuance_snapshot
+    if (!isInvoiceIssuanceSnapshot(snapshot, row.id)) throw new InvoiceIssuanceAuthorityError()
+    const facts = snapshot.invoice
+    const buyer = snapshot.buyer
+    const items = snapshot.items
+      .filter(item => item.is_internal !== true && item.unit !== '__section__')
+      .map(item => ({
+        unit_price: item.unit_price,
+        quantity: item.quantity ?? 0,
+        vat_rate: item.vat_rate ?? 0,
+      }))
+
+    return {
+      id: row.id,
+      number: facts.number,
+      invoice_type: facts.invoice_type ?? 'standard',
+      issue_date: facts.issue_date,
+      paid_at: row.paid_at,
+      total_ht: facts.total_ht ?? 0,
+      total_tva: facts.total_tva ?? 0,
+      total_ttc: facts.total_ttc ?? 0,
+      total_paid: row.total_paid ?? 0,
+      status: row.status,
+      chantier_id: typeof facts.chantier_id === 'string' ? facts.chantier_id : null,
+      is_vat_subject: snapshot.seller.is_vat_subject,
+      tva_sur_debits: snapshot.seller.tva_sur_debits ?? false,
+      business_profile: snapshot.seller.business_profile,
+      seller_siren: snapshot.seller.siren,
+      seller_vat_number: snapshot.seller.vat_number,
+      client: buyer ? {
+        id: buyer.id,
+        company_name: buyer.company_name,
+        contact_name: buyer.contact_name,
+        first_name: buyer.first_name,
+        last_name: buyer.last_name,
+        siret: buyer.siret,
+      } : null,
+      items,
+      pa_message_id: null,
+      chantier_title: snapshot.chantier?.title ?? null,
+    }
+  })
+
   // Récupérer les pa_message_id depuis pa_status_events
-  const invoiceIds = (data ?? []).map(i => i.id)
-  let paMessageIds: Record<string, string> = {}
+  const invoiceIds = invoices.map(i => i.id)
+  const paMessageIds: Record<string, string> = {}
   if (invoiceIds.length > 0) {
     const { data: paEvents } = await supabase
       .from('pa_status_events')
@@ -381,36 +434,14 @@ export async function getInvoicesForExport(
       .in('invoice_id', invoiceIds)
       .not('pa_message_id', 'is', null)
     for (const ev of paEvents ?? []) {
-      if (ev.invoice_id && ev.pa_message_id) {
-        paMessageIds[ev.invoice_id] = ev.pa_message_id
-      }
+      if (ev.invoice_id && ev.pa_message_id) paMessageIds[ev.invoice_id] = ev.pa_message_id
     }
   }
 
-  // Récupérer les titres de chantiers
-  const chantierIds = [...new Set((data ?? []).map(i => i.chantier_id).filter(Boolean))]
-  let chantierTitles: Record<string, string> = {}
-  if (chantierIds.length > 0) {
-    const { data: chantiers } = await supabase
-      .from('chantiers')
-      .select('id, title')
-      .in('id', chantierIds)
-    for (const c of chantiers ?? []) {
-      if (c.id) chantierTitles[c.id] = c.title ?? ''
-    }
-  }
-
-  return (data ?? []).map(inv => ({
-    ...inv,
-    total_ht: inv.total_ht ?? 0,
-    total_tva: inv.total_tva ?? 0,
-    total_ttc: inv.total_ttc ?? 0,
-    total_paid: inv.total_paid ?? 0,
-    pa_message_id: paMessageIds[inv.id] ?? null,
-    chantier_title: inv.chantier_id ? (chantierTitles[inv.chantier_id] ?? null) : null,
-    client: Array.isArray(inv.client) ? (inv.client[0] ?? null) : inv.client,
-    items: Array.isArray(inv.items) ? inv.items : [],
-  })) as InvoiceForExport[]
+  return invoices.map(invoice => ({
+    ...invoice,
+    pa_message_id: paMessageIds[invoice.id] ?? null,
+  }))
 }
 
 export async function getInvoiceStubs(): Promise<InvoiceStub[]> {

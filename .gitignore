@@ -1,6 +1,8 @@
-docs/
+# docs/ reste versionné : les audits et la doc de facturation sont cités par
+# le code et DEPLOIEMENT_CLIENT.md.
 node_modules/
 .scratch/
+.atelier-private/
 venv/
 .venv/
 venv_scraper/
@@ -19,6 +21,8 @@ cloudflare-env.d.ts
 *.log
 tsconfig.tsbuildinfo
 .env*
-.env.example
-.env.local
+# Templates versionnés (aucun secret réel dedans) — les .env.client-<client>,
+# .env.local et .env.cockpit restent ignorés.
+!.env.example
 !.env.client-template
+!.env.client-template-*

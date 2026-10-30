@@ -1,7 +1,9 @@
 'use server'
 
 import { redirect } from 'next/navigation'
+import { headers } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { sendEmail } from '@/lib/email'
 import { resolveOrganizationFromAddress } from '@/lib/email/resolver'
 import { buildPasswordResetOtpEmail } from '@/lib/email/templates'
@@ -29,6 +31,17 @@ export async function forgotPassword(
 ): Promise<ForgotPasswordState> {
   const email = (formData.get('email') as string)?.trim().toLowerCase()
   if (!email) return { error: 'Veuillez saisir votre adresse email.', success: false }
+
+  // Sans limite, une boucle épuise le quota Resend de l'instance et noie la
+  // boîte de la victime. Deux clés : par email et par IP.
+  const ip = getClientIp(await headers())
+  const [byEmail, byIp] = await Promise.all([
+    checkRateLimit({ scope: 'auth:forgot', identifier: email, limit: 3, windowSeconds: 60 * 60 }),
+    checkRateLimit({ scope: 'auth:forgot-ip', identifier: ip, limit: 10, windowSeconds: 60 * 60 }),
+  ])
+  if (!byEmail.allowed || !byIp.allowed) {
+    return { error: 'Trop de demandes de réinitialisation. Réessayez dans une heure.', success: false }
+  }
 
   const admin = createAdminClient()
 

@@ -1,14 +1,20 @@
 import { NextResponse } from 'next/server'
+import { pdfResponse } from '@/lib/pdf/response'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { renderContractPdfBufferById } from '@/lib/pdf/server'
-import { isValidUuid } from '@/lib/security'
+import {
+  renderContractPdfBufferById,
+  renderContractPdfBufferFromPublication,
+} from '@/lib/pdf/server'
+import type { ContractDocumentPublicationRecord } from '@/lib/contracts/document-authority'
+import { isSignatureTokenFresh, isValidUuid } from '@/lib/security'
 
 export async function GET(
   req: Request,
-  { params }: { params: { id: string } },
+  { params: paramsPromise }: { params: Promise<{ id: string }> },
 ) {
+  const params = await paramsPromise
   if (!isValidUuid(params.id)) return new NextResponse('Contrat introuvable', { status: 404 })
 
   const url = new URL(req.url)
@@ -20,29 +26,50 @@ export async function GET(
     const admin = createAdminClient()
     const { data: contract, error } = await admin
       .from('contracts')
-      .select('organization_id, pdf_snapshot, signature_token')
+      .select(`id, organization_id, status, archived_at, sent_at, signed_at, client_signed_at,
+        client_signature_image, client_signatory_name, client_signatory_role,
+        signature_document_hash, linked_quote_document, pdf_reference, pdf_snapshot,
+        signature_token, signature_token_expires_at`)
       .eq('id', params.id)
       .eq('signature_token', token)
       .single()
     if (error || !contract) return new NextResponse('Contrat introuvable ou lien invalide.', { status: 404 })
-    if (!contract.pdf_snapshot) return new NextResponse('Le PDF n\'est pas encore disponible.', { status: 409 })
+    if (!isSignatureTokenFresh(contract.signature_token_expires_at)) {
+      return new NextResponse('Lien expiré.', { status: 410 })
+    }
+    if (contract.status === 'archived' || contract.archived_at) {
+      return new NextResponse('Contrat clôturé.', { status: 410 })
+    }
+    if (!['sent', 'signed'].includes(contract.status)) {
+      return new NextResponse('Publication indisponible.', { status: 410 })
+    }
+    if (contract.status === 'sent' && !contract.signature_document_hash) {
+      return NextResponse.json({
+        error: 'Cette ancienne publication ne possède pas d’archive de signature vérifiée.',
+        code: 'CONTRACT_DOCUMENT_AUTHORITY_MISSING',
+      }, { status: 409 })
+    }
+    if (contract.status === 'signed' && !contract.client_signed_at) {
+      return new NextResponse('Le contrat ne possède pas de signature publique vérifiée.', { status: 410 })
+    }
+    if (!contract.pdf_snapshot) {
+      return NextResponse.json({
+        error: 'L’archive PDF du contrat signé est indisponible.',
+        code: 'CONTRACT_DOCUMENT_ARCHIVE_MISSING',
+      }, { status: 409 })
+    }
 
-    let publicResult
+    let publicResult: Awaited<ReturnType<typeof renderContractPdfBufferFromPublication>>
     try {
-      publicResult = await renderContractPdfBufferById(params.id, contract.organization_id)
+      publicResult = await renderContractPdfBufferFromPublication(
+        contract as ContractDocumentPublicationRecord,
+      )
     } catch (err) {
       console.error('[GET /api/pdf/contract] public render error:', err)
       return new NextResponse('Erreur génération PDF', { status: 500 })
     }
     if (!publicResult) return new NextResponse('Erreur génération PDF', { status: 500 })
-    return new NextResponse(publicResult.buffer, {
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': download
-          ? `attachment; filename="${publicResult.fileName}"`
-          : `inline; filename="${publicResult.fileName}"`,
-      },
-    })
+    return pdfResponse(publicResult.buffer, publicResult.fileName, { download, fallback: 'contrat' })
   }
 
   // Mode authentifié : accès interne par l'utilisateur de l'organisation
@@ -76,12 +103,5 @@ export async function GET(
   }
   if (!result) return new NextResponse('Erreur génération PDF', { status: 500 })
 
-  return new NextResponse(result.buffer, {
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': download
-        ? `attachment; filename="${result.fileName}"`
-        : `inline; filename="${result.fileName}"`,
-    },
-  })
+  return pdfResponse(result.buffer, result.fileName, { download, fallback: 'contrat' })
 }

@@ -25,10 +25,11 @@ import { createClient } from '@/lib/supabase/server'
 import ChantierDetailClient from './ChantierDetailClient'
 
 export default async function ChantierDetailPage({
-  params,
+  params: paramsPromise,
 }: {
-  params: { chantierId: string }
+  params: Promise<{ chantierId: string }>
 }) {
+  const params = await paramsPromise
   const [
     chantier,
     taches,

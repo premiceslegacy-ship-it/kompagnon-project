@@ -2,13 +2,20 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { sendEmail } from '@/lib/email'
 import { renderOrganizationEmail } from '@/lib/email/organization'
 import { renderCTA } from '@/lib/email/layout'
-import { renderContractPdfBufferById, renderInvoicePdfBufferById, renderQuotePdfBufferById } from '@/lib/pdf/server'
+import {
+  InvoiceIssuanceAuthorityError,
+  renderContractPdfBufferFromPublication,
+  renderInvoicePdfBufferById,
+  renderQuotePdfBufferById,
+} from '@/lib/pdf/server'
+import type { ContractDocumentPublicationRecord } from '@/lib/contracts/document-authority'
 import {
   CLAUSE_LABELS,
   CONTRACT_DISCLAIMER,
@@ -25,7 +32,7 @@ import {
   type ContractStatus,
   type ContractType,
 } from '@/lib/contracts/templates'
-import { assertSafeExternalFetchUrl } from '@/lib/security'
+import { loadPdfImageAsDataUrl } from '@/lib/pdf/engine/image-source'
 
 type Result = { error: string | null }
 
@@ -93,21 +100,6 @@ function escHtml(value: string | null | undefined): string {
     .replace(/'/g, '&#39;')
 }
 
-async function fetchLogoAsDataUrl(url: string | null | undefined): Promise<string | null> {
-  if (!url || url.startsWith('data:')) return url ?? null
-  const safeUrl = assertSafeExternalFetchUrl(url)
-  if (!safeUrl) return null
-  try {
-    const res = await fetch(safeUrl)
-    if (!res.ok) return null
-    const contentType = res.headers.get('content-type') ?? 'image/png'
-    if (contentType.includes('svg')) return null
-    const buf = await res.arrayBuffer()
-    return `data:${contentType};base64,${Buffer.from(buf).toString('base64')}`
-  } catch {
-    return null
-  }
-}
 
 async function resolveContractTemplate(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -211,9 +203,10 @@ async function buildPdfSnapshot(contractId: string, orgId: string) {
 
   const generatedAt = new Date().toISOString()
   const reference = contract.pdf_reference ?? buildContractReference(contract.id, generatedAt)
-  const logoDataUrl = await fetchLogoAsDataUrl(org?.logo_url)
+  const logoDataUrl = await loadPdfImageAsDataUrl(org?.logo_url)
 
   return {
+    organizationId: orgId,
     generatedAt,
     reference,
     disclaimer: CONTRACT_DISCLAIMER,
@@ -306,6 +299,9 @@ export async function createContract(input: CreateContractInput): Promise<{ cont
       .eq('organization_id', orgId)
       .single()
     if (!quote) return { contractId: null, error: 'Devis introuvable.' }
+    if (quote.client_id !== (input.clientId || null)) {
+      return { contractId: null, error: 'Le devis associé doit appartenir au même client que le contrat.' }
+    }
   }
 
   const { data, error } = await supabase
@@ -360,7 +356,7 @@ export async function updateContract(contractId: string, input: UpdateContractIn
 
   const { data: existing } = await supabase
     .from('contracts')
-    .select('id, status, contract_type, template_key, clauses')
+    .select('id, status, client_signed_at, updated_at, contract_type, template_key, clauses')
     .eq('id', contractId)
     .eq('organization_id', orgId)
     .single()
@@ -397,8 +393,14 @@ export async function updateContract(contractId: string, input: UpdateContractIn
     input.customSections,
     input.durationText,
   ].some(value => value !== undefined)
+  if ((existing.status === 'signed' || existing.client_signed_at) && contentChanged) {
+    return { error: 'Un contrat signé ne peut plus être modifié.' }
+  }
+  if (contentChanged && input.status === 'signed') {
+    return { error: 'Les conditions d’un contrat doivent être enregistrées avant sa signature.' }
+  }
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from('contracts')
     .update({
       ...(input.clientId !== undefined && { client_id: input.clientId || null }),
@@ -415,8 +417,7 @@ export async function updateContract(contractId: string, input: UpdateContractIn
       ...(input.clauses !== undefined && { clauses: normalizeClauses(input.clauses, template.clauses) }),
       ...(input.customSections !== undefined && { custom_sections: normalizeCustomSections(input.customSections) }),
       ...(input.durationText !== undefined && { duration_text: cleanText(input.durationText) }),
-      ...(contentChanged && { pdf_reference: null, pdf_generated_at: null, pdf_snapshot: null }),
-      ...(input.status !== undefined && {
+      ...(!contentChanged && input.status !== undefined && {
         status: input.status,
         sent_at: input.status === 'sent' ? new Date().toISOString() : undefined,
         signed_at: input.status === 'signed' ? new Date().toISOString() : undefined,
@@ -425,6 +426,9 @@ export async function updateContract(contractId: string, input: UpdateContractIn
     })
     .eq('id', contractId)
     .eq('organization_id', orgId)
+    .eq('updated_at', existing.updated_at)
+    .select('id')
+    .maybeSingle()
 
   if (error) {
     console.error('[updateContract]', error)
@@ -433,6 +437,7 @@ export async function updateContract(contractId: string, input: UpdateContractIn
     }
     return { error: 'Erreur lors de la mise à jour du contrat.' }
   }
+  if (!updated) return { error: 'Le contrat a changé entre-temps. Rechargez puis réessayez.' }
 
   revalidatePath('/contracts')
   revalidatePath(`/contracts/${contractId}`)
@@ -445,6 +450,17 @@ export async function generateContractPdfSnapshot(contractId: string): Promise<R
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
 
+  const { data: existing, error: lookupError } = await supabase
+    .from('contracts')
+    .select('updated_at, status, signature_token, signature_document_hash')
+    .eq('id', contractId)
+    .eq('organization_id', orgId)
+    .single()
+  if (lookupError || !existing) return { error: 'Contrat introuvable.' }
+  if (existing.status !== 'draft' || existing.signature_token || existing.signature_document_hash) {
+    return { error: 'Le PDF d’un contrat publié ne peut pas être remplacé. Modifiez les conditions pour préparer une nouvelle publication.' }
+  }
+
   let snapshot
   try {
     snapshot = await buildPdfSnapshot(contractId, orgId)
@@ -453,16 +469,13 @@ export async function generateContractPdfSnapshot(contractId: string): Promise<R
   }
   if (!snapshot) return { error: 'Contrat introuvable.' }
 
-  const { error } = await supabase
-    .from('contracts')
-    .update({
-      pdf_reference: snapshot.reference,
-      pdf_generated_at: snapshot.generatedAt,
-      pdf_snapshot: snapshot,
-    })
-    .eq('id', contractId)
-    .eq('organization_id', orgId)
-
+  const admin = createAdminClient()
+  const { data, error } = await admin.rpc('save_contract_draft_pdf_snapshot', {
+    p_contract_id: contractId,
+    p_organization_id: orgId,
+    p_expected_updated_at: existing.updated_at,
+    p_pdf_snapshot: snapshot,
+  })
   if (error) {
     console.error('[generateContractPdfSnapshot]', error)
     if (error.message.includes('custom_sections')) {
@@ -470,6 +483,7 @@ export async function generateContractPdfSnapshot(contractId: string): Promise<R
     }
     return { error: 'Erreur lors de la génération du PDF.' }
   }
+  if (!data?.ok) return { error: 'Le contrat a changé ou a été publié entre-temps. Rechargez puis réessayez.' }
 
   revalidatePath('/contracts')
   revalidatePath(`/contracts/${contractId}`)
@@ -487,7 +501,7 @@ export async function sendContract(
 
   const { data: contract, error: contractError } = await supabase
     .from('contracts')
-    .select('id, title, status, counterparty_name, counterparty_email, pdf_reference, pdf_snapshot, signature_token, client_id')
+    .select('id, title, status, updated_at, counterparty_name, counterparty_email, client_id, quote_id')
     .eq('id', contractId)
     .eq('organization_id', orgId)
     .single()
@@ -497,41 +511,57 @@ export async function sendContract(
     return { error: 'Contrat introuvable.' }
   }
   if (contract.status === 'archived') return { error: 'Un contrat archivé ne peut pas être envoyé.' }
+  if (contract.status === 'signed') return { error: 'Un contrat signé ne peut pas être publié à nouveau.' }
 
   const recipient = cleanText(contract.counterparty_email)
-  if (!recipient) return { error: "Aucune adresse e-mail n'est renseignée pour la partie contractante." }
+  if (!recipient) return { error: `Aucune adresse e-mail n'est renseignée pour la partie contractante.` }
 
   const organization = await getOrganization()
   if (!organization) return { error: 'Organisation introuvable.' }
 
-  let pdfReference = contract.pdf_reference
-  if (!contract.pdf_snapshot) {
-    let snapshot
-    try {
-      snapshot = await buildPdfSnapshot(contractId, orgId)
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : 'Erreur lors de la génération du PDF.' }
-    }
-    if (!snapshot) return { error: 'Contrat introuvable.' }
-    pdfReference = snapshot.reference
+  let snapshot
+  try {
+    snapshot = await buildPdfSnapshot(contractId, orgId)
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Erreur lors de la génération du PDF.' }
+  }
+  if (!snapshot) return { error: 'Contrat introuvable.' }
 
-    const { error } = await supabase
-      .from('contracts')
-      .update({
-        pdf_reference: snapshot.reference,
-        pdf_generated_at: snapshot.generatedAt,
-        pdf_snapshot: snapshot,
-      })
-      .eq('id', contractId)
-      .eq('organization_id', orgId)
-
-    if (error) {
-      console.error('[sendContract] snapshot update', error)
-      return { error: 'Erreur lors de la génération du PDF.' }
+  const canPublishLinkedQuote = contract.quote_id
+    ? await hasPermission('quotes.send')
+    : false
+  const admin = createAdminClient()
+  const { data: publication, error: publicationError } = await admin.rpc('publish_contract_document', {
+    p_contract_id: contractId,
+    p_organization_id: orgId,
+    p_expected_updated_at: contract.updated_at,
+    p_pdf_snapshot: snapshot,
+    p_publish_linked_quote: canPublishLinkedQuote,
+  })
+  if (publicationError) {
+    console.error('[sendContract] publication', publicationError)
+    return { error: 'Impossible de préparer la publication du contrat.' }
+  }
+  if (!publication?.ok) {
+    if (publication?.code === 'stale_contract') {
+      return { error: 'Le contrat a changé entre-temps. Rechargez puis réessayez.' }
     }
+    if (publication?.code === 'quote_send_permission_required') {
+      return { error: 'La publication du devis associé nécessite la permission d’envoyer des devis.' }
+    }
+    if (publication?.code === 'linked_quote_client_mismatch') {
+      return { error: 'Le devis associé ne correspond pas au client du contrat.' }
+    }
+    return { error: 'Le contrat ou le devis associé n’est plus disponible pour publication.' }
   }
 
-  const rendered = await renderContractPdfBufferById(contractId, orgId)
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+  const signUrl = `${appUrl}/contrats/signer/${publication.signature_token}`
+  const publicationRecord = publication.publication_record as ContractDocumentPublicationRecord | undefined
+  if (!publicationRecord || publicationRecord.id !== contractId || publicationRecord.organization_id !== orgId) {
+    return { error: 'Impossible de charger l’archive de la publication du contrat.' }
+  }
+  const rendered = await renderContractPdfBufferFromPublication(publicationRecord)
   if (!rendered) return { error: 'Impossible de générer le PDF du contrat.' }
 
   // Pièces jointes additionnelles (devis / factures du client lié)
@@ -540,7 +570,7 @@ export async function sendContract(
   ]
   const extraDocLabels: string[] = []
 
-  const clientId = (contract as any).client_id as string | null
+  const clientId = contract.client_id as string | null
   const attachQuoteIds = (options?.attachQuoteIds ?? []).filter(Boolean)
   const attachInvoiceIds = (options?.attachInvoiceIds ?? []).filter(Boolean)
 
@@ -561,32 +591,34 @@ export async function sendContract(
   }
 
   if (clientId && attachInvoiceIds.length > 0) {
-    const { data: ownedInvoices } = await supabase
+    const { data: ownedInvoices, error: ownedInvoicesError } = await supabase
       .from('invoices')
       .select('id, number')
       .eq('organization_id', orgId)
       .eq('client_id', clientId)
       .in('id', attachInvoiceIds)
+    if (ownedInvoicesError) return { error: 'Impossible de vérifier les factures à joindre.' }
     for (const inv of ownedInvoices ?? []) {
-      const pdf = await renderInvoicePdfBufferById(inv.id, orgId).catch(() => null)
-      if (pdf) {
-        attachments.push({ filename: pdf.fileName, content: pdf.buffer })
-        extraDocLabels.push(`facture ${inv.number}`)
+      let pdf: Awaited<ReturnType<typeof renderInvoicePdfBufferById>>
+      try {
+        pdf = await renderInvoicePdfBufferById(inv.id, orgId)
+      } catch (error) {
+        console.error('[sendContract] invoice PDF:', error)
+        if (error instanceof InvoiceIssuanceAuthorityError) return { error: error.message }
+        return { error: 'Impossible de générer le PDF de la facture à joindre.' }
       }
+      if (!pdf) return { error: `Facture ${inv.number ?? inv.id} introuvable.` }
+      attachments.push({ filename: pdf.fileName, content: pdf.buffer })
+      extraDocLabels.push(`facture ${inv.number}`)
     }
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-  const signUrl = (contract as any).signature_token
-    ? `${appUrl}/contrats/signer/${(contract as any).signature_token}`
-    : null
-
-  const reference = pdfReference ? ` ${pdfReference}` : ''
+  const reference = publication.pdf_reference ? ` ${publication.pdf_reference}` : ''
   const subject = `Votre contrat${reference} - ${organization.name}`
   const extrasParagraph = extraDocLabels.length > 0
     ? `<p>Vous trouverez également en pièce jointe : ${escHtml(extraDocLabels.join(', '))}.</p>`
     : ''
-  const signCta = signUrl ? renderCTA('Signer le contrat en ligne', signUrl) : ''
+  const signCta = renderCTA('Signer le contrat en ligne', signUrl)
   const html = renderOrganizationEmail({
     subject,
     orgName: organization.name,
@@ -611,20 +643,6 @@ export async function sendContract(
     attachments,
   })
   if (mail.error) return { error: mail.error }
-
-  const { error } = await supabase
-    .from('contracts')
-    .update({
-      status: contract.status === 'signed' ? 'signed' : 'sent',
-      sent_at: new Date().toISOString(),
-    })
-    .eq('id', contractId)
-    .eq('organization_id', orgId)
-
-  if (error) {
-    console.error('[sendContract] status update', error)
-    return { error: "Le contrat a été envoyé, mais le statut n'a pas pu être mis à jour." }
-  }
 
   revalidatePath('/contracts')
   revalidatePath(`/contracts/${contractId}`)

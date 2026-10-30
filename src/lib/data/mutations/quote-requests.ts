@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import { callAI } from '@/lib/ai/callAI'
 import { getCatalogDocumentVatRate, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { hasPermission } from '@/lib/data/queries/membership'
@@ -12,8 +13,14 @@ import { sendAuthEmail } from '@/lib/email'
 import { buildQuoteRequestNotificationEmail } from '@/lib/email/templates'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { sendPushToOrgPermission } from '@/lib/push'
-import { callAI } from '@/lib/ai/callAI'
 import { normalizeUnit } from '@/lib/units'
+import {
+  isQuoteAttachmentMimeType,
+  isValidQuoteAttachmentStoragePath,
+  QUOTE_ATTACHMENT_BUCKET,
+  QUOTE_ATTACHMENT_MAX_BYTES,
+  safeQuoteAttachmentFilename,
+} from '@/lib/quote-attachments'
 
 function splitContactName(fullName: string | null | undefined): { firstName: string | null; lastName: string | null } {
   const trimmed = fullName?.trim() ?? ''
@@ -117,32 +124,24 @@ export async function submitQuoteRequest(
   const subject = (formData.get('subject') as string)?.trim() || null
   const prestation_type = (formData.get('prestation_type') as string)?.trim() || null
   const dimensions = (formData.get('dimensions') as string)?.trim() || null
-  const attachment_url = (formData.get('attachment_url') as string)?.trim() || null
-  const type = (formData.get('type') as string)?.trim() || 'custom'
-  const freeform_notes = (formData.get('freeform_notes') as string)?.trim() || null
-
-  let catalog_items = null
+  const type = (formData.get('type') as string) || 'custom'
   const catalogItemsRaw = formData.get('catalog_items') as string | null
+  let catalog_items: any = null
   if (catalogItemsRaw) {
-    try { catalog_items = JSON.parse(catalogItemsRaw) } catch { /* ignore */ }
-  }
-
-  let attachments = null
-  const attachmentsRaw = formData.get('attachments') as string | null
-  if (attachmentsRaw) {
     try {
-      const parsed = JSON.parse(attachmentsRaw)
-      attachments = Array.isArray(parsed) ? parsed : null
+      catalog_items = JSON.parse(catalogItemsRaw)
     } catch {
-      attachments = null
+      return { error: "La sélection du catalogue est invalide.", success: false }
     }
   }
+  const freeform_notes = (formData.get('freeform_notes') as string)?.trim() || null
 
   const admin = createAdminClient()
   const { data: org, error: orgError } = await admin
     .from('organizations')
-    .select('id, name, logo_url, public_form_notification_email')
+    .select('id, slug, name, logo_url, public_form_notification_email')
     .eq('slug', orgSlug)
+    .eq('public_form_enabled', true)
     .single()
 
   if (orgError || !org) {
@@ -174,11 +173,66 @@ export async function submitQuoteRequest(
   if ((emailCount ?? 0) >= 3) {
     return { error: "Une demande a déjà été envoyée récemment avec cet email. Veuillez réessayer demain ou contacter directement l'entreprise.", success: false }
   }
+  const attachmentsRaw = formData.get('attachments')
+  if (attachmentsRaw !== null && typeof attachmentsRaw !== 'string') {
+    return { error: 'La pièce jointe est invalide. Retirez-la puis réessayez.', success: false }
+  }
+  let attachments: Array<{ storage_path: string; filename: string; size: number; content_type: string }> | null = null
+  if (attachmentsRaw) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(attachmentsRaw)
+    } catch {
+      return { error: 'La pièce jointe est invalide. Retirez-la puis réessayez.', success: false }
+    }
+
+    if (!Array.isArray(parsed) || parsed.length !== 1 || !parsed[0] || typeof parsed[0] !== 'object') {
+      return { error: 'La pièce jointe est invalide. Retirez-la puis réessayez.', success: false }
+    }
+    const metadata = parsed[0] as Record<string, unknown>
+    const path = typeof metadata.storage_path === 'string' ? metadata.storage_path : ''
+    const filename = typeof metadata.filename === 'string' ? metadata.filename : ''
+    const safeFilename = safeQuoteAttachmentFilename(filename)
+    const pathExtension = path.split('.').pop()?.toLowerCase()
+    const filenameExtension = safeFilename.split('.').pop()?.toLowerCase()
+    if (!isValidQuoteAttachmentStoragePath(path, org.id) || !filename || filenameExtension !== pathExtension) {
+      return { error: 'La pièce jointe est invalide. Retirez-la puis réessayez.', success: false }
+    }
+
+    const { data: ownership, error: ownershipError } = await admin
+      .from('quote_attachment_object_ownership')
+      .select('object_path')
+      .eq('object_path', path)
+      .eq('organization_id', org.id)
+      .maybeSingle()
+    if (ownershipError || !ownership) {
+      return { error: 'La pièce jointe est invalide. Retirez-la puis réessayez.', success: false }
+    }
+
+    const { data: storedFile, error: storageError } = await admin.storage
+      .from(QUOTE_ATTACHMENT_BUCKET)
+      .info(path)
+    const contentType = storedFile?.contentType ?? ''
+    const size = storedFile?.size
+    if (storageError || !storedFile || storedFile.bucketId !== QUOTE_ATTACHMENT_BUCKET
+      || typeof size !== 'number' || size < 1 || size > QUOTE_ATTACHMENT_MAX_BYTES
+      || !isQuoteAttachmentMimeType(contentType)) {
+      return { error: 'La pièce jointe est invalide. Retirez-la puis réessayez.', success: false }
+    }
+
+    attachments = [{
+      storage_path: path,
+      filename: safeFilename,
+      size,
+      content_type: contentType,
+    }]
+  }
+
 
   const { error } = await admin.from('quote_requests').insert({
     organization_id: org.id,
     name, email, phone, company_name, subject, description,
-    prestation_type, dimensions, attachment_url,
+    prestation_type, dimensions, attachment_url: null,
     chantier_address_line1, chantier_postal_code, chantier_city,
     type, catalog_items, attachments, freeform_notes,
     status: 'new',

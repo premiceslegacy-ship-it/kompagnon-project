@@ -272,11 +272,12 @@ export async function requestMemberSpaceAccess(email: string): Promise<Result> {
 
   const admin = createAdminClient()
 
-  // Recherche du membre par email (toutes orgs confondues - un membre = une org en pratique)
+  // `.eq` et non `.ilike` : `%` et `_` sont des jokers, donc `%` renvoyait des
+  // membres arbitraires et leur envoyait un lien d'accès.
   const { data: members } = await admin
     .from('chantier_equipe_membres')
     .select('id, organization_id')
-    .ilike('email', cleanedEmail)
+    .eq('email', cleanedEmail)
     .limit(2)
 
   // Réponse "succès" volontairement neutre pour ne pas révéler l'existence d'un email
@@ -324,6 +325,15 @@ export async function sendMemberSpaceInviteUnchecked(memberId: string): Promise<
   const orgName: string = (member as any).organizations?.name ?? 'Votre organisation'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orgLogoUrl: string | null = (member as any).organizations?.logo_url ?? null
+
+  // Un nouveau lien invalide les précédents non consommés : sans cela chaque
+  // demande (et chaque relance) empilait une capacité valable 30 jours.
+  await admin
+    .from('member_space_tokens')
+    .update({ expires_at: new Date().toISOString() })
+    .eq('member_id', memberId)
+    .is('last_used_at', null)
+    .gt('expires_at', new Date().toISOString())
 
   const { raw, hash, expiresAt } = generateMagicToken()
   const { error: insertError } = await admin

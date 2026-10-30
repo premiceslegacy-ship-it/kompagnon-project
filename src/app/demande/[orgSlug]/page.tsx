@@ -221,7 +221,8 @@ async function getOrgPublicData(slug: string): Promise<{
   }
 }
 
-export default async function DemandePage({ params }: { params: { orgSlug: string } }) {
+export default async function DemandePage({ params: paramsPromise }: { params: Promise<{ orgSlug: string }> }) {
+  const params = await paramsPromise
   const result = await getOrgPublicData(params.orgSlug)
   if (!result) notFound()
 

@@ -59,6 +59,7 @@ export type DashboardStats = {
 }
 
 export type DashboardSetupReadiness = {
+  dismissed: boolean
   organizationName: string | null
   businessActivityId: BusinessActivityId | null
   companyIdentityReady: boolean
@@ -698,12 +699,11 @@ export async function getDashboardSetupReadiness(deps?: QueryDeps): Promise<Dash
     return null
   }
 
-  if (org.setup_checklist_dismissed) return null
-
   const catalogItems = (prestationCount ?? 0) + (materialsCount ?? 0) + (laborCount ?? 0)
   const isVatSubject = org.is_vat_subject !== false
 
   return {
+    dismissed: org.setup_checklist_dismissed === true,
     organizationName: org.name ?? null,
     businessActivityId: org.business_activity_id ?? null,
     companyIdentityReady: Boolean(org.name && org.email && org.business_activity_id),

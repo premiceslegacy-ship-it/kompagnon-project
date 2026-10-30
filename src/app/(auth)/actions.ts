@@ -10,6 +10,7 @@ import { ATELIER_SENDER_NAME } from '@/lib/brand'
 import { headers } from 'next/headers'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { isSellableTier } from '@/lib/subscription-access'
+import { registerPendingSelfServiceSignup } from '@/lib/data/mutations/subscription-self-service'
 
 export type AuthState = {
   error: string | null
@@ -20,7 +21,9 @@ export type AuthState = {
 function translateAuthError(message: string): string {
   const map: Record<string, string> = {
     'Invalid login credentials': 'Email ou mot de passe incorrect.',
-    'Email not confirmed': "Votre email n'a pas encore été confirmé. Vérifiez votre boîte mail.",
+    // Volontairement aligné sur le message générique : « non confirmé »
+    // distinguait un compte existant d'une adresse inconnue.
+    'Email not confirmed': 'Email ou mot de passe incorrect.',
     'User already registered': 'Un compte existe déjà avec cet email.',
     'Email already in use': 'Un compte existe déjà avec cet email.',
     'Password should be at least 6 characters': 'Le mot de passe doit comporter au moins 6 caractères.',
@@ -44,6 +47,20 @@ function translateAuthError(message: string): string {
 }
 
 export async function login(_prevState: AuthState, formData: FormData): Promise<AuthState> {
+  const email = ((formData.get('email') as string) ?? '').trim().toLowerCase()
+  const requestHeaders = await headers()
+  const ip = getClientIp(requestHeaders)
+
+  // Aucune limite applicative n'existait sur le login : la seule barrière
+  // était celle de GoTrue, contournable par rotation d'IP.
+  const [byEmail, byIp] = await Promise.all([
+    checkRateLimit({ scope: 'auth:login', identifier: email, limit: 10, windowSeconds: 15 * 60 }),
+    checkRateLimit({ scope: 'auth:login-ip', identifier: ip, limit: 50, windowSeconds: 15 * 60 }),
+  ])
+  if (!byEmail.allowed || !byIp.allowed) {
+    return { error: 'Trop de tentatives. Réessayez dans quelques minutes.' }
+  }
+
   const supabase = await createClient()
 
   const { error } = await supabase.auth.signInWithPassword({
@@ -84,7 +101,15 @@ export async function signup(_prevState: AuthState, formData: FormData): Promise
     limit: Number.parseInt(process.env.SIGNUP_RATE_LIMIT_PER_HOUR ?? '5', 10),
     windowSeconds: 60 * 60,
   })
-  if (!signupLimit.allowed) {
+  // Clé IP seule : sans elle, changer d'email à chaque essai contournait la
+  // limite et permettait de créer des comptes (et des organisations) en série.
+  const signupIpLimit = await checkRateLimit({
+    scope: 'auth:signup-ip',
+    identifier: ip,
+    limit: Number.parseInt(process.env.SIGNUP_IP_RATE_LIMIT_PER_HOUR ?? '20', 10),
+    windowSeconds: 60 * 60,
+  })
+  if (!signupLimit.allowed || !signupIpLimit.allowed) {
     return { error: "Trop de créations de compte ont été tentées. Réessayez dans une heure." }
   }
 
@@ -115,6 +140,16 @@ export async function signup(_prevState: AuthState, formData: FormData): Promise
 
     const otp = linkData?.properties?.email_otp
     if (otp) {
+      if (linkData.user?.id) {
+        const registration = await registerPendingSelfServiceSignup({
+          userId: linkData.user.id,
+          email,
+          fullName,
+          preferredTier,
+          signupSource: signupMetadata.signup_source,
+        })
+        if ('error' in registration) console.error('[signup.operator-registration]', registration.error)
+      }
       const orgName = process.env.RESEND_FROM_NAME || ATELIER_SENDER_NAME
       const { subject, html } = buildSignupOtpEmail({ otp, orgName })
       await sendAuthEmail({ to: email, subject, html })
@@ -133,6 +168,17 @@ export async function signup(_prevState: AuthState, formData: FormData): Promise
 
   if (error) {
     return { error: translateAuthError(error.message) }
+  }
+
+  if (data.user?.id) {
+    const registration = await registerPendingSelfServiceSignup({
+      userId: data.user.id,
+      email,
+      fullName,
+      preferredTier,
+      signupSource: signupMetadata.signup_source,
+    })
+    if ('error' in registration) console.error('[signup.operator-registration]', registration.error)
   }
 
   if (!data.session) {

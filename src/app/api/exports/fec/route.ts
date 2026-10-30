@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getInvoicesForExport, type InvoiceForExport } from '@/lib/data/queries/invoices'
+import { InvoiceIssuanceAuthorityError } from '@/lib/pdf/server'
 import { getReceivedInvoicesForExport } from '@/lib/data/queries/received-invoices'
 import { generateFec, buildFecFilename, type FecInvoice, type FecReceivedInvoice, type FecOrgProfile } from '@/lib/exports/fec-generator'
 import { generateCsv, buildCsvFilename, type CsvInvoice } from '@/lib/exports/csv-generator'
@@ -105,24 +106,43 @@ export async function GET(req: Request) {
   // Charger le profil organisation
   const { data: org } = await admin
     .from('organizations')
-    .select('siren, siret, vat_number, is_vat_subject, tva_sur_debits, business_profile, sector')
+    .select('siren, siret, vat_number, is_vat_subject, business_profile, sector')
     .eq('id', orgId)
     .single()
 
   if (!org) return errorResponse('Organisation introuvable', 500)
 
-  // Validation SIRET obligatoire pour le FEC
-  if (format === 'fec' && !org.siren) {
+  // Les autorites légales des factures émises viennent des snapshots d'émission.
+  let invoices: InvoiceForExport[] = []
+  if (options.includeInvoices || options.includeAvoirs) {
+    try {
+      invoices = await getInvoicesForExport(from, to, options)
+    } catch (error) {
+      if (error instanceof InvoiceIssuanceAuthorityError) return errorResponse(error.message, 409)
+      console.error('[exports/fec] invoice authority lookup failed:', error)
+      return errorResponse('Impossible de vérifier les factures pour cet export comptable.', 500)
+    }
+  }
+  const invoiceEntries = selectedInvoiceEntries(invoices, options)
+  const invoiceIdentityRows = options.includePayments ? invoices : invoiceEntries
+  const sellerSirens = [...new Set(invoiceIdentityRows.map(invoice => invoice.seller_siren).filter((value): value is string => !!value))]
+
+  if (format === 'fec' && invoiceIdentityRows.some(invoice => !invoice.seller_siren)) {
+    return errorResponse('Le SIREN historique d’une facture sélectionnée est absent de son autorité d’émission.', 422)
+  }
+  if (format === 'fec' && sellerSirens.length > 1) {
+    return errorResponse('Les factures sélectionnées relèvent de plusieurs SIREN historiques et ne peuvent pas être exportées dans un FEC unique.', 422)
+  }
+  if (format === 'fec' && invoiceIdentityRows.length === 0 && !org.siren) {
     return errorResponse('Le numéro SIREN est obligatoire pour générer un FEC. Complétez votre profil entreprise dans les Paramètres.', 422)
   }
-
-  if (format === 'fec' && org.is_vat_subject && !org.vat_number) {
-    return errorResponse('Le numéro de TVA intracommunautaire est obligatoire pour les entreprises assujetties à la TVA. Complétez votre profil entreprise.', 422)
+  if (format === 'fec' && invoiceIdentityRows.some(invoice => invoice.is_vat_subject && !invoice.seller_vat_number)) {
+    return errorResponse('Le numéro de TVA historique d’une facture assujettie est absent de son autorité d’émission.', 422)
+  }
+  if (format === 'fec' && options.includeReceived && org.is_vat_subject && !org.vat_number) {
+    return errorResponse('Le numéro de TVA intracommunautaire est obligatoire pour les achats d’une entreprise assujettie. Complétez votre profil entreprise.', 422)
   }
 
-  // Charger les factures
-  const invoices = await getInvoicesForExport(from, to)
-  const invoiceEntries = selectedInvoiceEntries(invoices, options)
   const receivedInvoices = options.includeReceived ? await getReceivedInvoicesForExport(from, to) : []
 
   // Vérification continuité numérotation (warning bloquant pour exercice complet)
@@ -135,29 +155,32 @@ export async function GET(req: Request) {
     )
   }
 
-  const siren = org.siren ?? org.siret?.substring(0, 9) ?? 'SIREN_INCONNU'
+  const siren = sellerSirens[0] ?? org.siren ?? org.siret?.substring(0, 9) ?? 'SIREN_INCONNU'
   const orgProfile: FecOrgProfile = {
     siren,
     is_vat_subject: org.is_vat_subject ?? false,
-    tva_sur_debits: org.tva_sur_debits ?? false,
     business_profile: (org.business_profile as BusinessProfile) ?? 'btp',
   }
 
   if (format === 'csv') {
-    const csvInvoices: CsvInvoice[] = selectedCsvRows(invoices, options).map(inv => buildCsvInvoice(inv, orgProfile))
-    const content = generateCsv(csvInvoices, org.is_vat_subject ?? false, options.includePayments)
+    const csvInvoices: CsvInvoice[] = selectedCsvRows(invoices, options).map(buildCsvInvoice)
+    const hasVatSubjectInvoices = csvInvoices.length > 0
+      ? csvInvoices.some(invoice => invoice.is_vat_subject)
+      : org.is_vat_subject ?? false
+    const content = generateCsv(csvInvoices, hasVatSubjectInvoices, options.includePayments)
     const filename = buildCsvFilename(siren, from, to)
 
     return new NextResponse(content, {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
+        'Cache-Control': 'no-store, max-age=0',
         'Content-Disposition': `attachment; filename="${filename}"`,
       },
     })
   }
 
   // FEC
-  const fecInvoices: FecInvoice[] = invoices.map(inv => buildFecInvoice(inv, orgProfile))
+  const fecInvoices: FecInvoice[] = invoices.map(buildFecInvoice)
   const fecReceivedInvoices: FecReceivedInvoice[] = receivedInvoices.map(ri => ({
     id: ri.id,
     invoice_number: ri.invoice_number,
@@ -183,6 +206,7 @@ export async function GET(req: Request) {
 
   const headers: Record<string, string> = {
     'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'no-store, max-age=0',
     'Content-Disposition': `attachment; filename="${filename}"`,
   }
 
@@ -244,14 +268,16 @@ export async function POST(req: Request) {
     includeReceived: include_received,
   }
 
-  const admin2 = createAdminClient()
-  const { data: orgData } = await admin2
-    .from('organizations')
-    .select('is_vat_subject')
-    .eq('id', orgId)
-    .single()
-
-  const invoices = await getInvoicesForExport(from, to)
+  let invoices: InvoiceForExport[] = []
+  if (options.includeInvoices || options.includeAvoirs) {
+    try {
+      invoices = await getInvoicesForExport(from, to, options)
+    } catch (error) {
+      if (error instanceof InvoiceIssuanceAuthorityError) return errorResponse(error.message, 409)
+      console.error('[exports/fec:preview] invoice authority lookup failed:', error)
+      return errorResponse('Impossible de vérifier les factures pour cet aperçu comptable.', 500)
+    }
+  }
   const invoiceEntries = selectedInvoiceEntries(invoices, options)
   const receivedInvoices = options.includeReceived ? await getReceivedInvoicesForExport(from, to) : []
   const numberingResult = checkNumberingContinuity(invoiceEntries.map(i => i.number))
@@ -268,7 +294,7 @@ export async function POST(req: Request) {
       if (bd.rate === 5.5) { vatBreakdownTotals.base55 += bd.baseHt; vatBreakdownTotals.tva55 += bd.vatAmount }
     }
     vatBreakdownTotals.total += inv.total_tva
-    if (!(orgData?.is_vat_subject ?? false) && inv.invoice_type !== 'avoir' && inv.total_ttc > 0) {
+    if (!inv.is_vat_subject && inv.invoice_type !== 'avoir' && inv.total_ttc > 0) {
       autoLiqCount++
     }
   }
@@ -300,15 +326,12 @@ export async function POST(req: Request) {
 
 function clientDisplayName(client: InvoiceForExport['client']): string {
   if (!client) return ''
-  return (
-    client.company_name ??
-    [client.first_name, client.last_name].filter(Boolean).join(' ') ??
-    client.contact_name ??
-    ''
-  )
+  return client.company_name
+    ?? client.contact_name
+    ?? [client.first_name, client.last_name].filter(Boolean).join(' ')
 }
 
-function buildFecInvoice(inv: InvoiceForExport, orgProfile: FecOrgProfile): FecInvoice {
+function buildFecInvoice(inv: InvoiceForExport): FecInvoice {
   return {
     id: inv.id,
     number: inv.number ?? '',
@@ -319,7 +342,9 @@ function buildFecInvoice(inv: InvoiceForExport, orgProfile: FecOrgProfile): FecI
     total_ttc: inv.total_ttc,
     total_paid: inv.total_paid,
     paid_at: inv.paid_at,
-    is_vat_subject: orgProfile.is_vat_subject,
+    is_vat_subject: inv.is_vat_subject,
+    tva_sur_debits: inv.tva_sur_debits,
+    business_profile: (inv.business_profile as BusinessProfile | null) ?? null,
     pa_message_id: inv.pa_message_id,
     client: inv.client ? {
       id: inv.client.id,
@@ -331,7 +356,7 @@ function buildFecInvoice(inv: InvoiceForExport, orgProfile: FecOrgProfile): FecI
   }
 }
 
-function buildCsvInvoice(inv: InvoiceForExport, orgProfile: FecOrgProfile): CsvInvoice {
+function buildCsvInvoice(inv: InvoiceForExport): CsvInvoice {
   const bds = computeVatBreakdowns(inv.items)
   return {
     number: inv.number ?? '',
@@ -346,9 +371,9 @@ function buildCsvInvoice(inv: InvoiceForExport, orgProfile: FecOrgProfile): CsvI
     paid_at: inv.paid_at,
     status: inv.status,
     chantier_title: inv.chantier_title,
-    tva_sur_debits: orgProfile.tva_sur_debits,
-    is_vat_subject: orgProfile.is_vat_subject,
-    has_auto_liquidation: !orgProfile.is_vat_subject && inv.invoice_type !== 'avoir' && inv.total_ttc > 0,
+    tva_sur_debits: inv.tva_sur_debits,
+    is_vat_subject: inv.is_vat_subject,
+    has_auto_liquidation: !inv.is_vat_subject && inv.invoice_type !== 'avoir' && inv.total_ttc > 0,
     pa_message_id: inv.pa_message_id,
     vat_breakdown: bds.map(bd => ({
       rate: bd.rate,
