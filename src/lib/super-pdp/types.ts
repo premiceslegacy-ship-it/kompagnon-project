@@ -90,5 +90,7 @@ export function isSuperPdpTokenResponse(value: unknown): value is SuperPdpTokenR
 export function isSuperPdpCompany(value: unknown): value is SuperPdpCompany {
   if (!value || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
-  return typeof v.id === 'number' && typeof v.formal_name === 'string'
+  return typeof v.id === 'number'
+    && typeof v.formal_name === 'string'
+    && (v.env === 'sandbox' || v.env === 'production')
 }

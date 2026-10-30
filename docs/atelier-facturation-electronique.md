@@ -163,7 +163,7 @@ Deux flux distincts :
 }
 ```
 - `expires_in` = **1800s (30 min)** — access_token court, refresh systématique à prévoir.
-- `refresh_token` présent, opaque. Rotation à la prochaine utilisation non encore testée.
+- `refresh_token` est à usage unique : la rotation doit être conservée avant tout appel métier.
 - `scope` vide accepté (aucun scope explicite demandé dans l'exemple officiel ni dans ce test) — aucune restriction de scope observée.
 - Client secret envoyé en **body** du POST (`client_id` + `client_secret`), pas en Basic Auth HTTP.
 - **PKCE absent** des deux implémentations de référence (Go et Node) et du flux testé — `code_verifier`/`code_challenge` non requis malgré la recommandation OAuth 2.1 générale. Le `state` (aléa 16 octets base64url) reste la seule protection CSRF du flux.
@@ -256,23 +256,32 @@ Tables déjà existantes et **génériques, réutilisables sans migration** : `r
 
 **`operator_client_subscriptions`** (DB opérateur, `supabase/operator-migrations/014_super_pdp_einvoicing_config.sql`) : même changement en miroir, pour affichage cockpit. Colonne `b2brouter_active` (booléen legacy redondant, jamais consommé dans l'UI) retirée.
 
-### 8.3. Table nouvelle (Phase 0, faite)
+### 8.3. Table nouvelle et état de refresh (migrations cockpit 013 et 020)
 
 **`super_pdp_oauth_credentials`** (DB opérateur uniquement, `supabase/operator-migrations/013_super_pdp_oauth_credentials.sql`) :
 ```sql
 CREATE TABLE public.super_pdp_oauth_credentials (
-  organization_id          UUID        PRIMARY KEY,
   source_instance          TEXT        NOT NULL,
-  access_token_encrypted   TEXT        NOT NULL,
-  refresh_token_encrypted  TEXT        NOT NULL,
-  token_expires_at         TIMESTAMPTZ NOT NULL,
-  scopes                   TEXT[],
-  environment              TEXT        NOT NULL DEFAULT 'sandbox',
-  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+  organization_id           UUID        NOT NULL,
+  access_token_encrypted    TEXT        NOT NULL,
+  refresh_token_encrypted   TEXT        NOT NULL,
+  token_expires_at          TIMESTAMPTZ NOT NULL,
+  refresh_state             TEXT        NOT NULL DEFAULT 'ready',
+  refresh_claim_owner       UUID,
+  refresh_claimed_at        TIMESTAMPTZ,
+  credential_revision       UUID        NOT NULL DEFAULT gen_random_uuid(),
+  scopes                    TEXT[],
+  environment               TEXT        NOT NULL DEFAULT 'sandbox',
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_instance, organization_id)
 );
 ```
-RLS activée sans policy (bloque tout accès hors `service_role`/`createOperatorAdminClient()`). Jamais lue par les instances clientes — c'est la différence structurante avec le modèle B2Brouter initial (qui prévoyait des clés en env Cloudflare par client).
+La migration cockpit `020_super_pdp_refresh_claims.sql` ajoute l’état durable et les RPC `claim_super_pdp_oauth_refresh`, `complete_super_pdp_oauth_refresh`, `fail_super_pdp_oauth_refresh` et `store_super_pdp_oauth_grant`, exécutables uniquement par `service_role`. Le claim verrouille la paire `(source_instance, organization_id)` pendant sa décision et ne renvoie aucun ciphertext si `environment` ne correspond pas au `SUPER_PDP_ENV` explicite du cockpit (`sandbox` ou `production`). Le callback vérifie aussi que le `env` retourné par `/v1.beta/companies/me` correspond à cette configuration, avant d’enregistrer le grant ou de déclarer la connexion active.
+
+Un claim est borné à 30 secondes et la requête fournisseur à 10 secondes. Les réponses concurrentes obtiennent `busy` sans recevoir le refresh token. Un timeout, une réponse mal formée, une erreur de persistance ou un claim expiré impose `reconnect_required` : l’ancien refresh token n’est jamais rejoué. La complétion CAS vérifie le propriétaire et la révision, puis enregistre les deux tokens chiffrés et l’expiration atomiquement avant de rendre l’accès utilisable. `store_super_pdp_oauth_grant` remplace le grant et efface tout claim en une seule transaction; une réponse de refresh déjà en vol ne peut alors écraser les nouveaux identifiants.
+
+Un trigger bloque toute insertion ou modification directe de `super_pdp_oauth_credentials` : seules les RPC du protocole posent leur marqueur transactionnel pendant l’écriture. RLS est activée sans policy; la table et les RPC restent hors d’accès `anon`/`authenticated`. Les tokens restent exclusivement côté cockpit via `createOperatorAdminClient()` et ne sont jamais lus par les instances clientes.
 
 ---
 

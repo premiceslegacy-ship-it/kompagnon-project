@@ -76,7 +76,10 @@ done
 # Garde-fou avant tout build : secrets manquants, placeholders, incohérences.
 # Le préflight n'était appelé que par `npm run check`, jamais par le déploiement.
 node scripts/preflight-client.mjs "$worker_hint" --strict-env
-if [[ "$worker_hint" != "orsayn-cockpit" ]]; then
+if [[ "$worker_hint" == "orsayn-cockpit" ]]; then
+  # Read-only schema gate for the operator database, before cockpit build/deploy.
+  node scripts/operator-schema-check.mjs
+else
   # Read-only target-schema gate; the CLI loads only the canonical private client file.
   node scripts/quote-attachment-cutover.mjs "$worker_hint" --check
 fi

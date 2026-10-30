@@ -54,11 +54,12 @@ export async function GET(req: NextRequest) {
   const clientSecret = process.env.SUPER_PDP_CLIENT_SECRET?.trim()
   const redirectUri = process.env.SUPER_PDP_REDIRECT_URL?.trim()
   const encryptionKey = process.env.SUPER_PDP_ENCRYPTION_KEY?.trim()
-  // Le cockpit ne porte qu'une paire de credentials à la fois (une app OAuth = un
-  // environnement) : la bascule sandbox/production se fait en redéployant le cockpit
-  // avec l'autre .env, pas dynamiquement par requête. Cohérent tant qu'un seul
-  // cockpit sert tous les clients en sandbox (état actuel, Phase 1).
-  const environment = process.env.SUPER_PDP_ENV?.trim() === 'production' ? 'production' : 'sandbox'
+  const configuredEnvironment = process.env.SUPER_PDP_ENV?.trim()
+
+  if (configuredEnvironment !== 'sandbox' && configuredEnvironment !== 'production') {
+    return NextResponse.json({ error: 'Environnement Super PDP invalide côté cockpit' }, { status: 500 })
+  }
+  const environment = configuredEnvironment
 
   if (!endpoint || !clientId || !clientSecret || !redirectUri || !encryptionKey) {
     return NextResponse.json({ error: 'Configuration Super PDP incomplète côté cockpit' }, { status: 500 })
@@ -100,23 +101,25 @@ export async function GET(req: NextRequest) {
     return redirectWithStatus(appUrl, 'error', 'company_lookup_failed')
   }
 
+  if (company.env !== environment) {
+    return redirectWithStatus(appUrl, 'error', 'environment_mismatch')
+  }
+
+
   const [accessTokenEncrypted, refreshTokenEncrypted] = await Promise.all([
     encryptSecret(tokenResponse.access_token, encryptionKey),
     encryptSecret(tokenResponse.refresh_token, encryptionKey),
   ])
 
-  const { error: upsertError } = await operator
-    .from('super_pdp_oauth_credentials')
-    .upsert({
-      source_instance: state.source_instance,
-      organization_id: state.organization_id,
-      access_token_encrypted: accessTokenEncrypted,
-      refresh_token_encrypted: refreshTokenEncrypted,
-      token_expires_at: new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString(),
-      scopes: tokenResponse.scope ? tokenResponse.scope.split(' ').filter(Boolean) : [],
-      environment,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'source_instance,organization_id' })
+  const { error: upsertError } = await operator.rpc('store_super_pdp_oauth_grant', {
+    p_source_instance: state.source_instance,
+    p_organization_id: state.organization_id,
+    p_access_token_encrypted: accessTokenEncrypted,
+    p_refresh_token_encrypted: refreshTokenEncrypted,
+    p_token_expires_at: new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString(),
+    p_scopes: tokenResponse.scope ? tokenResponse.scope.split(' ').filter(Boolean) : [],
+    p_environment: environment,
+  })
 
   if (upsertError) {
     return redirectWithStatus(appUrl, 'error', 'credentials_store_failed')
