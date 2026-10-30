@@ -1,4 +1,4 @@
-import type { Organization } from '@/lib/data/queries/organization'
+import type { PdfOrganizationData } from '@/lib/pdf/document-types'
 import { pdfText } from '@/lib/pdf/pdf-design-system'
 import { PdfDoc } from '../engine/doc'
 import type { FontBytes } from '../engine/fonts'
@@ -45,10 +45,14 @@ export type ReportQuote = {
 
 export type MonthlyReportData = {
   month: string
-  organization: Organization & { logo_url: string | null }
+  organization: Pick<PdfOrganizationData, 'name' | 'logo_url' | 'siret' | 'email'>
   invoices: ReportInvoice[]
   quotes: ReportQuote[]
 }
+
+const ISSUED_INVOICE_STATUS: Record<string, true> = { sent: true, viewed: true, partial: true, paid: true, overdue: true }
+const WAITING_INVOICE_STATUS: Record<string, true> = { sent: true, viewed: true, partial: true, overdue: true }
+const UNPAID_INVOICE_STATUS: Record<string, true> = { sent: true, viewed: true, overdue: true }
 
 const MONTHS_FR = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre']
 
@@ -85,17 +89,14 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
   const doc = await PdfDoc.create(fontBytes)
   const F = doc.fonts
 
-  const isVatSubject = organization.is_vat_subject
   const currency = invoices[0]?.currency ?? quotes[0]?.currency ?? 'EUR'
-  const invoiceIssuedStatuses = ['sent', 'viewed', 'partial', 'paid', 'overdue']
-  const invoiceWaitingStatuses = ['sent', 'viewed', 'partial', 'overdue']
 
   const invoicesIssuedInMonth = invoices.filter(inv => inv.issue_date?.startsWith(month))
-  const sentPaid = invoicesIssuedInMonth.filter(inv => invoiceIssuedStatuses.includes(inv.status))
+  const sentPaid = invoicesIssuedInMonth.filter(inv => Object.hasOwn(ISSUED_INVOICE_STATUS, inv.status))
   const caHt = sentPaid.reduce((s, inv) => s + inv.total_ht, 0)
   const paidTtcTotal = (inv: ReportInvoice) => inv.status === 'paid' ? inv.total_ttc : inv.status === 'partial' ? inv.total_paid : 0
   const paidTtcInMonth = (inv: ReportInvoice) => {
-    const fromPayments = inv.payments.filter(p => p.payment_date?.startsWith(month)).reduce((s, p) => s + p.amount, 0)
+    const fromPayments = inv.payments.reduce((sum, payment) => payment.payment_date?.startsWith(month) ? sum + payment.amount : sum, 0)
     if (fromPayments > 0) return fromPayments
     if (inv.status === 'paid' && inv.paid_at?.startsWith(month)) return inv.total_ttc
     return 0
@@ -104,24 +105,30 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
     inv.total_ttc > 0 ? Math.min(inv.total_ht, inv.total_ht * (amountTtc / inv.total_ttc)) : 0
   const tvaFromTtc = (inv: ReportInvoice, amountTtc: number) =>
     inv.total_ttc > 0 ? Math.min(inv.total_tva, inv.total_tva * (amountTtc / inv.total_ttc)) : 0
-  const remainingHt = (inv: ReportInvoice) => ['sent', 'viewed', 'overdue'].includes(inv.status) ? inv.total_ht : inv.status === 'partial' ? Math.max(0, inv.total_ht - htFromTtc(inv, paidTtcTotal(inv))) : 0
-  const encaisseHt = invoices.reduce((s, inv) => s + htFromTtc(inv, paidTtcInMonth(inv)), 0)
-  const encaisseTtc = invoices.reduce((s, inv) => s + paidTtcInMonth(inv), 0)
+  const remainingHt = (inv: ReportInvoice) => Object.hasOwn(UNPAID_INVOICE_STATUS, inv.status) ? inv.total_ht : inv.status === 'partial' ? Math.max(0, inv.total_ht - htFromTtc(inv, paidTtcTotal(inv))) : 0
+  let encaisseHt = 0
+  let encaisseTtc = 0
+  let tvaTotale = 0
+  for (const invoice of invoices) {
+    const paidInMonth = paidTtcInMonth(invoice)
+    encaisseHt += htFromTtc(invoice, paidInMonth)
+    encaisseTtc += paidInMonth
+    tvaTotale += tvaFromTtc(invoice, paidInMonth)
+  }
   const resteHt = invoicesIssuedInMonth.reduce((s, inv) => s + remainingHt(inv), 0)
   const totalInternalCost = invoicesIssuedInMonth.reduce((s, inv) => s + inv.items_cost_total, 0)
   const margeHt = caHt - totalInternalCost
   const margePct = caHt > 0 ? Math.round((margeHt / caHt) * 100) : 0
   const hasMargin = totalInternalCost > 0
 
-  const tvaTotale = isVatSubject ? invoices.reduce((s, inv) => s + tvaFromTtc(inv, paidTtcInMonth(inv)), 0) : 0
 
   const qEmis = quotes.length
   const qAccepted = quotes.filter(q => q.status === 'accepted').length
   const qAcceptedHt = quotes.filter(q => q.status === 'accepted').reduce((s, q) => s + q.total_ht, 0)
   const qConvRate = qEmis > 0 ? Math.round((qAccepted / qEmis) * 100) : 0
 
-  const sentPaidCount = invoicesIssuedInMonth.filter(i => invoiceIssuedStatuses.includes(i.status)).length
-  const sentCount = invoicesIssuedInMonth.filter(i => invoiceWaitingStatuses.includes(i.status)).length
+  const sentPaidCount = sentPaid.length
+  const sentCount = invoicesIssuedInMonth.reduce((count, invoice) => count + Number(Object.hasOwn(WAITING_INVOICE_STATUS, invoice.status)), 0)
 
   const logoImg = organization.logo_url ? await embedImage(doc.doc, organization.logo_url) : null
 
@@ -177,7 +184,7 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
   drawSectionTitle(doc, 'Synthèse facturation', F)
   const kpiItems: { label: string; value: string; sub?: string; accent?: boolean }[] = [
     { label: 'Montant facturé HT', value: fmt(caHt, currency), sub: `${sentPaidCount} facture${sentPaidCount > 1 ? 's' : ''}`, accent: true },
-    { label: 'Encaissé HT', value: fmt(encaisseHt, currency), sub: isVatSubject ? `TTC : ${fmt(encaisseTtc, currency)}` : undefined },
+    { label: 'Encaissé HT', value: fmt(encaisseHt, currency), sub: `TTC : ${fmt(encaisseTtc, currency)}` },
     { label: 'Reste à recouvrer', value: fmt(resteHt, currency), sub: `${sentCount} facture${sentCount > 1 ? 's' : ''} en attente` },
   ]
   if (hasMargin) kpiItems.push({ label: 'Bénéfice prévu', value: `${margePct}%`, sub: `${fmt(margeHt, currency)} HT · coûts lignes` })
@@ -185,7 +192,6 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
   doc.moveDown(SPACE.md)
 
   // ── TVA ──
-  if (isVatSubject) {
     drawInfoBand(doc, F, (cy) => {
       doc.page.drawText('TVA COLLECTÉE', { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.xxs, font: F.regular, color: COLOR.secondary })
       cy -= SPACE.xs + SIZE.lg
@@ -193,11 +199,6 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
       cy -= 4 + SIZE.xxs
       doc.page.drawText(`Calculée sur ${fmt(encaisseTtc, currency)} TTC encaissé`, { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.xxs, font: F.regular, color: COLOR.secondary })
     })
-  } else {
-    drawInfoBand(doc, F, (cy) => {
-      doc.page.drawText('TVA non applicable - Art. 293B du CGI (franchise en base)', { x: PAGE.margin + SPACE.md, y: cy - SIZE.sm, size: SIZE.sm, font: F.regular, color: COLOR.secondary })
-    })
-  }
   doc.moveDown(SPACE.md)
 
   // ── KPI Devis ──
@@ -218,7 +219,7 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
     drawSectionTitle(doc, 'Détail des factures', F)
     doc.moveDown(SPACE.sm)
 
-    const numW = 55, dateW = 65, htW = 65, tvaW = isVatSubject ? 50 : 0, ttcW = 60
+    const numW = 55, dateW = 65, htW = 65, tvaW = 50, ttcW = 60
     const clientW = CONTENT_WIDTH - numW - dateW - htW - tvaW - ttcW - 75
     const statusW = 75
 
@@ -227,7 +228,7 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
       { width: clientW, header: 'Client' },
       { width: dateW, header: 'Date' },
       { width: htW, header: 'HT', align: 'right' },
-      ...(isVatSubject ? [{ width: tvaW, header: 'TVA', align: 'right' as const }] : []),
+      { width: tvaW, header: 'TVA', align: 'right' },
       { width: ttcW, header: 'TTC', align: 'right' },
       { width: statusW, header: 'Statut', align: 'right' },
     ]
@@ -237,7 +238,7 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
         { value: pdfText(inv.client_name ?? '—') },
         { value: fmtDate(inv.issue_date ?? inv.created_at) },
         { value: fmt(inv.total_ht, inv.currency), style: { font: F.heading } },
-        ...(isVatSubject ? [{ value: fmt(inv.total_tva, inv.currency) }] : []),
+        { value: fmt(inv.total_tva, inv.currency) },
         { value: fmt(inv.total_ttc, inv.currency) },
         { value: STATUS_LABELS[inv.status] ?? inv.status },
       ],

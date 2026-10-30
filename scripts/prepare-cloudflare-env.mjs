@@ -5,11 +5,19 @@ import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 
 const workerName = process.argv[2]
+
+const isCockpitTarget = workerName === 'orsayn-cockpit'
 const args = new Set(process.argv.slice(3))
 const applySecrets = args.has('--apply-secrets') || args.has('--apply-all')
 const applyAll = args.has('--apply-all')
 const envFileFlag = process.argv.find((arg) => arg.startsWith('--env-file='))
-const envFile = envFileFlag ? envFileFlag.split('=')[1] : '.env.local'
+const envFile = envFileFlag
+  ? envFileFlag.split('=')[1]
+  : isCockpitTarget
+    ? '.env.cockpit'
+    : workerName
+      ? `.env.client-${workerName}`
+      : '.env.local'
 
 const secretKeys = [
   'SUPABASE_ANON_KEY',
@@ -20,9 +28,11 @@ const secretKeys = [
   'CRON_SECRET',
   'MEMBER_SESSION_SECRET',
   'RATE_LIMIT_SECRET',
+  'ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY',
   'VAPID_PRIVATE_KEY',
   'OPERATOR_INGEST_SECRET',
   'OPERATOR_CONFIG_SYNC_SECRET',
+  'OPERATOR_MASTER_SECRET',
   'OPERATOR_SUPABASE_SERVICE_ROLE_KEY',
   // Super PDP : le vrai secret, cockpit uniquement — jamais dans un .env.client-*
   // (voir docs/atelier-facturation-electronique.md §3/§7.2). Le client_id, lui,
@@ -33,6 +43,16 @@ const secretKeys = [
   'STRIPE_WEBHOOK_SECRET',
   'OPERATOR_TRIAL_FINGERPRINT_SECRET',
 ]
+
+const cockpitOnlySecretKeys = new Set([
+  'OPERATOR_MASTER_SECRET',
+  'OPERATOR_SUPABASE_SERVICE_ROLE_KEY',
+  'SUPER_PDP_CLIENT_SECRET',
+  'SUPER_PDP_ENCRYPTION_KEY',
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+  'OPERATOR_TRIAL_FINGERPRINT_SECRET',
+])
 
 const textKeys = [
   'SUPABASE_URL',
@@ -90,6 +110,27 @@ const textKeys = [
   'NEXT_PUBLIC_POSTHOG_KEY',
   'NEXT_PUBLIC_POSTHOG_HOST',
 ]
+
+const cockpitOnlyTextKeys = new Set([
+  'OPERATOR_ALLOWED_EMAILS',
+  'OPERATOR_SUPABASE_URL',
+  'OPERATOR_USD_TO_EUR_RATE',
+  'OPERATOR_SELF_SERVICE_SOURCE_INSTANCE',
+  'OPERATOR_ALERT_EMAIL',
+  'STRIPE_PRICE_STARTER',
+  'STRIPE_PRICE_PRO',
+  'STRIPE_PRICE_EXPERT',
+  'STRIPE_PRICE_EXPERT_LEGACY',
+  'STRIPE_PORTAL_CONFIGURATION_ID',
+  'STRIPE_SELF_SERVICE_PORTAL_CONFIGURATION_ID',
+])
+
+const targetSecretKeys = isCockpitTarget
+  ? secretKeys
+  : secretKeys.filter((key) => !cockpitOnlySecretKeys.has(key))
+const targetTextKeys = isCockpitTarget
+  ? textKeys
+  : textKeys.filter((key) => !cockpitOnlyTextKeys.has(key))
 
 // SENTRY_AUTH_TOKEN / SENTRY_ORG / SENTRY_PROJECT ne sont volontairement PAS
 // dans secretKeys ni textKeys : ils ne servent qu'à l'upload de sourcemaps au
@@ -200,27 +241,32 @@ const env = {
   ...envClient,
 }
 
+if ((env.OPERATOR_MODE === 'true') !== isCockpitTarget) {
+  console.error(`OPERATOR_MODE must be ${isCockpitTarget ? 'true' : 'false or unset'} for target ${workerName}`)
+  process.exit(1)
+}
+
 console.log(`Cloudflare env preparation for ${workerName}`)
 if (applyAll) console.log('Mode: apply ALL (secrets via wrangler + text vars via API)')
 else if (applySecrets) console.log('Mode: apply secrets via wrangler (dry-run for text vars)')
 else console.log('Mode: dry-run')
 console.log('')
 
-const missingSecrets = secretKeys.filter((key) => !env[key])
-const missingText = textKeys.filter((key) => !env[key])
+const missingSecrets = targetSecretKeys.filter((key) => !env[key])
+const missingText = targetTextKeys.filter((key) => !env[key])
 
 // ── Nettoyage des variables texte conflictuelles avec les secrets ──────────────
 if (applySecrets) {
   const accountId = env['CLOUDFLARE_ACCOUNT_ID']
   const apiToken = env['CLOUDFLARE_API_TOKEN']
   if (accountId && apiToken) {
-    await deleteTextBindingsViaApi(secretKeys, accountId, apiToken)
+    await deleteTextBindingsViaApi(targetSecretKeys, accountId, apiToken)
   }
 }
 
 // ── Secrets ────────────────────────────────────────────────────────────────────
 console.log('Secrets:')
-for (const key of secretKeys) {
+for (const key of targetSecretKeys) {
   if (!env[key]) {
     console.log(`  MISSING ${key}`)
     continue
@@ -249,7 +295,7 @@ if (applyAll) {
     process.exitCode = 1
   } else {
     const varsToApply = {}
-    for (const key of textKeys) {
+    for (const key of targetTextKeys) {
       if (env[key]) varsToApply[key] = env[key]
       else console.log(`  SKIP (absent) ${key}`)
     }
@@ -265,7 +311,7 @@ if (applyAll) {
     }
   }
 } else {
-  for (const key of textKeys) {
+  for (const key of targetTextKeys) {
     if (!env[key]) console.log(`  MISSING ${key}`)
     else console.log(`  ${key}=${env[key]}`)
   }

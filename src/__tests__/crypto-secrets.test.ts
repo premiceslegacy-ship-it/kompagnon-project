@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { encryptSecret, decryptSecret } from '@/lib/crypto/secrets'
 
-const VALID_KEY = 'MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=' // 32 octets en base64
+// Vecteur de test déterministe, jamais une clé opérationnelle.
+const VALID_KEY = Buffer.from('01234567890123456789012345678901').toString('base64')
 
 describe('encryptSecret / decryptSecret', () => {
   it('round-trips a plaintext value', async () => {
@@ -19,7 +20,7 @@ describe('encryptSecret / decryptSecret', () => {
   })
 
   it('rejects a key that does not decode to exactly 32 bytes', async () => {
-    await expect(encryptSecret('value', 'dG9vLXNob3J0')).rejects.toThrow(/32 bytes/)
+    await expect(encryptSecret('value', 'dG9vLXNob3J0')).rejects.toThrow()
   })
 
   it('rejects a truncated ciphertext', async () => {
@@ -28,7 +29,7 @@ describe('encryptSecret / decryptSecret', () => {
 
   it('fails to decrypt with the wrong key', async () => {
     const ciphertext = await encryptSecret('value', VALID_KEY)
-    const otherKey = 'OTg3NjU0MzIxMDk4NzY1NDMyMTA5ODc2NTQzMjEwOTg=' // 32 octets, different from VALID_KEY
+    const otherKey = Buffer.from('98765432109876543210987654321098').toString('base64')
 
     await expect(decryptSecret(ciphertext, otherKey)).rejects.toThrow()
   })

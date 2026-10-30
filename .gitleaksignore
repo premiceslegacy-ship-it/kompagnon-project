@@ -1,0 +1,6 @@
+# Reviewed 2026-10-26: deterministic AES test vectors, not operational keys.
+f205a26351021f69c8b1c0686452444d30db603b:src/__tests__/crypto-secrets.test.ts:generic-api-key:4
+f205a26351021f69c8b1c0686452444d30db603b:src/__tests__/crypto-secrets.test.ts:generic-api-key:31
+# Reviewed 2026-10-26: NEXT_PUBLIC_POSTHOG_KEY is the public client ingestion key.
+da8b885d5b35f7381405a49c3c7ba303819285ea:.env.client-template:generic-api-key:68
+# Same three reviewed findings; commit IDs mapped after removing historical .next artifacts.

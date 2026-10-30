@@ -39,6 +39,9 @@ export async function completeInviteSetup(formData: FormData) {
     redirect('/invite/setup?error=password_failed')
   }
 
+  // Un mot de passe volé ne doit pas survivre à sa rotation : on coupe les
+  // autres sessions.
+  await supabase.auth.signOut({ scope: 'others' })
   revalidatePath('/', 'layout')
   redirect('/dashboard')
 }

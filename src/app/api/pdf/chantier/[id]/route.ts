@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { pdfResponse } from '@/lib/pdf/response'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getOrganization } from '@/lib/data/queries/organization'
@@ -19,8 +20,9 @@ function pdfOrigin(): string {
 
 export async function GET(
   req: Request,
-  { params }: { params: { id: string } },
+  { params: paramsPromise }: { params: Promise<{ id: string }> },
 ) {
+  const params = await paramsPromise
   if (!isValidUuid(params.id)) return new NextResponse('Chantier introuvable', { status: 404 })
 
   const supabase = await createClient()
@@ -124,12 +126,5 @@ export async function GET(
 
   const fileName = `rapport-chantier-${chantier.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.pdf`
 
-  return new NextResponse(buffer, {
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': download
-        ? `attachment; filename="${fileName}"`
-        : `inline; filename="${fileName}"`,
-    },
-  })
+  return pdfResponse(buffer, fileName, { download, fallback: 'rapport-chantier' })
 }

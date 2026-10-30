@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
-import { verifyOperatorSignature } from '@/lib/operator'
+import { hasOperatorMasterSecret, readOperatorRequest } from '@/lib/operator'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,24 +23,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'STRIPE_SECRET_KEY manquant' }, { status: 500 })
   }
 
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
-  if (!secret) {
-    return NextResponse.json({ error: 'Operator secret manquant' }, { status: 500 })
+  if (!hasOperatorMasterSecret()) {
+    return NextResponse.json({ error: 'Operator master secret manquant' }, { status: 500 })
   }
 
   const rawBody = await req.text()
-  const signature = req.headers.get('x-operator-signature')
-  if (!verifyOperatorSignature(rawBody, secret, signature)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const check = readOperatorRequest<{ source_instance: string; organization_id?: string; return_url: string }>(
+    rawBody,
+    req.headers,
+    { requireMaster: true },
+  )
+  if (!check.ok) {
+    return NextResponse.json({ error: check.error }, { status: check.status })
   }
-
-  let body: { source_instance: string; organization_id?: string; return_url: string }
-  try {
-    body = JSON.parse(rawBody)
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
+  const body = check.body
 
   const { source_instance, organization_id, return_url } = body
   if (!source_instance || !return_url) {
@@ -109,6 +105,8 @@ export async function POST(req: NextRequest) {
     configuration: portalConfigId,
   }
 
+  // Portal sessions are short-lived capabilities, not state-changing operations;
+  // retries create a fresh URL rather than reusing a possibly expired one.
   const stripeRes = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {
     method: 'POST',
     headers: {

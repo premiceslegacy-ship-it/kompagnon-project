@@ -906,7 +906,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
     });
     const [profileSaveStatus, setProfileSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-    const [passwordFields, setPasswordFields] = useState({ password: '', confirm: '' });
+    const [passwordFields, setPasswordFields] = useState({ current: '', password: '', confirm: '' });
     const [passwordSaveStatus, setPasswordSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [passwordError, setPasswordError] = useState<string | null>(null);
 
@@ -930,6 +930,10 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
 
     function handleSavePassword() {
         setPasswordError(null);
+        if (!passwordFields.current) {
+            setPasswordError('Saisissez votre mot de passe actuel.');
+            return;
+        }
         if (!passwordFields.password || passwordFields.password.length < 8) {
             setPasswordError('Le mot de passe doit contenir au moins 8 caractères.');
             return;
@@ -941,6 +945,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
         setPasswordSaveStatus('saving');
         startTransition(async () => {
             const fd = new FormData();
+            fd.append('current_password', passwordFields.current);
             fd.append('password', passwordFields.password);
             fd.append('confirm', passwordFields.confirm);
             const result = await updatePassword(fd);
@@ -950,7 +955,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                 setTimeout(() => setPasswordSaveStatus('idle'), 3000);
             } else {
                 setPasswordSaveStatus('saved');
-                setPasswordFields({ password: '', confirm: '' });
+                setPasswordFields({ current: '', password: '', confirm: '' });
                 setTimeout(() => setPasswordSaveStatus('idle'), 2000);
             }
         });
@@ -982,6 +987,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
                             <p className="mb-4 text-sm text-red-400">{passwordError}</p>
                         )}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Mot de passe actuel</label><input type="password" value={passwordFields.current} onChange={e => setPasswordFields(f => ({ ...f, current: e.target.value }))} placeholder="••••••••" autoComplete="current-password" className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                             <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Nouveau mot de passe</label><input type="password" value={passwordFields.password} onChange={e => setPasswordFields(f => ({ ...f, password: e.target.value }))} placeholder="Minimum 8 caractères" className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                             <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Confirmer le mot de passe</label><input type="password" value={passwordFields.confirm} onChange={e => setPasswordFields(f => ({ ...f, confirm: e.target.value }))} placeholder="••••••••" className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
                         </div>

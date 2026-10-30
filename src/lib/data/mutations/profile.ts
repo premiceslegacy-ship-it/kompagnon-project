@@ -74,8 +74,11 @@ export async function updatePassword(formData: FormData): Promise<PasswordState>
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
 
-  const password = (formData.get('password') as string)?.trim()
-  const confirm  = (formData.get('confirm') as string)?.trim()
+  // Pas de `trim()` : login/signup n'en appliquent pas, un mot de passe
+  // saisi avec un espace de tête deviendrait impossible à réutiliser.
+  const password = formData.get('password') as string
+  const confirm  = formData.get('confirm') as string
+  const currentPassword = formData.get('current_password') as string | null
 
   if (!password || password.length < 8) {
     return { error: 'Le mot de passe doit contenir au moins 8 caractères.' }
@@ -84,11 +87,25 @@ export async function updatePassword(formData: FormData): Promise<PasswordState>
     return { error: 'Les mots de passe ne correspondent pas.' }
   }
 
+  // Un simple cookie de session volé suffisait à changer le mot de passe :
+  // l'ancien est exigé dès qu'il est fourni par le formulaire.
+  if (currentPassword !== null) {
+    if (!currentPassword) return { error: 'Saisissez votre mot de passe actuel.' }
+
+    const verifier = createClient()
+    const { error: verifyError } = await (await verifier).auth.signInWithPassword({
+      email: user.email ?? '',
+      password: currentPassword,
+    })
+    if (verifyError) return { error: 'Mot de passe actuel incorrect.' }
+  }
+
   const { error } = await supabase.auth.updateUser({ password })
   if (error) {
     console.error('[updatePassword]', error.message)
     return { error: 'Impossible de changer le mot de passe.' }
   }
 
+  await supabase.auth.signOut({ scope: 'others' })
   return { error: null, success: true }
 }

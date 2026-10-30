@@ -1,6 +1,6 @@
 import Image from 'next/image'
 import { redirect } from 'next/navigation'
-import { ShieldCheck } from 'lucide-react'
+import { ArrowDown, CheckCircle2, Database, ShieldCheck } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentMembershipContext } from '@/lib/data/queries/membership'
 import { getOrganization } from '@/lib/data/queries/organization'
@@ -18,6 +18,8 @@ import styles from './activation.module.css'
 
 const ERROR_MESSAGES: Record<string, string> = {
   trial_already_used: 'L’essai gratuit a déjà été utilisé pour cet email ou ce SIRET.',
+  trial_email_already_used: 'Cette adresse email a déjà bénéficié de l’essai gratuit.',
+  trial_siret_already_used: 'Ce SIRET possède déjà un espace Atelier. Demandez à la personne qui l’a créé de vous inviter depuis Réglages → Équipe.',
   trial_activation_failed: 'Votre espace est prêt, mais son activation n’a pas abouti. Réessayez dans un instant.',
   checkout_failed: 'Le paiement sécurisé est momentanément indisponible. Aucun débit n’a été effectué.',
   portal_failed: 'Le portail de facturation est momentanément indisponible. Réessayez dans un instant ou contactez contact@orsayn.fr.',
@@ -36,7 +38,8 @@ function buildSetupWhatsappUrl(baseUrl: string | undefined, companyName: string)
   }
 }
 
-export default async function ActivationPage({ searchParams }: { searchParams?: { error?: string; checkout?: string; export?: string } }) {
+export default async function ActivationPage({ searchParams: searchParamsPromise }: { searchParams: Promise<{ error?: string; checkout?: string; export?: string }> }) {
+  const searchParams = await searchParamsPromise
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -85,7 +88,7 @@ export default async function ActivationPage({ searchParams }: { searchParams?: 
 
         <section className={styles.hero}>
           <div className={styles.heroContent}>
-            <p className={styles.eyebrow}>{companyName} · {heroEyebrow}</p>
+            <p className={styles.eyebrow}>{heroEyebrow}</p>
             <h1>{hasConsumedTrial ? <>Récupérez vos <em>soirées</em>.</> : <>Je récupère <em>10 h et 18 % de marge</em> chaque mois.</>}</h1>
             <p className={styles.heroLead}>{heroDescription}</p>
 
@@ -102,6 +105,20 @@ export default async function ActivationPage({ searchParams }: { searchParams?: 
             )}
             {activationState.showPortal && <form action={portalAction} className={styles.trialForm}><CheckoutSubmitButton label="Régulariser dans Stripe" featured /></form>}
             {membership.roleSlug !== 'owner' && <p className={styles.heroLead}>Seul le dirigeant du compte peut choisir une formule pour toute l’équipe.</p>}
+
+            {hasConsumedTrial && membership.roleSlug === 'owner' && (
+              <div className={styles.expiredSummary}>
+                <div className={styles.expiredStatus}><CheckCircle2 aria-hidden="true" /> Essai terminé · aucun débit</div>
+                <div className={styles.expiredFacts}>
+                  <span><Database aria-hidden="true" /> Données et documents conservés</span>
+                  <span><ShieldCheck aria-hidden="true" /> Reprise immédiate, sans ressaisie</span>
+                </div>
+                <a href="#activation-plans-title" className={styles.expiredCta}>
+                  Voir les formules dès {ATELIER_PRICING.pro.amountEur} € HT / mois
+                  <ArrowDown aria-hidden="true" />
+                </a>
+              </div>
+            )}
           </div>
         </section>
 
@@ -110,6 +127,7 @@ export default async function ActivationPage({ searchParams }: { searchParams?: 
             checkoutAction={checkoutAction}
             trialAvailable={activationState.canStartTrial}
             startTrialAction={startTrialAction}
+            preferredTier={entitlement?.preferredTier ?? 'pro'}
             setupAmount={ATELIER_PRICING.setup.amountEur}
             setupWhatsappUrl={setupWhatsappUrl}
           />

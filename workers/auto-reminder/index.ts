@@ -1,12 +1,12 @@
 /**
  * Cloudflare Worker — Crons automatiques Atelier
  *
- * Déclenché chaque matin à 7h UTC (8h Paris hiver, 9h Paris été).
+ * Déclenché chaque heure pour les rattrapages techniques et chaque matin à
+ * 7h UTC (8h Paris hiver, 9h Paris été) pour les traitements métier.
  * Appelle séquentiellement les API routes Next.js sécurisées par CRON_SECRET :
- *   1. /api/cron/auto-reminders    — relances devis/factures en retard (IA)
- *   2. /api/cron/recurring-invoices — brouillons récurrents + auto-envoi PDF si délai expiré
- *   3. /api/cron/chantier-period-invoices — brouillons des factures de période chantier
- *   4. /api/cron/member-token-reminders — rappel J-3 avant expiration des liens magiques membres
+ *   - /api/cron/operator-usage-sync — rattrapage des consommations cockpit
+ *   - /api/cron/onboarding-reminders — relances progressives des inscrits bloqués
+ *   - traitements métier quotidiens existants
  *
  * Variables d'environnement à configurer dans Cloudflare Dashboard :
  *   APP_URL      → URL de l'app (ex: https://atelier-weber.workers.dev)
@@ -31,8 +31,8 @@ function constantTimeEqual(a: string | null | undefined, b: string | null | unde
 }
 
 export default {
-  async scheduled(_event: { scheduledTime: number }, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
-    ctx.waitUntil(runAllCrons(env))
+  async scheduled(event: { scheduledTime: number; cron: string }, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
+    ctx.waitUntil(event.cron === '10 * * * *' ? runFastCrons(env) : runAllCrons(env))
   },
 
   async fetch(request: Request, env: Env, _ctx: unknown): Promise<Response> {
@@ -49,10 +49,17 @@ export default {
 }
 
 async function runAllCrons(env: Env): Promise<void> {
+  await runFastCrons(env)
   await callCron(env, '/api/cron/auto-reminders')
   await callCron(env, '/api/cron/recurring-invoices')
   await callCron(env, '/api/cron/chantier-period-invoices')
   await callCron(env, '/api/cron/member-token-reminders')
+}
+
+async function runFastCrons(env: Env): Promise<void> {
+  await callCron(env, '/api/cron/operator-usage-sync')
+  await callCron(env, '/api/cron/operator-signup-sync')
+  await callCron(env, '/api/cron/onboarding-reminders')
 }
 
 async function callCron(env: Env, path: string): Promise<void> {

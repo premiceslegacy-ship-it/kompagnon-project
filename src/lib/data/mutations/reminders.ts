@@ -13,7 +13,8 @@ import { sendPushToOrg } from '@/lib/push'
 import { renderQuotePdf } from '@/lib/pdf/documents/quote'
 import type { Client } from '@/lib/data/queries/clients'
 import { getClientGreetingName } from '@/lib/client'
-import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
+import { InvoiceIssuanceAuthorityError, renderInvoicePdfBufferById } from '@/lib/pdf/server'
+import type { InvoicePdfResult } from '@/lib/pdf/server'
 
 type Result = { error: string | null }
 
@@ -41,17 +42,22 @@ export async function sendInvoiceReminder(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
 
-  // Charger facture + client + org + template personnalisé
-  const [
-    { data: invoice },
-    { data: org },
-  ] = await Promise.all([
-    supabase.from('invoices').select('id, number, total_ttc, currency, due_date, client_id').eq('id', invoiceId).eq('organization_id', orgId).single(),
-    supabase.from('organizations').select('name, email, email_from_address, logo_url').eq('id', orgId).single(),
-  ])
+  let pdf: InvoicePdfResult | null
+  try {
+    pdf = await renderInvoicePdfBufferById(invoiceId, orgId)
+  } catch (pdfErr) {
+    console.error('[sendInvoiceReminder] PDF generation error:', pdfErr)
+    if (pdfErr instanceof InvoiceIssuanceAuthorityError) return { error: pdfErr.message }
+    return { error: 'Impossible de générer le PDF de la facture.' }
+  }
+  if (!pdf) return { error: 'Facture introuvable.' }
+  const invoice = pdf.authority.invoice
+  const org = pdf.authority.organization
+  const attachments = [{ filename: pdf.fileName, content: pdf.buffer }]
 
-  if (!invoice) return { error: 'Facture introuvable.' }
-  if (!org) return { error: 'Organisation introuvable.' }
+  const clientEmail = invoice.client?.email ?? null
+  const clientName = invoice.client ? getClientGreetingName(invoice.client) : 'Client'
+  if (!clientEmail) return { error: 'Adresse email du client absente de l’autorité d’émission.' }
 
   // Compter les relances existantes pour choisir niveau 1 ou 2
   const { count } = await supabase
@@ -74,20 +80,6 @@ export async function sendInvoiceReminder(
 
   let subject: string
   let html: string
-  let clientEmail: string | null = null
-  let clientName = 'Client'
-
-  if (invoice.client_id) {
-    const { data: client } = await supabase
-      .from('clients')
-      .select('company_name, contact_name, first_name, last_name, email')
-      .eq('id', invoice.client_id)
-      .single()
-    if (client) {
-      clientName = getClientGreetingName(client as any)
-      clientEmail = (client as any).email ?? null
-    }
-  }
 
   const fmtAmount = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: invoice.currency ?? 'EUR' }).format(invoice.total_ttc ?? 0)
   const fmtDate = invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : ''
@@ -116,25 +108,14 @@ export async function sendInvoiceReminder(
     html = wrapHtml(org.name, bodyText, org.logo_url)
   }
 
-  // Générer le PDF de la facture en pièce jointe
-  let attachments: Array<{ filename: string; content: Buffer }> | undefined
-  try {
-    const pdf = await renderInvoicePdfBufferById(invoiceId, orgId)
-    if (pdf) attachments = [{ filename: pdf.fileName, content: pdf.buffer }]
-  } catch (pdfErr) {
-    console.error('[sendInvoiceReminder] PDF generation error:', pdfErr)
-  }
 
-  // Envoyer l'email si le client a une adresse
-  if (clientEmail) {
-    const mail = await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
-      .catch((err): { error: string | null } => {
-        console.error('[sendInvoiceReminder] email error:', err)
-        return { error: "Impossible d'envoyer l'email." }
-      })
-    // Une relance non partie ne doit pas être journalisée comme envoyée.
-    if (mail.error) return { error: mail.error }
-  }
+  // Une relance non partie ne doit pas être journalisée comme envoyée.
+  const mail = await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
+    .catch((err): { error: string | null } => {
+      console.error('[sendInvoiceReminder] email error:', err)
+      return { error: "Impossible d'envoyer l'email." }
+    })
+  if (mail.error) return { error: mail.error }
 
   // Logger la relance dans la table reminders
   await supabase.from('reminders').insert({

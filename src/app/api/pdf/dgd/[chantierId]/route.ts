@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { pdfResponse } from '@/lib/pdf/response'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { renderDgdPdfBufferByChantierId } from '@/lib/pdf/server'
@@ -6,8 +7,9 @@ import { isValidUuid } from '@/lib/security'
 
 export async function GET(
   req: Request,
-  { params }: { params: { chantierId: string } },
+  { params: paramsPromise }: { params: Promise<{ chantierId: string }> },
 ) {
+  const params = await paramsPromise
   if (!isValidUuid(params.chantierId)) return new NextResponse('Chantier introuvable', { status: 404 })
 
   const supabase = await createClient()
@@ -37,12 +39,5 @@ export async function GET(
 
   const download = new URL(req.url).searchParams.get('download') === '1'
 
-  return new NextResponse(result.buffer, {
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': download
-        ? `attachment; filename="${result.fileName}"`
-        : `inline; filename="${result.fileName}"`,
-    },
-  })
+  return pdfResponse(result.buffer, result.fileName, { download })
 }

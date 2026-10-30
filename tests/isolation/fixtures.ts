@@ -15,4 +15,12 @@ export const TENANTS = {
     fullName: 'Tenant B Test',
     companyName: 'Tenant B — Isolation Test',
   },
+  // Rôle lecture seule dans l'organisation A : sert à prouver que les gardes
+  // valent aussi contre un membre non privilégié du bon tenant, pas seulement
+  // contre un autre tenant.
+  viewer: {
+    email: 'isolation-test-viewer@atelier-btp.test',
+    password: 'IsolationTestViewer-44!',
+    fullName: 'Tenant A Viewer',
+  },
 } as const

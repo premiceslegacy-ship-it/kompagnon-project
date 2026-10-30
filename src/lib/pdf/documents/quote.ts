@@ -1,6 +1,4 @@
-import type { Organization } from '@/lib/data/queries/organization'
-import type { QuoteWithItems } from '@/lib/data/queries/quotes'
-import type { Client } from '@/lib/data/queries/clients'
+import type { PdfOrganizationData, QuoteDocumentClient, QuoteDocumentRecord } from '@/lib/pdf/document-types'
 import { fmtCapitalSocial, formatDimDetail, pdfText, splitItemDescription } from '@/lib/pdf/pdf-design-system'
 import { PdfDoc } from '../engine/doc'
 import type { FontBytes } from '../engine/fonts'
@@ -24,14 +22,14 @@ function addDays(iso: string, days: number): string {
   return d.toISOString()
 }
 
-function clientDisplayName(client: Client): string {
+function clientDisplayName(client: QuoteDocumentClient): string {
   return client.company_name || [client.first_name, client.last_name].filter(Boolean).join(' ') || client.email || ''
 }
 
 export type QuotePdfData = {
-  quote: QuoteWithItems & { notes_client?: string | null; payment_conditions?: string | null }
-  organization: Organization
-  client: Client | null
+  quote: QuoteDocumentRecord
+  organization: PdfOrganizationData
+  client: QuoteDocumentClient | null
 }
 
 export async function renderQuotePdf(data: QuotePdfData, origin: string): Promise<Buffer> {
@@ -54,10 +52,11 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
   const visibleUnsectioned = quote.unsectionedItems.filter(i => !i.is_internal)
 
   const totalHt = [...visibleSections.flatMap(s => s.items), ...visibleUnsectioned]
-    .reduce((s, i) => s + i.quantity * i.unit_price, 0)
+    .reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0)
   const vatMap: Record<number, number> = {}
   if (isVatSubject) {
     for (const item of [...visibleSections.flatMap(s => s.items), ...visibleUnsectioned]) {
+      if (item.quantity == null || item.unit_price == null || item.vat_rate == null) continue
       const v = item.quantity * item.unit_price * (item.vat_rate / 100)
       vatMap[item.vat_rate] = (vatMap[item.vat_rate] ?? 0) + v
     }
@@ -70,6 +69,9 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
 
   const orgStreet = organization.address_line1 ?? null
   const orgPostalCity = [organization.postal_code, organization.city].filter(Boolean).join(' ') || null
+  const certifications = Array.isArray(organization.certifications)
+    ? organization.certifications.join(' · ')
+    : organization.certifications
 
   // ── Footer légal multi-ligne (identique à l'ancienne version react-pdf) ──
   const line1Parts: string[] = []
@@ -96,7 +98,7 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
     line1Parts.join(' · '),
     line2Parts.join(' · '),
     insuranceLine,
-    organization.certifications,
+    certifications,
   ].filter((l): l is string => !!l && l.length > 0)
 
   // ── Logo (une seule fois, réutilisé sur chaque page) ──
@@ -272,17 +274,21 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
 
     const cells: TableCell[] = [
       { value: title, detailLines: allDetails },
-      { value: String(item.quantity) },
+      { value: item.quantity == null ? '' : String(item.quantity) },
       { value: item.unit ?? '' },
       item.price_pending
         ? { value: '—', style: { color: COLOR.gray } }
-        : { value: fmt(item.unit_price, quote.currency) },
+        : item.unit_price == null
+          ? { value: '' }
+          : { value: fmt(item.unit_price, quote.currency) },
     ]
-    if (withVat) cells.push({ value: item.price_pending ? '' : `${item.vat_rate}%` })
+    if (withVat) cells.push({ value: item.price_pending || item.vat_rate == null ? '' : `${item.vat_rate}%` })
     cells.push(
       item.price_pending
         ? { value: 'A confirmer', style: { color: COLOR.gray } }
-        : { value: fmt(item.quantity * item.unit_price, quote.currency) },
+        : item.quantity == null || item.unit_price == null
+          ? { value: '' }
+          : { value: fmt(item.quantity * item.unit_price, quote.currency) },
     )
     return { cells }
   }
@@ -294,7 +300,7 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
     }
     for (const item of section.items) rows.push(itemToRow(item))
     if (quote.show_section_subtotals && section.title && section.items.length > 0) {
-      const subtotal = section.items.filter(i => !i.price_pending).reduce((s, i) => s + i.quantity * i.unit_price, 0)
+      const subtotal = section.items.filter(i => !i.price_pending).reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0)
       rows.push({
         cells: [
           { value: `Sous-total (${section.title})`, style: { font: F.regular, size: SIZE.sm, color: COLOR.secondary } },

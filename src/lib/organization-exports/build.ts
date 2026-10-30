@@ -1,14 +1,17 @@
 import JSZip from 'jszip'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { renderChantierPdfBufferById, renderContractPdfBufferById, renderInvoicePdfBufferById, renderQuotePdfBufferById } from '@/lib/pdf/server'
+import { InvoiceIssuanceAuthorityError, renderChantierPdfBufferById, renderContractPdfBufferById, renderInvoicePdfBufferById, renderQuotePdfBufferById } from '@/lib/pdf/server'
 import {
   ORGANIZATION_EXPORT_BUCKET,
   ORGANIZATION_EXPORT_KEEP_COUNT,
   ORGANIZATION_EXPORT_RETENTION_DAYS,
   type OrganizationExportSummary,
 } from './shared'
+import type { InvoicePdfResult } from '@/lib/pdf/server'
 import { rowsToCsv, sanitizeFileName } from './csv'
 import { assertSafeExternalFetchUrl } from '@/lib/security'
+import { isValidQuoteAttachmentStoragePath } from '@/lib/quote-attachments'
 
 type AdminClient = ReturnType<typeof createAdminClient>
 
@@ -26,10 +29,10 @@ type BuildOrganizationExportBundleResult = {
 }
 
 type ExportAttachment = {
-  bucket: string | null
-  storagePath: string | null
-  url: string | null
+  bucket: string
+  storagePath: string
   zipPath: string
+  organizationId?: string
 }
 
 function isoNow() {
@@ -71,17 +74,53 @@ async function blobToBuffer(blob: Blob): Promise<Buffer> {
   return Buffer.from(await blob.arrayBuffer())
 }
 
+const MAX_PUBLIC_ASSET_BYTES = 10 * 1024 * 1024
+
 async function downloadFromPublicUrl(url: string): Promise<{ buffer: Buffer; contentType: string | null } | null> {
   const safeUrl = assertSafeExternalFetchUrl(url)
   if (!safeUrl) return null
 
   try {
-    const res = await fetch(safeUrl)
-    if (!res.ok) return null
-    const blob = await res.blob()
-    return {
-      buffer: await blobToBuffer(blob),
-      contentType: res.headers.get('content-type'),
+    // Manual redirects remain visible as non-2xx responses, keeping the
+    // request inside the already validated URL. Count bytes while streaming
+    // because Content-Length can be absent or inaccurate.
+    const res = await fetch(safeUrl, { signal: AbortSignal.timeout(10_000), redirect: 'manual' })
+    if (!res.ok) {
+      await res.body?.cancel()
+      return null
+    }
+    if (Number(res.headers.get('content-length') ?? 0) > MAX_PUBLIC_ASSET_BYTES) {
+      await res.body?.cancel()
+      return null
+    }
+    if (!res.body) {
+      return { buffer: Buffer.alloc(0), contentType: res.headers.get('content-type') }
+    }
+
+    const reader = res.body.getReader()
+    const chunks: Uint8Array[] = []
+    let size = 0
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        size += value.byteLength
+        if (size > MAX_PUBLIC_ASSET_BYTES) {
+          await reader.cancel()
+          return null
+        }
+        chunks.push(value)
+      }
+
+      return {
+        buffer: Buffer.concat(chunks, size),
+        contentType: res.headers.get('content-type'),
+      }
+    } catch {
+      await reader.cancel().catch(() => {})
+      return null
+    } finally {
+      reader.releaseLock()
     }
   } catch {
     return null
@@ -106,12 +145,14 @@ async function fetchOrgRows(
   table: string,
   organizationId: string,
   orderBy?: string,
+  onError?: (message: string) => void,
 ): Promise<Array<Record<string, unknown>>> {
   let query: any = admin.from(table).select('*').eq('organization_id', organizationId)
   if (orderBy) query = query.order(orderBy, { ascending: true })
   const { data, error } = await query
   if (error) {
     console.error(`[organization-exports] ${table}:`, error.message)
+    onError?.(error.message)
     return []
   }
   return (data ?? []) as Array<Record<string, unknown>>
@@ -153,12 +194,26 @@ async function addFileToZip(
   summary: OrganizationExportSummary,
   warnings: string[],
 ) {
+  if (attachment.bucket === 'quote-attachments') {
+    if (!attachment.organizationId) {
+      warnings.push(`Impossible de verifier la propriete de ${attachment.zipPath}.`)
+      return
+    }
+    const { data: ownership, error: ownershipError } = await admin
+      .from('quote_attachment_object_ownership')
+      .select('object_path')
+      .eq('object_path', attachment.storagePath)
+      .eq('organization_id', attachment.organizationId)
+      .maybeSingle()
+    if (ownershipError || !ownership) {
+      warnings.push(`Impossible de verifier la propriete de ${attachment.zipPath}.`)
+      return
+    }
+  }
   let result: { buffer: Buffer; contentType: string | null } | null = null
 
-  if (attachment.bucket && attachment.storagePath) {
+  if (attachment.storagePath) {
     result = await downloadFromStorage(admin, attachment.bucket, attachment.storagePath)
-  } else if (attachment.url) {
-    result = await downloadFromPublicUrl(attachment.url)
   }
 
   if (!result) {
@@ -171,49 +226,40 @@ async function addFileToZip(
   summary.files[folder] = (summary.files[folder] ?? 0) + 1
 }
 
-function parseQuoteRequestAttachments(request: Record<string, unknown>): ExportAttachment[] {
+function parseQuoteRequestAttachments(
+  request: Record<string, unknown>,
+  organizationId: string,
+): ExportAttachment[] {
   const requestId = String(request.id ?? 'request')
-  const attachments = Array.isArray(request.attachments) ? request.attachments : []
+  const rows = Array.isArray(request.attachments) ? request.attachments : []
   const parsed: ExportAttachment[] = []
 
-  attachments.forEach((attachment, index) => {
-    if (!attachment || typeof attachment !== 'object') return
+  rows.forEach((attachment, index) => {
+    if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) return
     const row = attachment as Record<string, unknown>
-    const storagePath = typeof row.storage_path === 'string' ? row.storage_path : null
-    const filename =
-      typeof row.filename === 'string' && row.filename.trim()
-        ? row.filename.trim()
-        : storagePath
-          ? basename(storagePath)
-          : `piece-jointe-${index + 1}`
+    const candidatePath = typeof row.storage_path === 'string' ? row.storage_path : null
+    if (!candidatePath || !isValidQuoteAttachmentStoragePath(candidatePath, organizationId)) return
+    const filename = typeof row.filename === 'string' && row.filename.trim()
+      ? row.filename.trim()
+      : candidatePath.split('/').pop() ?? `piece-jointe-${index + 1}`
 
     parsed.push({
-      bucket: storagePath ? 'quote-attachments' : null,
-      storagePath,
-      url: typeof row.url === 'string' ? row.url : null,
+      bucket: 'quote-attachments',
+      storagePath: candidatePath,
       zipPath: `files/quote-attachments/${requestId}/${sanitizeFileName(filename, `piece-jointe-${index + 1}`)}`,
+      organizationId,
     })
   })
 
-  const attachmentUrl = typeof request.attachment_url === 'string' ? request.attachment_url : null
-  if (attachmentUrl) {
-    let fileName = basename(attachmentUrl)
-    try {
-      fileName = basename(new URL(attachmentUrl).pathname)
-    } catch {
-      // garder le basename déjà calculé
-    }
-
-    parsed.push({
-      bucket: null,
-      storagePath: null,
-      url: attachmentUrl,
-      zipPath: `files/quote-attachments/${requestId}/${sanitizeFileName(fileName, 'piece-jointe')}`,
-    })
-  }
-
   return parsed
 }
+
+const teamExportProfilesSchema = z.array(z.object({
+  id: z.string(),
+  full_name: z.string().nullable(),
+  email: z.string().nullable(),
+  job_title: z.string().nullable(),
+}))
 
 async function fetchTeamMembers(admin: AdminClient, organizationId: string): Promise<Array<Record<string, unknown>>> {
   const { data, error } = await admin
@@ -229,20 +275,39 @@ async function fetchTeamMembers(admin: AdminClient, organizationId: string): Pro
       notes,
       created_at,
       updated_at,
-      roles ( id, name, slug ),
-      profiles ( full_name, email, job_title )
+      roles ( id, name, slug )
     `)
     .eq('organization_id', organizationId)
     .order('accepted_at', { ascending: true })
 
   if (error) {
     console.error('[organization-exports] memberships:', error.message)
-    return []
+    throw new Error('Impossible de lire les membres pour l’export.')
   }
 
-  return (data ?? []).map((row: any) => {
+  const memberships = data ?? []
+  const userIds: string[] = []
+  for (const membership of memberships) {
+    if (typeof membership.user_id === 'string') userIds.push(membership.user_id)
+  }
+  const profilesById = new Map<string, z.infer<typeof teamExportProfilesSchema>[number]>()
+  if (userIds.length > 0) {
+    const { data: profiles, error: profilesError } = await admin
+      .from('profiles')
+      .select('id, full_name, email, job_title')
+      .in('id', userIds)
+    if (profilesError) {
+      console.error('[organization-exports] member profiles:', profilesError.message)
+      throw new Error('Impossible de lire les profils des membres pour l’export.')
+    }
+    for (const profile of teamExportProfilesSchema.parse(profiles ?? [])) {
+      profilesById.set(profile.id, profile)
+    }
+  }
+
+  return memberships.map((row: any) => {
     const role = Array.isArray(row.roles) ? row.roles[0] : row.roles
-    const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles
+    const profile = typeof row.user_id === 'string' ? profilesById.get(row.user_id) : undefined
 
     return {
       membership_id: row.id,
@@ -315,8 +380,20 @@ async function fetchPdfArtifacts(
   }
 
   for (const invoiceId of invoiceIds) {
-    const rendered = await renderInvoicePdfBufferById(invoiceId, organizationId)
+    let rendered: InvoicePdfResult | null
+    try {
+      rendered = await renderInvoicePdfBufferById(invoiceId, organizationId)
+    } catch (error) {
+      summary.invoice_documents_complete = false
+      if (error instanceof InvoiceIssuanceAuthorityError) {
+        warnings.push(`Facture ${invoiceId} : ${error.message}`)
+      } else {
+        warnings.push(`Impossible de regenerer le PDF de la facture ${invoiceId}.`)
+      }
+      continue
+    }
     if (!rendered) {
+      summary.invoice_documents_complete = false
       warnings.push(`Impossible de regenerer le PDF de la facture ${invoiceId}.`)
       continue
     }
@@ -391,6 +468,7 @@ export async function buildOrganizationExportBundle({
     counts: {},
     files: {},
     warnings: [],
+    invoice_documents_complete: true,
   }
 
   const organization = await fetchOrganizationRecord(admin, organizationId)
@@ -430,7 +508,10 @@ export async function buildOrganizationExportBundle({
     fetchOrgRows(admin, 'clients', organizationId, 'created_at'),
     fetchOrgRows(admin, 'quote_requests', organizationId, 'created_at'),
     fetchOrgRows(admin, 'quotes', organizationId, 'created_at'),
-    fetchOrgRows(admin, 'invoices', organizationId, 'created_at'),
+    fetchOrgRows(admin, 'invoices', organizationId, 'created_at', () => {
+      summary.invoice_documents_complete = false
+      summary.warnings.push('Impossible de vérifier l’intégralité des factures émises pour cet export.')
+    }),
     fetchOrgRows(admin, 'reminders', organizationId, 'created_at'),
     fetchOrgRows(admin, 'payments', organizationId, 'created_at'),
     fetchOrgRows(admin, 'recurring_invoices', organizationId, 'created_at'),
@@ -527,7 +608,7 @@ export async function buildOrganizationExportBundle({
   addCsvFile(zip, 'csv/received_invoices.csv', receivedInvoices, summary)
   addCsvFile(zip, 'csv/pa_status_events.csv', paStatusEvents, summary)
 
-  const warnings: string[] = []
+  const warnings = summary.warnings
 
   const logoUrl = typeof organization.logo_url === 'string' ? organization.logo_url : null
   if (logoUrl) {
@@ -550,7 +631,6 @@ export async function buildOrganizationExportBundle({
       {
         bucket: 'chantier-photos',
         storagePath,
-        url: null,
         zipPath: `files/chantier-photos/${String(photo.chantier_id ?? 'chantier')}/${sanitizeFileName(basename(storagePath), 'photo')}`,
       },
       summary,
@@ -559,7 +639,18 @@ export async function buildOrganizationExportBundle({
   }
 
   for (const quoteRequest of quoteRequests) {
-    const attachments = parseQuoteRequestAttachments(quoteRequest)
+    const rawAttachments = Array.isArray(quoteRequest.attachments) ? quoteRequest.attachments : []
+    const attachments = parseQuoteRequestAttachments(quoteRequest, organizationId)
+    const hasUnresolvedReference = (typeof quoteRequest.attachment_url === 'string' && quoteRequest.attachment_url.length > 0)
+      || rawAttachments.some((attachment) => {
+        if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) return true
+        const row = attachment as Record<string, unknown>
+        return typeof row.public_url === 'string'
+          || (typeof row.storage_path === 'string' && !isValidQuoteAttachmentStoragePath(row.storage_path, organizationId))
+      })
+    if (hasUnresolvedReference) {
+      warnings.push(`Une piece jointe historique de la demande ${String(quoteRequest.id ?? '')} requiert une migration verifiee.`)
+    }
     for (const attachment of attachments) {
       await addFileToZip(zip, admin, attachment, summary, warnings)
     }
@@ -584,7 +675,7 @@ export async function buildOrganizationExportBundle({
         retention_days: ORGANIZATION_EXPORT_RETENTION_DAYS,
         counts: summary.counts,
         files: summary.files,
-        warnings: summary.warnings,
+        invoice_documents_complete: summary.invoice_documents_complete,
       },
       null,
       2,

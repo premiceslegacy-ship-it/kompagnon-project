@@ -277,6 +277,12 @@ export async function removeMember(membershipId: string): Promise<{ error: strin
     return { error: 'Le dirigeant ne peut pas être retiré.' }
   }
 
+  const { data: targetRow } = await supabase
+    .from('memberships')
+    .select('user_id')
+    .eq('id', membershipId)
+    .single()
+
   const { error } = await supabase
     .from('memberships')
     .update({ is_active: false })
@@ -285,6 +291,16 @@ export async function removeMember(membershipId: string): Promise<{ error: strin
   if (error) {
     console.error('[removeMember]', error.message)
     return { error: "Impossible de retirer ce membre. Veuillez réessayer." }
+  }
+
+  // Un accès retiré doit le être réellement : sans cela le refresh token
+  // survivait, les notifications financières continuaient d'arriver, et les
+  // liens magiques déjà émis restaient valides.
+  const targetUserId = (targetRow as { user_id?: string } | null)?.user_id
+  if (targetUserId) {
+    const admin = createAdminClient()
+    await admin.from('push_subscriptions').delete().eq('user_id', targetUserId)
+    await admin.auth.admin.signOut(targetUserId, 'global').catch(() => null)
   }
 
   logAuditEvent({

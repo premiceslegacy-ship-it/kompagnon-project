@@ -31,8 +31,15 @@ if [[ ! -f "$CLIENTS_FILE" ]]; then
   exit 1
 fi
 
-# Lecture des clients (ignore lignes vides et commentaires #)
-mapfile -t CLIENTS < <(grep -v '^\s*#' "$CLIENTS_FILE" | grep -v '^\s*$')
+# Lecture portable sur le Bash 3.2 de macOS, y compris la dernière ligne sans LF.
+CLIENTS=()
+while IFS= read -r CLIENT || [[ -n "$CLIENT" ]]; do
+  CLIENT="${CLIENT%$'\r'}"
+  if [[ "$CLIENT" =~ ^[[:space:]]*$ || "$CLIENT" =~ ^[[:space:]]*# ]]; then
+    continue
+  fi
+  CLIENTS+=("$CLIENT")
+done < "$CLIENTS_FILE"
 
 if [[ ${#CLIENTS[@]} -eq 0 ]]; then
   echo "❌ Aucun client dans $CLIENTS_FILE"

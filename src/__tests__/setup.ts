@@ -9,6 +9,13 @@ vi.mock('next/cache', () => ({
   unstable_noStore: vi.fn(),
 }))
 
+// `cache()` de React est utilisé par la couche données : sans identité, tout
+// module qui l'importe casse à l'import en test.
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>()
+  return { ...actual, cache: <T,>(fn: T) => fn }
+})
+
 vi.mock('next/navigation', () => ({
   redirect: vi.fn((url: string) => { throw new Error(`REDIRECT:${url}`) }),
 }))

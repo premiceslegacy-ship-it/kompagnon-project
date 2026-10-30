@@ -1,28 +1,71 @@
 name: Deploy — Cockpit Orsayn
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-cockpit
+  cancel-in-progress: false
 
 jobs:
   deploy:
     name: Build & Deploy cockpit
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.event == 'push' &&
+           github.event.workflow_run.head_repository.full_name == github.repository) }}
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     runs-on: ubuntu-latest
     environment: Atelier CDF
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          node-version: '20'
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Verify exact successful CI and current main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main" == "$RELEASE_SHA" ]] || { echo "Stale release: main has advanced." >&2; exit 1; }
+          conclusion="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$RELEASE_SHA" --branch main --event push --status success --limit 1 --json conclusion --jq '.[0].conclusion')"
+          [[ "$conclusion" == success ]] || { echo "Successful CI required for this exact commit." >&2; exit 1; }
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Load target build and preflight configuration
+        env:
+          TARGET_ENV: ${{ secrets.COCKPIT_ENV }}
+        run: |
+          if [[ -z "$TARGET_ENV" ]]; then
+            echo "Missing Atelier CDF environment secret COCKPIT_ENV (target dotenv configuration)." >&2
+            exit 1
+          fi
+          umask 077
+          printf '%s\n' "$TARGET_ENV" > .env.cockpit
+
       - name: Build & Deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: ./scripts/deploy-cockpit.sh orsayn-cockpit
+        run: node --env-file=.env.cockpit -e 'require("node:child_process").execFileSync("./scripts/deploy-cockpit.sh", ["orsayn-cockpit"], {stdio:"inherit"})'
+
+      - name: Remove temporary target configuration
+        if: always()
+        run: rm -f .env.cockpit

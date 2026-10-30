@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { assertSafeExternalFetchUrl, constantTimeEqual, redactForLog } from '@/lib/security'
+import {
+  assertSafeExternalFetchUrl, constantTimeEqual, createSignatureTokenGrant,
+  isPrivateHostname, isSignatureTokenFresh, redactForLog, SIGNATURE_TOKEN_TTL_MS,
+} from '@/lib/security'
 import { verifyCronSecret } from '@/lib/cron-auth'
 import { hashRateLimitIdentifier } from '@/lib/rate-limit'
 
@@ -88,6 +91,24 @@ describe('redactForLog', () => {
   })
 })
 
+
+describe('signature token grants', () => {
+  it('creates distinct tokens with finite expiry', () => {
+    const now = Date.now()
+    const first = createSignatureTokenGrant()
+    const second = createSignatureTokenGrant()
+
+    expect(first.token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    expect(second.token).not.toBe(first.token)
+    expect(Date.parse(first.expiresAt)).toBeGreaterThan(now + SIGNATURE_TOKEN_TTL_MS - 1000)
+    expect(Date.parse(first.expiresAt)).toBeLessThanOrEqual(now + SIGNATURE_TOKEN_TTL_MS + 1000)
+  })
+
+  it.each([null, undefined, ''])('fails closed when expiry is absent (%s)', expiresAt => {
+    expect(isSignatureTokenFresh(expiresAt)).toBe(false)
+  })
+})
+
 describe('assertSafeExternalFetchUrl', () => {
   it('allows only plain https URLs', () => {
     expect(assertSafeExternalFetchUrl('https://example.com/logo.png')?.href).toBe('https://example.com/logo.png')
@@ -95,4 +116,57 @@ describe('assertSafeExternalFetchUrl', () => {
     expect(assertSafeExternalFetchUrl('https://user:pass@example.com/logo.png')).toBeNull()
     expect(assertSafeExternalFetchUrl('not-a-url')).toBeNull()
   })
+})
+
+describe('assertSafeExternalFetchUrl — hôtes internes', () => {
+  const unsafe = [
+    'https://localhost/logo.png',
+    'https://127.0.0.1/x.png',
+    'https://169.254.169.254/latest/meta-data/',
+    'https://10.1.2.3/x.png',
+    'https://192.168.0.10/x.png',
+    'https://172.16.5.4/x.png',
+    'https://[::1]/x.png',
+    'https://service.internal/x.png',
+  ]
+
+  for (const url of unsafe) {
+    it(`refuse ${url}`, () => {
+      expect(assertSafeExternalFetchUrl(url)).toBeNull()
+    })
+  }
+
+  const safe = [
+    'https://example.com/logo.png',
+    'https://abc.supabase.co/storage/v1/object/sign/x',
+    'https://172.32.0.1/x.png',
+  ]
+
+  for (const url of safe) {
+    it(`accepte ${url}`, () => {
+      expect(assertSafeExternalFetchUrl(url)).not.toBeNull()
+    })
+  }
+
+  it('refuse un schéma non https et des credentials embarqués', () => {
+    expect(assertSafeExternalFetchUrl('http://example.com/x')).toBeNull()
+    expect(assertSafeExternalFetchUrl('https://user:pass@example.com/x')).toBeNull()
+  })
+})
+
+describe('isPrivateHostname — IPv6 literals only', () => {
+  it.each(['fc.example.com', 'fd.example.com', 'fe80.example.com', 'fcdomain.example'])(
+    'does not classify public hostname %s as an IPv6 private range',
+    (hostname) => expect(isPrivateHostname(hostname)).toBe(false),
+  )
+
+  it.each(['fc00::1', 'fd12::1', 'fe80::1', '::1', '::', '::ffff:127.0.0.1', '::ffff:192.168.1.20'])(
+    'rejects private IPv6 literal %s',
+    (hostname) => expect(isPrivateHostname(hostname)).toBe(true),
+  )
+
+  it.each(['2001:db8::1', '::ffff:8.8.8.8'])(
+    'allows public IPv6 literal %s',
+    (hostname) => expect(isPrivateHostname(hostname)).toBe(false),
+  )
 })

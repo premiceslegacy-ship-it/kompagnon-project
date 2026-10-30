@@ -50,7 +50,7 @@ sed_inplace "s/\"name\":[[:space:]]*\"[^\"]*\"/\"name\": \"$WORKER_NAME\"/" "$WR
 sed_inplace "s/\"NEXT_INC_CACHE_KV\", \"id\": \"[^\"]*\"/\"NEXT_INC_CACHE_KV\", \"id\": \"$ATELIER_APP_INC_CACHE_KV_ID\"/" "$WRANGLER"
 sed_inplace "s/\"NEXT_TAG_CACHE_KV\", \"id\": \"[^\"]*\"/\"NEXT_TAG_CACHE_KV\", \"id\": \"$ATELIER_APP_TAG_CACHE_KV_ID\"/" "$WRANGLER"
 
-npm run deploy
+WORKER_NAME="$WORKER_NAME" PREFLIGHT_ENV_FILE=".env.client-atelier-app" npm run deploy
 
 trap - EXIT
 restore_wrangler_config

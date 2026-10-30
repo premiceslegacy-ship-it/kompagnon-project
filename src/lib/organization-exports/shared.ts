@@ -9,4 +9,5 @@ export type OrganizationExportSummary = {
   counts: Record<string, number>
   files: Record<string, number>
   warnings: string[]
+  invoice_documents_complete: boolean
 }

@@ -245,7 +245,7 @@ async function applySubscriptionState(input: {
     oauth_connected_at: previous?.oauth_connected_at ?? null,
     super_pdp_connection_id: previous?.super_pdp_connection_id ?? null,
   })
-  await syncClientQuotaConfig(
+  const sync = await syncClientQuotaConfig(
     sourceInstance,
     organizationId,
     settings.app_url,
@@ -255,6 +255,12 @@ async function applySubscriptionState(input: {
     einvoicingConfig,
     isSelfServiceTenant ? entitlement : undefined,
   )
+  // `syncClientQuotaConfig` n'échoue jamais par exception : sans ce relais,
+  // une instance indisponible laissait le cockpit en `expired` et l'instance
+  // avec ses modules payants, sans qu'aucun retry ne soit déclenché.
+  if (sync.status === 'failed') {
+    throw new Error(`config-sync: ${sync.error ?? 'échec inconnu'}`)
+  }
   const effectiveEventType = input.eventType === 'payment_succeeded' && ['past_due', 'unpaid'].includes(previous?.access_status)
     ? 'payment_recovered'
     : input.eventType
@@ -318,13 +324,20 @@ async function claimWebhookEvent(eventId: string, eventType: string): Promise<'c
     && new Date(existing.received_at).getTime() > Date.now() - 10 * 60 * 1000
   if (processingIsFresh) return 'duplicate'
   if (existing) {
-    await operator.from('webhook_events').update({
+    // UPDATE conditionnel : sans le filtre sur le statut lu, deux retries
+    // simultanés revendiquaient tous les deux l'événement et dupliquaient
+    // les emails et les écritures.
+    const { data: claimed } = await operator.from('webhook_events').update({
       status: 'processing',
       error_msg: null,
       processed_at: null,
       received_at: new Date().toISOString(),
-    }).eq('provider', 'stripe').eq('source_id', eventId)
-    return 'claimed'
+    })
+      .eq('provider', 'stripe')
+      .eq('source_id', eventId)
+      .eq('status', existing.status)
+      .select('source_id')
+    return claimed && claimed.length > 0 ? 'claimed' : 'duplicate'
   }
   const { error } = await operator.from('webhook_events').insert({ provider: 'stripe', source_id: eventId, event_type: eventType, status: 'processing' })
   return error?.code === '23505' ? 'duplicate' : 'claimed'

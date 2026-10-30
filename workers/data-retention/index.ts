@@ -30,7 +30,11 @@ function constantTimeEqual(a: string | null | undefined, b: string | null | unde
 
 export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(triggerDataRetention(env))
+    // Les deux tâches sont indépendantes : l'échec de l'une ne doit pas
+    // empêcher l'autre. `account-deletion` exécute l'effacement RGPD demandé
+    // 30 jours plus tôt — sans ce déclencheur, la promesse de la page
+    // confidentialité n'était jamais tenue.
+    ctx.waitUntil(Promise.all([triggerDataRetention(env), triggerAccountDeletion(env)]))
   },
 
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
@@ -41,7 +45,7 @@ export default {
     if (!constantTimeEqual(auth, env.CRON_SECRET)) {
       return new Response('Unauthorized', { status: 401 })
     }
-    await triggerDataRetention(env)
+    await Promise.all([triggerDataRetention(env), triggerAccountDeletion(env)])
     return new Response('OK', { status: 200 })
   },
 }
@@ -65,4 +69,22 @@ async function triggerDataRetention(env: Env): Promise<void> {
 
   const data = await res.json() as { ok: boolean; results: Record<string, number | string> }
   console.log(`[data-retention worker] ${JSON.stringify(data.results)}`)
+}
+
+async function triggerAccountDeletion(env: Env): Promise<void> {
+  const res = await fetch(`${env.APP_URL}/api/cron/account-deletion`, {
+    method: 'POST',
+    headers: {
+      'x-cron-secret': env.CRON_SECRET,
+      'Content-Type': 'application/json',
+    },
+  })
+
+  if (!res.ok) {
+    console.error(`[account-deletion worker] API returned ${res.status}: ${await res.text()}`)
+    return
+  }
+
+  const data = await res.json() as { ok: boolean; processed: number }
+  console.log(`[account-deletion worker] processed=${data.processed}`)
 }

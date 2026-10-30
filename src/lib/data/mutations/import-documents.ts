@@ -2,8 +2,9 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { hasPermission } from '@/lib/data/queries/membership'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { parseVatRate } from '@/lib/utils'
 
 // ─── Import job tracker ───────────────────────────────────────────────────────
 
@@ -79,15 +80,73 @@ export type ImportDocumentsResult = {
 function parseDate(raw: string): string | null {
   if (!raw?.trim()) return null
   const s = raw.trim()
-  // DD/MM/YYYY
+  let normalized: string | null = null
   const ddmm = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (ddmm) return `${ddmm[3]}-${ddmm[2].padStart(2, '0')}-${ddmm[1].padStart(2, '0')}`
-  // YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
-  // DD-MM-YYYY
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   const ddmm2 = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
-  if (ddmm2) return `${ddmm2[3]}-${ddmm2[2].padStart(2, '0')}-${ddmm2[1].padStart(2, '0')}`
-  return null
+  if (ddmm) normalized = `${ddmm[3]}-${ddmm[2].padStart(2, '0')}-${ddmm[1].padStart(2, '0')}`
+  else if (iso) normalized = s
+  else if (ddmm2) normalized = `${ddmm2[3]}-${ddmm2[2].padStart(2, '0')}-${ddmm2[1].padStart(2, '0')}`
+  if (!normalized) return null
+
+  const [year, month, day] = normalized.split('-').map(Number)
+  const checked = new Date(0)
+  checked.setUTCFullYear(year, month - 1, day)
+  checked.setUTCHours(0, 0, 0, 0)
+  return checked.getUTCFullYear() === year
+    && checked.getUTCMonth() === month - 1
+    && checked.getUTCDate() === day
+    ? normalized
+    : null
+}
+
+type HistoricalImportItem = {
+  description: string
+  quantity: number
+  unit: string
+  unit_price: number
+  vat_rate: number
+}
+
+function parseCsvNumber(raw: string | undefined, fallback?: number): number | null {
+  const value = raw?.trim()
+  if (!value) return fallback ?? null
+
+  let normalized = value.replace(/\s/g, '').replace(/[€%]$/, '')
+  const comma = normalized.lastIndexOf(',')
+  const dot = normalized.lastIndexOf('.')
+  if (comma >= 0 && dot >= 0) {
+    normalized = comma > dot
+      ? normalized.replace(/\./g, '').replace(',', '.')
+      : normalized.replace(/,/g, '')
+  } else if (comma >= 0) {
+    normalized = normalized.replace(',', '.')
+  }
+  if (!/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(normalized)) return null
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function prepareHistoricalItems(rows: ImportDocumentRow[]): HistoricalImportItem[] | null {
+  const items: HistoricalImportItem[] = []
+  for (const row of rows) {
+    const quantity = parseCsvNumber(row.quantite, 1)
+    const unitPrice = parseCsvNumber(row.prix_unitaire_ht)
+    const vatRate = parseCsvNumber(row.tva, 20)
+    if (quantity === null || unitPrice === null || vatRate === null) return null
+    items.push({
+      description: row.designation?.trim() || '-',
+      quantity,
+      unit: row.unite?.trim() || 'u',
+      unit_price: unitPrice,
+      vat_rate: vatRate,
+    })
+  }
+  return items.length > 0 ? items : null
+}
+
+function importDenied(): ImportDocumentsResult {
+  return { error: 'Action non autorisée.', imported: 0, skipped: 0, clients_created: 0, memory_entries: 0, skipped_reasons: [] }
 }
 
 function mapInvoiceStatus(raw?: string): string {
@@ -121,9 +180,11 @@ export async function importInvoices(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.', imported: 0, skipped: 0, clients_created: 0, memory_entries: 0, skipped_reasons: [] }
+  if (!(await hasPermission('import.history')) || !(await hasPermission('invoices.create'))) return importDenied()
 
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.', imported: 0, skipped: 0, clients_created: 0, memory_entries: 0, skipped_reasons: [] }
+  const admin = createAdminClient()
 
   const { data: org } = await supabase
     .from('organizations')
@@ -170,6 +231,12 @@ export async function importInvoices(
       skipped++; continue
     }
 
+    const itemRows = prepareHistoricalItems(lineRows)
+    if (!itemRows) {
+      skippedReasons.push(`Facture "${first.numero ?? first.client_nom}" ignorée : une ligne contient un montant, une quantité ou une TVA invalide`)
+      skipped++; continue
+    }
+
     // Trouver ou créer le client
     const emailKey = first.client_email?.toLowerCase()?.trim()
     const nameKey = first.client_nom.trim().toLowerCase()
@@ -202,68 +269,58 @@ export async function importInvoices(
         clientsCreated++
       }
     }
+    if (!clientId) {
+      skippedReasons.push(`Facture "${first.numero ?? first.client_nom}" ignorée : client introuvable et création impossible`)
+      skipped++; continue
+    }
+
 
     // Générer un numéro de facture
     let invoiceNumber = first.numero?.trim() || null
     if (!invoiceNumber) {
       const { data: gen } = await supabase.rpc('generate_invoice_number', { org_id: orgId })
-      invoiceNumber = gen as string
+      invoiceNumber = typeof gen === 'string' ? gen : null
     }
-
-    const dueDate = parseDate(first.date_echeance ?? '') ?? issueDate
-    const status = mapInvoiceStatus(first.statut)
-    const isRecurring = (first.recurrente ?? 'non').toLowerCase() === 'oui'
-
-    // Créer la facture
-    const { data: invoice, error: invErr } = await supabase
-      .from('invoices')
-      .insert({
-        organization_id: orgId,
-        client_id: clientId ?? null,
-        number: invoiceNumber,
-        title: first.titre_projet?.trim() || first.designation?.trim() || invoiceNumber,
-        status,
-        issue_date: issueDate,
-        due_date: dueDate,
-        paid_at: status === 'paid' ? issueDate : null,
-        notes_client: first.notes?.trim() || null,
-        currency: 'EUR',
-        created_by: user.id,
-      })
-      .select('id')
-      .single()
-
-    if (invErr || !invoice) {
-      skippedReasons.push(`Facture "${invoiceNumber}" ignorée : erreur base de données`)
+    if (!invoiceNumber) {
+      skippedReasons.push(`Facture "${first.client_nom}" ignorée : numéro indisponible`)
       skipped++; continue
     }
 
-    // Créer les lignes
-    const itemRows = lineRows.map((row, idx) => ({
-      invoice_id: invoice.id,
-      description: row.designation?.trim() || '-',
-      quantity: parseFloat(row.quantite ?? '1') || 1,
-      unit: row.unite?.trim() || 'u',
-      unit_price: parseFloat(row.prix_unitaire_ht) || 0,
-      vat_rate: parseVatRate(row.tva, 20),
-      position: idx + 1,
-    }))
-    const { error: itemsErr } = await supabase.from('invoice_items').insert(itemRows)
-    if (itemsErr) {
-      console.error('[importInvoices] invoice_items insert failed, rolling back invoice', invoice.id, itemsErr)
-      await supabase.from('invoices').delete().eq('id', invoice.id)
-      skippedReasons.push(`Facture "${invoiceNumber}" annulée : erreur lors de l'enregistrement des lignes`)
-      skipped++
-      continue
+    const title = first.titre_projet?.trim() || first.designation?.trim() || invoiceNumber
+    const dueDate = parseDate(first.date_echeance ?? '')
+    const recurrenceDate = dueDate ?? issueDate
+    const status = mapInvoiceStatus(first.statut)
+    const isRecurring = (first.recurrente ?? 'non').toLowerCase() === 'oui'
+
+    // The privileged RPC stages the header and every line before finalizing,
+    // keeping imported status without fabricating payment or issuance authority.
+    const { data: invoiceId, error: invErr } = await admin.rpc('import_historical_document', {
+      p_kind: 'invoice',
+      p_organization_id: orgId,
+      p_created_by: user.id,
+      p_document: {
+        client_id: clientId,
+        number: invoiceNumber,
+        title,
+        status,
+        issue_date: issueDate,
+        due_date: dueDate,
+        notes_client: first.notes?.trim() || null,
+        currency: 'EUR',
+      },
+      p_items: itemRows,
+    })
+
+    if (invErr || !invoiceId) {
+      skippedReasons.push(`Facture "${invoiceNumber}" ignorée : erreur lors de l'enregistrement du document historique`)
+      skipped++; continue
     }
 
-    // Totaux
-    const totalHt = itemRows.reduce((s, i) => s + i.quantity * i.unit_price, 0)
-    const totalTva = itemRows.reduce((s, i) => s + i.quantity * i.unit_price * (i.vat_rate / 100), 0)
-    await supabase.from('invoices').update({ total_ht: totalHt, total_tva: totalTva, total_ttc: totalHt + totalTva }).eq('id', invoice.id)
+    const totalHt = itemRows.reduce((s, i) => s + Math.round(i.quantity * i.unit_price * 100) / 100, 0)
+    const totalTva = itemRows.reduce((s, i) => s + Math.round(i.quantity * i.unit_price * i.vat_rate) / 100, 0)
 
     // Récurrence
-    if (isRecurring && clientId) {
+    if (isRecurring) {
       const freq = mapFrequency(first.frequence)
       const { data: ri } = await supabase
         .from('recurring_invoices')
@@ -272,7 +329,7 @@ export async function importInvoices(
           client_id: clientId,
           title: first.titre_projet?.trim() || first.designation?.trim() || 'Facture récurrente',
           frequency: freq,
-          next_send_date: dueDate,
+          next_send_date: recurrenceDate,
           base_amount_ht: totalHt,
           currency: 'EUR',
           requires_confirmation: true,
@@ -306,7 +363,7 @@ export async function importInvoices(
       organization_id: orgId,
       type: 'invoice',
       content: memContent,
-      metadata: { invoice_id: invoice.id, client_id: clientId, total_ht: totalHt, status, date: issueDate, ...(activityId ? { activity_id: activityId } : {}) },
+      metadata: { invoice_id: invoiceId, client_id: clientId, total_ht: totalHt, status, date: issueDate, ...(activityId ? { activity_id: activityId } : {}) },
       source: 'import',
       confidence: 1.0,
     })
@@ -314,6 +371,7 @@ export async function importInvoices(
 
     imported++
   }
+
 
   await trackImportJob({ supabase, orgId, userId: user.id, type: 'invoices', totalRows: groups.size, importedRows: imported, skippedRows: skipped, skippedReasons })
   revalidatePath('/finances')
@@ -328,9 +386,11 @@ export async function importQuotes(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.', imported: 0, skipped: 0, clients_created: 0, memory_entries: 0, skipped_reasons: [] }
+  if (!(await hasPermission('import.history')) || !(await hasPermission('quotes.create'))) return importDenied()
 
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.', imported: 0, skipped: 0, clients_created: 0, memory_entries: 0, skipped_reasons: [] }
+  const admin = createAdminClient()
 
   const { data: org } = await supabase
     .from('organizations')
@@ -375,6 +435,12 @@ export async function importQuotes(
       skipped++; continue
     }
 
+    const itemRows = prepareHistoricalItems(lineRows)
+    if (!itemRows) {
+      skippedReasons.push(`Devis "${first.numero ?? first.client_nom}" ignoré : une ligne contient un montant, une quantité ou une TVA invalide`)
+      skipped++; continue
+    }
+
     const emailKey = first.client_email?.toLowerCase()?.trim()
     const nameKey = first.client_nom.trim().toLowerCase()
     let clientId = (emailKey && clientCache.get(emailKey)) || clientCache.get(nameKey)
@@ -406,85 +472,62 @@ export async function importQuotes(
         clientsCreated++
       }
     }
+    if (!clientId) {
+      skippedReasons.push(`Devis "${first.numero ?? first.client_nom}" ignoré : client introuvable et création impossible`)
+      skipped++; continue
+    }
 
     let quoteNumber = first.numero?.trim() || null
     if (!quoteNumber) {
       const { data: gen } = await supabase.rpc('generate_quote_number', { org_id: orgId })
-      quoteNumber = gen as string
+      quoteNumber = typeof gen === 'string' ? gen : null
     }
-
-    const status = mapQuoteStatus(first.statut)
-    const validityDate = parseDate(first.date_validite ?? '') ?? null
-
-    const { data: quote, error: qErr } = await supabase
-      .from('quotes')
-      .insert({
-        organization_id: orgId,
-        client_id: clientId ?? null,
-        number: quoteNumber,
-        title: first.titre_projet?.trim() || first.designation?.trim() || quoteNumber,
-        status,
-        notes_client: first.notes?.trim() || null,
-        validity_days: validityDate
-          ? Math.round((new Date(validityDate).getTime() - new Date(issueDate).getTime()) / 86400000)
-          : 30,
-        created_by: user.id,
-      })
-      .select('id')
-      .single()
-
-    if (qErr || !quote) {
-      skippedReasons.push(`Devis "${quoteNumber}" ignoré : erreur base de données`)
+    if (!quoteNumber) {
+      skippedReasons.push(`Devis "${first.client_nom}" ignoré : numéro indisponible`)
       skipped++; continue
     }
 
-    // Une section par défaut
-    const { data: section, error: sectionErr } = await supabase
-      .from('quote_sections')
-      .insert({ quote_id: quote.id, title: first.titre_projet?.trim() || 'Travaux', position: 1 })
-      .select('id')
-      .single()
+    const status = mapQuoteStatus(first.statut)
+    const validityDate = parseDate(first.date_validite ?? '')
+    const validityDays = validityDate
+      ? Math.round((new Date(validityDate).getTime() - new Date(issueDate).getTime()) / 86400000)
+      : 30
+    const title = first.titre_projet?.trim() || first.designation?.trim() || quoteNumber
 
-    if (sectionErr || !section) {
-      console.error('[importQuotes] quote_sections insert failed, rolling back quote', quote.id, sectionErr)
-      await supabase.from('quotes').delete().eq('id', quote.id)
-      skippedReasons.push(`Devis "${quoteNumber}" annulé : erreur lors de la création de la section`)
-      skipped++
-      continue
+    const { data: quoteId, error: quoteError } = await admin.rpc('import_historical_document', {
+      p_kind: 'quote',
+      p_organization_id: orgId,
+      p_created_by: user.id,
+      p_document: {
+        client_id: clientId,
+        number: quoteNumber,
+        title,
+        status,
+        issue_date: issueDate,
+        valid_until: validityDate,
+        validity_days: validityDays,
+        notes_client: first.notes?.trim() || null,
+        currency: 'EUR',
+      },
+      p_items: itemRows,
+    })
+
+    if (quoteError || !quoteId) {
+      skippedReasons.push(`Devis "${quoteNumber}" ignoré : erreur lors de l'enregistrement du document historique`)
+      skipped++; continue
     }
 
-    const itemRows = lineRows.map((row, idx) => ({
-      quote_id: quote.id,
-      section_id: section.id,
-      type: 'custom',
-      description: row.designation?.trim() || '-',
-      quantity: parseFloat(row.quantite ?? '1') || 1,
-      unit: row.unite?.trim() || 'u',
-      unit_price: parseFloat(row.prix_unitaire_ht) || 0,
-      vat_rate: parseVatRate(row.tva, 20),
-      position: idx + 1,
-    }))
-    const { error: itemsErr } = await supabase.from('quote_items').insert(itemRows)
-    if (itemsErr) {
-      console.error('[importQuotes] quote_items insert failed, rolling back quote', quote.id, itemsErr)
-      await supabase.from('quotes').delete().eq('id', quote.id)
-      skippedReasons.push(`Devis "${quoteNumber}" annulé : erreur lors de l'enregistrement des lignes`)
-      skipped++
-      continue
-    }
-
-    // Mémoire d'entreprise
-    const clientLabel = first.client_nom.trim()
-    const itemsSummary = lineRows.map(r => `${r.designation?.trim()} (${r.quantite ?? '1'} × ${r.prix_unitaire_ht}€ HT)`).join(', ')
-    const totalHt = lineRows.reduce((s, r) => s + (parseFloat(r.quantite ?? '1') || 1) * (parseFloat(r.prix_unitaire_ht) || 0), 0)
+    const totalHt = itemRows.reduce((s, item) => s + Math.round(item.quantity * item.unit_price * 100) / 100, 0)
     const statusLabel = status === 'accepted' ? 'accepté' : status === 'refused' ? 'refusé' : status === 'sent' ? 'envoyé' : 'brouillon'
+    const itemsSummary = itemRows.map(item => `${item.description} (${item.quantity} × ${item.unit_price}€ HT)`).join(', ')
+    const clientLabel = first.client_nom.trim()
     const memContent = `Devis ${quoteNumber} émis le ${issueDate} pour ${clientLabel}${first.titre_projet ? ` - Projet : ${first.titre_projet.trim()}` : ''} - ${itemsSummary} - Total HT : ${totalHt.toFixed(2)}€ - Statut : ${statusLabel}`
 
     await supabase.from('company_memory').insert({
       organization_id: orgId,
       type: 'quote',
       content: memContent,
-      metadata: { quote_id: quote.id, client_id: clientId, total_ht: totalHt, status, date: issueDate, ...(activityId ? { activity_id: activityId } : {}) },
+      metadata: { quote_id: quoteId, client_id: clientId, total_ht: totalHt, status, date: issueDate, ...(activityId ? { activity_id: activityId } : {}) },
       source: 'import',
       confidence: 1.0,
     })
@@ -492,6 +535,7 @@ export async function importQuotes(
 
     imported++
   }
+
 
   await trackImportJob({ supabase, orgId, userId: user.id, type: 'quotes', totalRows: groups.size, importedRows: imported, skippedRows: skipped, skippedReasons })
   revalidatePath('/finances')

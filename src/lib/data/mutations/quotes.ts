@@ -2,9 +2,9 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { createSignatureTokenGrant } from '@/lib/security'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { CreateQuoteSchema, UpdateQuoteSchema, UpsertQuoteItemSchema } from '@/lib/validations/quotes'
-import { getQuoteById } from '@/lib/data/queries/quotes'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { sendEmail } from '@/lib/email'
 import { renderOrganizationEmail } from '@/lib/email/organization'
@@ -12,8 +12,7 @@ import { sendPushToOrg } from '@/lib/push'
 import { buildQuoteSentEmail } from '@/lib/email/templates'
 import { getClientGreetingName } from '@/lib/client'
 import { renderQuotePdf } from '@/lib/pdf/documents/quote'
-import { renderContractPdfBufferById } from '@/lib/pdf/server'
-import type { Client } from '@/lib/data/queries/clients'
+import { quoteDocumentPayloadFromSnapshot, renderContractPdfBufferById } from '@/lib/pdf/server'
 import { coerceLegalVatRate } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { syncQuoteMemoryEntry, syncQuoteLearningEntry } from '@/lib/data/mutations/document-memory'
@@ -687,150 +686,114 @@ async function recalcQuoteTotals(quoteId: string, orgId: string) {
 
 export async function sendQuote(quoteId: string, options?: { attachContractIds?: string[] }): Promise<Result & { signUrl?: string }> {
   if (!(await hasPermission('quotes.send'))) return { error: 'Permission refusée.' }
-
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL
+  if (!appUrl) return { error: 'NEXT_PUBLIC_APP_URL manquant.' }
 
-  // Générer un token de signature unique
-  const signatureToken = crypto.randomUUID()
-
-  const { error } = await supabase
-    .from('quotes')
+  const { token: signatureToken, expiresAt } = createSignatureTokenGrant()
+  // The database captures this publication and its totals under the same lock.
+  // Keep the returned row: a later edit must not change the attached document.
+  const { data: quote, error } = await supabase.from('quotes')
     .update({
       status: 'sent',
       sent_at: new Date().toISOString(),
       signature_token: signatureToken,
+      signature_token_expires_at: expiresAt,
     })
     .eq('id', quoteId)
     .eq('organization_id', orgId)
-
+    .eq('is_archived', false)
+    .is('signed_at', null)
+    .select(`id, number, title, total_ttc, currency, valid_until, client_id, status,
+      signed_at, client_signature_image, client_signatory_name, client_signatory_role, document_snapshot`)
+    .maybeSingle()
   if (error) return { error: error.message }
+  if (!quote) return { error: 'Devis introuvable ou non disponible pour un nouvel envoi.' }
+  const signUrl = `${appUrl.replace(/\/$/, '')}/sign/${signatureToken}`
 
-  // Construire le lien de signature
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-  const signUrl = `${appUrl}/sign/${signatureToken}`
-
-  // Forcer le recalcul des totaux avant lecture (garantit que total_ttc est à jour)
-  await recalcQuoteTotals(quoteId, orgId)
   await syncQuoteMemoryEntry(supabase, orgId, quoteId)
-  // Tache de fond, jamais attendue : compare le prix propose par Chloe au
-  // prix final retenu par l'artisan et memorise les ecarts significatifs
-  // (voir document-memory.ts). Ne doit jamais ralentir la reponse d'envoi.
   void syncQuoteLearningEntry(supabase, orgId, quoteId)
 
-  // Charger les infos du devis + client + org pour l'email
-  const { data: quote } = await supabase
-    .from('quotes')
-    .select('number, title, total_ttc, currency, valid_until, client_id')
-    .eq('id', quoteId)
-    .single()
-
-  if (quote?.client_id) {
-    const [{ data: client }, { data: customTpl }, organization, fullQuote] = await Promise.all([
-      supabase.from('clients').select('*').eq('id', quote.client_id).single(),
+  if (quote.client_id) {
+    const [{ data: client }, { data: customTpl }, organization] = await Promise.all([
+      supabase.from('clients').select('*').eq('id', quote.client_id).eq('organization_id', orgId).single(),
       supabase.from('email_templates').select('subject, body_text').eq('organization_id', orgId).eq('slug', 'quote_sent').eq('is_active', true).maybeSingle(),
       getOrganization(),
-      getQuoteById(quoteId),
     ])
-
-    if (client?.email && organization) {
-      const clientName = getClientGreetingName(client as any)
-
-      let subject: string
-      let html: string
-
-      if (customTpl?.body_text) {
-        const vars: Record<string, string> = {
-          numero_devis: quote.number ?? '',
-          client_nom: clientName,
-          montant_ttc: new Intl.NumberFormat('fr-FR', { style: 'currency', currency: quote.currency ?? 'EUR' }).format(quote.total_ttc ?? 0),
-          entreprise_nom: organization.name,
-          lien_signature: signUrl,
-        }
-        const interpolate = (t: string) => Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), t)
-        subject = interpolate(customTpl.subject ?? '')
-        html = wrapHtml(organization.name, interpolate(customTpl.body_text), organization.logo_url)
-      } else {
-        const built = buildQuoteSentEmail({
-          orgName: organization.name,
-          logoUrl: organization.logo_url,
-          orgEmail: organization.email,
-          clientName,
-          quoteNumber: quote.number,
-          quoteTitle: quote.title,
-          totalTtc: quote.total_ttc,
-          currency: quote.currency ?? 'EUR',
-          validUntil: quote.valid_until,
-          signUrl,
-          emailSignature: organization.email_signature ?? null,
-        })
-        subject = built.subject
-        html = built.html
-      }
-
-      // ── Générer le PDF en pièce jointe ──────────────────────────────────────
-      let attachments: Array<{ filename: string; content: Buffer }> | undefined
-      if (fullQuote) {
-        const { data: quoteExtra } = await supabase
-          .from('quotes')
-          .select('notes_client, payment_conditions')
-          .eq('id', quoteId)
-          .single()
-
-        const fullQuoteWithExtras = {
-          ...fullQuote,
-          notes_client: quoteExtra?.notes_client ?? null,
-          payment_conditions: quoteExtra?.payment_conditions ?? null,
-        }
-
-        try {
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL
-          if (!appUrl) throw new Error('NEXT_PUBLIC_APP_URL manquant')
-          const pdfBuffer = await renderQuotePdf({
-            quote: fullQuoteWithExtras,
-            organization,
-            client: client as unknown as Client,
-          }, appUrl)
-          attachments = [{
-            filename: `devis-${quote.number ?? quoteId}.pdf`,
-            content: Buffer.from(pdfBuffer),
-          }]
-        } catch (pdfErr) {
-          console.error('[sendQuote] PDF generation error:', pdfErr)
-        }
-      }
-
-      // Pièces jointes additionnelles : contrats du client lié
-      const attachContractIds = (options?.attachContractIds ?? []).filter(Boolean)
-      if (attachContractIds.length > 0 && quote.client_id) {
-        const { data: ownedContracts } = await supabase
-          .from('contracts')
-          .select('id, pdf_snapshot')
-          .eq('organization_id', orgId)
-          .eq('client_id', quote.client_id)
-          .in('id', attachContractIds)
-        for (const c of ownedContracts ?? []) {
-          if (!c.pdf_snapshot) continue
-          const pdf = await renderContractPdfBufferById(c.id, orgId).catch(() => null)
-          if (pdf) {
-            attachments = [...(attachments ?? []), { filename: pdf.fileName, content: pdf.buffer }]
-          }
-        }
-      }
-
-      const emailResult = await sendEmail({ organizationId: orgId, to: client.email, subject, html, attachments })
-      if (emailResult.error) {
-        console.error('[sendQuote] email error:', emailResult.error)
-        revalidatePath('/finances')
-        return { error: emailResult.error, signUrl }
-      }
-    } else if (!client?.email) {
+    if (!client?.email) {
       revalidatePath('/finances')
-      return { error: 'Ce client n\'a pas d\'adresse email. Ajoutez-en une dans sa fiche.', signUrl }
+      return { error: 'Ce client n’a pas d’adresse email. Ajoutez-en une dans sa fiche.', signUrl }
+    }
+    if (!organization) return { error: 'Organisation introuvable.', signUrl }
+    const clientName = getClientGreetingName(client)
+    let subject: string
+    let html: string
+    if (customTpl?.body_text) {
+      const vars: Record<string, string> = {
+        numero_devis: quote.number ?? '',
+        client_nom: clientName,
+        montant_ttc: new Intl.NumberFormat('fr-FR', { style: 'currency', currency: quote.currency ?? 'EUR' }).format(quote.total_ttc ?? 0),
+        entreprise_nom: organization.name,
+        lien_signature: signUrl,
+      }
+      const interpolate = (text: string) => Object.entries(vars).reduce((result, [key, value]) => result.replaceAll(`{{${key}}}`, value), text)
+      subject = interpolate(customTpl.subject ?? '')
+      html = wrapHtml(organization.name, interpolate(customTpl.body_text), organization.logo_url)
+    } else {
+      const built = buildQuoteSentEmail({
+        orgName: organization.name,
+        logoUrl: organization.logo_url,
+        orgEmail: organization.email,
+        clientName,
+        quoteNumber: quote.number,
+        quoteTitle: quote.title,
+        totalTtc: quote.total_ttc,
+        currency: quote.currency ?? 'EUR',
+        validUntil: quote.valid_until,
+        signUrl,
+        emailSignature: organization.email_signature ?? null,
+      })
+      subject = built.subject
+      html = built.html
+    }
+
+    let attachments: Array<{ filename: string; content: Buffer }>
+    try {
+      const payload = quoteDocumentPayloadFromSnapshot(quote, orgId)
+      const pdfBuffer = await renderQuotePdf({
+        quote: payload.quoteRecord,
+        organization: payload.organization,
+        client: payload.client,
+      }, appUrl)
+      attachments = [{ filename: `devis-${quote.number ?? quoteId}.pdf`, content: Buffer.from(pdfBuffer) }]
+    } catch (pdfError) {
+      console.error('[sendQuote] PDF generation error:', pdfError)
+      return { error: 'Le PDF du devis n’a pas pu être généré. Aucun email n’a été envoyé.', signUrl }
+    }
+
+    const attachContractIds = (options?.attachContractIds ?? []).filter(Boolean)
+    if (attachContractIds.length > 0) {
+      const { data: ownedContracts } = await supabase.from('contracts')
+        .select('id, pdf_snapshot')
+        .eq('organization_id', orgId)
+        .eq('client_id', quote.client_id)
+        .in('id', attachContractIds)
+      for (const contract of ownedContracts ?? []) {
+        if (!contract.pdf_snapshot) continue
+        const pdf = await renderContractPdfBufferById(contract.id, orgId).catch(() => null)
+        if (pdf) attachments.push({ filename: pdf.fileName, content: pdf.buffer })
+      }
+    }
+
+    const emailResult = await sendEmail({ organizationId: orgId, to: client.email, subject, html, attachments })
+    if (emailResult.error) {
+      console.error('[sendQuote] email error:', emailResult.error)
+      revalidatePath('/finances')
+      return { error: emailResult.error, signUrl }
     }
   }
-
   revalidatePath('/finances')
   return { error: null, signUrl }
 }

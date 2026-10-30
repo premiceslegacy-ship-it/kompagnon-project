@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { randomUUID } from 'node:crypto'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
@@ -20,7 +21,6 @@ import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { sendPushToOrg } from '@/lib/push'
 import { logAuditEvent } from '@/lib/audit-log'
 import { trackServerEvent } from '@/lib/analytics-server'
-import { renderInvoicePdf } from '@/lib/pdf/documents/invoice'
 import { coerceLegalVatRate } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { renderInvoicePdfBufferById, renderContractPdfBufferById } from '@/lib/pdf/server'
@@ -168,7 +168,9 @@ export async function saveInvoiceItems(
   const normalizedItems = items.map(item => ({ ...item, vat_rate: normalizeVatRate(item.vat_rate) }))
   const clientItems = normalizedItems.filter(i => !i.is_internal)
   const totalHt = clientItems.reduce((sum, i) => sum + i.quantity * i.unit_price, 0)
-  const totalTva = clientItems.reduce((sum, i) => sum + i.quantity * i.unit_price * (i.vat_rate / 100), 0)
+  const totalTva = isVatSubject && meta.isReverseCharge !== true
+    ? clientItems.reduce((sum, i) => sum + i.quantity * i.unit_price * (i.vat_rate / 100), 0)
+    : 0
   const totalTtc = totalHt + totalTva
 
   const { error: updateError } = await supabase
@@ -203,7 +205,7 @@ export async function saveInvoiceItems(
  * Met le statut à 'paid', enregistre la date de paiement,
  * et envoie un email de remerciement au client.
  */
-export async function markInvoicePaid(invoiceId: string): Promise<Result & { total_paid?: number; paid_at?: string }> {
+export async function markInvoicePaid(invoiceId: string): Promise<Result & { total_paid?: number; paid_at?: string | null }> {
   if (!(await hasPermission('invoices.record_payment'))) return { error: 'Permission refusée.' }
 
   const supabase = await createClient()
@@ -213,152 +215,125 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
 
-  const paidAt = new Date()
-  const paymentDate = paidAt.toISOString().split('T')[0]
+  const { data, error } = await supabase.rpc('mark_invoice_paid', { p_invoice_id: invoiceId })
+  if (error || !data) return { error: error?.message ?? 'Impossible de marquer la facture comme payée.' }
 
-  const { data: invoiceBeforePayment, error: invoiceError } = await supabase
-    .from('invoices')
-    .select('id, number, title, status, total_ttc, total_paid, currency, client_id')
-    .eq('id', invoiceId)
-    .eq('organization_id', orgId)
-    .single()
-
-  if (invoiceError || !invoiceBeforePayment) return { error: invoiceError?.message ?? 'Facture introuvable.' }
-  if (!['sent', 'partial'].includes(invoiceBeforePayment.status)) {
-    return { error: 'Cette facture ne peut pas être marquée comme payée.' }
+  type PaidInvoiceMetadata = {
+    id: string
+    number: string | null
+    title: string | null
+    currency: string | null
+    client_id: string | null
+    total_ttc: number | null
   }
+  type PaidInvoiceMutationResult =
+    | { changed: true; amount_recorded: number; total_paid: number; paid_at: string; invoice: PaidInvoiceMetadata }
+    | { changed: false; amount_recorded: number; total_paid: number; paid_at: string | null; invoice: PaidInvoiceMetadata }
+  const payment = data as PaidInvoiceMutationResult
 
-  const { data: existingPayments, error: paymentsError } = await supabase
-    .from('payments')
-    .select('amount')
-    .eq('invoice_id', invoiceId)
-    .eq('organization_id', orgId)
+  if (payment.changed) {
+    const paidAt = new Date(payment.paid_at)
+    const invoice = payment.invoice
 
-  if (paymentsError) return { error: paymentsError.message }
+    await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
+    logAuditEvent({
+      organizationId: orgId,
+      actorId: user.id,
+      action: 'audit.invoice.paid',
+      entityType: 'invoice',
+      entityId: invoiceId,
+      metadata: { number: invoice.number, amount: payment.amount_recorded, total_paid: payment.total_paid },
+    }).catch(() => {})
+    await trackServerEvent(user.id, 'invoice_paid', {
+      organization_id: orgId,
+      amount: payment.amount_recorded,
+    })
 
-  const totalTtc = roundMoney(invoiceBeforePayment.total_ttc ?? 0)
-  const paymentsTotal = roundMoney(
-    (existingPayments ?? []).reduce((sum, payment) => sum + (payment.amount ?? 0), 0)
-  )
-  const alreadyPaid = Math.max(paymentsTotal, roundMoney(invoiceBeforePayment.total_paid ?? 0))
-  const amountToRecord = roundMoney(Math.max(0, totalTtc - alreadyPaid))
+    if (invoice.client_id) {
+      const [{ data: client }, { data: org }, { data: customTpl }] = await Promise.all([
+        supabase.from('clients').select('company_name, contact_name, first_name, last_name, email').eq('id', invoice.client_id).single(),
+        supabase.from('organizations').select('name, email, email_from_address, email_signature, logo_url').eq('id', orgId).single(),
+        supabase.from('email_templates').select('subject, body_text').eq('organization_id', orgId).eq('slug', 'invoice_paid').eq('is_active', true).maybeSingle(),
+      ])
 
-  if (amountToRecord > 0) {
-    const { error: paymentError } = await supabase
-      .from('payments')
-      .insert({
-        organization_id: orgId,
-        invoice_id: invoiceId,
-        client_id: invoiceBeforePayment.client_id,
-        amount: amountToRecord,
-        payment_date: paymentDate,
-        method: 'manual',
-        notes: 'Paiement total enregistré depuis la liste des factures',
-        created_by: user.id,
-      })
+      const recipient = client as {
+        type?: string | null
+        company_name: string | null
+        contact_name: string | null
+        first_name: string | null
+        last_name: string | null
+        email: string | null
+      } | null
+      const sender = org as {
+        name: string
+        email: string
+        email_signature: string | null
+        logo_url: string | null
+      } | null
+      if (recipient && sender && recipient.email) {
+        const clientName = getClientGreetingName(recipient)
+        let subject: string
+        let html: string
 
-    if (paymentError) return { error: paymentError.message }
-  }
-
-  const totalPaid = roundMoney(alreadyPaid + amountToRecord)
-
-  const { error } = await supabase
-    .from('invoices')
-    .update({ status: 'paid', total_paid: totalPaid, paid_at: paidAt.toISOString() })
-    .eq('id', invoiceId)
-    .eq('organization_id', orgId)
-
-  if (error) return { error: error.message }
-  await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
-  logAuditEvent({
-    organizationId: orgId,
-    actorId: user.id,
-    action: 'audit.invoice.paid',
-    entityType: 'invoice',
-    entityId: invoiceId,
-    metadata: { number: invoiceBeforePayment.number, amount: amountToRecord, total_paid: totalPaid },
-  }).catch(() => {})
-  trackServerEvent(user.id, 'invoice_paid', { organization_id: orgId, amount: amountToRecord })
-
-  // Charger les infos de la facture + client + org pour l'email
-  const { data: invoice } = await supabase
-    .from('invoices')
-    .select('number, title, total_ttc, currency, client_id')
-    .eq('id', invoiceId)
-    .single()
-
-  if (invoice?.client_id) {
-    const [{ data: client }, { data: org }, { data: customTpl }] = await Promise.all([
-      supabase.from('clients').select('company_name, contact_name, first_name, last_name, email').eq('id', invoice.client_id).single(),
-      supabase.from('organizations').select('name, email, email_from_address, email_signature, logo_url').eq('id', orgId).single(),
-      supabase.from('email_templates').select('subject, body_text').eq('organization_id', orgId).eq('slug', 'invoice_paid').eq('is_active', true).maybeSingle(),
-    ])
-
-    if (client && org && (client as any).email) {
-      const clientName = getClientGreetingName(client as any)
-
-      let subject: string
-      let html: string
-
-      if (customTpl?.body_text) {
-        const vars: Record<string, string> = {
-          numero_facture: invoice.number ?? '',
-          client_nom: clientName,
-          montant_ttc: new Intl.NumberFormat('fr-FR', { style: 'currency', currency: invoice.currency ?? 'EUR' }).format(invoice.total_ttc ?? 0),
-          entreprise_nom: org.name,
-          email_org: org.email ?? '',
+        if (customTpl?.body_text) {
+          const vars: Record<string, string> = {
+            numero_facture: invoice.number ?? '',
+            client_nom: clientName,
+            montant_ttc: new Intl.NumberFormat('fr-FR', { style: 'currency', currency: invoice.currency ?? 'EUR' }).format(invoice.total_ttc ?? 0),
+            entreprise_nom: sender.name,
+            email_org: sender.email ?? '',
+          }
+          const interpolate = (t: string) => Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), t)
+          subject = interpolate(customTpl.subject ?? '')
+          html = wrapHtml(sender.name, interpolate(customTpl.body_text), sender.logo_url)
+        } else {
+          const built = buildInvoicePaidEmail({
+            orgName: sender.name,
+            logoUrl: sender.logo_url,
+            orgEmail: sender.email,
+            clientName,
+            invoiceNumber: invoice.number,
+            invoiceTitle: invoice.title,
+            totalTtc: invoice.total_ttc,
+            currency: invoice.currency ?? 'EUR',
+            paidAt,
+            emailSignature: sender.email_signature,
+          })
+          subject = built.subject
+          html = built.html
         }
-        const interpolate = (t: string) => Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, v), t)
-        subject = interpolate(customTpl.subject ?? '')
-        html = wrapHtml(org.name, interpolate(customTpl.body_text), org.logo_url)
-      } else {
-        const built = buildInvoicePaidEmail({
-          orgName: org.name,
-          logoUrl: org.logo_url,
-          orgEmail: org.email,
-          clientName,
-          invoiceNumber: invoice.number,
-          invoiceTitle: invoice.title,
-          totalTtc: invoice.total_ttc,
-          currency: invoice.currency ?? 'EUR',
-          paidAt,
-          emailSignature: (org as any).email_signature ?? null,
-        })
-        subject = built.subject
-        html = built.html
+
+        const paidMail = await sendEmail({
+          organizationId: orgId,
+          to: recipient.email,
+          subject,
+          html,
+        }).catch((err): { error: string | null } => ({ error: String(err) }))
+        if (paidMail.error) console.error('[markInvoicePaid] email error:', paidMail.error)
       }
-
-      const paidMail = await sendEmail({
-        organizationId: orgId,
-        to: (client as any).email,
-        subject,
-        html,
-      }).catch((err): { error: string | null } => ({ error: String(err) }))
-      if (paidMail.error) console.error('[markInvoicePaid] email error:', paidMail.error)
     }
-  }
 
-  const invoiceNum = invoiceBeforePayment.number ?? invoiceId.slice(0, 8)
-  const invoiceTitle = invoiceBeforePayment.title ?? null
-  const clientForPush = invoice?.client_id
-    ? await supabase.from('clients').select('company_name, contact_name').eq('id', invoice.client_id).maybeSingle().then(r => r.data)
-    : null
-  const clientLabel = clientForPush?.company_name ?? clientForPush?.contact_name ?? null
-  const bodyParts = [
-    clientLabel,
-    invoiceTitle,
-    `${totalPaid.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`,
-  ].filter(Boolean)
-  sendPushToOrg(orgId, {
-    title: `Facture ${invoiceNum} réglée`,
-    body: bodyParts.join(' · '),
-    url: '/finances',
-  }, user.id).catch(() => {})
+    const invoiceNum = invoice.number ?? invoiceId.slice(0, 8)
+    const clientForPush = invoice.client_id
+      ? await supabase.from('clients').select('company_name, contact_name').eq('id', invoice.client_id).maybeSingle().then(r => r.data)
+      : null
+    const clientLabel = clientForPush?.company_name ?? clientForPush?.contact_name ?? null
+    const bodyParts = [
+      clientLabel,
+      invoice.title,
+      `${payment.total_paid.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`,
+    ].filter(Boolean)
+    sendPushToOrg(orgId, {
+      title: `Facture ${invoiceNum} réglée`,
+      body: bodyParts.join(' · '),
+      url: '/finances',
+    }, user.id).catch(() => {})
+  }
 
   revalidatePath('/finances')
   revalidatePath('/clients')
   revalidatePath('/dashboard')
-  return { error: null, total_paid: totalPaid, paid_at: paidAt.toISOString() }
+  return { error: null, total_paid: payment.total_paid, paid_at: payment.paid_at }
 }
 
 // ─── Create ───────────────────────────────────────────────────────────────────
@@ -491,44 +466,95 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
   if (!(await hasPermission('invoices.send'))) return { error: 'Permission refusée.' }
 
   const supabase = await createClient()
-  const admin = createAdminClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
 
-  const [{ data: invoiceData, error: invoiceError }, organization] = await Promise.all([
-    admin
-      .from('invoices')
-      .select(`
-        id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
-        issue_date, due_date, sent_at, paid_at, created_at,
-        notes_client, payment_conditions, aid_label, aid_amount, quote_id, chantier_id, client_id,
-        situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference, is_reverse_charge,
-        client:clients(id, company_name, contact_name, first_name, last_name, email, phone,
-          address_line1, postal_code, city, siret, siren, vat_number, type),
-        items:invoice_items(id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, position, length_m, width_m, height_m, dim_quantity, is_internal, material_id),
-        payment_schedule:invoice_payment_schedule(id, invoice_id, label, due_date, amount, amount_type, percentage, position, paid_payment_id)
-      `)
-      .eq('id', invoiceId)
-      .eq('organization_id', orgId)
-      .order('position', { referencedTable: 'invoice_items', ascending: true })
-      .order('position', { referencedTable: 'invoice_payment_schedule', ascending: true })
-      .single(),
-    getOrganization(),
-  ])
+  // The admin client is created only after session permission and tenant scope
+  // have been verified; every privileged query below is organization-scoped.
+  const admin = createAdminClient()
+  const { data: invoiceData, error: invoiceError } = await admin
+    .from('invoices')
+    .select(`
+      id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
+      issue_date, due_date, sent_at, paid_at, created_at,
+      notes_client, payment_conditions, aid_label, aid_amount, quote_id, chantier_id, client_id,
+      situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference, is_reverse_charge,
+      client:clients(id, company_name, contact_name, first_name, last_name, email, phone,
+        address_line1, postal_code, city, siret, siren, vat_number, type),
+      items:invoice_items(id, description, quantity, unit, unit_price, unit_cost_ht, vat_rate, position, length_m, width_m, height_m, dim_quantity, is_internal, material_id),
+      payment_schedule:invoice_payment_schedule(id, invoice_id, label, due_date, amount, amount_type, percentage, position, paid_payment_id)
+    `)
+    .eq('id', invoiceId)
+    .eq('organization_id', orgId)
+    .order('position', { referencedTable: 'invoice_items', ascending: true })
+    .order('position', { referencedTable: 'invoice_payment_schedule', ascending: true })
+    .single()
   if (invoiceError) {
     console.error('[sendInvoice] invoice lookup error:', invoiceError)
     return { error: `Erreur de chargement de la facture : ${invoiceError.message}` }
   }
-  if (!invoiceData) {
-    return { error: 'Facture introuvable.' }
+  if (!invoiceData) return { error: 'Facture introuvable.' }
+
+  const previousStatus = invoiceData.status
+  if (previousStatus === 'sending') return { error: 'Cette facture est déjà en cours d’envoi.' }
+  if (previousStatus !== 'draft' && previousStatus !== 'sent' && previousStatus !== 'partial' && previousStatus !== 'paid') {
+    return { error: 'Cette facture ne peut pas être envoyée dans son état actuel.' }
   }
-  if (!organization) return { error: 'Organisation introuvable.' }
-  const invoice = {
-    ...invoiceData,
-    client: Array.isArray(invoiceData.client) ? invoiceData.client[0] ?? null : invoiceData.client ?? null,
-    quote_number: null,
-  } as Awaited<ReturnType<typeof getInvoiceById>>
-  if (!invoice) return { error: 'Facture introuvable.' }
+
+  // Draft claims coordinate with the recurring-invoice cron through the
+  // existing lifecycle status. Issued resends use a separate service-only
+  // claim so they never rewrite the financial lifecycle.
+  let resendClaimToken: string | null = null
+  if (previousStatus === 'draft') {
+    const { data: claimed, error: claimError } = await admin
+      .from('invoices')
+      .update({ status: 'sending' })
+      .eq('id', invoiceId)
+      .eq('organization_id', orgId)
+      .eq('status', 'draft')
+      .select('id')
+      .maybeSingle()
+    if (claimError) return { error: claimError.message }
+    if (!claimed) return { error: 'Cette facture est déjà en cours d’envoi ou son état a changé.' }
+  } else {
+    const token = randomUUID()
+    const { data: claimed, error: claimError } = await admin
+      .from('invoice_resend_delivery_claims')
+      .insert({ invoice_id: invoiceId, claim_token: token })
+      .select('invoice_id')
+      .maybeSingle()
+    if (claimError) {
+      if (claimError.code === '23505') return { error: 'Cette facture est déjà en cours de renvoi ou nécessite une réconciliation.' }
+      return { error: claimError.message }
+    }
+    if (!claimed) return { error: 'Impossible de réserver le renvoi de cette facture.' }
+    resendClaimToken = token
+  }
+
+  const releaseResendClaim = async () => {
+    if (!resendClaimToken) return null
+    const { error } = await admin
+      .from('invoice_resend_delivery_claims')
+      .delete()
+      .eq('invoice_id', invoiceId)
+      .eq('claim_token', resendClaimToken)
+    if (error) {
+      console.error('[sendInvoice] release resend claim:', error.message)
+      return error.message
+    }
+    return null
+  }
+
+  let deliveryAttempted = false
+  try {
+    const organization = await getOrganization()
+    if (!organization) throw new Error('Organisation introuvable.')
+    const invoice = {
+      ...invoiceData,
+      client: Array.isArray(invoiceData.client) ? invoiceData.client[0] ?? null : invoiceData.client ?? null,
+      quote_number: null,
+    } as Awaited<ReturnType<typeof getInvoiceById>>
+    if (!invoice) throw new Error('Facture introuvable.')
 
   // Récupérer l'email client
   let clientEmail: string | null = null
@@ -591,7 +617,7 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
 
     const defaultTpl = DEFAULT_EMAIL_TEMPLATES.find(t => t.slug === 'invoice_sent')
     const tpl = customTpl ?? defaultTpl
-    if (!tpl) return { error: 'Template email introuvable.' }
+    if (!tpl) throw new Error('Template email introuvable.')
 
     const fmtAmount = new Intl.NumberFormat('fr-FR', {
       style: 'currency',
@@ -610,21 +636,13 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
     html = wrapHtml(organization.name, interpolate(tpl.body_text, vars), organization.logo_url)
   }
 
-  // Générer le PDF
-  let attachments: Array<{ filename: string; content: Buffer }> | undefined
-  try {
-    const rendered = await renderInvoicePdfBufferById(invoiceId, orgId)
-    if (rendered) {
-      attachments = [{ filename: rendered.fileName, content: rendered.buffer }]
-    } else {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL
-      if (!appUrl) throw new Error('NEXT_PUBLIC_APP_URL manquant')
-      const pdfBuffer = await renderInvoicePdf({ invoice, organization }, appUrl)
-      attachments = [{ filename: `facture-${invoice.number ?? invoiceId}.pdf`, content: Buffer.from(pdfBuffer) }]
-    }
-  } catch (pdfErr) {
-    console.error('[sendInvoice] PDF generation error:', pdfErr)
-  }
+  // Issuing an invoice requires the shared renderer and its immutable authority.
+  // Missing snapshots and render failures abort before any provider dispatch.
+  const rendered = await renderInvoicePdfBufferById(invoiceId, orgId)
+  if (!rendered) throw new Error('Le PDF de la facture est indisponible.')
+  let attachments: Array<{ filename: string; content: Buffer }> = [
+    { filename: rendered.fileName, content: rendered.buffer },
+  ]
 
   // Pièces jointes additionnelles : contrats du client lié
   const attachContractIds = (options?.attachContractIds ?? []).filter(Boolean)
@@ -639,54 +657,79 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
       if (!c.pdf_snapshot) continue
       const pdf = await renderContractPdfBufferById(c.id, orgId).catch(() => null)
       if (pdf) {
-        attachments = [...(attachments ?? []), { filename: pdf.fileName, content: pdf.buffer }]
+        attachments.push({ filename: pdf.fileName, content: pdf.buffer })
       }
     }
   }
 
   // Envoyer l'email
   if (clientEmail) {
+    deliveryAttempted = true
     const mail = await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
-      .catch((err): { error: string | null } => {
+      .catch((err) => {
         console.error('[sendInvoice] email error:', err)
-        return { error: "Impossible d'envoyer l'email." }
+        return { error: "Impossible d'envoyer l'email.", delivery: 'unknown' as const }
       })
-    // Une facture dont l'email n'est pas parti ne doit pas passer en « envoyée ».
-    if (mail.error) return { error: mail.error }
+    if (mail.error) {
+      if (mail.delivery === 'rejected' || mail.delivery === 'not_sent') {
+        if (previousStatus === 'draft') {
+          const { error: releaseError } = await admin.from('invoices')
+            .update({ status: 'draft' })
+            .eq('id', invoiceId)
+            .eq('organization_id', orgId)
+            .eq('status', 'sending')
+          if (releaseError) console.error('[sendInvoice] restore rejected send claim:', releaseError.message)
+        } else {
+          await releaseResendClaim()
+        }
+      } else if (previousStatus === 'draft') {
+        // An ambiguous first send stays in sending to block automatic retries.
+        console.error('[sendInvoice] leaving ambiguous first-send claim in sending state', invoiceId)
+      } else {
+        const { error: ambiguityError } = await admin
+          .from('invoice_resend_delivery_claims')
+          .update({ state: 'ambiguous', ambiguous_at: new Date().toISOString() })
+          .eq('invoice_id', invoiceId)
+          .eq('claim_token', resendClaimToken)
+        if (ambiguityError) console.error('[sendInvoice] mark ambiguous resend claim:', ambiguityError.message)
+      }
+      return { error: mail.error }
+    }
   }
 
-  // Marquer comme envoyée
-  const { error } = await supabase
-    .from('invoices')
-    .update({ status: 'sent', sent_at: new Date().toISOString() })
-    .eq('id', invoiceId)
-    .eq('organization_id', orgId)
+  // Only a first send updates the financial lifecycle and initial sent_at.
+  if (previousStatus === 'draft') {
+    const { data: sentInvoice, error: sentError } = await admin
+      .from('invoices')
+      .update({ status: 'sent', sent_at: new Date().toISOString() })
+      .eq('id', invoiceId)
+      .eq('organization_id', orgId)
+      .eq('status', 'sending')
+      .select('id')
+      .maybeSingle()
+    if (sentError) throw new Error(sentError.message)
+    if (!sentInvoice) throw new Error('La facture a été envoyée mais son état n’a pas pu être finalisé.')
+  } else {
+    const releaseError = await releaseResendClaim()
+    if (releaseError) throw new Error(`Facture envoyée, mais le verrou de renvoi reste à réconcilier : ${releaseError}`)
+  }
 
-  if (error) return { error: error.message }
-
-  // Transmission Super PDP fusionnee dans l'envoi (un seul clic) : strictement
-  // best-effort, ne doit jamais faire echouer sendInvoice -- l'email est deja
-  // parti. transmitInvoiceViaSuperPdp revérifie tout le gating en interne
-  // (permission, mode/oauth_status/emission_enabled, client B2B+SIRET) ; le
-  // filtre ici n'est qu'une optimisation pour eviter un aller-retour reseau
-  // inutile quand le client n'est manifestement pas concerne.
+  // The PDP applies its own eligibility gate from frozen buyer authority; do
+  // not skip it based on mutable client fields from the live client row.
   let paTransmission: Result['paTransmission']
-  if (invoice.client?.type === 'company' && invoice.client.siret?.trim()) {
-    const transmitResult = await transmitInvoiceViaSuperPdp(invoiceId).catch((err) => {
-      console.error('[sendInvoice] Super PDP transmission threw', err)
-      return { error: 'Erreur interne lors de la transmission Super PDP.' } as const
-    })
-    paTransmission = 'success' in transmitResult
-      ? { success: true, messageId: transmitResult.messageId }
-      : { success: false, error: transmitResult.error }
-  }
+  const transmitResult = await transmitInvoiceViaSuperPdp(invoiceId).catch((err) => {
+    console.error('[sendInvoice] Super PDP transmission threw', err)
+    return { error: 'Erreur interne lors de la transmission Super PDP.' } as const
+  })
+  paTransmission = 'success' in transmitResult
+    ? { success: true, messageId: transmitResult.messageId }
+    : { success: false, error: transmitResult.error }
+
 
   const { data: { user: sendingUser } } = await supabase.auth.getUser()
 
-  // confirmed_by distingue un envoi manuel (cet utilisateur) d'un envoi
-  // vraiment automatique par le cron recurring-invoices (confirmed_by=null) —
-  // le dashboard (UrgentTasksClient.tsx) s'appuie dessus pour son libellé
-  // "Envoyé automatiquement".
+  // confirmed_by distinguishes a manual send (this user) from an automatic
+  // recurring-invoice cron send (confirmed_by=null).
   await supabase
     .from('invoice_schedules')
     .update({ status: 'sent', confirmed_at: new Date().toISOString(), confirmed_by: sendingUser?.id ?? null })
@@ -695,10 +738,26 @@ export async function sendInvoice(invoiceId: string, options?: { attachContractI
     .eq('status', 'pending_confirmation')
 
   await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
-  if (sendingUser) trackServerEvent(sendingUser.id, 'invoice_sent', { organization_id: orgId })
+  if (sendingUser) await trackServerEvent(sendingUser.id, 'invoice_sent', { organization_id: orgId })
   revalidatePath('/finances')
   revalidatePath('/finances/recurring')
   return { error: null, paTransmission }
+  } catch (err) {
+    console.error('[sendInvoice] send failure:', err)
+    if (!deliveryAttempted) {
+      if (previousStatus === 'draft') {
+        const { error: releaseError } = await admin.from('invoices')
+          .update({ status: 'draft' })
+          .eq('id', invoiceId)
+          .eq('organization_id', orgId)
+          .eq('status', 'sending')
+        if (releaseError) console.error('[sendInvoice] restore pre-delivery claim:', releaseError.message)
+      } else {
+        await releaseResendClaim()
+      }
+    }
+    return { error: err instanceof Error ? err.message : 'Erreur lors de l’envoi de la facture.' }
+  }
 }
 
 // ─── Générer une facture d'acompte depuis un devis accepté ───────────────────

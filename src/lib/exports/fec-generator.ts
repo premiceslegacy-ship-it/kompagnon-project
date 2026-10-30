@@ -14,6 +14,8 @@ export type FecInvoice = {
   total_paid: number
   paid_at: string | null
   is_vat_subject: boolean
+  tva_sur_debits: boolean
+  business_profile: BusinessProfile | null
   pa_message_id: string | null
   client: {
     id: string
@@ -42,7 +44,6 @@ export type FecReceivedInvoice = {
 export type FecOrgProfile = {
   siren: string
   is_vat_subject: boolean
-  tva_sur_debits: boolean
   business_profile: BusinessProfile | null
 }
 
@@ -328,9 +329,16 @@ function generateReceivedInvoiceLines(
 
 // ─── Sérialisation FEC ─────────────────────────────────────────────────────────
 
+// Le FEC est un format positionnel à séparateur `|` : un libellé contenant un
+// pipe, une tabulation ou un saut de ligne décale toutes les colonnes de la
+// ligne et rend le fichier rejeté par le comptable. On neutralise à la source.
+function cleanFecField(value: string): string {
+  return value.replace(/[|\r\n\t]+/g, ' ').trim()
+}
+
 function serializeFec(lines: FecLine[]): string {
   const header = FEC_HEADERS.join('|')
-  const rows = lines.map(l => FEC_HEADERS.map(h => l[h]).join('|'))
+  const rows = lines.map(l => FEC_HEADERS.map(h => cleanFecField(l[h] ?? '')).join('|'))
   return [header, ...rows].join('\n')
 }
 
@@ -363,7 +371,6 @@ export function generateFec(input: GenerateFecInput): GenerateFecResult {
     includeReceivedInvoices,
   } = input
   const profile: BusinessProfile = orgProfile.business_profile ?? 'btp'
-  const vatTiming = orgProfile.tva_sur_debits ? 'debits' : 'encaissements'
   const counters: Counters = {}
   const warnings: string[] = []
 
@@ -385,11 +392,13 @@ export function generateFec(input: GenerateFecInput): GenerateFecResult {
   for (const inv of sorted) {
     if (!inv.number) continue
     const shouldIncludeInvoiceEntry = inv.invoice_type === 'avoir' ? includeAvoirs : includeInvoices
+    const invoiceProfile = inv.business_profile ?? profile
+    const invoiceVatTiming = inv.tva_sur_debits ? 'debits' : 'encaissements'
     if (shouldIncludeInvoiceEntry) {
-      allLines.push(...generateInvoiceLines(inv, profile, vatTiming, counters))
+      allLines.push(...generateInvoiceLines(inv, invoiceProfile, invoiceVatTiming, counters))
     }
     if (includePayments) {
-      allLines.push(...generatePaymentLines(inv, profile, vatTiming, counters))
+      allLines.push(...generatePaymentLines(inv, invoiceProfile, invoiceVatTiming, counters))
     }
   }
 

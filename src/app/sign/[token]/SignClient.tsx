@@ -100,8 +100,7 @@ export default function SignClient({
             Télécharger le devis signé
           </a>
           <p className="text-xs text-gray-400 leading-relaxed">
-            Un email de confirmation vous a été envoyé. Conservez-le comme preuve d&apos;acceptation.
-            <br />{orgName} prendra contact avec vous prochainement.
+            Votre accord est enregistré. Téléchargez et conservez le devis signé.
           </p>
         </div>
       </div>

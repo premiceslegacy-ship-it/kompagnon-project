@@ -1,5 +1,6 @@
+import { createHash } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyOperatorSignature } from '@/lib/operator'
+import { hasOperatorMasterSecret, OPERATOR_TIMESTAMP_HEADER, readOperatorRequest } from '@/lib/operator'
 import { createOperatorAdminClient, isOperatorModeEnabled } from '@/lib/supabase/operator'
 import { normalizeEinvoicingConfigFromDb, DEFAULT_EINVOICING_CONFIG } from '@/lib/einvoicing-config'
 import { isOverflowMode } from '@/lib/quota-catalog'
@@ -14,15 +15,13 @@ export const dynamic = 'force-dynamic'
 export async function POST(req: NextRequest) {
   if (!isOperatorModeEnabled()) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const stripeKey = process.env.STRIPE_SECRET_KEY?.trim()
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim() || process.env.OPERATOR_INGEST_SECRET?.trim()
-  if (!stripeKey || !secret) return NextResponse.json({ error: 'Configuration manquante' }, { status: 500 })
+  if (!stripeKey || !hasOperatorMasterSecret()) return NextResponse.json({ error: 'Configuration manquante' }, { status: 500 })
 
   const rawBody = await req.text()
-  if (!verifyOperatorSignature(rawBody, secret, req.headers.get('x-operator-signature'))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-  let body: Record<string, unknown>
-  try { body = JSON.parse(rawBody) } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
+  const check = readOperatorRequest<Record<string, unknown>>(rawBody, req.headers, { requireMaster: true })
+  if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status })
+  const body = check.body
+  const requestTimestamp = req.headers.get(OPERATOR_TIMESTAMP_HEADER)!
   const sourceInstance = typeof body.source_instance === 'string' ? body.source_instance : ''
   const organizationId = typeof body.organization_id === 'string' ? body.organization_id : ''
   const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 500) : ''
@@ -49,10 +48,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, cancel_at: subscription.cancel_at, idempotent: true })
   }
 
-  const cancelAt = new Date(Date.now() + CANCELLATION_NOTICE_DAYS * 24 * 60 * 60 * 1000)
+  // Stripe's key is tied to the subscription operation rather than the
+  // short-lived HMAC. A refreshed signature cannot repeat cancellation; if
+  // parameters differ, Stripe rejects the reused key rather than executing twice.
+  const cancelAt = new Date(Number(requestTimestamp) + CANCELLATION_NOTICE_DAYS * 24 * 60 * 60 * 1000)
   const stripeResponse = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(subscription.stripe_subscription_id)}`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${stripeKey}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      Authorization: `Bearer ${stripeKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Idempotency-Key': `cancel-subscription-${createHash('sha256').update(JSON.stringify([sourceInstance, organizationId, subscription.stripe_subscription_id])).digest('hex')}`,
+    },
     body: new URLSearchParams({
       cancel_at: String(Math.floor(cancelAt.getTime() / 1000)),
       proration_behavior: 'create_prorations',

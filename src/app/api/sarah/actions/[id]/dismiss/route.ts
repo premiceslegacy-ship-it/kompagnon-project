@@ -3,9 +3,9 @@ import { dismissSarahAction } from '@/lib/sarah/actions'
 
 export const dynamic = 'force-dynamic'
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = params
+    const { id } = await params
     return NextResponse.json(await dismissSarahAction(id))
   } catch (err) {
     console.error('[sarah/actions/dismiss]', err)

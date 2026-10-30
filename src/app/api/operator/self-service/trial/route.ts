@@ -1,6 +1,6 @@
 import { createHmac } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyOperatorSignature } from '@/lib/operator'
+import { getOperatorFingerprintSecret, hasOperatorMasterSecret, readOperatorRequest } from '@/lib/operator'
 import { createOperatorAdminClient, isOperatorModeEnabled } from '@/lib/supabase/operator'
 import {
   initializeQuotasForTier,
@@ -12,7 +12,11 @@ import { getModulesForTier, getQuotaConfigForTier } from '@/lib/quota-catalog'
 import { DEFAULT_EINVOICING_CONFIG } from '@/lib/einvoicing-config'
 import { isSellableTier, type EntitlementSyncPayload, type SellableTier } from '@/lib/subscription-access'
 import { sendAuthEmail } from '@/lib/email'
-import { buildAtelierNotificationEmail, buildAtelierTrialStartedEmail } from '@/lib/email/commercial'
+import {
+  buildAtelierExistingCompanyEmail,
+  buildAtelierNotificationEmail,
+  buildAtelierTrialStartedEmail,
+} from '@/lib/email/commercial'
 
 type TrialRequest = {
   source_instance: string
@@ -63,24 +67,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  const signatureSecret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
-  const fingerprintSecret = process.env.OPERATOR_TRIAL_FINGERPRINT_SECRET?.trim() || signatureSecret
-  if (!signatureSecret || !fingerprintSecret) {
+  const fingerprintSecret = getOperatorFingerprintSecret()
+  if (!hasOperatorMasterSecret() || !fingerprintSecret) {
     return NextResponse.json({ error: 'Operator secrets missing' }, { status: 500 })
   }
 
   const rawBody = await req.text()
-  if (!verifyOperatorSignature(rawBody, signatureSecret, req.headers.get('x-operator-signature'))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const check = readOperatorRequest<Record<string, unknown>>(rawBody, req.headers, { requireMaster: true })
+  if (!check.ok) {
+    return NextResponse.json({ error: check.error }, { status: check.status })
   }
-
-  let payload: unknown
-  try {
-    payload = JSON.parse(rawBody)
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
+  const payload: unknown = check.body
   if (!isValidRequest(payload)) {
     return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
   }
@@ -98,6 +95,8 @@ export async function POST(req: NextRequest) {
   const trialEnd = new Date(now.getTime() + TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000)
   const email = payload.contact_email.trim().toLowerCase()
   const siret = payload.siret.replace(/\s/g, '')
+  const emailFingerprint = fingerprint(email, fingerprintSecret)
+  const siretFingerprint = fingerprint(siret, fingerprintSecret)
 
   const { error: settingsError } = await operator
     .from('operator_client_settings')
@@ -145,11 +144,96 @@ export async function POST(req: NextRequest) {
     })
   }
 
+  // Le contrôle explicite avant l'INSERT permet de distinguer un email déjà
+  // utilisé d'un SIRET appartenant à une entreprise existante. Dans ce second
+  // cas, on guide le collaborateur vers le parcours d'invitation plutôt que de
+  // le laisser seul face à un message générique.
+  const [{ data: claimByEmail }, { data: claimBySiret }] = await Promise.all([
+    operator
+      .from('operator_trial_claims')
+      .select('organization_id')
+      .eq('email_fingerprint', emailFingerprint)
+      .maybeSingle(),
+    operator
+      .from('operator_trial_claims')
+      .select('organization_id')
+      .eq('siret_fingerprint', siretFingerprint)
+      .maybeSingle(),
+  ])
+
+  if (claimByEmail || claimBySiret) {
+    const duplicateReason = claimByEmail ? 'email' : 'siret'
+    let existingCompanyName: string | null = null
+    if (claimBySiret?.organization_id) {
+      const { data: existingCompany } = await operator
+        .from('operator_client_settings')
+        .select('label')
+        .eq('source_instance', payload.source_instance)
+        .eq('organization_id', claimBySiret.organization_id)
+        .maybeSingle()
+      existingCompanyName = existingCompany?.label ?? null
+    }
+
+    const { data: previousGuidance } = await operator
+      .from('operator_client_events')
+      .select('id')
+      .eq('source_instance', payload.source_instance)
+      .eq('organization_id', payload.organization_id)
+      .eq('event_type', 'trial_duplicate_guidance_sent')
+      .maybeSingle()
+
+    let guidanceEmailStatus: 'sent' | 'failed' | 'not_applicable' | 'already_sent' = 'not_applicable'
+    if (duplicateReason === 'siret' && !previousGuidance) {
+      const guidanceEmail = buildAtelierExistingCompanyEmail({
+        appUrl: payload.app_url,
+        companyName: existingCompanyName,
+      })
+      const result = await sendAuthEmail({
+        to: email,
+        subject: guidanceEmail.subject,
+        html: guidanceEmail.html,
+      })
+      guidanceEmailStatus = result.error ? 'failed' : 'sent'
+      if (!result.error) {
+        await recordOperatorClientEvent({
+          sourceInstance: payload.source_instance,
+          organizationId: payload.organization_id,
+          eventCategory: 'trial',
+          eventType: 'trial_duplicate_guidance_sent',
+          actorEmail: email,
+          metadata: {
+            duplicate_reason: duplicateReason,
+            existing_organization_id: claimBySiret?.organization_id ?? null,
+          },
+        })
+      }
+    } else if (previousGuidance) {
+      guidanceEmailStatus = 'already_sent'
+    }
+
+    await recordOperatorClientEvent({
+      sourceInstance: payload.source_instance,
+      organizationId: payload.organization_id,
+      eventCategory: 'trial',
+      eventType: 'trial_rejected_already_used',
+      actorEmail: email,
+      metadata: {
+        duplicate_reason: duplicateReason,
+        guidance_email_status: guidanceEmailStatus,
+      },
+    })
+
+    return NextResponse.json(
+      { error: 'trial_already_used', reason: duplicateReason },
+      { status: 409 },
+    )
+  }
+
   const { error: claimError } = await operator.from('operator_trial_claims').insert({
     source_instance: payload.source_instance,
     organization_id: payload.organization_id,
-    email_fingerprint: fingerprint(email, fingerprintSecret),
-    siret_fingerprint: fingerprint(siret, fingerprintSecret),
+    email_fingerprint: emailFingerprint,
+    siret_fingerprint: siretFingerprint,
     metadata: { signup_source: payload.signup_source ?? 'direct', preferred_tier: payload.preferred_tier },
   })
   if (claimError) {

@@ -1,13 +1,12 @@
 'use server'
 
-import { signOperatorPayload } from '@/lib/operator'
+import { getOperatorSigningSecret, signOperatorRequest, OPERATOR_TIMESTAMP_HEADER } from '@/lib/operator'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 
 export async function createStripePortalSession(returnUrl: string): Promise<{ url: string } | { error: string }> {
   const ingestUrl = process.env.OPERATOR_INGEST_URL?.trim()
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
   const sourceInstance = process.env.OPERATOR_SOURCE_INSTANCE?.trim()
+  const secret = sourceInstance ? getOperatorSigningSecret(sourceInstance) : null
 
   if (!ingestUrl || !secret || !sourceInstance) {
     return { error: 'Configuration opérateur manquante' }
@@ -22,7 +21,7 @@ export async function createStripePortalSession(returnUrl: string): Promise<{ ur
   const cockpitBase = new URL(ingestUrl).origin
 
   const body = JSON.stringify({ source_instance: sourceInstance, organization_id: organizationId, return_url: returnUrl })
-  const signature = signOperatorPayload(body, secret)
+  const { signature, timestamp } = signOperatorRequest(body, secret)
 
   try {
     const res = await fetch(`${cockpitBase}/api/stripe/portal-session`, {
@@ -30,6 +29,7 @@ export async function createStripePortalSession(returnUrl: string): Promise<{ ur
       headers: {
         'Content-Type': 'application/json',
         'x-operator-signature': signature,
+        [OPERATOR_TIMESTAMP_HEADER]: timestamp,
       },
       body,
     })

@@ -24,7 +24,8 @@ const formatCurrency = (amount: number) =>
 
 const cardClasses = "rounded-3xl card transition-all duration-300 ease-out";
 
-export default async function ClientProfilePage({ params }: { params: { id: string } }) {
+export default async function ClientProfilePage({ params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise
     const [client, quotes, invoices, org, hasAI] = await Promise.all([
         getClientById(params.id),
         getClientQuotes(params.id),

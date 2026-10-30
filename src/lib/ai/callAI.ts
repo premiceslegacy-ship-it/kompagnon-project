@@ -1,7 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isModuleEnabledAdmin } from '@/lib/data/queries/organization-modules'
 import type { OrganizationModuleKey } from '@/lib/organization-modules'
-import { getOperatorSourceInstance, signOperatorPayload, type OperatorUsageEventPayload } from '@/lib/operator'
+import { getOperatorSourceInstance, signOperatorRequest, OPERATOR_TIMESTAMP_HEADER, type OperatorUsageEventPayload } from '@/lib/operator'
 import { checkAIRateLimit } from '@/lib/rate-limit'
 import { AIQuotaExceededError, checkQuota, type AIBillingMode, type QuotaCheckResult } from '@/lib/quota'
 import { getOrganizationOpenRouterKey } from '@/lib/ai/openrouter-credentials'
@@ -120,6 +120,16 @@ export class AIProviderCreditError extends Error {
     this.status = status
   }
 }
+export class AIQuotaUnavailableError extends Error {
+  readonly feature: AIFeature
+
+  constructor(feature: AIFeature) {
+    super('La vérification du quota IA est indisponible. Réessayez plus tard.')
+    this.name = 'AIQuotaUnavailableError'
+    this.feature = feature
+  }
+}
+
 
 type LogUsageParams = {
   organizationId: string
@@ -210,6 +220,41 @@ async function insertUsageLog(params: LogUsageParams): Promise<string | null> {
   return data?.id ?? null
 }
 
+/**
+ * Clôt la ligne réservée par `reserve_quota` (elle compte déjà dans le quota)
+ * ou, à défaut de réservation, insère une ligne complète. Insérer une seconde
+ * ligne doublerait la consommation comptée.
+ */
+async function settleUsageLog(params: LogUsageParams & { reservationId: string | null }): Promise<string | null> {
+  if (!params.reservationId) return insertUsageLog(params)
+
+  const admin = createAdminClient()
+  // Deux tentatives : une réservation laissée ouverte bloque le quota jusqu'à
+  // la réconciliation (`expire_stale_quota_reservations`), qui ne passe
+  // qu'après 30 minutes. La ligne porte déjà son id, ce n'est pas bloquant.
+  for (const attempt of [1, 2]) {
+    const { error } = await admin
+      .from('usage_logs')
+      .update({
+        status: params.status,
+        prompt_tokens: params.usage.promptTokens,
+        completion_tokens: params.usage.completionTokens,
+        total_tokens: params.usage.totalTokens,
+        provider_cost: params.usage.providerCost,
+        currency: params.usage.currency,
+        external_request_id: params.externalRequestId,
+        metadata: params.metadata ?? null,
+        over_quota: params.quotaCheck?.overQuota ?? false,
+      })
+      .eq('id', params.reservationId)
+
+    if (!error) return params.reservationId
+    console.error(`[callAI.settleUsageLog] tentative ${attempt}`, error)
+  }
+
+  return params.reservationId
+}
+
 async function updateUsageLogSyncState(logId: string, state: {
   status: 'synced' | 'failed' | 'skipped'
   error?: string | null
@@ -239,13 +284,14 @@ async function pushUsageEventToOperator(payload: OperatorUsageEventPayload): Pro
   }
 
   const body = JSON.stringify(payload)
-  const signature = signOperatorPayload(body, secret)
+  const { signature, timestamp } = signOperatorRequest(body, secret)
 
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-operator-signature': signature,
+        [OPERATOR_TIMESTAMP_HEADER]: timestamp,
     },
     body,
   })
@@ -311,6 +357,10 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
       organizationId: params.organizationId,
       technicalFeature: params.feature,
       quantity: params.quotaQuantity ?? 1,
+      reserve: true,
+      provider: params.provider,
+      model: params.model,
+      inputKind: params.inputKind,
     }),
     checkAIRateLimit({
       organizationId: params.organizationId,
@@ -318,19 +368,41 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
     }),
   ])
 
-  if (quotaCheck.aiBillingMode !== 'client_owned') {
-    await ensureFeatureEnabled(params.organizationId, params.feature)
+  // Une réservation posée puis refusée plus bas ne serait jamais close et
+  // consommerait le quota à chaque tentative : on la relâche avant de lever.
+  async function releaseReservation() {
+    if (quotaCheck.reservationId) {
+      await createAdminClient()
+        .from('usage_logs')
+        .delete()
+        .eq('id', quotaCheck.reservationId)
+        .eq('status', 'reserved')
+    }
   }
 
-  if (!quotaCheck.allowed && quotaCheck.quotaFeature && quotaCheck.quotaMonthly !== null) {
-    throw new AIQuotaExceededError({
-      quotaFeature: quotaCheck.quotaFeature,
-      quotaMonthly: quotaCheck.quotaMonthly,
-      usedQuantity: quotaCheck.usedQuantity,
-      requestedQuantity: quotaCheck.requestedQuantity,
-    })
+  try {
+    if (quotaCheck.aiBillingMode !== 'client_owned') {
+      await ensureFeatureEnabled(params.organizationId, params.feature)
+    }
+  } catch (error) {
+    await releaseReservation()
+    throw error
+  }
+
+  if (!quotaCheck.allowed) {
+    await releaseReservation()
+    if (quotaCheck.quotaFeature && quotaCheck.quotaMonthly !== null) {
+      throw new AIQuotaExceededError({
+        quotaFeature: quotaCheck.quotaFeature,
+        quotaMonthly: quotaCheck.quotaMonthly,
+        usedQuantity: quotaCheck.usedQuantity,
+        requestedQuantity: quotaCheck.requestedQuantity,
+      })
+    }
+    throw new AIQuotaUnavailableError(params.feature)
   }
   if (!rateLimit.allowed) {
+    await releaseReservation()
     throw new AIRateLimitError(params.feature, rateLimit.limit, rateLimit.windowSeconds)
   }
 
@@ -414,7 +486,8 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
     externalRequestId = typeof raw.id === 'string' ? raw.id : null
     const latencyMs = Date.now() - startedAt
 
-    const logId = await insertUsageLog({
+    const logId = await settleUsageLog({
+      reservationId: quotaCheck.reservationId ?? null,
       organizationId: params.organizationId,
       provider: params.provider,
       feature: params.feature,
@@ -427,10 +500,11 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
       quotaCheck,
     })
 
-    // Best effort by design: on ne bloque jamais la réponse métier sur le cockpit opérateur.
-    // En cas de crash du process entre l'insert local et ce lancement asynchrone,
-    // certains events peuvent rester orphelins avec operator_sync_status = 'pending'.
-    void syncUsageLogToOperator(logId, {
+    // La synchronisation doit être attendue sur Cloudflare : une promesse détachée
+    // peut être interrompue dès que la réponse HTTP est renvoyée. La fonction
+    // absorbe elle-même les erreurs et marque le log `failed`, donc l'appel métier
+    // reste disponible même si le cockpit est momentanément indisponible.
+    await syncUsageLogToOperator(logId, {
       source_instance: getOperatorSourceInstance(),
       organization_id: params.organizationId,
       occurred_at: occurredAt,
@@ -459,7 +533,8 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
     const latencyMs = Date.now() - startedAt
     const errorMessage = error instanceof Error ? error.message : 'Erreur IA inconnue'
 
-    const logId = await insertUsageLog({
+    const logId = await settleUsageLog({
+      reservationId: quotaCheck.reservationId ?? null,
       organizationId: params.organizationId,
       provider: params.provider,
       feature: params.feature,
@@ -476,9 +551,9 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
       quotaCheck,
     })
 
-    // Même stratégie best effort côté erreur: on conserve le log local comme source de vérité
-    // et on tente la remontée opérateur sans impacter la réponse envoyée au caller.
-    void syncUsageLogToOperator(logId, {
+    // Même garantie côté erreur : le journal local reste la source de vérité et
+    // la tentative opérateur est terminée (ou marquée failed) avant de répondre.
+    await syncUsageLogToOperator(logId, {
       source_instance: getOperatorSourceInstance(),
       organization_id: params.organizationId,
       occurred_at: occurredAt,

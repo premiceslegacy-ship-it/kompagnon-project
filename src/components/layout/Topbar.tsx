@@ -793,7 +793,8 @@ const MobileDrawer = ({
                 onClick={onClose}
             />
             <div
-                className={`fixed top-0 left-0 h-full w-[280px] z-[9991] flex flex-col transition-transform duration-300 ease-out ${isCockpit ? 'cockpit-topbar-drawer' : 'bg-surface dark:bg-[#141414]'} ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
+                aria-hidden={!isOpen}
+                className={`fixed top-0 left-0 h-full w-[280px] z-[9991] flex flex-col transition-[transform,visibility] duration-300 ease-out ${isCockpit ? 'cockpit-topbar-drawer' : 'bg-surface dark:bg-[#141414]'} ${isOpen ? 'visible translate-x-0' : 'invisible -translate-x-full pointer-events-none'}`}
             >
                 <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--elevation-border)]">
                     <div className="flex items-center gap-3">

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import * as Sentry from '@sentry/nextjs'
+import * as Sentry from '@sentry/browser'
 import { APP_NAME } from '@/lib/brand'
 
 /**

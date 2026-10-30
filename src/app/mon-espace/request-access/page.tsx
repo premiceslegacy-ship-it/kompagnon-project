@@ -1,10 +1,11 @@
 import RequestAccessForm from './RequestAccessForm'
 
-export default function RequestAccessPage({
-  searchParams,
+export default async function RequestAccessPage({
+  searchParams: searchParamsPromise,
 }: {
-  searchParams: { error?: string }
+  searchParams: Promise<{ error?: string }>
 }) {
+  const searchParams = await searchParamsPromise
   const errorLabel = searchParams.error === 'invalid_token'
     ? "Le lien est expiré ou invalide. Demandez-en un nouveau ci-dessous."
     : null

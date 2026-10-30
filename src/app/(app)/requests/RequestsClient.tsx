@@ -48,7 +48,8 @@ function RequestCard({ request }: { request: QuoteRequest }) {
 
   const isCatalog = request.type === 'catalog'
   const hasFreeformNotes = Boolean(request.freeform_notes?.trim())
-  const attachmentLabel = request.attachments?.[0]?.filename ?? request.attachment_url?.split('/').pop() ?? 'fichier joint'
+  const hasAttachment = request.has_attachment
+  const attachmentLabel = request.attachments?.[0]?.filename ?? 'fichier joint'
 
   const handleConvert = () => {
     if (isConverting) return
@@ -71,16 +72,16 @@ function RequestCard({ request }: { request: QuoteRequest }) {
   const [aiError, setAiError] = useState<string | null>(null)
 
   async function handleAnalyzeWithAI() {
-    if (!request.attachment_url || isAnalyzingAI) return
+    if (!hasAttachment || isAnalyzingAI) return
     setIsAnalyzingAI(true)
     setAiError(null)
 
     try {
-      // Télécharger le fichier depuis Supabase Storage
-      const fileRes = await fetch(request.attachment_url)
+      // Télécharger la pièce jointe via la route authentifiée et limitée à l'organisation.
+      const fileRes = await fetch(`/api/requests/${encodeURIComponent(request.id)}/attachment`, { credentials: 'same-origin' })
       if (!fileRes.ok) throw new Error('Impossible de télécharger le fichier joint.')
       const blob = await fileRes.blob()
-      const fileName = request.attachments?.[0]?.filename ?? request.attachment_url.split('/').pop() ?? 'document'
+      const fileName = request.attachments?.[0]?.filename ?? 'document'
       const file = new File([blob], fileName, { type: blob.type })
 
       // Envoyer à l'API analyze-quote
@@ -247,17 +248,15 @@ function RequestCard({ request }: { request: QuoteRequest }) {
           </div>
 
           {/* Pièce jointe */}
-          {request.attachment_url && (
+          {hasAttachment && (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <a
-                  href={request.attachment_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href={`/api/requests/${encodeURIComponent(request.id)}/attachment`}
                   className="flex items-center gap-3 p-3 rounded-xl bg-accent/5 border border-accent/20 hover:bg-accent/10 transition-colors group flex-1"
                 >
                   <Paperclip className="w-4 h-4 text-accent flex-shrink-0" />
-                  <span className="text-sm font-semibold text-accent flex-1 truncate">Voir {attachmentLabel}</span>
+                  <span className="text-sm font-semibold text-accent flex-1 truncate">Télécharger {attachmentLabel}</span>
                   <ExternalLink className="w-3.5 h-3.5 text-accent opacity-0 group-hover:opacity-100 transition-opacity" />
                 </a>
                 {!alreadyConverted && (

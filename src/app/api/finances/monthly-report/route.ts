@@ -3,9 +3,8 @@ import JSZip from 'jszip'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
-import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
+import { INVOICE_ISSUANCE_AUTHORITY_ERROR_MESSAGE, InvoiceIssuanceAuthorityError, isInvoiceIssuanceSnapshot, renderInvoicePdfBufferById, type InvoicePdfResult } from '@/lib/pdf/server'
 import { renderMonthlyReportPdf, type MonthlyReportData, type ReportInvoice, type ReportQuote } from '@/lib/pdf/documents/monthly-report'
-import { assertSafeExternalFetchUrl } from '@/lib/security'
 
 function pdfOrigin(): string {
   const origin = process.env.NEXT_PUBLIC_APP_URL
@@ -13,27 +12,44 @@ function pdfOrigin(): string {
   return origin
 }
 
-const REPORTABLE_INVOICE_STATUSES = ['sent', 'viewed', 'partial', 'paid', 'overdue'] as const
+const REPORTABLE_INVOICE_STATUS: Record<string, true> = {
+  sent: true, viewed: true, partial: true, paid: true, overdue: true,
+}
+const REPORTABLE_INVOICE_STATUSES = Object.keys(REPORTABLE_INVOICE_STATUS)
 const REPORTABLE_QUOTE_STATUSES = ['sent', 'viewed', 'accepted', 'refused', 'expired', 'converted', 'fully_invoiced'] as const
 
 function isReportableInvoiceStatus(status: string | null | undefined): boolean {
-  return REPORTABLE_INVOICE_STATUSES.includes(status as typeof REPORTABLE_INVOICE_STATUSES[number])
+  return typeof status === 'string' && Object.hasOwn(REPORTABLE_INVOICE_STATUS, status)
 }
 
-async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
-  if (!url) return null
-  const safeUrl = assertSafeExternalFetchUrl(url)
-  if (!safeUrl) return null
-  try {
-    const res = await fetch(safeUrl)
-    if (!res.ok) return null
-    const buf = await res.arrayBuffer()
-    const ct = res.headers.get('content-type') ?? 'image/png'
-    return `data:${ct};base64,${Buffer.from(buf).toString('base64')}`
-  } catch {
-    return null
-  }
+type MonthlyPayment = {
+  id: string
+  amount: number | null
+  payment_date: string | null
 }
+
+type MonthlyInvoiceRecord = {
+  id: string
+  status: string
+  issuance_snapshot: unknown
+  total_paid: number | null
+  paid_at: string | null
+  payments?: MonthlyPayment[] | null
+}
+
+type MonthlyPaymentWithInvoice = MonthlyPayment & {
+  invoice: MonthlyInvoiceRecord | MonthlyInvoiceRecord[] | null
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+function numberValue(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 
 export async function GET(req: Request) {
   const supabase = await createClient()
@@ -58,39 +74,35 @@ export async function GET(req: Request) {
   // ── Charger organisation ──────────────────────────────────────────────────
   const { data: orgData } = await admin
     .from('organizations')
-    .select('id, name, slug, siret, siren, vat_number, email, phone, address_line1, address_line2, city, postal_code, country, logo_url, email_from_name, email_from_address, forme_juridique, capital_social, rcs, rcs_ville, insurance_info, certifications, primary_color, payment_terms_days, late_penalty_rate, court_competent, iban, bic, bank_name, recovery_indemnity_text, auto_reminder_enabled, invoice_reminder_days, quote_reminder_days, reminder_hour_utc, sector, business_profile, business_activity_id, label_set, unit_set, default_categories, starter_presets, is_vat_subject, default_vat_rate, public_form_enabled, public_form_welcome_message, public_form_catalog_item_ids, public_form_custom_mode_enabled, public_form_notification_email, decennale_enabled, decennale_assureur, decennale_police, decennale_couverture, decennale_date_debut, decennale_date_fin')
+    .select('name, siret, email, logo_url')
     .eq('id', orgId)
     .single()
 
   if (!orgData) return new NextResponse('Organisation introuvable', { status: 500 })
 
+  // Archiving only hides an invoice from day-to-day views. It does not cancel
+  // its issuance or remove its recorded cash from the monthly export.
   // ── Charger factures du mois ──────────────────────────────────────────────
-  const { data: rawInvoices } = await admin
+  const { data: rawInvoices, error: invoicesError } = await admin
     .from('invoices')
     .select(`
-      id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
-      issue_date, due_date, paid_at, created_at,
-      client:clients(company_name, contact_name, first_name, last_name, email),
-      items:invoice_items(unit_price, unit_cost_ht, quantity, is_internal),
+      id, status, issuance_snapshot, total_paid, paid_at,
       payments:payments(id, amount, payment_date)
     `)
     .eq('organization_id', orgId)
-    .eq('is_archived', false)
     .in('status', REPORTABLE_INVOICE_STATUSES)
     .gte('issue_date', monthStart)
     .lt('issue_date', monthEnd)
     .order('issue_date', { ascending: true })
 
   // Factures encaissées sur le mois, même si elles ont été émises avant.
-  const { data: rawPayments } = await admin
+  const { data: rawPayments, error: paymentsError } = await admin
     .from('payments')
     .select(`
       id, amount, payment_date,
       invoice:invoices!inner(
-        id, number, title, status, invoice_type, is_archived, total_ht, total_tva, total_ttc, total_paid, currency,
-        issue_date, due_date, paid_at, created_at,
-        client:clients(company_name, contact_name, first_name, last_name, email),
-        items:invoice_items(unit_price, unit_cost_ht, quantity, is_internal)
+        id, status, issuance_snapshot, total_paid, paid_at,
+        payments:payments(id, amount, payment_date)
       )
     `)
     .eq('organization_id', orgId)
@@ -98,20 +110,38 @@ export async function GET(req: Request) {
     .lt('payment_date', monthEnd)
 
   // Compatibilité avec les factures marquées payées avant l'historique détaillé des paiements.
-  const { data: rawPaidInvoices } = await admin
+  const { data: rawPaidInvoices, error: paidInvoicesError } = await admin
     .from('invoices')
     .select(`
-      id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
-      issue_date, due_date, paid_at, created_at,
-      client:clients(company_name, contact_name, first_name, last_name, email),
-      items:invoice_items(unit_price, unit_cost_ht, quantity, is_internal),
+      id, status, issuance_snapshot, total_paid, paid_at,
       payments:payments(id, amount, payment_date)
     `)
     .eq('organization_id', orgId)
-    .eq('is_archived', false)
     .eq('status', 'paid')
     .gte('paid_at', monthStart)
     .lt('paid_at', monthEnd)
+  if (invoicesError || paymentsError || paidInvoicesError) {
+    console.error('[monthly-report] invoice authority source query failed:', {
+      invoicesError,
+      paymentsError,
+      paidInvoicesError,
+    })
+    return new NextResponse('Impossible de vérifier l’intégralité des factures émises pour ce rapport.', { status: 500 })
+  }
+
+
+  const invoiceRows = (rawInvoices ?? []) as unknown as MonthlyInvoiceRecord[]
+  const paidInvoiceRows = (rawPaidInvoices ?? []) as unknown as MonthlyInvoiceRecord[]
+  const paymentRows = (rawPayments ?? []) as unknown as MonthlyPaymentWithInvoice[]
+  const paymentInvoices = paymentRows
+    .map(payment => Array.isArray(payment.invoice) ? payment.invoice[0] : payment.invoice)
+    .filter((invoice): invoice is MonthlyInvoiceRecord =>
+      invoice !== null && isReportableInvoiceStatus(invoice.status),
+    )
+  const invoiceSources = [...invoiceRows, ...paidInvoiceRows, ...paymentInvoices]
+  if (invoiceSources.some(invoice => !isInvoiceIssuanceSnapshot(invoice.issuance_snapshot, invoice.id))) {
+    return new NextResponse(INVOICE_ISSUANCE_AUTHORITY_ERROR_MESSAGE, { status: 409 })
+  }
 
   // ── Charger devis du mois ─────────────────────────────────────────────────
   const { data: rawQuotes } = await admin
@@ -128,63 +158,75 @@ export async function GET(req: Request) {
     .order('created_at', { ascending: true })
 
   // ── Normaliser les données ─────────────────────────────────────────────────
-  function clientName(client: Record<string, string | null> | null): string | null {
+  function clientName(client: Record<string, unknown> | null): string | null {
     if (!client) return null
-    return client.company_name ?? ([client.first_name, client.last_name].filter(Boolean).join(' ') || client.contact_name || client.email || null)
+    const company = stringValue(client.company_name)
+    const first = stringValue(client.first_name)
+    const last = stringValue(client.last_name)
+    const contact = stringValue(client.contact_name)
+    const email = stringValue(client.email)
+    return company ?? ([first, last].filter(Boolean).join(' ') || contact || email || null)
   }
 
-  function normalizeInvoice(inv: any): ReportInvoice {
-    const c = Array.isArray(inv.client) ? inv.client[0] : inv.client
-    const items = (Array.isArray(inv.items) ? inv.items : []) as Array<{ unit_price: number; unit_cost_ht: number | null; quantity: number; is_internal: boolean }>
-    const internalTotal = items.reduce((s, i) => {
-      const unitCost = i.unit_cost_ht != null ? i.unit_cost_ht : i.is_internal ? i.unit_price : 0
-      return s + unitCost * i.quantity
+  function normalizeInvoice(invoice: MonthlyInvoiceRecord): ReportInvoice {
+    if (!isInvoiceIssuanceSnapshot(invoice.issuance_snapshot, invoice.id)) {
+      throw new Error(INVOICE_ISSUANCE_AUTHORITY_ERROR_MESSAGE)
+    }
+    const facts = invoice.issuance_snapshot.invoice
+    const items = invoice.issuance_snapshot.items
+    const internalTotal = items.reduce((sum, item) => {
+      const unitCost = item.unit_cost_ht == null
+        ? (item.is_internal === true ? numberValue(item.unit_price) : 0)
+        : numberValue(item.unit_cost_ht)
+      return sum + unitCost * numberValue(item.quantity)
     }, 0)
+    const payments = (invoice.payments ?? []).map(payment => ({
+      id: payment.id,
+      amount: payment.amount ?? 0,
+      payment_date: payment.payment_date,
+    }))
+
     return {
-      id: inv.id,
-      number: inv.number,
-      title: inv.title,
-      status: inv.status,
-      invoice_type: inv.invoice_type,
-      total_ht: inv.total_ht ?? 0,
-      total_tva: inv.total_tva ?? 0,
-      total_ttc: inv.total_ttc ?? 0,
-      total_paid: inv.total_paid ?? 0,
-      currency: inv.currency ?? 'EUR',
-      issue_date: inv.issue_date,
-      due_date: inv.due_date,
-      paid_at: inv.paid_at,
-      created_at: inv.created_at,
-      client_name: clientName(c),
+      id: invoice.id,
+      number: stringValue(facts.number),
+      title: stringValue(facts.title),
+      status: invoice.status,
+      invoice_type: stringValue(facts.invoice_type) ?? 'standard',
+      total_ht: numberValue(facts.total_ht),
+      total_tva: numberValue(facts.total_tva),
+      total_ttc: numberValue(facts.total_ttc),
+      total_paid: invoice.total_paid ?? 0,
+      currency: stringValue(facts.currency) ?? 'EUR',
+      issue_date: stringValue(facts.issue_date),
+      due_date: stringValue(facts.due_date),
+      paid_at: invoice.paid_at,
+      created_at: stringValue(facts.created_at) ?? stringValue(facts.issue_date) ?? '',
+      client_name: clientName(invoice.issuance_snapshot.buyer),
       items_cost_total: internalTotal,
-      payments: (Array.isArray(inv.payments) ? inv.payments : []).map((p: any) => ({
-        id: p.id,
-        amount: p.amount ?? 0,
-        payment_date: p.payment_date,
-      })),
+      payments,
     }
   }
 
   const invoiceMap = new Map<string, ReportInvoice>()
-  ;(rawInvoices ?? []).forEach((inv: any) => {
-    invoiceMap.set(inv.id, normalizeInvoice(inv))
+  invoiceRows.forEach(invoice => {
+    invoiceMap.set(invoice.id, normalizeInvoice(invoice))
   })
-  ;(rawPaidInvoices ?? []).forEach((inv: any) => {
-    if (!invoiceMap.has(inv.id)) invoiceMap.set(inv.id, normalizeInvoice(inv))
+  paidInvoiceRows.forEach(invoice => {
+    if (!invoiceMap.has(invoice.id)) invoiceMap.set(invoice.id, normalizeInvoice(invoice))
   })
-  ;(rawPayments ?? []).forEach((payment: any) => {
-    const inv = Array.isArray(payment.invoice) ? payment.invoice[0] : payment.invoice
-    if (!inv || !isReportableInvoiceStatus(inv.status) || inv.is_archived) return
+  paymentRows.forEach(payment => {
+    const invoice = Array.isArray(payment.invoice) ? payment.invoice[0] : payment.invoice
+    if (!invoice || !isReportableInvoiceStatus(invoice.status)) return
 
-    const normalized = invoiceMap.get(inv.id) ?? normalizeInvoice(inv)
-    if (!normalized.payments.some(p => p.id === payment.id)) {
+    const normalized = invoiceMap.get(invoice.id) ?? normalizeInvoice(invoice)
+    if (!normalized.payments.some(existing => existing.id === payment.id)) {
       normalized.payments.push({
         id: payment.id,
         amount: payment.amount ?? 0,
         payment_date: payment.payment_date,
       })
     }
-    invoiceMap.set(inv.id, normalized)
+    invoiceMap.set(invoice.id, normalized)
   })
   const invoices = Array.from(invoiceMap.values())
     .sort((a, b) => (a.issue_date ?? a.created_at).localeCompare(b.issue_date ?? b.created_at))
@@ -203,11 +245,9 @@ export async function GET(req: Request) {
     }
   })
 
-  const logoDataUrl = await fetchLogoAsDataUrl(orgData.logo_url)
-  const organization = { ...orgData, logo_url: logoDataUrl ?? orgData.logo_url } as MonthlyReportData['organization']
 
   // ── Générer le PDF de synthèse ────────────────────────────────────────────
-  const reportData: MonthlyReportData = { month, organization, invoices, quotes }
+  const reportData: MonthlyReportData = { month, organization: orgData, invoices, quotes }
   const reportBuffer = await renderMonthlyReportPdf(reportData, pdfOrigin())
 
   // ── Construire le ZIP ─────────────────────────────────────────────────────
@@ -215,14 +255,20 @@ export async function GET(req: Request) {
   zip.file(`rapport-${month}.pdf`, reportBuffer)
 
   const facturesFolder = zip.folder('factures')!
-  await Promise.all(
-    invoices.map(async inv => {
-      const result = await renderInvoicePdfBufferById(inv.id, orgId)
-      if (result) {
-        facturesFolder.file(result.fileName, result.buffer)
+  for (const invoice of invoices) {
+    let result: InvoicePdfResult | null
+    try {
+      result = await renderInvoicePdfBufferById(invoice.id, orgId)
+    } catch (err) {
+      if (err instanceof InvoiceIssuanceAuthorityError) {
+        return new NextResponse(err.message, { status: 409 })
       }
-    }),
-  )
+      console.error('[GET /api/finances/monthly-report] invoice PDF error:', err)
+      return new NextResponse('Erreur génération du PDF de facture', { status: 500 })
+    }
+    if (!result) return new NextResponse('Facture introuvable pendant la création de l’archive', { status: 404 })
+    facturesFolder.file(result.fileName, result.buffer)
+  }
 
   const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
 

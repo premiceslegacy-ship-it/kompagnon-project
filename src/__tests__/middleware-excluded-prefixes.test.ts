@@ -16,8 +16,12 @@ import { describe, expect, it } from 'vitest'
 
 const EXCLUDED_PREFIXES = ['src/app/api/cron', 'src/app/api/webhooks', 'src/app/api/operator', 'src/app/api/einvoicing']
 
+// `readOperatorRequest` authentifie ET parse en une passe (secret dérivé du
+// source_instance + fraîcheur) : c'est la garde canonique des routes
+// serveur-à-serveur depuis l'audit du 26/10/2026.
 const KNOWN_GUARDS = [
   'verifyCronSecret',
+  'readOperatorRequest',
   'verifyOperatorSignature',
   'verifyStripeSignature',
   'verifyOauthState',

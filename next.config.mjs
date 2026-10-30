@@ -4,14 +4,12 @@ import { withSentryConfig } from '@sentry/nextjs'
 const nextConfig = {
     reactStrictMode: true,
     images: {
-        // Cloudflare Workers free plan ne supporte pas cloudflare/images.js
-        // On désactive l'optimisation Next.js et on sert les images en passthrough
+        // Images servies sans transformation payante. OpenNext sait fonctionner
+        // sans binding IMAGES ; aucun patch du Worker généré n'est nécessaire.
         unoptimized: true,
     },
-    // @react-pdf/renderer et pdf-lib utilisent des modules Node natifs — ne pas bundler côté serveur
-    experimental: {
-        serverComponentsExternalPackages: ['@react-pdf/renderer', 'pdf-lib'],
-    },
+    // pdf-lib reste externe côté serveur ; aucune dépendance react-pdf.
+    serverExternalPackages: ['pdf-lib'],
     async redirects() {
         return [
             {
@@ -38,10 +36,6 @@ const nextConfig = {
                         value: 'max-age=63072000; includeSubDomains; preload',
                     },
                     {
-                        key: 'X-Frame-Options',
-                        value: 'DENY',
-                    },
-                    {
                         key: 'X-Content-Type-Options',
                         value: 'nosniff',
                     },
@@ -49,25 +43,16 @@ const nextConfig = {
                         key: 'Referrer-Policy',
                         value: 'strict-origin-when-cross-origin',
                     },
+                ],
+            },
+            {
+                // Le formulaire public est intégrable ; la CSP conserve le refus
+                // de framing partout ailleurs, en plus de ce header historique.
+                source: '/((?!demande/[^/]+/?$).*)',
+                headers: [
                     {
-                        key: 'Content-Security-Policy',
-                        // nonce-based inline scripts handled via _document; unsafe-inline kept for
-                        // next/script and react-pdf until a nonce solution is wired up.
-                        // *.sentry.io / *.ingest.us.sentry.io : remontée d'erreurs client (Sentry).
-                        // *.posthog.com / *.i.posthog.com : analytics produit (PostHog).
-                        value: [
-                            "default-src 'self'",
-                            // *.i.posthog.com : PostHog charge ses modules complémentaires
-                            // (web-vitals, surveys, dead-clicks) depuis eu-assets.i.posthog.com.
-                            "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https://*.i.posthog.com",
-                            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-                            "font-src 'self' https://fonts.gstatic.com",
-                            "img-src 'self' data: blob: https:",
-                            "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com https://openrouter.ai https://api.elevenlabs.io wss://api.elevenlabs.io https://api-adresse.data.gouv.fr https://*.sentry.io https://*.ingest.us.sentry.io https://*.posthog.com https://*.i.posthog.com",
-                            "frame-ancestors 'none'",
-                            "form-action 'self'",
-                            "base-uri 'self'",
-                        ].join('; '),
+                        key: 'X-Frame-Options',
+                        value: 'DENY',
                     },
                 ],
             },
@@ -100,12 +85,9 @@ const nextConfig = {
     },
 };
 
-// Suivi Sentry côté client uniquement (voir components/sentry-init.tsx — pas
-// src/instrumentation-client.ts, convention Next 15.3+ non supportée par Next
-// 14.2 ici) — la partie serveur/edge n'est pas activée : bug connu non résolu (AsyncLocalStorage) sur
-// OpenNext/Cloudflare Workers. withSentryConfig() ne s'applique que si les
-// variables d'upload sont présentes, pour ne jamais faire échouer le build d'un
-// client sans Sentry configuré (setup per-client, credentials optionnels).
+// Suivi Sentry côté client uniquement (components/sentry-init.tsx). La partie
+// serveur/edge reste désactivée pour le runtime OpenNext/Cloudflare. L'upload
+// des sources est optionnel pour les instances sans configuration Sentry.
 const sentryBuildOptions = {
     org: process.env.SENTRY_ORG,
     project: process.env.SENTRY_PROJECT,
@@ -114,6 +96,13 @@ const sentryBuildOptions = {
     widenClientFileUpload: true,
     disableLogger: true,
     telemetry: false,
+    webpack: {
+        // L'upload des sourcemaps ne doit pas réintroduire le SDK Node dans
+        // le Worker quand SENTRY_AUTH_TOKEN est configuré en CI.
+        autoInstrumentServerFunctions: false,
+        autoInstrumentMiddleware: false,
+        autoInstrumentAppDirectory: false,
+    },
 };
 
 export default process.env.SENTRY_AUTH_TOKEN

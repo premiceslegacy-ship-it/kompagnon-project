@@ -3,6 +3,7 @@
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 export type VerifyRecoveryState = { error: string | null }
 
@@ -19,6 +20,13 @@ export async function verifyRecoveryOtp(
 
   if (!email || !token) {
     return { error: 'Veuillez saisir le code reçu par email.' }
+  }
+
+  // Même borne que la confirmation d'inscription : un OTP de 6 chiffres doit
+  // être limité en essais, sinon il est devinable dans son heure de validité.
+  const limit = await checkRateLimit({ scope: 'auth:otp-verify', identifier: email, limit: 5, windowSeconds: 15 * 60 })
+  if (!limit.allowed) {
+    return { error: 'Trop de codes essayés. Demandez un nouveau code.' }
   }
 
   const supabase = await createClient()

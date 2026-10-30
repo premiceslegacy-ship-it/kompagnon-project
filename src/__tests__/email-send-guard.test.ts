@@ -71,7 +71,7 @@ describe('sendEmail : réponse du client final', () => {
     for (const email of [null, '', '   ']) {
       orgRow = { ...baseOrg, email }
       const result = await sendEmail(mail)
-      expect(result.error).toBe(MISSING_ORGANIZATION_EMAIL_ERROR)
+      expect(result.delivery).toBe('not_sent')
     }
     expect(send).not.toHaveBeenCalled()
   })
@@ -88,5 +88,30 @@ describe('sendEmail : réponse du client final', () => {
     const result = await sendEmail({ ...mail, allowAtelierReplyTo: true })
     expect(result.error).toBeNull()
     expect(send.mock.calls[0][0].replyTo).toBe('contact@orsayn.fr')
+  })
+})
+describe('sendEmail delivery outcomes', () => {
+  it('classifies Resend SDK 4xx error objects as definite rejections', async () => {
+    send.mockResolvedValueOnce({
+      error: { name: 'validation_error', statusCode: 422, message: 'Invalid recipient' },
+      data: null,
+    })
+
+    const result = await sendEmail(mail)
+
+    expect(result.error).toBe("Impossible d'envoyer l'email. Vérifiez la configuration Resend.")
+    expect(result.delivery).toBe('rejected')
+  })
+
+  it.each([
+    { name: 'application_error', statusCode: 503, message: 'Service unavailable' },
+    { name: 'application_error', statusCode: null, message: 'Unable to fetch data' },
+  ])('keeps Resend 5xx and transport error objects ambiguous', async (error) => {
+    send.mockResolvedValueOnce({ error, data: null })
+
+    const result = await sendEmail(mail)
+
+    expect(result.error).not.toBeNull()
+    expect(result.delivery).toBe('unknown')
   })
 })

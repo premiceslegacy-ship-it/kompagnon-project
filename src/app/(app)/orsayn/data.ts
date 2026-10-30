@@ -161,7 +161,7 @@ export async function getCockpitData(): Promise<CockpitData | null> {
   ] = await Promise.all([
     operator
       .from('operator_client_settings')
-      .select('source_instance, organization_id, label, monthly_fee_ht, billing_currency, is_active, app_url, contact_email, config_sync_status, config_synced_at, config_sync_error')
+      .select('source_instance, organization_id, label, monthly_fee_ht, billing_currency, is_active, app_url, contact_email, company_siret, config_sync_status, config_synced_at, config_sync_error, updated_at')
       .order('source_instance', { ascending: true }),
     operator
       .from('operator_client_subscriptions')
@@ -359,6 +359,14 @@ export async function getCockpitData(): Promise<CockpitData | null> {
       reception_enabled: subscription?.super_pdp_reception_enabled ?? false,
     })
     const usageHistoryForClient = usageHistoryBySource.get(key) ?? buildUsageHistory([], usdToEurRate)
+    const clientEvents = operatorEventsBySource[key] ?? []
+    const onboardingStartedEvent = clientEvents.find((event) => event.event_type === 'signup_created')
+    const onboardingCompletedEvent = clientEvents.find((event) => event.event_type === 'self_service_signup')
+    const onboardingStatus = onboardingCompletedEvent || setting?.company_siret
+      ? 'completed'
+      : onboardingStartedEvent
+        ? 'pending'
+        : 'unknown'
 
     return {
       sourceInstance,
@@ -376,10 +384,14 @@ export async function getCockpitData(): Promise<CockpitData | null> {
       isArchived: setting?.is_active === false,
       isActive: subscription?.is_active ?? setting?.is_active ?? true,
       renewsAt: subscription?.renews_at ?? null,
+      trialTier: subscription?.trial_tier ?? null,
       trialEndsAt: subscription?.trial_ends_at ?? null,
       trialConverted: Boolean(subscription?.trial_converted),
       preferredTier: subscription?.preferred_tier === 'expert' ? 'expert' : 'pro',
       accessStatus: subscription?.access_status ?? null,
+      onboardingStatus,
+      onboardingStartedAt: onboardingStartedEvent?.created_at ?? null,
+      onboardingCompletedAt: onboardingCompletedEvent?.created_at ?? null,
       accessEndsAt: subscription?.access_ends_at ?? null,
       cancelAt: subscription?.cancel_at ?? null,
       stripeStatus: subscription?.stripe_status ?? null,
@@ -394,7 +406,7 @@ export async function getCockpitData(): Promise<CockpitData | null> {
       grossMargin,
       grossMarginEur,
       marginPct,
-      lastSeenAt: latestEvent?.occurred_at ?? client?.updated_at ?? null,
+      lastSeenAt: latestEvent?.occurred_at ?? client?.updated_at ?? onboardingStartedEvent?.created_at ?? setting?.updated_at ?? null,
       lastStatus: latestEvent?.status ?? null,
       monthEventCount: monthEvents.length,
       modules: isOrganizationResolved && modulesByOrgId.has(organizationId)
@@ -410,7 +422,7 @@ export async function getCockpitData(): Promise<CockpitData | null> {
         const bLabel = QUOTA_DEFINITIONS[b.quota_feature]?.label ?? b.quota_feature
         return aLabel.localeCompare(bLabel, 'fr')
       }),
-      events: operatorEventsBySource[key] ?? [],
+      events: clientEvents,
       commercialEvents: commercialEventsBySource[key] ?? [],
       usageHistory: usageHistoryForClient,
     } satisfies ClientRow

@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Accord de traitement des données (DPA) — Orsayn</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.65;
+      color: #1a1a1a;
+      background: #fff;
+    }
+
+    .page {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 60px 60px 80px;
+    }
+
+    /* En-tête */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding-bottom: 28px;
+      border-bottom: 2px solid #1a1a1a;
+      margin-bottom: 36px;
+    }
+
+    .header-brand {
+      font-size: 22pt;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #1a1a1a;
+    }
+
+    .header-brand span {
+      display: block;
+      font-size: 8.5pt;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #666;
+      margin-top: 3px;
+    }
+
+    .header-meta {
+      text-align: right;
+      font-size: 8.5pt;
+      color: #666;
+      line-height: 1.6;
+    }
+
+    /* Titre du document */
+    .doc-title {
+      margin-bottom: 32px;
+    }
+
+    .doc-title h1 {
+      font-size: 17pt;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #1a1a1a;
+      margin-bottom: 6px;
+    }
+
+    .doc-title .subtitle {
+      font-size: 9pt;
+      color: #666;
+    }
+
+    /* Notice intro */
+    .notice {
+      background: #f5f5f5;
+      border-left: 3px solid #1a1a1a;
+      padding: 12px 16px;
+      font-size: 9pt;
+      color: #444;
+      margin-bottom: 36px;
+      line-height: 1.55;
+    }
+
+    /* Bloc identification parties */
+    .parties-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 10px 0 20px;
+    }
+
+    .partie-block {
+      border: 1px solid #e0e0e0;
+      padding: 14px 16px;
+      font-size: 9.5pt;
+      line-height: 1.8;
+    }
+
+    .partie-block .partie-label {
+      font-size: 8pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #666;
+      margin-bottom: 8px;
+    }
+
+    .partie-block .field {
+      color: #888;
+      font-style: italic;
+    }
+
+    /* Articles */
+    .article {
+      margin-bottom: 28px;
+    }
+
+    .article h2 {
+      font-size: 10.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #1a1a1a;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .article p {
+      margin-bottom: 8px;
+      color: #222;
+    }
+
+    .article ul {
+      margin: 8px 0 8px 18px;
+    }
+
+    .article ul li {
+      margin-bottom: 5px;
+      color: #222;
+    }
+
+    /* Tableaux */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 9pt;
+    }
+
+    thead tr {
+      background: #f5f5f5;
+    }
+
+    th {
+      text-align: left;
+      padding: 8px 10px;
+      font-weight: 600;
+      color: #1a1a1a;
+      border-bottom: 1.5px solid #1a1a1a;
+    }
+
+    td {
+      padding: 7px 10px;
+      border-bottom: 1px solid #e8e8e8;
+      color: #222;
+      vertical-align: top;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    strong { font-weight: 600; }
+
+    hr {
+      border: none;
+      border-top: 1px solid #e0e0e0;
+      margin: 28px 0;
+    }
+
+    .footer {
+      margin-top: 48px;
+      padding-top: 20px;
+      border-top: 1.5px solid #1a1a1a;
+      font-size: 8.5pt;
+      color: #888;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    @media print {
+      body { font-size: 10pt; }
+      .page { padding: 40px 50px 60px; max-width: 100%; }
+      .article { page-break-inside: avoid; }
+      table { page-break-inside: avoid; }
+      .parties-grid { page-break-inside: avoid; }
+      @page { margin: 20mm 15mm; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- En-tête -->
+  <div class="header">
+    <div class="header-brand">
+      Orsayn
+      <span>Samuel Mbeboura, entrepreneur individuel</span>
+    </div>
+    <div class="header-meta">
+      SIRET 98920815200011<br>
+      1 rue des héraults<br>
+      contact@orsayn.fr<br>
+      Annexe RGPD — DPA
+    </div>
+  </div>
+
+  <!-- Titre -->
+  <div class="doc-title">
+    <h1>Accord de traitement des données</h1>
+    <div class="subtitle">Annexe RGPD — Version 1.0 — mai 2026</div>
+  </div>
+
+  <!-- Notice -->
+  <div class="notice">
+    Ce document constitue l'Annexe RGPD au contrat de prestation de services conclu entre Orsayn et le Client.
+    Il est remis et signé lors de chaque nouveau déploiement, conformément à l'article 28 du Règlement (UE)
+    2016/679 (RGPD). Il fait partie intégrante des Conditions Générales de Vente d'Orsayn.
+  </div>
+
+  <!-- Art. 1 -->
+  <div class="article">
+    <h2>Article 1 — Identification des parties</h2>
+    <div class="parties-grid">
+      <div class="partie-block">
+        <div class="partie-label">Sous-traitant</div>
+        <strong>Samuel Mbeboura</strong><br>
+        Entrepreneur individuel — Orsayn<br>
+        1 rue des héraults<br>
+        SIRET 98920815200011<br>
+        contact@orsayn.fr
+      </div>
+      <div class="partie-block">
+        <div class="partie-label">Responsable de traitement — Le Client</div>
+        Raison sociale : <span class="field">___________________________</span><br>
+        SIRET : <span class="field">___________________________</span><br>
+        Représentant légal : <span class="field">___________________________</span><br>
+        Adresse : <span class="field">___________________________</span><br>
+        Email : <span class="field">___________________________</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Art. 2 -->
+  <div class="article">
+    <h2>Article 2 — Objet et durée</h2>
+    <p>
+      Le présent accord encadre les traitements de données à caractère personnel réalisés par Orsayn
+      pour le compte du Client dans le cadre de l'utilisation du logiciel <strong>Atelier</strong>
+      (application de gestion BTP : devis, factures, chantiers, contacts, collaborateurs).
+    </p>
+    <p>
+      Il prend effet à la date de signature et reste en vigueur pendant toute la durée du contrat
+      de prestation, puis pendant les durées de conservation légales applicables post-résiliation.
+    </p>
+  </div>
+
+  <!-- Art. 3 -->
+  <div class="article">
+    <h2>Article 3 — Qualification des rôles</h2>
+    <p>
+      <strong>Données métier du Client</strong> (clients, devis, factures, chantiers, contacts,
+      collaborateurs, photos, documents) : Orsayn intervient comme <strong>sous-traitant</strong>
+      au sens de l'article 4(8) du RGPD. Le Client est responsable de traitement.
+    </p>
+    <p>
+      <strong>Traitements propres d'Orsayn</strong> (gestion du compte éditeur, support, sécurité,
+      facturation, logs d'accès à l'infrastructure) : Orsayn intervient comme
+      <strong>responsable de traitement</strong> indépendant, soumis à sa propre politique de
+      confidentialité (orsayn.fr/privacy).
+    </p>
+  </div>
+
+  <!-- Art. 4 -->
+  <div class="article">
+    <h2>Article 4 — Nature et finalités des traitements</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Catégorie de données</th>
+          <th>Personnes concernées</th>
+          <th>Finalité</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Nom, prénom, email, téléphone, adresse (clients du Client)</td>
+          <td>Clients de l'artisan</td>
+          <td>Devis, facturation, relances, suivi chantier</td>
+        </tr>
+        <tr>
+          <td>Nom, prénom, email, rôle, heures (collaborateurs)</td>
+          <td>Salariés et sous-traitants de l'artisan</td>
+          <td>Gestion des équipes, planning, rapports heures</td>
+        </tr>
+        <tr>
+          <td>Contenu des échanges WhatsApp</td>
+          <td>Artisan, collaborateurs</td>
+          <td>Agent IA conversationnel, relances, briefings</td>
+        </tr>
+        <tr>
+          <td>Données de connexion et d'utilisation</td>
+          <td>Utilisateurs de l'application</td>
+          <td>Sécurité, audit, quotas IA</td>
+        </tr>
+        <tr>
+          <td>Photos et documents chantier</td>
+          <td>—</td>
+          <td>Suivi travaux, rapports PDF</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Art. 5 -->
+  <div class="article">
+    <h2>Article 5 — Instructions documentées</h2>
+    <p>
+      Orsayn traite les données personnelles uniquement sur instruction documentée du Client,
+      telle que matérialisée par l'utilisation de l'application et les paramètres configurés.
+      Orsayn n'utilise pas les données métier du Client à des fins propres (entraînement de
+      modèles, marketing, revente).
+    </p>
+  </div>
+
+  <!-- Art. 6 -->
+  <div class="article">
+    <h2>Article 6 — Obligations de confidentialité</h2>
+    <p>
+      Orsayn s'assure que les personnes autorisées à traiter les données dans le cadre de la
+      prestation sont soumises à une obligation de confidentialité appropriée.
+    </p>
+  </div>
+
+  <!-- Art. 7 -->
+  <div class="article">
+    <h2>Article 7 — Mesures de sécurité techniques et organisationnelles</h2>
+    <ul>
+      <li><strong>Isolation totale par client :</strong> chaque instance dispose de sa propre base de données Supabase, de ses propres clés d'API et de son propre Worker Cloudflare. Aucun accès croisé entre instances n'est possible au niveau applicatif.</li>
+      <li><strong>Chiffrement en transit :</strong> HTTPS/TLS sur toutes les communications.</li>
+      <li><strong>Chiffrement au repos :</strong> fourni par Supabase (AES-256, région EU West — Frankfurt).</li>
+      <li><strong>Authentification :</strong> Supabase Auth avec sessions httpOnly, rate-limiting, RBAC par rôle.</li>
+      <li><strong>Clé de service :</strong> jamais exposée côté client, jamais loggée.</li>
+      <li><strong>Sauvegardes :</strong> automatiques Supabase (quotidiennes, rétention 7 jours en plan gratuit, 30 jours en plan Pro).</li>
+      <li><strong>Contrôle d'accès opérateur :</strong> le cockpit Orsayn dispose de son propre projet Supabase distinct, sans accès direct aux bases de données clients.</li>
+    </ul>
+  </div>
+
+  <!-- Art. 8 -->
+  <div class="article">
+    <h2>Article 8 — Sous-traitants ultérieurs</h2>
+    <p>
+      Le Client autorise Orsayn à faire appel aux sous-traitants ultérieurs suivants. Orsayn s'engage
+      à leur imposer des obligations de protection des données équivalentes au présent accord.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Sous-traitant</th>
+          <th>Pays</th>
+          <th>Rôle</th>
+          <th>Garantie de transfert</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Supabase, Inc.</strong></td>
+          <td>USA (données EU Frankfurt)</td>
+          <td>Base de données, authentification, stockage</td>
+          <td>Data Privacy Framework UE-USA</td>
+        </tr>
+        <tr>
+          <td><strong>Cloudflare, Inc.</strong></td>
+          <td>USA (CDN mondial)</td>
+          <td>Exécution applicative, CDN</td>
+          <td>Data Privacy Framework UE-USA</td>
+        </tr>
+        <tr>
+          <td><strong>Mistral AI</strong></td>
+          <td>France (UE)</td>
+          <td>Transcription audio (saisie vocale, vocal WhatsApp)</td>
+          <td>Entité UE — droit français applicable</td>
+        </tr>
+        <tr>
+          <td><strong>OpenRouter, Inc.</strong></td>
+          <td>USA</td>
+          <td>Routage des appels LLM (IA)</td>
+          <td>Clauses contractuelles types (CCT) 2021</td>
+        </tr>
+        <tr>
+          <td><strong>Resend, Inc.</strong></td>
+          <td>USA</td>
+          <td>Emails transactionnels (devis, factures, invitations)</td>
+          <td>Clauses contractuelles types (CCT) 2021</td>
+        </tr>
+        <tr>
+          <td><strong>Twilio, Inc.</strong></td>
+          <td>USA</td>
+          <td>Messagerie WhatsApp (numéro Atelier mutualisé)</td>
+          <td>Data Privacy Framework UE-USA</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Orsayn informera le Client de tout ajout ou remplacement de sous-traitant ultérieur avec
+      un préavis raisonnable. Le Client peut s'y opposer pour motif légitime.
+    </p>
+  </div>
+
+  <!-- Art. 9 -->
+  <div class="article">
+    <h2>Article 9 — Transferts hors Espace Économique Européen</h2>
+    <p>
+      Les sous-traitants américains listés à l'article 8 sont soumis au Cloud Act américain (2018),
+      qui autorise les autorités américaines à accéder à des données stockées hors des États-Unis
+      par des sociétés américaines. Les certifications Data Privacy Framework et les clauses
+      contractuelles types constituent les garanties adéquates au sens des articles 44 à 49 du
+      RGPD et de la décision d'adéquation 2023/1795 de la Commission européenne.
+    </p>
+    <p>
+      Les données métier sont stockées dans la région EU West (Frankfurt) de Supabase. Les données
+      transitant par Cloudflare Workers peuvent être traitées dans des datacenters hors UE le temps
+      de l'exécution de la requête, sans persistance.
+    </p>
+  </div>
+
+  <!-- Art. 10 -->
+  <div class="article">
+    <h2>Article 10 — Assistance à l'exercice des droits</h2>
+    <p>Orsayn met à disposition du Client les outils suivants :</p>
+    <ul>
+      <li>Export des données en self-service depuis les paramètres de l'application (formats JSON/CSV/PDF).</li>
+      <li>Procédure de suppression de compte et de purge des données accessible depuis les paramètres.</li>
+      <li>Contact RGPD : contact@orsayn.fr — délai de traitement : 30 jours calendaires.</li>
+    </ul>
+    <p>
+      Pour les demandes portant sur des données traitées pour le compte du Client (données de ses
+      propres clients ou collaborateurs), le Client est responsable de traitement et doit répondre
+      directement à la personne concernée. Orsayn apporte son assistance technique sur demande.
+    </p>
+  </div>
+
+  <!-- Art. 11 -->
+  <div class="article">
+    <h2>Article 11 — Notification des violations de données</h2>
+    <p>
+      En cas de violation de données à caractère personnel affectant les données du Client, Orsayn
+      notifie le Client dans les meilleurs délais et au plus tard <strong>72 heures</strong> après
+      en avoir pris connaissance, afin de permettre au Client de satisfaire à son obligation de
+      notification à la CNIL (article 33 RGPD).
+    </p>
+    <p>
+      La notification contient : nature de la violation, catégories et volume de données concernées,
+      mesures prises ou envisagées, coordonnées du point de contact.
+    </p>
+  </div>
+
+  <!-- Art. 12 -->
+  <div class="article">
+    <h2>Article 12 — Durées de conservation</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Type de données</th>
+          <th>Durée</th>
+          <th>Base légale</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Devis et factures</td>
+          <td>10 ans après émission</td>
+          <td>Art. L123-22 Code de commerce</td>
+        </tr>
+        <tr>
+          <td>Données de compte (nom, email, organisation)</td>
+          <td>3 ans après résiliation</td>
+          <td>Prescription civile — art. 2224 Code civil</td>
+        </tr>
+        <tr>
+          <td>Conversations WhatsApp</td>
+          <td>1 an</td>
+          <td>Intérêt légitime — traçabilité des échanges (art. 6(1)(f) RGPD)</td>
+        </tr>
+        <tr>
+          <td>Logs d'activité et d'audit</td>
+          <td>1 an</td>
+          <td>Sécurité — art. 32 RGPD</td>
+        </tr>
+        <tr>
+          <td>Données de session (cookies)</td>
+          <td>Session active / 7 jours max</td>
+          <td>Strictement nécessaire</td>
+        </tr>
+        <tr>
+          <td>Exports ZIP générés</td>
+          <td>7 jours (lien de téléchargement)</td>
+          <td>Opérationnel</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Art. 13 -->
+  <div class="article">
+    <h2>Article 13 — Sort des données en fin de prestation</h2>
+    <p>
+      À la résiliation du contrat, Orsayn met à disposition du Client un export complet de ses données
+      métier (formats JSON/CSV/PDF selon le type) dans un délai de <strong>30 jours</strong>.
+    </p>
+    <p>
+      Passé ce délai d'export, Orsayn procède à la suppression de l'instance et à la purge des données,
+      à l'exception des données soumises à une obligation légale de conservation (article 12).
+    </p>
+  </div>
+
+  <!-- Art. 14 -->
+  <div class="article">
+    <h2>Article 14 — Loi applicable et autorité de contrôle</h2>
+    <p>
+      Le présent accord est soumis au droit français et au Règlement (UE) 2016/679 (RGPD).
+    </p>
+    <p>
+      L'autorité de contrôle compétente est la <strong>Commission Nationale de l'Informatique
+      et des Libertés (CNIL)</strong> — www.cnil.fr.
+    </p>
+  </div>
+
+  <hr>
+
+  <!-- Signatures -->
+  <div class="article">
+    <h2>Signatures</h2>
+    <p style="margin-bottom: 32px;">
+      Fait en deux exemplaires originaux. Chaque partie reconnaît avoir pris connaissance du
+      présent accord et l'accepter dans son intégralité.
+    </p>
+    <table style="border: none;">
+      <tbody>
+        <tr>
+          <td style="width: 50%; border: none; padding: 0 24px 0 0; vertical-align: top;">
+            <strong>Pour Orsayn (Sous-traitant)</strong><br>
+            Samuel Mbeboura<br><br>
+            Date : _____ / _____ / _____<br><br><br>
+            Signature :<br><br><br><br>
+            ___________________________________
+          </td>
+          <td style="width: 50%; border: none; padding: 0 0 0 24px; vertical-align: top;">
+            <strong>Pour le Client (Responsable de traitement)</strong><br>
+            Nom et qualité : ___________________________<br><br>
+            Date : _____ / _____ / _____<br><br><br>
+            Signature :<br><br><br><br>
+            ___________________________________
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pied de page -->
+  <div class="footer">
+    <span>DPA Orsayn — Annexe RGPD — Version 1.0 — mai 2026</span>
+    <span>Samuel Mbeboura EI — SIRET 98920815200011 — contact@orsayn.fr</span>
+  </div>
+
+</div>
+</body>
+</html>

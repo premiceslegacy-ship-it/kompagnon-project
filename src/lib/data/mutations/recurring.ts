@@ -260,16 +260,18 @@ export async function prepareNextRecurringDraft(recurringId: string): Promise<Re
     is_internal?: boolean | null
   }>
   const clientItems = items.filter(item => !item.is_internal)
-  const totalHt = clientItems.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0)
-  const totalTva = clientItems.reduce(
-    (sum, item) => sum + Number(item.quantity) * Number(item.unit_price) * (Number(item.vat_rate) / 100),
-    0,
-  )
   const { data: organization } = await supabase
     .from('organizations')
-    .select('payment_terms_days')
+    .select('payment_terms_days, is_vat_subject')
     .eq('id', orgId)
     .maybeSingle()
+  const totalHt = clientItems.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0)
+  const totalTva = organization?.is_vat_subject === false
+    ? 0
+    : clientItems.reduce(
+        (sum, item) => sum + Number(item.quantity) * Number(item.unit_price) * (Number(item.vat_rate) / 100),
+        0,
+      )
   const clientRelation = model.client as unknown as { payment_terms_days: number | null } | { payment_terms_days: number | null }[] | null
   const clientPaymentTermsDays = Array.isArray(clientRelation)
     ? clientRelation[0]?.payment_terms_days

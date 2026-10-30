@@ -1,8 +1,8 @@
-<svg width="120" height="80" viewBox="0 0 120 80" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M10 37L59 49L110 37" stroke="url(#paint0_linear_788_379)" stroke-width="8"/>
-<path d="M0 80L54 0H66L120 80H104L60 15L16 80H0Z" fill="#FFF8ED"/>
+<svg width="141" height="84" viewBox="0 0 141 84" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M12 39L70.5 51L129 39" stroke="url(#barre_atelier_blanc)" stroke-width="8"/>
+<path d="M0 84L63 0H78L141 84H126L70.5 10L15 84Z" fill="#FFF8ED"/>
 <defs>
-<linearGradient id="paint0_linear_788_379" x1="10" y1="43" x2="110" y2="43" gradientUnits="userSpaceOnUse">
+<linearGradient id="barre_atelier_blanc" x1="12" y1="45" x2="129" y2="45" gradientUnits="userSpaceOnUse">
 <stop stop-color="#FF8A01"/>
 <stop offset="1" stop-color="#995300"/>
 </linearGradient>

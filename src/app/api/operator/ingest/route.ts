@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isOperatorModeEnabled, createOperatorAdminClient } from '@/lib/supabase/operator'
-import { getOperatorUsdToEurRate, verifyOperatorSignature, type OperatorUsageEventPayload } from '@/lib/operator'
+import { getOperatorUsdToEurRate, hasOperatorMasterSecret, readOperatorRequest, type OperatorUsageEventPayload } from '@/lib/operator'
 import { getQuotaFeatureForTechnicalFeature, getQuotaUnit, isQuotaFeature } from '@/lib/quota-catalog'
 
 function isValidPayload(payload: unknown): payload is OperatorUsageEventPayload {
@@ -29,12 +29,11 @@ function convertProviderCostToEur(value: number | null | undefined, currency: st
 }
 
 function getPeriodStart(value: string): string {
+  // UTC : le mois de quota local est borné en UTC par les Workers, un setDate
+  // en heure locale décalerait l'événement du 1er d'un mois selon le fuseau.
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return new Date().toISOString().substring(0, 7) + '-01'
-  }
-  date.setDate(1)
-  date.setHours(0, 0, 0, 0)
+  date.setUTCDate(1)
+  date.setUTCHours(0, 0, 0, 0)
   return date.toISOString().substring(0, 10)
 }
 
@@ -54,26 +53,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  const secret = process.env.OPERATOR_INGEST_SECRET?.trim()
-  if (!secret) {
+  if (!hasOperatorMasterSecret()) {
     return NextResponse.json({ error: 'Operator ingest secret missing' }, { status: 500 })
   }
 
   const rawBody = await req.text()
-  const signature = req.headers.get('x-operator-signature')
-  if (!verifyOperatorSignature(rawBody, secret, signature)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const check = readOperatorRequest<OperatorUsageEventPayload>(rawBody, req.headers, { requireMaster: true })
+  if (!check.ok) {
+    return NextResponse.json({ error: check.error }, { status: check.status })
   }
-
-  let payload: OperatorUsageEventPayload
-  try {
-    payload = JSON.parse(rawBody)
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
+  const payload = check.body
 
   if (!isValidPayload(payload)) {
     return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
+  }
+
+  // Une quantité négative décrémenterait le compteur ; une date illisible
+  // ferait échouer l'insertion en base à chaque retry de l'instance.
+  if (Number.isNaN(new Date(payload.occurred_at).getTime())) {
+    return NextResponse.json({ error: 'Invalid occurred_at' }, { status: 400 })
+  }
+  if (payload.quota_quantity != null && (!Number.isFinite(payload.quota_quantity) || payload.quota_quantity < 0)) {
+    return NextResponse.json({ error: 'Invalid quota_quantity' }, { status: 400 })
   }
 
   const operator = createOperatorAdminClient()
@@ -90,8 +91,19 @@ export async function POST(req: NextRequest) {
     }, { onConflict: 'source_instance,organization_id' })
 
   if (clientError) {
-    console.error('[operator/ingest.client]', clientError)
-    return NextResponse.json({ error: 'Unable to upsert operator client' }, { status: 500 })
+    // Certaines bases cockpit historiques ont conservé par erreur l'ancienne
+    // contrainte UNIQUE(source_instance), incompatible avec une instance SaaS
+    // mutualisée. Les tables settings/subscriptions/usage sont déjà, elles,
+    // correctement indexées par organisation : ne pas perdre la consommation
+    // d'une nouvelle organisation pour cette ligne de compatibilité legacy.
+    const legacySourceConstraint = clientError.code === '23505'
+      && String(clientError.message).includes('operator_clients_source_instance_key')
+    if (legacySourceConstraint) {
+      console.warn('[operator/ingest.client] legacy source_instance constraint ignored')
+    } else {
+      console.error('[operator/ingest.client]', clientError)
+      return NextResponse.json({ error: 'Unable to upsert operator client' }, { status: 500 })
+    }
   }
 
   // Auto-crée la ligne cockpit au premier event - le label peut être corrigé manuellement ensuite

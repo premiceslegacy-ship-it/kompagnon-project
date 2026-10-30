@@ -131,6 +131,84 @@ export function buildAtelierTrialStartedEmail({
   })
 }
 
+export function buildAtelierExistingCompanyEmail({
+  appUrl,
+  companyName,
+}: {
+  appUrl: string
+  companyName?: string | null
+}) {
+  const existingCompany = companyName?.trim() || 'une entreprise déjà inscrite'
+  return buildAtelierCommercialEmail({
+    subject: 'Votre entreprise possède déjà un espace Atelier',
+    eyebrow: 'Rejoindre votre équipe',
+    title: 'Pas besoin de créer un deuxième espace.',
+    paragraphs: [
+      `Le SIRET renseigné est déjà associé à l’espace Atelier de ${existingCompany}.`,
+      'Rapprochez-vous de la personne qui a créé cet espace et demandez-lui de vous inviter depuis Réglages → Équipe. Vous recevrez alors un lien personnel pour rejoindre directement la bonne entreprise.',
+      'Vos données resteront ainsi regroupées au même endroit : devis, clients, chantiers et droits de chaque collaborateur.',
+    ],
+    notice: {
+      text: 'Pour votre sécurité, Atelier ne rattache jamais automatiquement un compte à une entreprise existante.',
+      theme: 'info',
+    },
+    cta: { label: 'Retourner dans Atelier →', url: `${appUrl.replace(/\/$/, '')}/activation` },
+    footnote: 'Si vous êtes la personne qui gère déjà cet espace, reconnectez-vous avec le compte utilisé lors de sa création.',
+  })
+}
+
+export type OnboardingReminderStage = 'first' | 'second' | 'final'
+
+export function buildAtelierOnboardingReminderEmail({
+  appUrl,
+  firstName,
+  stage,
+}: {
+  appUrl: string
+  firstName?: string | null
+  stage: OnboardingReminderStage
+}) {
+  const name = firstName?.trim() || 'Bonjour'
+  const variants: Record<OnboardingReminderStage, { subject: string; title: string; paragraphs: string[]; footnote: string }> = {
+    first: {
+      subject: 'Votre espace Atelier est presque prêt',
+      title: `${name}, encore deux minutes avant votre premier devis.`,
+      paragraphs: [
+        'Votre compte est confirmé. Il reste seulement à indiquer votre entreprise, votre activité et votre SIRET pour ouvrir votre essai Pro.',
+        'Les coordonnées complètes, la facturation électronique et l’équipe pourront être configurées plus tard depuis les réglages.',
+      ],
+      footnote: 'Aucune carte bancaire n’est demandée pour démarrer les 7 jours Pro.',
+    },
+    second: {
+      subject: 'Un premier devis réel pour découvrir Atelier',
+      title: `${name}, partez d’un dossier que vous connaissez déjà.`,
+      paragraphs: [
+        'Terminez la configuration rapide, puis décrivez un vrai chantier à la voix : Atelier prépare la structure du devis et vous gardez la main sur chaque prix.',
+        'Si votre entreprise utilise déjà Atelier, choisissez plutôt « Je rejoins une entreprise » et demandez le code ou une invitation à votre responsable.',
+      ],
+      footnote: 'Vos informations déjà saisies sont conservées.',
+    },
+    final: {
+      subject: 'Besoin d’aide pour terminer votre espace Atelier ?',
+      title: `${name}, votre espace vous attend toujours.`,
+      paragraphs: [
+        'Vous pouvez reprendre là où vous vous êtes arrêté. La configuration essentielle ne demande que quelques informations sur votre entreprise.',
+        'Vous êtes salarié ou collaborateur ? Ne créez pas un second espace : demandez à la personne qui gère Atelier dans votre entreprise de vous inviter.',
+      ],
+      footnote: 'Vous pouvez simplement ignorer ce message si vous ne souhaitez pas continuer.',
+    },
+  }
+  const copy = variants[stage]
+  return buildAtelierCommercialEmail({
+    subject: copy.subject,
+    eyebrow: 'Configuration rapide',
+    title: copy.title,
+    paragraphs: copy.paragraphs,
+    cta: { label: 'Terminer mon espace →', url: `${appUrl.replace(/\/$/, '')}/onboarding` },
+    footnote: copy.footnote,
+  })
+}
+
 /**
  * Deux états, une seule architecture (état, conséquence, action).
  * - 3 jours ou plus : la valeur et le choix des formules, sans pression.
@@ -203,6 +281,44 @@ export function buildAtelierTrialEndedEmail({ appUrl }: { appUrl: string }) {
       'Vous préférez ne pas continuer ? Vous pouvez exporter vos données depuis la page d’activation, sans rien payer.',
     ],
     cta: { label: 'Choisir ma formule →', url: `${appUrl}/activation` },
+  })
+}
+
+export type PostTrialReminderStage = 'first' | 'final'
+
+/** Relances sobres après l'essai : rappeler la conservation des données et le
+ * chemin de reprise, sans urgence artificielle ni création automatique d'un abonnement. */
+export function buildAtelierPostTrialReminderEmail({
+  appUrl,
+  stage,
+}: {
+  appUrl: string
+  stage: PostTrialReminderStage
+}) {
+  if (stage === 'first') {
+    return buildAtelierCommercialEmail({
+      subject: 'Votre espace Atelier est toujours disponible',
+      eyebrow: 'Après votre essai',
+      title: 'Reprenez exactement là où vous vous êtes arrêté.',
+      paragraphs: [
+        'Votre essai Pro est terminé et votre espace est en pause. Aucun prélèvement n’a été effectué.',
+        'Vos devis, clients et chantiers sont toujours conservés. Choisissez Pro ou Expert pour retrouver immédiatement votre espace et continuer sans ressaisie.',
+      ],
+      cta: { label: 'Reprendre mon espace →', url: `${appUrl}/activation` },
+      footnote: 'Vous pouvez aussi exporter vos données sans souscrire.',
+    })
+  }
+
+  return buildAtelierCommercialEmail({
+    subject: 'Reprendre Atelier quand vous le souhaitez',
+    eyebrow: 'Votre espace reste en pause',
+    title: 'Vos dossiers vous attendent toujours.',
+    paragraphs: [
+      'Votre espace Atelier reste disponible avec les données créées pendant l’essai.',
+      `Si Atelier vous a fait gagner du temps sur vos premiers dossiers, vous pouvez reprendre avec Pro (${PRO_PRICE}) ou Expert (${EXPERT_PRICE}). Sinon, aucune action n’est nécessaire et rien ne sera prélevé.`,
+    ],
+    cta: { label: 'Voir mes options →', url: `${appUrl}/activation` },
+    footnote: 'C’est le dernier rappel automatique envoyé après votre essai.',
   })
 }
 

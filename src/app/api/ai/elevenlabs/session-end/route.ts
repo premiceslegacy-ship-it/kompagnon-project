@@ -69,9 +69,10 @@ export async function POST(req: NextRequest) {
       console.error('[elevenlabs/session-end.insert]', insertError)
     }
 
-    // Best effort, comme callAI : ne jamais bloquer la réponse métier sur le
-    // cockpit opérateur.
-    void syncUsageLogToOperator(inserted?.id ?? null, {
+    // Sur Cloudflare, une promesse détachée peut être interrompue dès que la
+    // réponse part. La fonction absorbe l'erreur et marque le log pour le cron
+    // de rattrapage, donc on peut l'attendre sans perdre la session métier.
+    await syncUsageLogToOperator(inserted?.id ?? null, {
       source_instance: getOperatorSourceInstance(),
       organization_id: orgId,
       occurred_at: occurredAt,

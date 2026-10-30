@@ -18,11 +18,17 @@ function stringifyCsvValue(value: unknown): string {
   return JSON.stringify(value)
 }
 
+// Excel/LibreOffice interprètent une cellule commençant par = + - @ (ou tab/CR)
+// comme une formule. L'archive de réversibilité contient des données saisies
+// par des tiers (clients, fournisseurs) : on neutralise par une apostrophe.
+const FORMULA_START = /^[=+\-@\t\r]/
+
 function escapeCsvCell(value: string): string {
-  if (/[;"\n\r]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`
+  const guarded = FORMULA_START.test(value) ? `'${value}` : value
+  if (/[;"\n\r]/.test(guarded)) {
+    return `"${guarded.replace(/"/g, '""')}"`
   }
-  return value
+  return guarded
 }
 
 export function rowsToCsv(

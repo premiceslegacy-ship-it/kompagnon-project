@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 export type VerifyEmailState = { error: string | null }
 
@@ -19,6 +20,12 @@ export async function verifyEmailOtp(
 
   if (!email || !token) {
     return { error: 'Veuillez saisir le code reçu par email.' }
+  }
+
+  // Un OTP à 6 chiffres est devinable si rien ne borne les essais.
+  const limit = await checkRateLimit({ scope: 'auth:otp-verify', identifier: email, limit: 5, windowSeconds: 15 * 60 })
+  if (!limit.allowed) {
+    return { error: 'Trop de codes essayés. Demandez un nouveau code.' }
   }
 
   const supabase = await createClient()

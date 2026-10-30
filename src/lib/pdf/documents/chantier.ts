@@ -1,4 +1,4 @@
-import type { Organization } from '@/lib/data/queries/organization'
+import type { PdfOrganizationData } from '@/lib/pdf/document-types'
 import type { ChantierDetail, Tache, ChantierNote } from '@/lib/data/queries/chantiers'
 import { fmtCurrency, pdfText } from '@/lib/pdf/pdf-design-system'
 import { PdfDoc } from '../engine/doc'
@@ -7,6 +7,11 @@ import { loadFontBytes } from '../engine/fonts'
 import { drawImageContained, embedImage } from '../engine/image'
 import { textLineHeight, wrapText, type TextStyle } from '../engine/text'
 import { COLOR, CONTENT_WIDTH, PAGE, SIZE, SPACE } from '../engine/theme'
+
+type ChantierPdfOrganization = Pick<
+  PdfOrganizationData,
+  'name' | 'postal_code' | 'city' | 'logo_url' | 'address_line1' | 'siret' | 'phone' | 'email'
+>
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,7 +45,7 @@ export type ChantierPdfData = {
   chantier: ChantierDetail
   taches: Tache[]
   notes: ChantierNote[]
-  organization: Organization
+  organization: ChantierPdfOrganization
   periodFrom?: string | null
   periodTo?: string | null
   reportPhotos?: ChantierPDFPhoto[]

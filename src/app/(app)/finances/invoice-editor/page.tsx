@@ -12,10 +12,11 @@ import InvoiceEditorClient from './InvoiceEditorClient'
 export const dynamic = 'force-dynamic'
 
 export default async function InvoiceEditorPage({
-  searchParams,
+  searchParams: searchParamsPromise,
 }: {
-  searchParams: { id?: string; chantier?: string; returnTo?: string }
+  searchParams: Promise<{ id?: string; chantier?: string; returnTo?: string }>
 }) {
+  const searchParams = await searchParamsPromise
   const canCreate = await hasPermission('invoices.create')
   const canEdit = searchParams.id ? await hasPermission('invoices.edit') : false
   if (!canCreate && !canEdit) notFound()

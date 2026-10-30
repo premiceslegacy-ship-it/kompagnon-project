@@ -11,6 +11,9 @@ type Props = {
   hint?: string
 }
 
+const MAX_SIGNATURE_PNG_WIDTH = 2000
+const MAX_SIGNATURE_PNG_HEIGHT = 1000
+
 export default function SignaturePad({ value, onChange, width = 480, height = 180, hint }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const drawingRef = useRef(false)
@@ -23,13 +26,20 @@ export default function SignaturePad({ value, onChange, width = 480, height = 18
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const ratio = window.devicePixelRatio || 1
-    canvas.width = width * ratio
-    canvas.height = height * ratio
+    // Keep the exported PNG inside the server's dimension limits even on high-DPI screens.
+    // Lower the backing resolution, rather than resizing the finished image, so no strokes are clipped.
+    const ratio = Math.min(
+      window.devicePixelRatio || 1,
+      MAX_SIGNATURE_PNG_WIDTH / width,
+      MAX_SIGNATURE_PNG_HEIGHT / height,
+    )
+    const pixelWidth = Math.max(1, Math.min(MAX_SIGNATURE_PNG_WIDTH, Math.round(width * ratio)))
+    const pixelHeight = Math.max(1, Math.min(MAX_SIGNATURE_PNG_HEIGHT, Math.round(height * ratio)))
+    canvas.width = pixelWidth
+    canvas.height = pixelHeight
     canvas.style.width = `${width}px`
     canvas.style.height = `${height}px`
-    ctx.scale(ratio, ratio)
-    ctx.lineCap = 'round'
+    ctx.setTransform(pixelWidth / width, 0, 0, pixelHeight / height, 0, 0)
     ctx.lineJoin = 'round'
     ctx.lineWidth = 2
     ctx.strokeStyle = '#0a0a0a'
