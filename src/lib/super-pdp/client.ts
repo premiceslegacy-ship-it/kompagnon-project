@@ -3,6 +3,7 @@
 // docs/atelier-facturation-electronique.md). Endpoints et formats confirmés par
 // exécution réelle le 29/08/2026 (scripts/super-pdp-emission-reception-probe.mjs).
 
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createOperatorAdminClient } from '@/lib/supabase/operator'
 import { encryptSecret, decryptSecret } from '@/lib/crypto/secrets'
 import {
@@ -14,10 +15,8 @@ import {
   type SuperPdpInvoiceList,
 } from '@/lib/super-pdp/types'
 
-// Marge avant expiration pour déclencher un refresh préventif plutôt que d'échouer
-// un appel en cours. access_token dure 1800s (confirmé) ; 2 min de marge suffit
-// largement pour la durée d'une requête HTTP.
-const REFRESH_MARGIN_MS = 2 * 60 * 1000
+// La marge est également appliquée dans le RPC de revendication afin que
+// chaque Worker prenne la décision sur la même horloge de base de données.
 
 export type SuperPdpResult<T> =
   | { ok: true; data: T }
@@ -28,12 +27,14 @@ function requireConfig() {
   const clientId = process.env.SUPER_PDP_CLIENT_ID?.trim()
   const clientSecret = process.env.SUPER_PDP_CLIENT_SECRET?.trim()
   const encryptionKey = process.env.SUPER_PDP_ENCRYPTION_KEY?.trim()
+  const environment = process.env.SUPER_PDP_ENV?.trim()
 
-  if (!endpoint || !clientId || !clientSecret || !encryptionKey) {
-    throw new Error('Configuration Super PDP incomplète côté cockpit')
+  if (!endpoint || !clientId || !clientSecret || !encryptionKey
+    || (environment !== 'sandbox' && environment !== 'production')) {
+    throw new Error('Configuration Super PDP incomplète ou environnement invalide côté cockpit')
   }
 
-  return { endpoint, clientId, clientSecret, encryptionKey }
+  return { endpoint, clientId, clientSecret, encryptionKey, environment }
 }
 
 // Forme d'erreur volontairement large : {http_status_code, message} est confirmé sur
@@ -51,38 +52,127 @@ async function parseErrorBody(resp: Response): Promise<string> {
 }
 
 /**
- * Retourne un access_token valide pour (sourceInstance, organizationId), en le
- * rafraîchissant si besoin. Le refresh_token Super PDP tourne à usage unique
- * (rotation confirmée le 29/08/2026) : le nouveau token est toujours re-chiffré
- * et persisté avant d'être retourné à l'appelant.
+ * Retourne un access_token valide pour (sourceInstance, organizationId).
+ * L'acquisition est durable en base : un seul Worker peut consommer le
+ * refresh_token à usage unique, et aucun token rafraîchi n'est utilisé avant
+ * la persistance atomique des deux nouveaux ciphertexts.
  */
+type RefreshClaim = {
+  result_state: 'fresh' | 'claimed' | 'busy' | 'reconnect_required' | 'missing' | 'environment_mismatch'
+  access_token_encrypted: string | null
+  refresh_token_encrypted: string | null
+  claim_owner: string | null
+  credential_revision: string | null
+}
+
+function isRefreshClaimState(value: unknown): value is RefreshClaim['result_state'] {
+  return value === 'fresh'
+    || value === 'claimed'
+    || value === 'busy'
+    || value === 'reconnect_required'
+    || value === 'missing'
+    || value === 'environment_mismatch'
+}
+
+function parseRefreshClaim(value: unknown): RefreshClaim | null {
+  const row = Array.isArray(value) ? value[0] : value
+  if (!row || typeof row !== 'object') return null
+  const claim = row as Record<string, unknown>
+  if (!isRefreshClaimState(claim.result_state)) return null
+  return {
+    result_state: claim.result_state,
+    access_token_encrypted: typeof claim.access_token_encrypted === 'string' ? claim.access_token_encrypted : null,
+    refresh_token_encrypted: typeof claim.refresh_token_encrypted === 'string' ? claim.refresh_token_encrypted : null,
+    claim_owner: typeof claim.claim_owner === 'string' ? claim.claim_owner : null,
+    credential_revision: typeof claim.credential_revision === 'string' ? claim.credential_revision : null,
+  }
+}
+
+function isUsableRefreshResponse(value: unknown): value is SuperPdpTokenResponse {
+  return isSuperPdpTokenResponse(value)
+    && Number.isFinite(value.expires_in)
+    && value.expires_in > 0
+}
+
+async function failRefreshClaim(
+  operator: SupabaseClient,
+  sourceInstance: string,
+  organizationId: string,
+  claimOwner: string,
+  credentialRevision: string,
+): Promise<void> {
+  try {
+    await operator.rpc('fail_super_pdp_oauth_refresh', {
+      p_source_instance: sourceInstance,
+      p_organization_id: organizationId,
+      p_claim_owner: claimOwner,
+      p_expected_revision: credentialRevision,
+    })
+  } catch {
+    // An unconfirmed failure leaves the durable claim to expire into
+    // reconnect_required; it must never make the old refresh token reusable.
+  }
+}
+
 export async function getValidAccessToken(
   sourceInstance: string,
   organizationId: string,
 ): Promise<SuperPdpResult<string>> {
-  const { endpoint, clientId, clientSecret, encryptionKey } = requireConfig()
+  const { endpoint, clientId, clientSecret, encryptionKey, environment } = requireConfig()
   const operator = createOperatorAdminClient()
+  const claimOwner = crypto.randomUUID()
 
-  const { data: credentials, error } = await operator
-    .from('super_pdp_oauth_credentials')
-    .select('access_token_encrypted, refresh_token_encrypted, token_expires_at')
-    .eq('source_instance', sourceInstance)
-    .eq('organization_id', organizationId)
-    .maybeSingle()
+  let claimResult: { data: unknown; error: unknown }
+  try {
+    claimResult = await operator.rpc('claim_super_pdp_oauth_refresh', {
+      p_source_instance: sourceInstance,
+      p_organization_id: organizationId,
+      p_claim_owner: claimOwner,
+      p_environment: environment,
+    })
+  } catch {
+    return { ok: false, status: 503, message: 'État de connexion Super PDP indisponible' }
+  }
 
-  if (error || !credentials) {
+  const claim = claimResult.error ? null : parseRefreshClaim(claimResult.data)
+  if (!claim) {
+    return { ok: false, status: 503, message: 'État de connexion Super PDP indisponible' }
+  }
+  if (claim.result_state === 'missing') {
     return { ok: false, status: 404, message: 'Aucune connexion Super PDP pour cette organisation' }
   }
-
-  const expiresAt = new Date(credentials.token_expires_at).getTime()
-  const stillValid = expiresAt - Date.now() > REFRESH_MARGIN_MS
-
-  if (stillValid) {
-    const accessToken = await decryptSecret(credentials.access_token_encrypted, encryptionKey)
-    return { ok: true, data: accessToken }
+  if (claim.result_state === 'environment_mismatch') {
+    return { ok: false, status: 409, message: 'Reconnectez le compte Super PDP dans l’environnement configuré côté cockpit' }
+  }
+  if (claim.result_state === 'busy') {
+    return { ok: false, status: 503, message: 'Actualisation Super PDP en cours; réessayez dans quelques instants' }
+  }
+  if (claim.result_state === 'reconnect_required') {
+    return { ok: false, status: 409, message: 'Reconnectez le compte Super PDP avant de continuer' }
   }
 
-  const refreshToken = await decryptSecret(credentials.refresh_token_encrypted, encryptionKey)
+  if (claim.result_state === 'fresh') {
+    if (!claim.access_token_encrypted) {
+      return { ok: false, status: 503, message: 'Identifiants Super PDP illisibles; reconnectez le compte' }
+    }
+    try {
+      return { ok: true, data: await decryptSecret(claim.access_token_encrypted, encryptionKey) }
+    } catch {
+      return { ok: false, status: 503, message: 'Identifiants Super PDP illisibles; reconnectez le compte' }
+    }
+  }
+
+  if (claim.claim_owner !== claimOwner || !claim.refresh_token_encrypted || !claim.credential_revision) {
+    return { ok: false, status: 503, message: 'État de renouvellement Super PDP invalide' }
+  }
+
+  let refreshToken: string
+  try {
+    refreshToken = await decryptSecret(claim.refresh_token_encrypted, encryptionKey)
+  } catch {
+    await failRefreshClaim(operator, sourceInstance, organizationId, claimOwner, claim.credential_revision)
+    return { ok: false, status: 409, message: 'Reconnectez le compte Super PDP avant de continuer' }
+  }
 
   let tokenResponse: SuperPdpTokenResponse
   try {
@@ -95,31 +185,55 @@ export async function getValidAccessToken(
         client_id: clientId,
         client_secret: clientSecret,
       }).toString(),
+      signal: AbortSignal.timeout(10_000),
     })
     const body: unknown = await resp.json()
-    if (!resp.ok || !isSuperPdpTokenResponse(body)) {
-      return { ok: false, status: resp.status, message: 'Échec du rafraîchissement du token Super PDP' }
+    if (!resp.ok || !isUsableRefreshResponse(body)) {
+      await failRefreshClaim(operator, sourceInstance, organizationId, claimOwner, claim.credential_revision)
+      return { ok: false, status: 502, message: 'Échec du rafraîchissement; reconnectez le compte Super PDP' }
     }
     tokenResponse = body
   } catch {
-    return { ok: false, status: 502, message: 'Échec du rafraîchissement du token Super PDP' }
+    await failRefreshClaim(operator, sourceInstance, organizationId, claimOwner, claim.credential_revision)
+    return { ok: false, status: 502, message: 'Résultat du rafraîchissement incertain; reconnectez le compte Super PDP' }
   }
 
-  const [accessTokenEncrypted, refreshTokenEncrypted] = await Promise.all([
-    encryptSecret(tokenResponse.access_token, encryptionKey),
-    encryptSecret(tokenResponse.refresh_token, encryptionKey),
-  ])
+  let accessTokenEncrypted: string
+  let refreshTokenEncrypted: string
+  try {
+    [accessTokenEncrypted, refreshTokenEncrypted] = await Promise.all([
+      encryptSecret(tokenResponse.access_token, encryptionKey),
+      encryptSecret(tokenResponse.refresh_token, encryptionKey),
+    ])
+  } catch {
+    await failRefreshClaim(operator, sourceInstance, organizationId, claimOwner, claim.credential_revision)
+    return { ok: false, status: 503, message: 'Impossible de conserver le renouvellement; reconnectez le compte Super PDP' }
+  }
 
-  await operator
-    .from('super_pdp_oauth_credentials')
-    .update({
-      access_token_encrypted: accessTokenEncrypted,
-      refresh_token_encrypted: refreshTokenEncrypted,
-      token_expires_at: new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString(),
-      updated_at: new Date().toISOString(),
+  let completion: { data: unknown; error: unknown }
+  try {
+    completion = await operator.rpc('complete_super_pdp_oauth_refresh', {
+      p_source_instance: sourceInstance,
+      p_organization_id: organizationId,
+      p_claim_owner: claimOwner,
+      p_expected_revision: claim.credential_revision,
+      p_access_token_encrypted: accessTokenEncrypted,
+      p_refresh_token_encrypted: refreshTokenEncrypted,
+      p_token_expires_at: new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString(),
     })
-    .eq('source_instance', sourceInstance)
-    .eq('organization_id', organizationId)
+  } catch {
+    await failRefreshClaim(operator, sourceInstance, organizationId, claimOwner, claim.credential_revision)
+    return { ok: false, status: 503, message: 'Impossible de confirmer le renouvellement; reconnectez le compte Super PDP' }
+  }
+
+  if (completion.error || completion.data !== true) {
+    await failRefreshClaim(operator, sourceInstance, organizationId, claimOwner, claim.credential_revision)
+    return {
+      ok: false,
+      status: completion.error ? 503 : 409,
+      message: 'Le renouvellement n’a pas été conservé; réessayez ou reconnectez le compte Super PDP',
+    }
+  }
 
   return { ok: true, data: tokenResponse.access_token }
 }
