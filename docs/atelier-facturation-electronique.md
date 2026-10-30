@@ -283,6 +283,12 @@ Un claim est borné à 30 secondes et la requête fournisseur à 10 secondes. Le
 
 Un trigger bloque toute insertion ou modification directe de `super_pdp_oauth_credentials` : seules les RPC du protocole posent leur marqueur transactionnel pendant l’écriture. RLS est activée sans policy; la table et les RPC restent hors d’accès `anon`/`authenticated`. Les tokens restent exclusivement côté cockpit via `createOperatorAdminClient()` et ne sont jamais lus par les instances clientes.
 
+### 8.4. Frontière des tables opérateur (migration cockpit 021)
+
+La migration `supabase/operator-migrations/021_operator_table_security.sql` établit la frontière cible `service_role` seul pour `operator_client_events`, `operator_client_quotas`, `operator_client_settings`, `operator_client_subscriptions`, `operator_clients`, `operator_commercial_events`, `operator_quota_usage_events` et `operator_usage_events`. La qualification en lecture seule du cockpit de production a confirmé RLS active et zéro policy sur ces tables, mais aussi des privilèges effectifs `anon`/`authenticated`, dont DML et `TRUNCATE`; 021 révoque ces privilèges puis accorde `SELECT`/`INSERT`/`UPDATE`/`DELETE` à `service_role`. Cette révocation distante requiert un accord explicite préalable. La migration ne crée ni ne supprime de policy.
+
+L’assertion read-only `assert_operator_table_security()` vérifie l’existence des huit tables, RLS active, l’absence de toute policy divergente, les privilèges effectifs des rôles et le bypass RLS de `service_role`. `scripts/operator-schema-check.mjs` exige cette assertion en plus du garde 020; une policy inattendue ou une RLS désactivée bloque donc le déploiement au lieu d’être masquée.
+
 ---
 
 ## 9. Architecture code
