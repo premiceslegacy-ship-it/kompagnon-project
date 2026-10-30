@@ -66,20 +66,26 @@ function makeClient(config) {
 async function main(argv) {
   if (argv.length !== 0) fail('Usage: node scripts/operator-schema-check.mjs (reads only .env.cockpit).')
   const client = makeClient(readCockpitConfig())
-  const { data, error } = await client.rpc('assert_super_pdp_refresh_schema')
-  if (error) {
-    const code = typeof error.code === 'string' ? error.code : 'unknown'
-    fail(`Operator schema assertion unavailable or rejected (PostgREST code ${code}).`)
+  for (const [label, rpc] of [
+    ['refresh schema', 'assert_super_pdp_refresh_schema'],
+    ['operator table security', 'assert_operator_table_security'],
+  ]) {
+    const { data, error } = await client.rpc(rpc)
+    if (error) {
+      const code = typeof error.code === 'string' ? error.code : 'unknown'
+      fail(`Operator ${label} assertion unavailable or rejected (PostgREST code ${code}).`)
+    }
+    const result = Array.isArray(data) ? data[0] : data
+    const gate = result && typeof result === 'object' ? result : null
+    if (!gate || gate.ok !== true) {
+      const failures = Array.isArray(gate?.failures)
+        ? gate.failures.filter(value => typeof value === 'string')
+        : []
+      fail(`Operator ${label} gate refused deployment${failures.length ? `: ${failures.join(', ')}` : '.'}`)
+    }
   }
-  const result = Array.isArray(data) ? data[0] : data
-  const gate = result && typeof result === 'object' ? result : null
-  if (!gate || gate.ok !== true) {
-    const failures = Array.isArray(gate?.failures)
-      ? gate.failures.filter(value => typeof value === 'string')
-      : []
-    fail(`Operator schema gate refused deployment${failures.length ? `: ${failures.join(', ')}` : '.'}`)
-  }
-  console.log('Operator schema gate passed: refresh claims, submission ledger, composite keys, and role restrictions are present.')
+  console.log('Operator schema gate passed: refresh claims, submission ledger, composite keys, role restrictions, and operator table security are present.')
+
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
