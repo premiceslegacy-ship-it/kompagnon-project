@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
   // retombe sur la ligne la plus récente (risqué sur une instance mutualisée).
   const subscriptionQuery = operator
     .from('operator_client_subscriptions')
-    .select('stripe_customer_id')
+    .select('billing_model, stripe_customer_id')
     .eq('source_instance', source_instance)
   const [{ data, error }, { data: settings }] = await Promise.all([
     organization_id
@@ -86,6 +86,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Erreur base de données' }, { status: 500 })
   }
 
+  if (data?.billing_model === 'setup') {
+    return NextResponse.json({ error: 'Cette organisation dispose d’une offre setup payée manuellement' }, { status: 409 })
+  }
   if (!data?.stripe_customer_id) {
     return NextResponse.json({ error: 'Aucun abonnement Stripe trouvé pour ce client' }, { status: 404 })
   }

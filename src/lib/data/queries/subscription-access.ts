@@ -16,7 +16,7 @@ async function _getOrganizationEntitlement(orgId?: string | null): Promise<Organ
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('organization_entitlements')
-    .select('organization_id, access_status, effective_tier, preferred_tier, trial_started_at, trial_ends_at, access_ends_at, updated_at')
+    .select('organization_id, billing_model, access_status, effective_tier, preferred_tier, trial_started_at, trial_ends_at, access_ends_at, updated_at')
     .eq('organization_id', organizationId)
     .maybeSingle()
 
@@ -33,7 +33,7 @@ export async function getOrganizationEntitlementAdmin(organizationId: string): P
   const admin = createAdminClient()
   const { data, error } = await admin
     .from('organization_entitlements')
-    .select('organization_id, access_status, effective_tier, preferred_tier, trial_started_at, trial_ends_at, access_ends_at, updated_at')
+    .select('organization_id, billing_model, access_status, effective_tier, preferred_tier, trial_started_at, trial_ends_at, access_ends_at, updated_at')
     .eq('organization_id', organizationId)
     .maybeSingle()
   if (error) {

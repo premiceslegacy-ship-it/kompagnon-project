@@ -28,10 +28,16 @@ export default function TermsPage() {
       <section className="space-y-4">
         <h2 className="text-2xl font-bold">Deux modalités commerciales</h2>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
-          L&apos;offre « On s&apos;occupe de tout » comprend un environnement dédié, la configuration métier,
-          la reprise du catalogue, la formation et 30 jours d&apos;accompagnement, pour un prix de
-          3 000 € HT payable à la commande. Elle donne accès au service sans abonnement mensuel,
-          selon le périmètre convenu au devis.
+          L&apos;offre « On s&apos;occupe de tout » comprend une organisation isolée sur la plateforme
+          partagée Atelier, la configuration métier, la reprise du catalogue, la formation et
+          30 jours d&apos;accompagnement, pour un prix de 3 000 € HT payable à la commande.
+          Elle donne accès au service sans abonnement mensuel Atelier, selon le périmètre convenu au devis.
+        </p>
+        <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
+          Pour cette offre setup, le client utilise son propre compte OpenRouter et paie sa consommation IA
+          directement à ce fournisseur. Sans clé ou crédit utilisable, l&apos;IA reste indisponible sans
+          prélèvement sur le compte IA partagé d&apos;Orsayn. Le vocal live centralisé n&apos;est pas inclus.
+          Une infrastructure dédiée par client ne fait pas partie de l&apos;offre standard.
         </p>
         <p className="text-sm leading-7 text-slate-700 dark:text-zinc-300">
           L&apos;offre « Je démarre maintenant » donne accès à la plateforme partagée sans frais de départ,

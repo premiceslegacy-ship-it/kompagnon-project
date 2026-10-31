@@ -69,6 +69,7 @@ async function main(argv) {
   for (const [label, rpc] of [
     ['refresh schema', 'assert_super_pdp_refresh_schema'],
     ['operator table security', 'assert_operator_table_security'],
+    ['setup billing', 'assert_setup_billing_schema'],
   ]) {
     const { data, error } = await client.rpc(rpc)
     if (error) {
@@ -84,8 +85,7 @@ async function main(argv) {
       fail(`Operator ${label} gate refused deployment${failures.length ? `: ${failures.join(', ')}` : '.'}`)
     }
   }
-  console.log('Operator schema gate passed: refresh claims, submission ledger, composite keys, role restrictions, and operator table security are present.')
-
+  console.log('Operator schema gate passed: refresh claims, submission ledger, composite keys, role restrictions, operator table security, and setup billing are present.')
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

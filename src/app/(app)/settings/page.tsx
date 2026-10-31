@@ -114,6 +114,7 @@ export default async function SettingsPage({
       stripeLinkPro={process.env.NEXT_PUBLIC_STRIPE_LINK_PRO ?? null}
       stripeLinkExpert={process.env.NEXT_PUBLIC_STRIPE_LINK_EXPERT ?? null}
       selfService={isSelfServiceMode()}
+      subscriptionBillingModel={entitlement?.billingModel ?? 'subscription'}
       subscriptionTier={entitlement?.effectiveTier ?? null}
       subscriptionAccessStatus={entitlement?.accessStatus ?? null}
       subscriptionAccessEndsAt={entitlement?.accessEndsAt ?? null}

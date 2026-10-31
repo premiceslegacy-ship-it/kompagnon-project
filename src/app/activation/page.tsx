@@ -51,6 +51,33 @@ export default async function ActivationPage({ searchParams: searchParamsPromise
   ])
   if (!membership) redirect('/onboarding')
   if (hasActiveAccess(entitlement)) redirect('/dashboard')
+  if (entitlement?.billingModel === 'setup') {
+    return (
+      <main className={styles.shell}>
+        <div className={styles.container}>
+          <header className={styles.header}>
+            <Image src={wordmarkForTheme('light')} alt="Atelier" width={132} height={32} priority />
+            <div className={styles.securePill}><ShieldCheck aria-hidden="true" /> Espace sécurisé</div>
+          </header>
+          <section className={styles.hero}>
+            <div className={styles.heroContent}>
+              <p className={styles.eyebrow}>Achat setup enregistré</p>
+              <h1>Votre accès Atelier est suspendu.</h1>
+              <p className={styles.heroLead}>
+                L’accès de {organization?.name || 'votre entreprise'} doit être vérifié avec Orsayn.
+                Votre achat setup reste enregistré : aucun nouvel achat ni abonnement n’est demandé.
+              </p>
+              <a className={styles.expiredCta} href="mailto:contact@orsayn.fr">Contacter Orsayn pour vérifier mon accès</a>
+            </div>
+          </section>
+          <footer className={styles.footer}>
+            {membership.roleSlug === 'owner' && <form action={exportDataAction}><button className={styles.footerExport}>Exporter toutes mes données</button></form>}
+            <LegalFooter tone="light" />
+          </footer>
+        </div>
+      </main>
+    )
+  }
 
   const status = entitlement ? getDisplayAccessStatus(entitlement) : 'locked'
   const activationState = getActivationState({

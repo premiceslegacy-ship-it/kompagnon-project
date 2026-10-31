@@ -6,7 +6,7 @@ import type { OrganizationModules } from '@/lib/organization-modules'
 import type { SubscriptionTier } from '@/lib/quota-catalog'
 import { createStripePortalSession } from '@/lib/data/mutations/stripe-portal'
 import { requestSelfServiceCancellation } from '@/lib/data/mutations/subscription-self-service'
-import type { AccessStatus } from '@/lib/subscription-access'
+import type { AccessStatus, BillingModel } from '@/lib/subscription-access'
 
 // ── Données statiques des tiers ──────────────────────────────────────────────
 
@@ -283,6 +283,7 @@ function CancellationFlow({
 // ── Composant principal ───────────────────────────────────────────────────────
 
 type Props = {
+  billingModel: BillingModel
   modules: OrganizationModules
   stripeLinkPro: string | null
   stripeLinkExpert: string | null
@@ -293,6 +294,7 @@ type Props = {
 }
 
 export default function SubscriptionTab({
+  billingModel,
   modules,
   stripeLinkPro,
   stripeLinkExpert,
@@ -327,6 +329,34 @@ export default function SubscriptionTab({
 
   const tierPrice = TIER_INFO.find(t => t.tier === currentTier)?.price ?? null
   const benefits = CURRENT_TIER_BENEFITS[currentTier] ?? []
+  if (billingModel === 'setup') {
+    return (
+      <div className="max-w-2xl space-y-6">
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-2xl font-bold text-primary">Votre achat setup</h2>
+            <p className="mt-1 text-sm text-secondary">L’installation Atelier a été réglée au prix convenu de 3 000 € HT, en une fois.</p>
+          </div>
+          <div className="space-y-4 rounded-2xl border border-[var(--elevation-border)] bg-surface p-5 dark:bg-white/5">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-secondary">Accès Atelier</p>
+              <p className="mt-1 text-sm text-primary">{accessStatus === 'active' ? 'Actif, sans abonnement récurrent.' : accessStatus === 'canceling' ? 'Fin d’accès programmée.' : accessStatus === 'locked' || accessStatus === 'expired' ? 'Accès suspendu, sans abonnement récurrent.' : 'Statut de l’accès à vérifier.'}</p>
+              {accessEndsAt && <p className="mt-1 text-sm text-secondary">Accès jusqu’au {new Date(accessEndsAt).toLocaleDateString('fr-FR')}.</p>}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-secondary">Montant mensuel</p>
+              <p className="mt-1 text-sm text-primary">0 € par mois pour Atelier, hors consommation IA.</p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-secondary">Consommation IA</p>
+              <p className="mt-1 text-sm leading-6 text-primary">Les appels IA sont facturés sur votre compte OpenRouter. Vous pouvez gérer sa clé dans le bloc OpenRouter ci-dessous.</p>
+              <p className="mt-1 text-sm leading-6 text-secondary">Le vocal live centralisé n’est pas inclus dans cette consommation OpenRouter.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-10 max-w-2xl">

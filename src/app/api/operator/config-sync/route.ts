@@ -1,62 +1,62 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { hasOperatorSigningSecret, readOperatorRequest } from '@/lib/operator'
 import { normalizeOrganizationModules } from '@/lib/organization-modules'
-import { isOverflowMode } from '@/lib/quota-catalog'
+import { isOverflowMode, isQuotaFeature, SUBSCRIPTION_TIERS } from '@/lib/quota-catalog'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeEinvoicingConfig } from '@/lib/einvoicing-config'
-import { isSubscriptionTier } from '@/lib/quota-catalog'
-import { isAccessStatus, isSellableTier, type EntitlementSyncPayload } from '@/lib/subscription-access'
+import { ACCESS_STATUSES, SELLABLE_TIERS } from '@/lib/subscription-access'
 
-type ConfigSyncPayload = {
-  source_instance: string
-  organization_id: string
-  modules: Record<string, unknown>
-  quota_config: Record<string, unknown>
-  overflow_mode: string
-  ai_billing_mode?: string
-  einvoicing_config?: Record<string, unknown>
-  entitlement?: EntitlementSyncPayload
+const ORGANIZATION_ID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i
+const nullableTimestampSchema = z.union([
+  z.string().refine((value) => Number.isFinite(Date.parse(value))),
+  z.null(),
+])
+
+const commonEntitlementFields = {
+  access_status: z.enum(ACCESS_STATUSES),
+  effective_tier: z.enum(SUBSCRIPTION_TIERS),
+  preferred_tier: z.enum(SELLABLE_TIERS),
+  trial_started_at: nullableTimestampSchema,
+  trial_ends_at: nullableTimestampSchema,
+  access_ends_at: nullableTimestampSchema,
 }
 
-function isValidEntitlement(value: unknown): value is EntitlementSyncPayload {
-  if (!isRecord(value)) return false
-  return (
-    isAccessStatus(value.access_status)
-    && typeof value.effective_tier === 'string'
-    && isSubscriptionTier(value.effective_tier)
-    && isSellableTier(value.preferred_tier)
-    && (value.trial_started_at === null || typeof value.trial_started_at === 'string')
-    && (value.trial_ends_at === null || typeof value.trial_ends_at === 'string')
-    && (value.access_ends_at === null || typeof value.access_ends_at === 'string')
-  )
-}
+const entitlementSchema = z.discriminatedUnion('billing_model', [
+  z.object({
+    ...commonEntitlementFields,
+    billing_model: z.literal('subscription'),
+  }),
+  z.object({
+    ...commonEntitlementFields,
+    billing_model: z.literal('setup'),
+    revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  }),
+])
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value)
-}
+const configSyncPayloadSchema = z.object({
+  source_instance: z.string().min(1).refine((value) => value === value.trim()),
+  organization_id: z.string().regex(ORGANIZATION_ID_PATTERN),
+  modules: z.record(z.string(), z.unknown()),
+  quota_config: z.record(z.string(), z.union([z.number(), z.string()])),
+  overflow_mode: z.string(),
+  ai_billing_mode: z.string().optional(),
+  einvoicing_config: z.record(z.string(), z.unknown()).optional(),
+  entitlement: entitlementSchema.optional(),
+}).strict()
 
-function isValidPayload(value: unknown): value is ConfigSyncPayload {
-  if (!isRecord(value)) return false
+type ConfigSyncPayload = z.infer<typeof configSyncPayloadSchema>
 
-  return (
-    typeof value.source_instance === 'string'
-    && typeof value.organization_id === 'string'
-    && isRecord(value.modules)
-    && isRecord(value.quota_config)
-    && typeof value.overflow_mode === 'string'
-    && (value.ai_billing_mode === undefined || typeof value.ai_billing_mode === 'string')
-    && (value.einvoicing_config === undefined || isRecord(value.einvoicing_config))
-    && (value.entitlement === undefined || isValidEntitlement(value.entitlement))
-  )
-}
-
-function normalizeQuotaConfig(input: Record<string, unknown>): Record<string, number> {
-  return Object.fromEntries(
-    Object.entries(input).map(([key, raw]) => {
-      const parsed = typeof raw === 'number' ? raw : Number.parseFloat(String(raw))
-      return [key, Number.isFinite(parsed) ? parsed : -1]
-    }),
-  )
+function normalizeQuotaConfig(input: Record<string, number | string>): Record<string, number> | null {
+  const normalized: Record<string, number> = {}
+  for (const [key, raw] of Object.entries(input)) {
+    if (!isQuotaFeature(key) || (typeof raw !== 'number' && typeof raw !== 'string')) return null
+    if (typeof raw === 'string' && raw.trim() === '') return null
+    const parsed = typeof raw === 'number' ? raw : Number(raw)
+    if (!Number.isFinite(parsed)) return null
+    normalized[key] = parsed
+  }
+  return normalized
 }
 
 export async function POST(req: NextRequest) {
@@ -69,38 +69,44 @@ export async function POST(req: NextRequest) {
   if (!check.ok) {
     return NextResponse.json({ error: check.error }, { status: check.status })
   }
-  const payload: unknown = check.body
 
-  if (!isValidPayload(payload)) {
+  const parsed = configSyncPayloadSchema.safeParse(check.body)
+  if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
   }
+  const payload = parsed.data
 
   const overflowMode = isOverflowMode(payload.overflow_mode) ? payload.overflow_mode : 'block'
   const aiBillingMode = payload.ai_billing_mode === 'client_owned' ? 'client_owned' : 'orsayn_shared'
-  const einvoicingConfig = normalizeEinvoicingConfig(payload.einvoicing_config)
+  const quotaConfig = normalizeQuotaConfig(payload.quota_config)
+  if (!quotaConfig) {
+    return NextResponse.json({ error: 'Invalid quota config' }, { status: 400 })
+  }
+  const einvoicingConfig = payload.einvoicing_config === undefined
+    ? null
+    : normalizeEinvoicingConfig(payload.einvoicing_config)
   const normalizedModules = normalizeOrganizationModules(payload.modules)
-  const admin = createAdminClient()
-  const { error: modulesError } = await admin
-    .from('organization_modules')
-    .upsert({
-      organization_id: payload.organization_id,
-      modules: normalizedModules,
-      quota_config: normalizeQuotaConfig(payload.quota_config),
-      overflow_mode: overflowMode,
-      ai_billing_mode: aiBillingMode,
-      quota_synced_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'organization_id' })
-
-  if (modulesError) {
-    console.error('[operator/config-sync.modules]', modulesError)
-    return NextResponse.json({ error: 'Unable to sync quota config' }, { status: 500 })
+  if (payload.entitlement?.billing_model === 'setup' && (
+    aiBillingMode !== 'client_owned'
+    || payload.entitlement.effective_tier !== 'setup_only'
+    || normalizedModules.voice_live
+    || quotaConfig.voice_live_minutes !== 0
+    || overflowMode !== 'block'
+    || !['active', 'locked'].includes(payload.entitlement.access_status)
+    || payload.entitlement.trial_started_at !== null
+    || payload.entitlement.trial_ends_at !== null
+    || payload.entitlement.access_ends_at !== null
+  )) {
+    return NextResponse.json({ error: 'Invalid setup entitlement' }, { status: 400 })
   }
 
-  const { error: einvoicingError } = await admin
-    .from('organization_einvoicing_config')
-    .upsert({
-      organization_id: payload.organization_id,
+  const { data, error } = await createAdminClient().rpc('apply_operator_config', {
+    p_organization_id: payload.organization_id,
+    p_modules: normalizedModules,
+    p_quota_config: quotaConfig,
+    p_overflow_mode: overflowMode,
+    p_ai_billing_mode: aiBillingMode,
+    p_einvoicing_config: einvoicingConfig ? {
       mode: einvoicingConfig.mode,
       provider: einvoicingConfig.provider,
       environment: einvoicingConfig.environment,
@@ -110,27 +116,21 @@ export async function POST(req: NextRequest) {
       super_pdp_connection_id: einvoicingConfig.super_pdp_connection_id,
       super_pdp_emission_enabled: einvoicingConfig.emission_enabled,
       super_pdp_reception_enabled: einvoicingConfig.reception_enabled,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'organization_id' })
+    } : null,
+    p_entitlement: payload.entitlement ?? null,
+  })
 
-  if (einvoicingError) {
-    console.error('[operator/config-sync.einvoicing]', einvoicingError)
-    return NextResponse.json({ error: 'Unable to sync einvoicing config' }, { status: 500 })
+  if (error) {
+    if (error.code === 'PT409') {
+      return NextResponse.json({ error: 'Configuration d’accès plus récente déjà appliquée' }, { status: 409 })
+    }
+    console.error('[operator/config-sync.rpc]', { code: error.code })
+    return NextResponse.json({ error: 'Unable to sync organization config' }, { status: 500 })
   }
 
-  if (payload.entitlement) {
-    const { error: entitlementError } = await admin
-      .from('organization_entitlements')
-      .upsert({
-        organization_id: payload.organization_id,
-        ...payload.entitlement,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'organization_id' })
-
-    if (entitlementError) {
-      console.error('[operator/config-sync.entitlement]', entitlementError)
-      return NextResponse.json({ error: 'Unable to sync entitlement' }, { status: 500 })
-    }
+  if (data !== 'applied') {
+    console.error('[operator/config-sync.rpc]', { result: 'unexpected' })
+    return NextResponse.json({ error: 'Unable to sync organization config' }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })

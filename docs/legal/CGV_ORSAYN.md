@@ -1,6 +1,8 @@
 # Conditions Générales de Vente — Orsayn
 **Version 1.0 — mai 2026**
 
+> **Archive historique, pas un modèle à envoyer pour l’offre setup actuelle.** Les tarifs, le déploiement dédié, WhatsApp et B2Brouter décrits dans cette version ne définissent pas l’offre à 3 000 €. Son parcours actuel est documenté dans `DEPLOIEMENT_CLIENT.md` (« Achat setup : droits et livraison »). Le devis et les conditions applicables doivent préciser la licence d’usage, l’IA payée sur le compte du client, l’hébergement, la maintenance et le support avant tout encaissement. Cette archive ne prouve ni leur mise à jour juridique ni leur acceptation par un client.
+
 ---
 
 > Ces CGV s'appliquent à toutes les prestations réalisées par Orsayn (Samuel Mbeboura, entrepreneur individuel, SIRET 98920815200011) au bénéfice de ses clients professionnels. Elles prévalent sur tout document d'achat du client, sauf accord écrit contraire.

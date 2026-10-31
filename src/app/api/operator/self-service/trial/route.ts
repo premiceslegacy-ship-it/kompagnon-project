@@ -53,6 +53,7 @@ function entitlementFromSubscription(row: Record<string, unknown>): EntitlementS
   const preferred = isSellableTier(row.preferred_tier) ? row.preferred_tier : 'pro'
   const trialTier = isSellableTier(row.trial_tier) ? row.trial_tier : 'pro'
   return {
+    billing_model: 'subscription',
     access_status: status as EntitlementSyncPayload['access_status'],
     effective_tier: status === 'trialing' ? trialTier : (isSellableTier(row.tier) ? row.tier : 'setup_only'),
     preferred_tier: preferred,
@@ -98,6 +99,23 @@ export async function POST(req: NextRequest) {
   const emailFingerprint = fingerprint(email, fingerprintSecret)
   const siretFingerprint = fingerprint(siret, fingerprintSecret)
 
+  const { data: existingSubscription, error: subscriptionLookupError } = await operator
+    .from('operator_client_subscriptions')
+    .select('billing_model, tier, preferred_tier, access_status, trial_tier, trial_started_at, trial_ends_at, access_ends_at')
+    .eq('source_instance', payload.source_instance)
+    .eq('organization_id', payload.organization_id)
+    .maybeSingle()
+  if (subscriptionLookupError) {
+    console.error('[self-service/trial.subscription-lookup]', subscriptionLookupError)
+    return NextResponse.json({ error: 'Unable to verify organization billing' }, { status: 500 })
+  }
+  if (existingSubscription?.billing_model === 'setup') {
+    return NextResponse.json({ error: 'Cette organisation dispose d’une offre setup payée manuellement' }, { status: 409 })
+  }
+  if (existingSubscription && existingSubscription.billing_model !== 'subscription') {
+    return NextResponse.json({ error: 'Unable to verify organization billing' }, { status: 500 })
+  }
+
   const { error: settingsError } = await operator
     .from('operator_client_settings')
     .upsert({
@@ -125,12 +143,6 @@ export async function POST(req: NextRequest) {
     .maybeSingle()
 
   if (existingClaim) {
-    const { data: existingSubscription } = await operator
-      .from('operator_client_subscriptions')
-      .select('tier, preferred_tier, access_status, trial_tier, trial_started_at, trial_ends_at, access_ends_at')
-      .eq('source_instance', payload.source_instance)
-      .eq('organization_id', payload.organization_id)
-      .maybeSingle()
     if (!existingSubscription) {
       return NextResponse.json({ error: 'Trial claim is already consumed' }, { status: 409 })
     }
@@ -245,6 +257,7 @@ export async function POST(req: NextRequest) {
   }
 
   const entitlement: EntitlementSyncPayload = {
+    billing_model: 'subscription',
     access_status: 'trialing',
     effective_tier: 'pro',
     preferred_tier: payload.preferred_tier,
@@ -255,6 +268,7 @@ export async function POST(req: NextRequest) {
   const { error: subscriptionError } = await operator
     .from('operator_client_subscriptions')
     .upsert({
+      billing_model: 'subscription',
       source_instance: payload.source_instance,
       organization_id: payload.organization_id,
       tier: 'setup_only',

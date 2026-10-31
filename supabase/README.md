@@ -2,6 +2,10 @@
 
 Ce dossier contient toutes les migrations SQL pour déployer Atelier sur un nouveau projet Supabase.
 
+**Offre setup 3 000 € :** ne pas créer de projet par client. Les nouveaux setups et les abonnés partagent `atelier-app` ; le tenant est l’organisation. Les étapes de création d’un projet ci-dessous concernent une nouvelle infrastructure explicitement décidée, pas l’onboarding standard. Parcours actuel : [DEPLOIEMENT_CLIENT.md](../DEPLOIEMENT_CLIENT.md), section « Achat setup : droits et livraison ».
+
+**Évolution setup hors abonnement :** appliquer `migrations/215_setup_billing_model.sql` sur la base application et `operator-migrations/022_setup_purchases.sql` sur la base cockpit avant le code correspondant. Ne pas convertir les anciennes lignes `setup_only` par inférence : un paiement validé et une organisation exacte sont requis. Régressions locales transactionnelles : `tests/isolation/app-215-setup-sync.sql` et `tests/isolation/operator-022-setup.sql`. Publier le cockpit avant l’application, en gelant les activations setup jusqu’à la mise en service des deux versions ; ordre et contrôles détaillés dans le guide de livraison.
+
 ---
 
 ## Ordre des migrations
@@ -106,15 +110,7 @@ ALTER TABLE public.clients ADD COLUMN IF NOT EXISTS xyz TEXT;
 
 ## Architecture multi-clients
 
-Chaque client = 1 projet Supabase + 1 déploiement Next.js.
-
-```
-Client A : project-ref-aaa → app-a.vercel.app
-Client B : project-ref-bbb → app-b.vercel.app
-Client C : project-ref-ccc → app-c.vercel.app
-```
-
-Les migrations sont identiques pour tous les clients. Les données sont totalement isolées.
+Les clients de l’offre standard partagent une application et un projet Supabase, avec isolation par organisation et politiques RLS. Le cockpit reste un projet distinct réservé à l’opérateur. Les instances dédiées historiques utilisent le même schéma applicatif ; elles ne constituent pas le parcours par défaut des nouveaux setups.
 
 ---
 

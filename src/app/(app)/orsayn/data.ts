@@ -165,7 +165,7 @@ export async function getCockpitData(): Promise<CockpitData | null> {
       .order('source_instance', { ascending: true }),
     operator
       .from('operator_client_subscriptions')
-      .select('source_instance, organization_id, tier, ai_billing_mode, mrr_ht, billing_currency, is_active, renews_at, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at, cancel_at, stripe_status, payment_failed_at, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, super_pdp_emission_enabled, super_pdp_reception_enabled, overflow_mode, notes')
+      .select('source_instance, organization_id, tier, billing_model, ai_billing_mode, mrr_ht, billing_currency, is_active, renews_at, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at, cancel_at, stripe_status, payment_failed_at, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, super_pdp_emission_enabled, super_pdp_reception_enabled, overflow_mode, notes')
       .order('source_instance', { ascending: true }),
     // L'historique des quotas sert à la fiche client et ne doit pas être limité au mois courant.
     operator
@@ -336,8 +336,9 @@ export async function getCockpitData(): Promise<CockpitData | null> {
     const monthEvents = currentMonthEventsBySource[key] ?? []
     const successfulMonthEvents = monthEvents.filter((event) => event.status === 'success')
     const billingCurrency = (subscription?.billing_currency ?? setting?.billing_currency ?? 'EUR') as 'EUR' | 'USD'
+    const billingModel = subscription?.billing_model === 'setup' ? 'setup' : 'subscription'
     const aiBillingMode = normalizeAIBillingMode(subscription?.ai_billing_mode)
-    const monthlyFee = normalizeFee(subscription?.mrr_ht ?? setting?.monthly_fee_ht)
+    const monthlyFee = billingModel === 'setup' ? 0 : normalizeFee(subscription?.mrr_ht ?? setting?.monthly_fee_ht)
     const monthUsageCostEur = successfulMonthEvents.reduce((sum, event) => sum + convertProviderCostToEur(event.provider_cost, event.currency, usdToEurRate), 0)
     const monthUsageCost = convertEurToCurrency(monthUsageCostEur, billingCurrency, usdToEurRate)
     const monthCost = aiBillingMode === 'client_owned' ? 0 : monthUsageCost
@@ -373,6 +374,7 @@ export async function getCockpitData(): Promise<CockpitData | null> {
       organizationId,
       isOrganizationResolved,
       label,
+      billingModel,
       tier: subscription?.tier ?? 'setup_only',
       appUrl: setting?.app_url ?? null,
       contactEmail: setting?.contact_email ?? null,

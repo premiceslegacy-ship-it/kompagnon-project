@@ -91,6 +91,7 @@ jobs:
             tests/isolation/account-deletion-identity-claim.sql \
             tests/isolation/account-deletion-logo-claim.sql \
             tests/isolation/quote-attachment-identity.sql \
+            tests/isolation/app-215-setup-sync.sql \
             tests/isolation/invoice-paid-transaction.sql; do
             if [[ "$smoke" == tests/isolation/quote-attachment-identity.sql ]]; then
               # Disposable legacy-restore fixture alone needs the Storage owner.
@@ -112,3 +113,4 @@ jobs:
           psql "$operator_db_url" -v ON_ERROR_STOP=1 -f tests/isolation/operator-019-smoke.sql
           psql "$operator_db_url" -v ON_ERROR_STOP=1 -f tests/isolation/operator-020-refresh.sql
           psql "$operator_db_url" -v ON_ERROR_STOP=1 -f tests/isolation/operator-021-security.sql
+          psql "$operator_db_url" -v ON_ERROR_STOP=1 -f tests/isolation/operator-022-setup.sql

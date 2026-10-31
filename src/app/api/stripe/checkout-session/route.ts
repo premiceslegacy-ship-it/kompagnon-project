@@ -27,10 +27,17 @@ export async function POST(req: NextRequest) {
   if (sourceInstance !== allowedSource) return NextResponse.json({ error: 'Source instance not allowed' }, { status: 403 })
 
   const operator = createOperatorAdminClient()
-  const [{ data: settings }, { data: subscription }] = await Promise.all([
+  const [{ data: settings }, { data: subscription, error: subscriptionError }] = await Promise.all([
     operator.from('operator_client_settings').select('app_url, contact_email').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
-    operator.from('operator_client_subscriptions').select('stripe_customer_id, stripe_subscription_id, stripe_status').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
+    operator.from('operator_client_subscriptions').select('billing_model, stripe_customer_id, stripe_subscription_id, stripe_status').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
   ])
+  if (subscriptionError) {
+    console.error('[stripe/checkout-session] DB error:', subscriptionError)
+    return NextResponse.json({ error: 'Erreur base de données' }, { status: 500 })
+  }
+  if (subscription?.billing_model === 'setup') {
+    return NextResponse.json({ error: 'Cette organisation dispose d’une offre setup payée manuellement' }, { status: 409 })
+  }
   if (!settings?.app_url) return NextResponse.json({ error: 'Organisation introuvable' }, { status: 404 })
   try {
     if (new URL(returnUrl).origin !== new URL(settings.app_url).origin) {

@@ -10,6 +10,7 @@ import {
 function entitlement(overrides: Partial<OrganizationEntitlement> = {}): OrganizationEntitlement {
   return {
     organizationId: '10000000-0000-4000-8000-000000000001',
+    billingModel: 'subscription',
     accessStatus: 'locked',
     effectiveTier: 'setup_only',
     preferredTier: 'pro',
@@ -44,6 +45,22 @@ describe('subscription access', () => {
     const now = Date.parse('2026-08-09T12:00:00.000Z')
     expect(hasActiveAccess(entitlement({ accessStatus: 'canceling', accessEndsAt: '2026-09-08T12:00:00.000Z' }), now)).toBe(true)
     expect(hasActiveAccess(entitlement({ accessStatus: 'canceling', accessEndsAt: '2026-08-09T11:00:00.000Z' }), now)).toBe(false)
+  })
+
+  it('maintient l’achat setup actif sans échéance mais refuse un setup verrouillé', () => {
+    const purchased = entitlement({ billingModel: 'setup', accessStatus: 'active' })
+    expect(hasActiveAccess(purchased, Date.parse('2040-01-01T00:00:00Z'))).toBe(true)
+    expect(hasActiveAccess({ ...purchased, accessStatus: 'locked' })).toBe(false)
+    expect(entitlementFromDb({
+      organization_id: purchased.organizationId,
+      billing_model: 'setup',
+      access_status: 'active',
+      effective_tier: 'setup_only',
+      preferred_tier: 'pro',
+      trial_started_at: null,
+      trial_ends_at: null,
+      access_ends_at: null,
+    })?.billingModel).toBe('setup')
   })
 
   it('rejette un miroir incomplet plutôt que de laisser passer', () => {

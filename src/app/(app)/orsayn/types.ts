@@ -1,4 +1,4 @@
-import type { AccessStatus, SellableTier } from '@/lib/subscription-access'
+import type { AccessStatus, BillingModel, SellableTier } from '@/lib/subscription-access'
 import type { OrganizationModules } from '@/lib/organization-modules'
 import type { QuotaFeature, QuotaUnit, SubscriptionTier, OverflowMode } from '@/lib/quota-catalog'
 import type {
@@ -56,6 +56,7 @@ export type OperatorClientSetting = {
 export type OperatorClientSubscription = {
   source_instance: string
   organization_id: string
+  billing_model: BillingModel
   tier: SubscriptionTier
   ai_billing_mode: AIBillingMode | null
   mrr_ht: number | string | null
@@ -132,6 +133,7 @@ export type ClientRow = {
   organizationId: string | null
   isOrganizationResolved: boolean
   label: string
+  billingModel: BillingModel
   tier: SubscriptionTier
   appUrl: string | null
   contactEmail: string | null

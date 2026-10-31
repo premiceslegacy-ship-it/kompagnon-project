@@ -65,6 +65,7 @@ export async function ensureLockedEntitlement(
   const admin = createAdminClient()
   const { error } = await admin.from('organization_entitlements').upsert({
     organization_id: organizationId,
+    billing_model: 'subscription',
     access_status: 'locked',
     effective_tier: 'setup_only',
     preferred_tier: preferredTier,
@@ -173,24 +174,20 @@ export async function activateTrialForCurrentOrganization(): Promise<{ ok: true 
   })
   if ('error' in result) return result
 
-  const [{ error: entitlementError }, { error: moduleError }] = await Promise.all([
-    admin.from('organization_entitlements').upsert({
-      organization_id: context.organizationId,
-      ...result.entitlement,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'organization_id' }),
-    admin.from('organization_modules').upsert({
-      organization_id: context.organizationId,
-      modules: result.modules,
-      quota_config: result.quota_config,
-      overflow_mode: 'block',
-      ai_billing_mode: 'orsayn_shared',
-      quota_synced_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'organization_id' }),
-  ])
-  if (entitlementError || moduleError) {
-    console.error('[activateTrial.local-sync]', entitlementError || moduleError)
+  const { data, error } = await admin.rpc('apply_operator_config', {
+    p_organization_id: context.organizationId,
+    p_modules: result.modules,
+    p_quota_config: result.quota_config,
+    p_overflow_mode: 'block',
+    p_ai_billing_mode: 'orsayn_shared',
+    p_einvoicing_config: null,
+    p_entitlement: result.entitlement,
+  })
+  if (error || data !== 'applied') {
+    if (error?.code === 'PT409') {
+      return { error: 'Une configuration d’accès plus récente empêche la synchronisation de l’essai' }
+    }
+    console.error('[activateTrial.local-sync]', { code: error?.code ?? 'unexpected-result' })
     return { error: 'L’essai est créé, mais la synchronisation locale doit être relancée' }
   }
   return { ok: true }

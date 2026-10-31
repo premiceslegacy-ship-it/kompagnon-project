@@ -37,6 +37,8 @@ import type { QuoteClauseTemplate } from '@/lib/data/queries/clause-templates';
 import type { OrganizationModules } from '@/lib/organization-modules';
 import type { CatalogLaborRate, CatalogMaterial, PrestationType } from '@/lib/data/queries/catalog';
 import type { Supplier } from '@/lib/data/queries/suppliers';
+import type { AccessStatus, BillingModel } from '@/lib/subscription-access';
+import type { SubscriptionTier } from '@/lib/quota-catalog';
 import {
     BUSINESS_ACTIVITIES_BY_PROFILE,
     getSecondaryActivityOptions,
@@ -113,8 +115,9 @@ type Props = {
     stripeLinkPro: string | null;
     stripeLinkExpert: string | null;
     selfService: boolean;
-    subscriptionTier: import('@/lib/quota-catalog').SubscriptionTier | null;
-    subscriptionAccessStatus: import('@/lib/subscription-access').AccessStatus | null;
+    subscriptionBillingModel: BillingModel;
+    subscriptionTier: SubscriptionTier | null;
+    subscriptionAccessStatus: AccessStatus | null;
     subscriptionAccessEndsAt: string | null;
     einvoicingConfig: EinvoicingConfig;
     canConfigureEinvoicing: boolean;
@@ -214,7 +217,7 @@ function SecondaryActivitiesSelector({
     )
 }
 
-export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkPro, stripeLinkExpert, selfService, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt, einvoicingConfig, canConfigureEinvoicing, companyMemories, oauthResult, oauthDetail }: Props) {
+export default function SettingsClient({ initialFullName, initialEmail, members, roles, joinCode, organization, appUrl, supabaseUrl, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, catalogContext, currentRoleSlug, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialTab, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkPro, stripeLinkExpert, selfService, subscriptionBillingModel, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt, einvoicingConfig, canConfigureEinvoicing, companyMemories, oauthResult, oauthDetail }: Props) {
     const router = useRouter()
     const [activeTab, setActiveTab] = useState(initialTab);
     useEffect(() => {
@@ -2948,6 +2951,7 @@ export default function SettingsClient({ initialFullName, initialEmail, members,
             return (
                 <div className="rounded-3xl card p-8 space-y-8">
                     <SubscriptionTab
+                        billingModel={subscriptionBillingModel}
                         modules={organizationModules ?? {} as OrganizationModules}
                         stripeLinkPro={stripeLinkPro}
                         stripeLinkExpert={stripeLinkExpert}
