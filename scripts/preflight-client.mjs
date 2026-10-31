@@ -2,6 +2,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { parseEnv } from 'node:util'
 import path from 'node:path'
 
 const root = process.cwd()
@@ -50,17 +51,7 @@ const PLACEHOLDER = /^(TODO|COPIER_DEPUIS|un-secret|change-?moi|xxx)/i
 
 function readEnvFile(filePath) {
   if (!existsSync(filePath)) return {}
-  const env = {}
-  const lines = readFileSync(filePath, 'utf8').split(/\r?\n/)
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue
-    const index = trimmed.indexOf('=')
-    const key = trimmed.slice(0, index).trim()
-    const value = trimmed.slice(index + 1).trim().replace(/^["']|["']$/g, '')
-    env[key] = value
-  }
-  return env
+  return parseEnv(readFileSync(filePath, 'utf8'))
 }
 
 function check(condition, ok, fail, failures, warnings, warning = false) {
