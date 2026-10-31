@@ -92,7 +92,7 @@ npm audit --omit=dev --audit-level=high
 
 # Même limite que le build qualifié ; surcharge explicite possible selon le runner.
 NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=6144}" node_modules/.bin/opennextjs-cloudflare build
-node ./node_modules/wrangler/bin/wrangler.js deploy --keep-vars --config "$ROOT_DIR/wrangler.jsonc" --name "$worker_hint"
+node_modules/.bin/opennextjs-cloudflare deploy --keep-vars --config "$ROOT_DIR/wrangler.jsonc" --name "$worker_hint"
 
 trap - EXIT INT TERM
 restore_env_files
