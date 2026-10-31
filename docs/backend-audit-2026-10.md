@@ -217,6 +217,7 @@ Aucun nouveau test réel de livraison email, PA/Super PDP, Stripe, Sentry ou fou
 - `main` protégé avec PR et CI requises ; environnement `Atelier CDF` limité à main, revue humaine requise et bypass administrateur désactivé. Configurations privées app/cockpit et credentials de déploiement provisionnés dans cet environnement.
 - CI et workflows **Atelier App / Cockpit Orsayn actifs**, toujours soumis à ces gates. Workflows générique client et tous-clients conservés **désactivés** ; aucune livraison de clients non qualifiés déclenchée.
 - Quatre helpers cron rétablis avec leurs horaires d'avant maintenance, relus via API ; aucun traitement métier lancé manuellement. L'horaire supplémentaire de quinze minutes présent dans le code d'operator-cron mais absent de sa configuration effective n'a pas été ajouté.
+- Préviews de versions Cloudflare fermées sur les deux Workers, sans désactiver leur adresse courante `workers.dev` : URLs de versions observées **200 avant / 404 après**, pages de connexion courantes **200**. `preview_urls: false` inscrit dans Wrangler et accepté par un vrai dry-deploy OpenNext, pour que les prochains déploiements ne réouvrent pas ces voies vers d'anciens builds.
 - Avertissements non masqués : Middleware, date de compatibilité workerd et queue ISR directe. Cette livraison n'établit ni zéro incident futur, ni dimensionnement en charge, ni conformité réglementaire universelle.
 
 ## Revue du skill `backend-orsayn`
