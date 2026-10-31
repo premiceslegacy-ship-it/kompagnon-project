@@ -192,16 +192,16 @@ Deux flux distincts :
 - Champ "Entreprise" **verrouillé à une seule option pré-remplie** (Orsayn, le porteur de l'application — pas une restriction à un seul client final, confirmé par test réel de l'utilisateur).
 - Type d'application : **Confidentielle** (client_secret côté serveur Cloudflare Workers).
 - Format AFNOR : **Factur-X**.
-- URL de redirection production : `https://orsayn-cockpit.mbebourasam.workers.dev/api/einvoicing/oauth/callback` (endpoint à créer, voir §7.3 et §9).
+- URL de redirection production : `https://orsayn-cockpit.mbebourasam.workers.dev/api/einvoicing/oauth/callback?env=production`. Elle doit correspondre exactement à celle enregistrée chez le fournisseur ; le callback utilise l’environnement configuré côté cockpit, pas une valeur choisie par l’appelant.
 - Une deuxième application dédiée au bac à sable existe, même configuration.
 
 **Conséquence architecturale** : puisqu'une seule application = un seul porteur (Orsayn), **c'est le cockpit qui détient et rafraîchit tous les tokens OAuth**, pas chaque instance cliente. Chaque instance passe par un endpoint proxy côté cockpit pour les opérations de facturation électronique.
 
-### 7.3. Flux d'activation (à construire — Phase 1)
+### 7.3. Flux d’activation OAuth
 
-1. Owner d'une organisation clique "Activer la facturation électronique" **depuis son instance Atelier** (nouvelle UI `/settings`, absente aujourd'hui — l'UI existante à `/orsayn` est le cockpit opérateur interne, pas une UI client).
-2. L'instance redirige vers le cockpit avec un `state` signé HMAC (réutilise le pattern `signOperatorPayload`/`verifyOperatorSignature` de `src/lib/operator.ts`) encodant `source_instance` + `organization_id`, pour savoir où rediriger l'utilisateur en fin de flux.
-3. Le cockpit redirige vers `/oauth2/authorize` de Super PDP (`authorization_code`).
+1. L’owner d’une organisation lance la connexion depuis les paramètres de son instance Atelier, après contrôle de `einvoicing.configure`.
+2. L’instance signe un `state` HMAC contenant `source_instance`, `organization_id`, un nonce et l’heure d’émission, avec son propre secret dérivé. Le state est valable dix minutes.
+3. L’instance redirige vers `/oauth2/authorize` de Super PDP. Au retour, seul le cockpit vérifie le state : `OPERATOR_MASTER_SECRET` est obligatoire et sert à dériver la clé attendue pour le `source_instance` décodé. Aucun accès au contexte client avant validation du HMAC ; les anciens alias partagés ne sont pas un fallback de vérification.
 4. L'owner autorise côté Super PDP — **partiellement confirmé** : dans le test sandbox du 25/08/2026, le tunnel a directement authentifié une entreprise déjà préconfigurée dans le bac à sable ("Tricatel"), sans étape KYC visible. **Reste non confirmé** : le comportement pour un SIREN client réel qui n'a jamais eu de compte Super PDP en production — création à la volée vs redirection vers un formulaire séparé (email/mot de passe/KYC). À revalider avec le support Super PDP ou un premier client pilote avant la mise en production.
 5. Super PDP redirige vers le callback unique côté cockpit (`/api/einvoicing/oauth/callback`).
 6. Le cockpit échange le `code` contre `access_token`/`refresh_token`, les chiffre (AES-256-GCM, `src/lib/crypto/secrets.ts`), les stocke dans `super_pdp_oauth_credentials` (DB opérateur uniquement).
@@ -321,7 +321,7 @@ Le callback OAuth doit tourner sur le runtime Cloudflare Workers (cohérent avec
 |---|---|
 | Fuite de token OAuth | Chiffrement AES-256-GCM avant stockage (`src/lib/crypto/secrets.ts`), clé maître en secret Cloudflare (`SUPER_PDP_ENCRYPTION_KEY`), jamais en DB |
 | Token répliqué vers une instance compromise | Non applicable — les tokens ne quittent jamais le cockpit |
-| Spoofing du `state` OAuth | Signature HMAC-SHA256 obligatoire avant toute redirection finale (réutilise `signOperatorPayload`/`verifyOperatorSignature`) |
+| Spoofing du `state` OAuth | Signature HMAC-SHA256 avec la clé dérivée de l’instance ; vérification cockpit avec master obligatoire, sans fallback partagé, avant lecture du contexte client ou échange du code |
 | Lecture `super_pdp_oauth_credentials` | RLS activée sans policy : accessible uniquement via `service_role` |
 | Lecture `organization_einvoicing_config` (statuts, pas de secrets) | RLS existante : lecture par tout membre org, écriture réservée `settings.edit_org` |
 | Insertion `received_invoices` | RLS : INSERT uniquement via `service_role` (webhook/cron, mécanisme exact à définir en Phase 3) |

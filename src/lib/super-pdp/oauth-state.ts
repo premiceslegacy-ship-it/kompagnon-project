@@ -4,7 +4,7 @@
 // organisation ont initie le flux, pour savoir ou rediriger l'utilisateur a la fin (le callback
 // OAuth est unique, cote cockpit, partage par toutes les instances clientes).
 
-import { signOperatorPayload, verifyOperatorSignature } from '@/lib/operator'
+import { getOperatorSigningSecret, hasOperatorMasterSecret, signOperatorPayload, verifyOperatorSignature } from '@/lib/operator'
 
 const STATE_TTL_MS = 10 * 60 * 1000
 
@@ -15,11 +15,10 @@ export type OauthStatePayload = {
   issued_at: number
 }
 
-function getOauthStateSecret(): string {
-  const secret = process.env.OPERATOR_CONFIG_SYNC_SECRET?.trim()
-    || process.env.OPERATOR_INGEST_SECRET?.trim()
+function getOauthStateSecret(sourceInstance: string): string {
+  const secret = getOperatorSigningSecret(sourceInstance)
   if (!secret) {
-    throw new Error('OPERATOR_CONFIG_SYNC_SECRET / OPERATOR_INGEST_SECRET manquant')
+    throw new Error('Secret de signature opérateur manquant')
   }
   return secret
 }
@@ -42,20 +41,18 @@ export function signOauthState(sourceInstance: string, organizationId: string): 
     issued_at: Date.now(),
   }
   const encoded = toBase64Url(JSON.stringify(payload))
-  const signature = signOperatorPayload(encoded, getOauthStateSecret())
+  const signature = signOperatorPayload(encoded, getOauthStateSecret(sourceInstance))
   return `${encoded}.${signature}`
 }
 
 export function verifyOauthState(state: string | null): OauthStatePayload | null {
-  if (!state) return null
+  if (!state || !hasOperatorMasterSecret()) return null
 
   const separatorIndex = state.lastIndexOf('.')
   if (separatorIndex === -1) return null
 
   const encoded = state.slice(0, separatorIndex)
   const signature = state.slice(separatorIndex + 1)
-
-  if (!verifyOperatorSignature(encoded, getOauthStateSecret(), signature)) return null
 
   let payload: OauthStatePayload
   try {
@@ -65,13 +62,18 @@ export function verifyOauthState(state: string | null): OauthStatePayload | null
   }
 
   if (
-    typeof payload.source_instance !== 'string' || !payload.source_instance
+    !payload || typeof payload !== 'object'
+    || typeof payload.source_instance !== 'string' || !payload.source_instance
     || typeof payload.organization_id !== 'string' || !payload.organization_id
     || typeof payload.nonce !== 'string' || !payload.nonce
     || typeof payload.issued_at !== 'number'
   ) {
     return null
   }
+
+  // Le source non fiable choisit seulement la clé ; le HMAC autorise le state.
+  const secret = getOperatorSigningSecret(payload.source_instance)
+  if (!secret || !verifyOperatorSignature(encoded, secret, signature)) return null
 
   if (Date.now() - payload.issued_at > STATE_TTL_MS) return null
 
