@@ -37,7 +37,11 @@ export async function POST(req: NextRequest) {
   let errors = 0
 
   for (const row of rows) {
-    const embedding = await generateEmbedding(row.content, row.organization_id ?? null)
+    if (!row.organization_id) {
+      errors++
+      continue
+    }
+    const embedding = await generateEmbedding(row.content, row.organization_id)
     if (!embedding) {
       errors++
       continue

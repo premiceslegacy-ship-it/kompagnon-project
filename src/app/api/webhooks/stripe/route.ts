@@ -19,6 +19,8 @@ export const dynamic = 'force-dynamic'
 type StripeObject = Record<string, any>
 type TenantContext = { sourceInstance: string; organizationId: string }
 
+const SETUP_BILLING_WEBHOOK_ERROR = 'Stripe event targets a manually paid setup organization; operator review is required'
+
 function tierFromPriceId(priceId: string | null | undefined): SubscriptionTier | null {
   if (!priceId) return null
   const entries: Array<[string | undefined, SubscriptionTier]> = [
@@ -132,6 +134,14 @@ const LIFECYCLE_EMAIL_KIND: Record<string, AtelierSubscriptionEmailKind> = {
   subscription_cancelled: 'ended',
 }
 
+const WATCHED_STRIPE_EVENTS: Record<string, true> = {
+  'checkout.session.completed': true,
+  'invoice.paid': true,
+  'invoice.payment_failed': true,
+  'customer.subscription.updated': true,
+  'customer.subscription.deleted': true,
+}
+
 async function notifyLifecycle(to: string | null, eventType: string, tier: SubscriptionTier, appUrl: string, renewsAt: string | null) {
   const kind = LIFECYCLE_EMAIL_KIND[eventType]
   if (!kind) return
@@ -166,10 +176,12 @@ async function applySubscriptionState(input: {
 }) {
   const operator = createOperatorAdminClient()
   const { sourceInstance, organizationId } = input.tenant
-  const [{ data: settings }, { data: previous }] = await Promise.all([
+  const [{ data: settings }, { data: previous, error: subscriptionLookupError }] = await Promise.all([
     operator.from('operator_client_settings').select('app_url, contact_email').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
     operator.from('operator_client_subscriptions').select('*').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
   ])
+  if (subscriptionLookupError) throw new Error('Unable to inspect subscription billing before applying Stripe event')
+  if (previous?.billing_model === 'setup') throw new Error(SETUP_BILLING_WEBHOOK_ERROR)
   if (!settings) throw new Error(`Organisation cockpit introuvable: ${sourceInstance}/${organizationId}`)
 
   const metadata = metadataOf(input.subscription)
@@ -196,6 +208,7 @@ async function applySubscriptionState(input: {
     ? 'setup_only'
     : tier
   const entitlement: EntitlementSyncPayload = {
+    billing_model: 'subscription',
     access_status: accessStatus,
     effective_tier: syncedTier,
     preferred_tier: preferredTier,
@@ -364,19 +377,35 @@ export async function POST(req: NextRequest) {
   try { event = JSON.parse(rawBody) } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
   if (!event.id || !event.type || !event.data?.object) return NextResponse.json({ error: 'Invalid event' }, { status: 400 })
   if (await claimWebhookEvent(event.id, event.type) === 'duplicate') {
+    if (WATCHED_STRIPE_EVENTS[event.type] === true) {
+      try {
+        const tenant = await resolveTenant(event.data.object)
+        if (tenant) {
+          const { data: subscription, error } = await createOperatorAdminClient()
+            .from('operator_client_subscriptions')
+            .select('billing_model')
+            .eq('source_instance', tenant.sourceInstance)
+            .eq('organization_id', tenant.organizationId)
+            .maybeSingle()
+          if (error) throw new Error('Unable to inspect subscription billing before acknowledging duplicate Stripe event')
+          if (subscription?.billing_model === 'setup') throw new Error(SETUP_BILLING_WEBHOOK_ERROR)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Internal error'
+        console.error('[stripe/webhook]', event.type, message)
+        await finishWebhookEvent(event.id, 'failed', message)
+        return NextResponse.json(
+          { error: message === SETUP_BILLING_WEBHOOK_ERROR ? 'Manual setup billing requires operator review' : 'Internal error' },
+          { status: 500 },
+        )
+      }
+    }
     return NextResponse.json({ received: true, duplicate: true })
   }
 
   try {
     const object = event.data.object
-    const watched = new Set([
-      'checkout.session.completed',
-      'invoice.paid',
-      'invoice.payment_failed',
-      'customer.subscription.updated',
-      'customer.subscription.deleted',
-    ])
-    if (watched.has(event.type)) {
+    if (WATCHED_STRIPE_EVENTS[event.type] === true) {
       const tenant = await resolveTenant(object)
       if (!tenant) {
         await recordOrphan(object, `Tenant introuvable pour ${event.type}`)
@@ -412,6 +441,10 @@ export async function POST(req: NextRequest) {
     const message = error instanceof Error ? error.message : 'Internal error'
     console.error('[stripe/webhook]', event.type, message)
     await finishWebhookEvent(event.id, 'failed', message)
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
+    const manualSetupReview = message === SETUP_BILLING_WEBHOOK_ERROR
+    return NextResponse.json(
+      { error: manualSetupReview ? 'Manual setup billing requires operator review' : 'Internal error' },
+      { status: 500 },
+    )
   }
 }

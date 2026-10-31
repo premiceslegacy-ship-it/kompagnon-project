@@ -67,6 +67,8 @@ export function getEventLabel(eventType: string): string {
     signup_created: 'Inscription créée',
     self_service_signup: 'Onboarding terminé',
     subscription_updated: 'Offre appliquée',
+    setup_purchase_approved: 'Règlement setup validé',
+    setup_config_synced: 'Synchronisation setup',
     trial_started: 'Essai activé',
     trial_converted: 'Essai converti',
     trial_ended: 'Essai terminé',
@@ -131,14 +133,16 @@ export function formatAIBillingMode(value: AIBillingMode): string {
   return value === 'client_owned' ? 'Le client (sa propre clé)' : 'Orsayn'
 }
 
-export function formatCommercialStatus(row: Pick<ClientRow, 'tier' | 'aiBillingMode'>): string {
+export function formatCommercialStatus(row: Pick<ClientRow, 'tier' | 'aiBillingMode' | 'billingModel'>): string {
+  if (row.billingModel === 'setup') return 'Achat setup'
   if (row.aiBillingMode === 'client_owned') return 'Le client paie l’IA'
   return formatTier(row.tier)
 }
 
 export function formatClientOffer(
-  row: Pick<ClientRow, 'tier' | 'trialTier' | 'trialEndsAt' | 'trialConverted' | 'accessStatus'>,
+  row: Pick<ClientRow, 'billingModel' | 'tier' | 'trialTier' | 'trialEndsAt' | 'trialConverted' | 'accessStatus'>,
 ): string {
+  if (row.billingModel === 'setup') return 'Achat setup'
   if (
     row.accessStatus === 'trialing'
     && !row.trialConverted

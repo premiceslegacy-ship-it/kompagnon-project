@@ -12,7 +12,7 @@ type Query = {
   then(resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown): Promise<unknown>
 }
 
-const mocks = vi.hoisted(() => ({ from: vi.fn(), fetch: vi.fn() }))
+const mocks = vi.hoisted(() => ({ from: vi.fn(), fetch: vi.fn(), subscriptionBillingModel: null as string | null, writes: [] as string[] }))
 const MASTER = 'd'.repeat(64)
 const SOURCE = 'atelier-app'
 const ORGANIZATION_ID = '11111111-1111-4111-8111-111111111111'
@@ -30,10 +30,10 @@ function makeQuery(table: string): Query {
     maybeSingle: async () => ({
       data: table === 'operator_client_settings'
         ? { app_url: 'https://atelier-test.example', contact_email: 'owner@example.test' }
-        : null,
+        : mocks.subscriptionBillingModel ? { billing_model: mocks.subscriptionBillingModel } : null,
       error: null,
     }),
-    update: () => query,
+    update: () => { mocks.writes.push(table); return query },
     then: (resolve, reject) => Promise.resolve({ data: null, error: null }).then(resolve, reject),
   }
   return query
@@ -69,6 +69,8 @@ beforeEach(() => {
   vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_local_only')
   vi.stubEnv('STRIPE_PRICE_PRO', 'price_pro_test')
   vi.stubEnv('OPERATOR_SELF_SERVICE_SOURCE_INSTANCE', SOURCE)
+  mocks.subscriptionBillingModel = 'subscription'
+  mocks.writes.length = 0
   mocks.from.mockImplementation((table: string) => makeQuery(table))
   mocks.fetch.mockReset()
   const sessions = new Map<string, { id: string; url: string }>()
@@ -106,5 +108,15 @@ describe('cockpit checkout replay protection', () => {
       .toBe(new Headers(replayInit.headers).get('Idempotency-Key'))
     expect(String(firstInit.body)).toContain('line_items%5B0%5D%5Bprice%5D=price_pro_test')
     expect(replayInit.body).toBe(firstInit.body)
+  })
+
+  it('refuse un checkout setup sans appel Stripe ni écriture cockpit', async () => {
+    mocks.subscriptionBillingModel = 'setup'
+
+    const response = await POST(signedRequest(String(Date.now())))
+
+    expect(response.status).toBe(409)
+    expect(mocks.fetch).not.toHaveBeenCalled()
+    expect(mocks.writes).toEqual([])
   })
 })

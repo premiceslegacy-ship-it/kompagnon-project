@@ -1,50 +1,31 @@
 # SOP Déploiement — Nouveau client Atelier
 
 > **Document vivant.** Toute nouvelle étape de déploiement doit être ajoutée ici immédiatement.
-> Modèle décrit dans la majorité de ce document (encore le mode de livraison actif pour les clients déjà provisionnés ainsi) : **1 Supabase + 1 déploiement Cloudflare Workers + 1 domaine** par client — données totalement isolées.
-> **Trajectoire cible pour l'offre setup 3k, décidée le 2026-09-16** : basculer vers le modèle mutualisé (1 seul projet Supabase, N clients dedans) — voir section dédiée ci-dessous. Ce document reste la référence des deux modes tant que la bascule n'est pas terminée pour tout le parc.
+> **Offre setup 3 000 € : décision confirmée le 31/10/2026.** Même application `atelier-app`, même projet Supabase `pyxnmohknxmbpbcuvudg` que les abonnés, une organisation isolée par client. Aucun nouveau projet Supabase, Worker ou domaine par client setup.
+> Les procédures **1 Supabase + 1 Worker + 1 domaine par client** plus bas concernent les instances dédiées historiques ou un contrat dédié explicitement accepté ; elles ne sont pas le parcours standard de l’offre setup.
 
 > **Portée au 27/10/2026 :** ce guide décrit les procédures et prérequis présents dans le dépôt. Il ne certifie aucune publication en production, aucun projet distant à jour, ni qualification auprès de la PA, Sentry, Stripe ou d’un autre fournisseur. Pour `cf:env --apply-all`, `CLOUDFLARE_ACCOUNT_ID` et `CLOUDFLARE_API_TOKEN` restent des identifiants d’administration locaux, hors des fichiers client.
 > **Scopes séparées :** Stripe abonnements cockpit → `docs/scope-cockpit-stripe-abonnements.md`. Super PDP / facturation électronique → `docs/atelier-facturation-electronique.md`. Paiement en ligne des factures artisan → `docs/scope-paiement-en-ligne.md`. WhatsApp → abandonné (2026-09-16), voir section dédiée.
 
 ---
 
-## Architecture par client
+## Cockpit : une paire exacte par organisation cliente
 
-```
-Client BTP
-  └── Supabase (DB + Auth + Storage + Edge Functions)  → données isolées
-  └── Cloudflare Workers (Next.js via OpenNext)        → app full-stack
-  └── Cloudflare Worker (cron relances auto)           → 8h chaque matin
-  └── Cloudflare Worker (cron brief Sarah)             → 7h chaque matin (Pro/Expert uniquement)
-  └── Resend (emails transactionnels)                  → devis, factures, invitations
-  └── OpenRouter + Mistral (IA)                        → clés Atelier partagées (voir §IA)
-  └── ElevenLabs (Sarah vocale)                        → compte Orsayn centralisé, 1 agent partagé (Pro/Expert uniquement)
-  └── Domaine custom                                   → ~€10/an
-```
-
----
-
-## Cockpit : modèle à deux modes (per-client en cours de sortie, mutualisé devenu la cible)
-
-Le modèle historique était **single-tenant par instance** (1 org réelle par instance Supabase) ; le modèle cible pour l'offre setup 3k, décidé le 2026-09-16, est mutualisé (voir section dédiée plus haut). Le cockpit modélise déjà le tenant logique comme la paire `(source_instance, organization_id)` — pas `source_instance` seul, ce qui a permis à cette bascule de ne pas nécessiter de changement de schéma côté cockpit :
+Le cockpit identifie chaque tenant par `(source_instance, organization_id)`. Pour les nouveaux setups mutualisés, `source_instance = atelier-app` et l’UUID de l’organisation est obligatoire ; ne jamais choisir l’organisation « la plus récente » d’une instance :
 
 - `operator_clients` : upsert `onConflict: 'source_instance,organization_id'`
 - `operator_usage_events` : idempotence `onConflict: 'source_instance,local_usage_log_id'`
 - config-sync et quotas sont scopés par `organization_id`, pas par instance
 
-Conséquence : un client **setup 3k** (organisation mutualisée dans `atelier-app`) et un client self-service (Pro/Expert, même instance) apparaissent dans le même cockpit sans changement de schéma — per-client historique = 1 `source_instance` × 1 org, mutualisé = 1 `source_instance` × N orgs.
+Un achat setup et un abonnement Pro/Expert peuvent partager l’infrastructure sans partager leurs droits commerciaux ni leur payeur IA. Le champ **`billing_model`** distingue `setup` et `subscription` ; `tier = setup_only` ne prouve pas un achat, car il sert aussi aux comptes bloqués ou aux essais expirés.
 
-Points encore ouverts pour l'ouverture à des clients setup 3k payants (le mutualisé n'est plus théorique, mais ces deux points n'ont pas été retraités par l'audit du 2026-09-16, qui a porté sur l'isolation cross-tenant, pas sur la volumétrie du cockpit) :
-
-1. `syncClientQuotaConfig` pousse une config vers une `app_url` par client — en mutualisé, N organisations partageraient la même URL. Le payload porte déjà `organization_id`, mais le routage réception côté instance (`config-sync`) est à valider explicitement pour ce cas.
-2. Le cron `quota-alerts` et l'expiration d'essai itèrent `operator_client_subscriptions` sans pagination — cadence et volumétrie à revoir dès qu'une instance porte plusieurs organisations (voir le sous-skill `cron-webhooks-integrations` du dossier backend-orsayn, pattern fan-out cron).
+Le routage config-sync porte déjà l’UUID de l’organisation et les crons utilisent la pagination. La qualification spécifique du setup doit aussi démontrer qu’un autre tenant n’est pas modifié et qu’un essai/événement Stripe tardif ne remplace pas l’achat.
 
 ---
 
-## Instance mutualisée `atelier-app` — devenue le modèle cible de l'offre setup 3k
+## Instance mutualisée `atelier-app` — parcours standard de l’offre setup 3k
 
-Ce document décrit historiquement le modèle **1 Supabase + 1 Worker + 1 domaine par client**. `atelier-app` (Worker Cloudflare, domaine `app.atelier-btp.fr`) déroge à ce modèle depuis le départ : c'est une instance **unique et partagée** portant potentiellement N organisations, avec le même Supabase `pyxnmohknxmbpbcuvudg` que les autres environnements de test. Jusqu'au 2026-09-16, elle ne servait qu'au parcours self-service (Pro/Expert sans setup) ; **elle devient désormais aussi le mode de livraison cible de l'offre setup 3k** : un client "on s'occupe de tout" est provisionné comme une organisation supplémentaire dans ce même projet Supabase, pas dans un projet dédié.
+`atelier-app` (Worker Cloudflare, domaine `app.atelier-btp.fr`, projet Supabase `pyxnmohknxmbpbcuvudg`) héberge abonnés et clients setup dans des organisations distinctes. Ajouter un client setup ne crée aucune infrastructure : il rejoint cette application avec ses propres utilisateurs, données, identité documentaire et clé IA.
 
 Ce choix avait été explicitement écarté le 2026-09-09 dans `docs/souverainete-donnees/03-trajectoire.md` ("chantier de refonte plus lourd que l'urgence actuelle ne le justifie"). Il redevient praticable après l'audit et le durcissement du 2026-09-16 : voir `docs/souverainete-donnees/` pour la trajectoire à jour, et le sous-skill `auth-rls-access-control` (`references/multi-tenant-isolation.md`) du dossier `backend-orsayn` pour le détail technique des failles corrigées et de la méthode de vérification.
 
@@ -72,19 +53,58 @@ La règle retenue diffère par offre, **sans fallback entre les deux** :
 **Implémentation :**
 - Migration `187_organization_openrouter_key.sql` : table `organization_ai_credentials` (PK `organization_id`, colonne `openrouter_key_encrypted`), RLS activée **sans aucune policy** — accessible uniquement via `createAdminClient()`/`service_role`, même le membre propriétaire de l'organisation ne peut pas la lire via PostgREST (vérifié en base locale : `SELECT` par un client anon connecté renvoie `[]`). Pattern copié de `supabase/operator-migrations/013_super_pdp_oauth_credentials.sql`.
 - `src/lib/ai/openrouter-credentials.ts` : lecture/écriture/suppression, chiffrement via `src/lib/crypto/secrets.ts` (même mécanisme que les tokens OAuth Super PDP), clé de chiffrement dans `ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY` (secret Worker, jamais en base, distinct par instance — voir `.env.example`).
-- `src/lib/ai/callAI.ts` et `src/lib/ai/embeddings.ts` résolvent la clé selon `ai_billing_mode` : `client_owned` lit d'abord `organization_ai_credentials`, puis retombe sur `OPENROUTER_API_KEY` du Worker (modèle dédié historique, où la clé client est directement le secret du Worker) — ce second niveau n'est pas un fallback client/Atelier, c'est la même clé client exprimée différemment selon le modèle de déploiement.
+- `src/lib/ai/callAI.ts` et `src/lib/ai/embeddings.ts` : `client_owned` utilise exclusivement `organization_ai_credentials`. Clé absente, illisible ou invalide : aucun repli sur `OPENROUTER_API_KEY`. Les embeddings exigent aussi une organisation et un mode de facturation connus. Une ancienne instance dédiée utilisant seulement sa clé Worker doit enregistrer la clé au niveau de son organisation avant cette version.
 - UI cliente : section dans `/settings` → onglet Abonnement (`src/components/settings/OpenRouterKeyTab.tsx`), visible uniquement si `ai_billing_mode = 'client_owned'`. Write-only : la clé n'est jamais renvoyée au navigateur une fois enregistrée, seule sa présence est affichée.
 - Dix routes IA (`analyze-quote`, `chantier-assistant`, `email-draft`, `estimate-labor`, `parse-document-pdf`, `measure-plan`, `scan-receipt`, `suggest-tasks`, `suggest-jalons`, `transcribe-audio`) avaient une garde précoce `if (!process.env.OPENROUTER_API_KEY)` qui aurait bloqué tout client `client_owned` sans clé Atelier configurée sur le Worker mutualisé — retirée, la garde vit maintenant uniquement dans `callAI()` qui connaît le mode de facturation.
 
-**Reste à faire :** aucune UI cockpit pour forcer `ai_billing_mode = 'client_owned'` sur une organisation setup 3k — se fait aujourd'hui via `OffreTab.tsx` (`/orsayn`, champ "Mode facturation IA").
+Le cockpit dispose d’une activation setup explicite, distincte du choix du tier et du mode IA. Voir le parcours ci-dessous. Le vocal live central ElevenLabs n’est pas inclus dans `client_owned` et reste désactivé ; une clé OpenRouter ne le finance pas.
 
-**Suivi de consommation cockpit — inchangé, déjà en place.** Que la clé utilisée soit celle du client ou la clé Atelier partagée, la consommation IA de chaque organisation remonte déjà au cockpit via `operator_usage_events`/`usage_logs` scopés par `organization_id` (voir `callAI.ts`, `syncUsageLogToOperator`) — le fait qu'un client utilise sa propre clé OpenRouter ne dispense pas de logguer l'usage côté Atelier.
+**Suivi de consommation cockpit.** Les appels journalisés par `callAI.ts` remontent via `usage_logs` et `operator_usage_events`, avec leur organisation et leur payeur. Ce suivi n’est pas une facture exhaustive de tous les usages fournisseur : notamment, le helper d’embeddings n’enregistre pas lui-même ces coûts. Le compte OpenRouter du client reste la référence pour ses dépenses réelles.
 
-### Migration des données client par agent IA — à construire
+### Achat setup : droits et livraison
 
-L'idée retenue : un opérateur humain (ou Hermes Agent / Claude) reçoit d'un client un fichier contenant ses données existantes (clients, catalogue, devis, factures) et les fait migrer par un agent IA qui agit directement dans la base mutualisée, scopé à l'organisation de ce client. **Non construit à ce jour.** Deux garde-fous non négociables avant de construire cet agent, vu l'audit du 2026-09-16 :
-- l'agent doit agir via un chemin qui porte `organization_id` de façon fiable à chaque écriture (soit via un client authentifié comme un membre de cette organisation, soit via `service_role` avec un `.eq('organization_id', ...)` explicite sur **chaque** requête — jamais l'un des deux à moitié) ;
-- avant de lui donner un accès en écriture large, écrire ses scénarios comme des cas du harnais `tests/isolation/` (voir sous-skill `multi-tenant-test-harness`) : un agent qui écrit en masse via `service_role` amplifie exactement le risque qu'un seul filtre `organization_id` oublié devienne une fuite entre deux clients payants.
+| Contrat | Setup 3 000 € | Abonnement Pro/Expert |
+|---|---|---|
+| Modèle durable | `billing_model = setup` | `billing_model = subscription` |
+| Mensuel Atelier | 0 € ; achat initial distinct du MRR | Selon la formule souscrite |
+| IA | Compte et clé OpenRouter du client | Clé Atelier, quotas de la formule |
+| Accès | Activé après validation opérateur du règlement ; aucune échéance d’essai | Essai ou état d’abonnement |
+| Infrastructure | `app.atelier-btp.fr`, organisation isolée | Même application, autre organisation |
+
+**Prérequis de publication de cette évolution :** migration application `215_setup_billing_model.sql`, migration cockpit `supabase/operator-migrations/022_setup_purchases.sql`, puis code application et cockpit compatibles. Ces fichiers ne prouvent pas leur application en production. Les anciennes lignes `setup_only` ne sont pas converties automatiquement : leur règlement et leur entreprise doivent être vérifiés.
+
+1. **Commande et périmètre.** Faire accepter le devis de setup : prix de 3 000 €, licence d’usage et prestation de mise en service, pas cession du code ni promesse de serveur dédié. La page `/terms` prévoit la configuration métier, la reprise du catalogue, la formation et 30 jours d’accompagnement ; le droit d’usage dure la relation contractuelle. Préciser au devis le périmètre d’hébergement, maintenance et support au-delà de cet accompagnement ; « sans abonnement Atelier » ne signifie pas « hébergement et maintenance gratuits à vie ». Les coûts d’infrastructure mutualisée restent à la charge d’Orsayn, sauf disposition contractuelle distincte. Les modèles de CGV de mai 2026 sont historiques, pas les conditions actuelles de cette offre.
+2. **Compte et entreprise.** Le client crée son compte, vérifie son email et termine l’onboarding de sa propre entreprise. Ni abonnement Stripe ni démarrage d’essai ne sont requis pour acheter le setup. Retrouver ensuite sa fiche cockpit ; vérifier nom, SIRET, `source_instance = atelier-app` et UUID exact, sans demander de premier appel IA.
+3. **Règlement.** L’opérateur vérifie le paiement effectivement reçu et sa référence. Avant activation, réconcilier tout abonnement **ou session Checkout Stripe en cours** ; ne jamais abandonner une souscription ou un lien de paiement encore utilisable en changeant seulement le tier. Le formulaire ne collecte aucun paiement et ne résilie rien automatiquement.
+4. **Activation cockpit.** Sur la fiche exacte, utiliser l’action setup, indiquer la référence et confirmer le règlement et l’absence de parcours Stripe en cours. La RPC réservée au serveur opérateur enregistre atomiquement la preuve de validation et les droits : mensuel nul, clé client, essai clos sans échéance, accès actif hors abonnement. Une référence ne peut pas acheter l’accès de deux organisations. La preuve ne se supprime pas avec la fiche CRM ; archiver au lieu de supprimer.
+5. **Synchronisation.** Vérifier `config_sync_status = synced` puis l’accès réel du propriétaire. Le HMAC transmet `billing_model = setup`, l’accès, les modules et une révision monotone émise par la base cockpit, pour cet UUID uniquement. La réception applique la configuration en une transaction ; un état antérieur ne peut pas rouvrir un accès suspendu ni remplacer la clé client par le payeur partagé. Un échec n’est pas une livraison : corriger puis relancer avec la **même référence**, sans créer un second achat. Un événement Stripe tardif sur un setup est une anomalie à réconcilier, pas une autorité de rétrogradation.
+6. **IA client.** Le propriétaire renseigne sa clé dans les réglages, jamais dans le chat de l’agent. L’application la chiffre ; elle ne la renvoie pas au navigateur. Le client approvisionne son compte OpenRouter. Sans clé ou crédit utilisable, les fonctions métier restent accessibles, mais l’IA refuse au lieu de facturer Orsayn.
+7. **Reprise et recette.** Préparer les données avec Hermes, appliquer uniquement via un chemin d’import approuvé et qualifié, vérifier volumes, références, documents historiques et isolation. Faire valider une recette par le client. Toute activation PA suit son consentement propre ; jamais le mandat d’Orsayn à sa place.
+
+### Agent Hermes « Atelier setup » : reprise bornée, pas administrateur
+
+Le profil `atelier-setup-migrations` existe. Son `SOUL.md` et son skill `atelier-client-migration` désignent la même instance existante et le même contrat de périmètre. Il collecte, normalise, prépare un dry-run et remet un dossier à l’opérateur pour **une seule organisation par session**.
+
+Il ne crée ni Supabase, ni Worker, ni abonnement ; ne valide ni paiement ni droits ; ne manipule aucune clé `service_role`, clé IA ou autorité cockpit. **Sans outil d’import approuvé, disponible et vérifié pour la cible exacte, il ne peut pas écrire.** Aucun connecteur d’import Hermes opérationnel n’est établi par la présence de ce profil. La mutation applicative `import-documents.ts` et la migration `208_historical_document_import.sql` fournissent un chemin d’archives historiques, pas un outil agent universel pour tout fichier.
+
+Les factures déjà émises restent des archives avec leurs références d’origine ; elles ne deviennent pas de nouvelles factures Atelier. Les nouveaux brouillons suivent la numérotation normale. Les statuts ne sont jamais déduits silencieusement et chaque lot exige validation humaine et contrôle d’isolation.
+
+### Qualification et publication de l’évolution setup
+
+Le 31/10/2026, le parcours a été exercé sur deux bases locales jetables et des comptes fictifs : activation depuis la fiche cockpit, accès du propriétaire, clé IA chiffrée, absence de repli sur le compte partagé, refus des parcours Stripe et essai, suspension puis réouverture opérateur. Un abonnement Pro voisin est resté intact pendant l’activation ; son portail Stripe a aussi été exercé avec un fournisseur local contrôlé. Aucun paiement réel, email client, mandat PA ou projet distant n’a été créé pour cette recette.
+
+Les contrôles incluent 20 approbations concurrentes pour un achat unique, le refus d’une ancienne configuration signée après suspension et des régressions SQL transactionnelles sur les deux bases. Cela qualifie ces scénarios ; ce n’est pas un certificat de pentest externe ni une preuve de déploiement.
+
+Résultats finaux : 523 tests applicatifs, 65 tests d’isolation, les deux régressions SQL et les relectures de migrations vierges ont passé. Le lint et les contrôles TypeScript ont passé ; les deux bundles Cloudflare ont été construits avec OpenNext depuis des profils fictifs isolés, avec dépendances locales à chaque build et plafond V8 explicite. Ces artefacts ne sont pas promouvables en production. L’inventaire local du profil Hermes reconnaît le skill de migration comme activé et ne contient aucun serveur MCP configuré ; aucune exécution LLM ni écriture client n’a été lancée pour le vérifier.
+
+**Publication de cette évolution :**
+
+1. Geler les activations setup pendant la release. Vérifier explicitement les références, profils et workdirs : application `pyxnmohknxmbpbcuvudg`, cockpit `ghkacozmtvvmlbbwwnlp`. Sauvegarder avant mutation ; ne pas utiliser un lien Supabase implicite.
+2. Appliquer uniquement les migrations nouvelles et contrôler leur journal : application `215`, cockpit `022`. Contrôler les droits des RPC et le gate cockpit `assert_setup_billing_schema`.
+3. Construire pour chaque cible avec sa configuration réelle puis publier **le cockpit avant l’application**. Ne pas réutiliser les builds de recette contenant des URL et identifiants fictifs. Ne pas activer de setup tant que les deux versions ne sont pas en service : l’ancien récepteur n’accepte pas la nouvelle révision setup, et le nouveau récepteur exige le modèle de facturation envoyé par le nouveau cockpit.
+4. Contrôler la santé et les refus non autorisés des deux surfaces, puis ouvrir les activations. Le premier règlement et la première recette client restent de vraies opérations commerciales, avec preuve réelle ; ne pas fabriquer d’achat de production pour tester.
+
+Cette évolution n’est pas déclarée publiée par le présent guide. Les versions, migrations réellement appliquées et preuves après publication doivent être consignées dans le compte rendu de release.
 
 ### Rappel : la mutualisation ne ferme pas la porte à un self-hosted
 
@@ -92,7 +112,11 @@ L'idée retenue : un opérateur humain (ou Hermes Agent / Claude) reçoit d'un c
 
 ---
 
-## ─── 1 REPO GITHUB → N CLIENTS ────────────────────────────────────────────────
+## Annexes techniques des environnements dédiés — hors offre standard
+
+> Jusqu’au registre final, les procédures suivantes concernent les environnements dédiés historiques ou un contrat distinct. Elles ne servent pas à livrer chaque nouveau setup mutualisé : ce parcours est décrit plus haut, dans « Achat setup : droits et livraison ».
+
+### Un dépôt pour plusieurs environnements dédiés
 
 **Principe :** une seule source de code, une configuration exacte par cible, et un build distinct par Worker tant que l’artefact partagé n’a pas été prouvé neutre vis-à-vis des tenants.
 
@@ -2048,10 +2072,10 @@ Créer un cron-job.org gratuit → ping `https://<ref>.supabase.co/rest/v1/` tou
 
 ## ─── REGISTRE DES CLIENTS DÉPLOYÉS ─────────────────────────────────────────────
 
-> Mettre à jour à chaque nouveau client. Aucun client setup (per-client dédié) déployé à ce jour (2026-09-09) — seule l'instance SaaS mutualisée existe.
+Le registre suit les infrastructures, pas une ligne par organisation cliente. Les nouveaux setups mutualisés utiliseront `atelier-app` après publication de l’évolution `215`/`022` ; leur achat sera suivi dans le cockpit.
 
 | Instance | Project Ref | Domaine | Rôle | Migrations à jour au | Fact. élec. |
 |--------|-------------|---------|------|------------|------------|
-| `atelier-app` (SaaS mutualisé Pro/Expert, porte aussi le compte démo Weber Tôlerie) | `pyxnmohknxmbpbcuvudg` | app.atelier-btp.fr | Worker unique, N organisations self-service | 184 (vérifié 2026-09-09) | export_only |
+| `atelier-app` (application mutualisée) | `pyxnmohknxmbpbcuvudg` | app.atelier-btp.fr | Worker unique, organisations isolées ; setups après release `215`/`022` | 214 en production lors de la release du 30/10/2026 ; 215 qualifiée localement, pas déclarée publiée | Qualification client réelle distincte, avec consentement propre |
 
-Client setup 3k (per-client dédié, 1 Supabase + 1 Worker par client) : aucune ligne pour l'instant, ce tableau grandit au premier déploiement via `DEPLOIEMENT_CLIENT.md` ci-dessus. Cockpit (`ghkacozmtvvmlbbwwnlp`) suivi séparément, pas dans ce registre.
+Le cockpit (`ghkacozmtvvmlbbwwnlp`) reste une infrastructure opérateur distincte : migrations jusqu’à `021` en production lors de la release du 30/10/2026 ; `022` qualifiée localement, pas déclarée publiée. Aucun nouveau Supabase ni Worker n’est requis à l’ajout d’un client setup standard.

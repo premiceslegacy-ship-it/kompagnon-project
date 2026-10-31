@@ -1,5 +1,12 @@
 import type { SubscriptionTier } from '@/lib/quota-catalog'
 
+export const BILLING_MODELS = ['subscription', 'setup'] as const
+export type BillingModel = typeof BILLING_MODELS[number]
+
+export function isBillingModel(value: unknown): value is BillingModel {
+  return typeof value === 'string' && (BILLING_MODELS as readonly string[]).includes(value)
+}
+
 export const SELLABLE_TIERS = ['pro', 'expert'] as const
 export type SellableTier = typeof SELLABLE_TIERS[number]
 
@@ -17,6 +24,7 @@ export type AccessStatus = typeof ACCESS_STATUSES[number]
 
 export type OrganizationEntitlement = {
   organizationId: string
+  billingModel: BillingModel
   accessStatus: AccessStatus
   effectiveTier: SubscriptionTier
   preferredTier: SellableTier
@@ -33,6 +41,19 @@ export type EntitlementSyncPayload = {
   trial_started_at: string | null
   trial_ends_at: string | null
   access_ends_at: string | null
+} & ({ billing_model: 'subscription' } | { billing_model: 'setup'; revision: number })
+
+export function getSetupEntitlement(isActive: boolean, revision: number): EntitlementSyncPayload {
+  return {
+    billing_model: 'setup',
+    revision,
+    access_status: isActive ? 'active' : 'locked',
+    effective_tier: 'setup_only',
+    preferred_tier: 'pro',
+    trial_started_at: null,
+    trial_ends_at: null,
+    access_ends_at: null,
+  }
 }
 
 export function isSellableTier(value: unknown): value is SellableTier {
@@ -74,10 +95,11 @@ export function getDisplayAccessStatus(
 }
 
 export function entitlementFromDb(row: Record<string, unknown>): OrganizationEntitlement | null {
-  if (!isAccessStatus(row.access_status) || !isSellableTier(row.preferred_tier)) return null
+  if (!isBillingModel(row.billing_model) || !isAccessStatus(row.access_status) || !isSellableTier(row.preferred_tier)) return null
   const tier = typeof row.effective_tier === 'string' ? row.effective_tier as SubscriptionTier : 'setup_only'
   return {
     organizationId: String(row.organization_id ?? ''),
+    billingModel: row.billing_model,
     accessStatus: row.access_status,
     effectiveTier: tier,
     preferredTier: row.preferred_tier,

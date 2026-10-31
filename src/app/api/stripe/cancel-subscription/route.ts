@@ -34,10 +34,17 @@ export async function POST(req: NextRequest) {
   }
 
   const operator = createOperatorAdminClient()
-  const [{ data: subscription }, { data: settings }] = await Promise.all([
+  const [{ data: subscription, error: subscriptionError }, { data: settings }] = await Promise.all([
     operator.from('operator_client_subscriptions').select('*').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
     operator.from('operator_client_settings').select('app_url, contact_email').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle(),
   ])
+  if (subscriptionError) {
+    console.error('[stripe/cancel-subscription] DB error:', subscriptionError)
+    return NextResponse.json({ error: 'Erreur base de données' }, { status: 500 })
+  }
+  if (subscription?.billing_model === 'setup') {
+    return NextResponse.json({ error: 'Cette organisation dispose d’une offre setup payée manuellement' }, { status: 409 })
+  }
   if (!subscription?.stripe_subscription_id || !settings?.app_url) {
     return NextResponse.json({ error: 'Abonnement introuvable' }, { status: 404 })
   }
@@ -74,6 +81,7 @@ export async function POST(req: NextRequest) {
   const tier = subscription.tier
   const preferredTier = isSellableTier(subscription.preferred_tier) ? subscription.preferred_tier : (tier === 'expert' ? 'expert' : 'pro')
   const entitlement: EntitlementSyncPayload = {
+    billing_model: 'subscription',
     access_status: 'canceling',
     effective_tier: tier,
     preferred_tier: preferredTier,

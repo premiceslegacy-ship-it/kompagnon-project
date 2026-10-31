@@ -89,6 +89,7 @@ export async function POST(req: NextRequest) {
   const expiredTrials = await collectPages<{ source_instance: string; organization_id: string; trial_tier: string | null }>((from, to) => operator
     .from('operator_client_subscriptions')
     .select('source_instance, organization_id, trial_tier')
+    .eq('billing_model', 'subscription')
     .not('trial_tier', 'is', null)
     .not('trial_ends_at', 'is', null)
     .eq('trial_converted', false)
@@ -146,6 +147,7 @@ export async function POST(req: NextRequest) {
     trial_reminders_sent: string[] | null
   }>((from, to) => operator.from('operator_client_subscriptions')
     .select('source_instance, organization_id, trial_ends_at, trial_tier, preferred_tier, trial_reminders_sent')
+    .eq('billing_model', 'subscription')
     .not('trial_tier', 'is', null)
     .eq('trial_converted', false)
     .is('stripe_subscription_id', null)
@@ -195,6 +197,7 @@ export async function POST(req: NextRequest) {
     trial_reminders_sent: string[] | null
   }>((from, to) => operator.from('operator_client_subscriptions')
     .select('source_instance, organization_id, trial_ends_at, trial_reminders_sent')
+    .eq('billing_model', 'subscription')
     .eq('access_status', 'expired')
     .eq('trial_converted', false)
     .is('stripe_subscription_id', null)

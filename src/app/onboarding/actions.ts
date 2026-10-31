@@ -26,8 +26,8 @@ import {
   normalizeSiret,
 } from '@/lib/validations/organization'
 import { LEGAL_VAT_RATES } from '@/lib/utils'
-import { isSelfServiceMode } from '@/lib/data/queries/subscription-access'
-import { isSellableTier } from '@/lib/subscription-access'
+import { getOrganizationEntitlementAdmin, isSelfServiceMode } from '@/lib/data/queries/subscription-access'
+import { hasActiveAccess, isSellableTier } from '@/lib/subscription-access'
 import { trackServerEvent } from '@/lib/analytics-server'
 import {
   activateTrialForCurrentOrganization,
@@ -186,6 +186,10 @@ async function finalizeSelfServiceAccess(user: { user_metadata?: Record<string, 
     // l'activation. Une indisponibilité ponctuelle du cockpit ne doit pas faire
     // perdre les données d'onboarding déjà validées.
     console.error('[onboarding.self-service-registration]', registration.error)
+  }
+  const entitlement = await getOrganizationEntitlementAdmin(organizationId)
+  if (entitlement?.billingModel === 'setup') {
+    return { destination: hasActiveAccess(entitlement) ? '/dashboard' : '/activation' }
   }
   if (user.user_metadata?.pending_trial_intent !== 'trial') {
     return { destination: '/activation' }

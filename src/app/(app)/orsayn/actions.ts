@@ -295,18 +295,27 @@ export async function upsertOperatorSubscription(formData: FormData) {
   const operator = createOperatorAdminClient()
   const organizationIdFieldRaw = String(formData.get('organizationId') ?? '').trim()
   const organizationIdField = organizationIdFieldRaw === UNRESOLVED_ORGANIZATION_ID ? '' : organizationIdFieldRaw
-  const organizationId = organizationIdField || await resolveOrganizationId(operator, sourceInstance)
+  const organizationId = organizationIdField
 
   if (!organizationId) {
-    throw new Error('organization_id introuvable pour cette instance — préconfigurez le client avec un organizationId, ou attendez son premier appel IA (ingest).')
+    throw new Error('organization_id explicite requis — sélectionnez l’organisation exacte dans le cockpit.')
   }
 
-  const { data: existingSubscription } = await operator
+  const { data: existingSubscription, error: existingSubscriptionError } = await operator
     .from('operator_client_subscriptions')
-    .select('trial_tier, trial_ends_at, trial_converted, oauth_status, oauth_connected_at, super_pdp_connection_id')
+    .select('billing_model, access_status, preferred_tier, trial_started_at, access_ends_at, trial_tier, trial_ends_at, trial_converted, oauth_status, oauth_connected_at, super_pdp_connection_id')
     .eq('source_instance', sourceInstance)
     .eq('organization_id', organizationId)
     .maybeSingle()
+  if (existingSubscriptionError) throw new Error('Impossible de vérifier l’offre existante')
+  const isSetup = existingSubscription?.billing_model === 'setup'
+  const isActive = formData.get('isActive') === 'on'
+  if (isSetup && (tier !== 'setup_only' || mrrHt !== 0 || aiBillingMode !== 'client_owned' || renewsAt !== null || overflowMode !== 'block')) {
+    throw new Error('L’achat setup conserve un mensuel nul, la clé IA client et aucune échéance de renouvellement.')
+  }
+  if (isSetup && (sourceInstance !== 'atelier-app' || appUrl !== 'https://app.atelier-btp.fr')) {
+    throw new Error('L’achat setup utilise l’application Atelier mutualisée.')
+  }
 
   const currentOauthFields: Pick<EinvoicingConfig, 'oauth_status' | 'oauth_connected_at' | 'super_pdp_connection_id'> = {
     oauth_status: existingSubscription?.oauth_status ?? 'not_connected',
@@ -351,6 +360,7 @@ export async function upsertOperatorSubscription(formData: FormData) {
       billing_currency: billingCurrency,
       ai_billing_mode: aiBillingMode,
       is_active: formData.get('isActive') === 'on',
+      ...(isSetup ? { access_status: isActive ? 'active' : 'locked' } : {}),
       renews_at: renewsAt && !Number.isNaN(renewsAt.getTime()) ? renewsAt.toISOString() : null,
       trial_tier: trialTier,
       trial_ends_at: trialEndsAt,
@@ -398,6 +408,49 @@ export async function upsertOperatorSubscription(formData: FormData) {
   })
 
   revalidatePath('/orsayn')
+  if (isSetup && syncResult.status !== 'synced') {
+    throw new Error('Offre setup enregistrée, mais la synchronisation a échoué. Relancez la configuration depuis cette fiche.')
+  }
+}
+
+export async function activateOperatorSetup(formData: FormData) {
+  const user = await getOperatorUser()
+  if (!user?.email) throw new Error('Accès opérateur requis')
+  const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
+  const organizationId = String(formData.get('organizationId') ?? '').trim()
+  const paymentReference = String(formData.get('paymentReference') ?? '').trim()
+  if (sourceInstance !== 'atelier-app' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(organizationId)) {
+    throw new Error('Organisation Atelier exacte requise pour l’achat setup.')
+  }
+  if (paymentReference.length < 3 || paymentReference.length > 200
+    || formData.get('paymentConfirmed') !== 'on'
+    || formData.get('stripeClearConfirmed') !== 'on') {
+    throw new Error('Confirmez le règlement reçu, sa référence et l’absence de parcours Stripe en cours.')
+  }
+  const operator = createOperatorAdminClient()
+  const { data: activation, error } = await operator.rpc('activate_operator_setup', {
+    p_source_instance: sourceInstance,
+    p_organization_id: organizationId,
+    p_payment_reference: paymentReference,
+    p_actor_email: user.email,
+  })
+  if (error) {
+    console.error('[activateOperatorSetup]', { code: error.code })
+    throw new Error('Activation refusée : vérifiez l’organisation enregistrée, la référence de règlement et tout abonnement Stripe existant.')
+  }
+  const { appUrl, subscription } = await getOperatorClientContext(sourceInstance, organizationId)
+  await initializeQuotasForTier(sourceInstance, organizationId, 'setup_only')
+  const sync = await syncClientQuotaConfig(
+    sourceInstance, organizationId, appUrl, 'setup_only', 'block', 'client_owned', subscription.einvoicingConfig,
+  )
+  await recordOperatorClientEvent({
+    sourceInstance, organizationId, eventCategory: 'config_sync', eventType: 'setup_config_synced',
+    actorEmail: user.email, metadata: { activation, config_sync_status: sync.status },
+  })
+  revalidatePath('/orsayn')
+  if (sync.status !== 'synced') {
+    throw new Error('Achat enregistré côté cockpit, mais accès client non confirmé. Corrigez la synchronisation puis relancez avec la même référence ; aucun nouvel achat ne sera créé.')
+  }
 }
 
 export async function activateOperatorTrial(formData: FormData) {
@@ -412,6 +465,7 @@ export async function activateOperatorTrial(formData: FormData) {
   const trialStartedAt = new Date().toISOString()
   const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString()
   const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance, requestedOrganizationId)
+  if (subscription.billingModel === 'setup') throw new Error('Un achat setup ne peut pas être remplacé par un essai.')
   const trialTier = TRIAL_TIER
 
   if (!organizationId) {
@@ -478,6 +532,7 @@ export async function convertOperatorTrial(formData: FormData) {
 
   const targetTier = parseTier(formData.get('targetTier'))
   const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance, requestedOrganizationId)
+  if (subscription.billingModel === 'setup') throw new Error('Un achat setup ne peut pas être converti en abonnement depuis un essai.')
 
   if (!organizationId) {
     throw new Error('organization_id introuvable pour cette instance')
@@ -566,6 +621,7 @@ export async function extendOperatorTrial(formData: FormData) {
   const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
   const { operator, organizationId, appUrl, subscription } = await getOperatorClientContext(sourceInstance, requestedOrganizationId)
   if (!organizationId) throw new Error('Organisation introuvable pour cette fiche')
+  if (subscription.billingModel === 'setup') throw new Error('Un achat setup ne dépend pas d’un essai à prolonger.')
 
   const baseTime = subscription.trialEndsAt && new Date(subscription.trialEndsAt).getTime() > Date.now()
     ? new Date(subscription.trialEndsAt).getTime()
@@ -649,6 +705,10 @@ export async function deleteOperatorClient(formData: FormData) {
   if (!expectedName || confirmation !== expectedName) throw new Error('Saisis exactement le nom du client pour confirmer')
 
   const operator = createOperatorAdminClient()
+  const { data: purchase, error: purchaseError } = await operator.from('operator_setup_purchases')
+    .select('organization_id').eq('source_instance', sourceInstance).eq('organization_id', organizationId).maybeSingle()
+  if (purchaseError) throw new Error('Impossible de vérifier les achats de cette fiche')
+  if (purchase) throw new Error('Cette fiche porte un achat setup : archivez-la sans supprimer sa preuve de règlement.')
   // La fiche correspond aux données de configuration du cockpit. Les journaux
   // IA bruts restent conservés pour l'historique et ne sont plus rattachés à
   // une fiche visible une fois ces lignes supprimées.
@@ -712,6 +772,9 @@ export async function resyncOperatorClientConfig(formData: FormData) {
   })
 
   revalidatePath('/orsayn')
+  if (subscription.billingModel === 'setup' && syncResult.status !== 'synced') {
+    throw new Error('La synchronisation de l’accès setup a échoué. La livraison reste à confirmer.')
+  }
 }
 
 export async function recordOperatorCommercialAction(formData: FormData) {

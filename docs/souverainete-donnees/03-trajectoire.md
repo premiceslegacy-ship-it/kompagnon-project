@@ -1,6 +1,6 @@
 # Trajectoire retenue
 
-Dernière mise à jour : 2026-09-16 (bascule vers la mutualisation, voir en fin de document — la trajectoire du 2026-09-09 ci-dessous reste décrite intégralement pour la traçabilité de la décision qu'elle remplace).
+Dernière mise à jour : 2026-10-31. Le choix du 2026-09-16 est confirmé : setups et abonnés partagent `atelier-app`, avec une organisation et une clé IA distinctes par client. Aucun projet Supabase dédié supplémentaire n’est prévu pour l’offre standard à 3 000 €.
 
 ## Décision (2026-09-16 — remplace celle du 2026-09-09)
 
@@ -65,4 +65,4 @@ La mutualisation avait été écartée le 2026-09-09 pour une seule raison : c'�
 
 Le chantier de refonte anticipé le 2026-09-09 s'est donc avéré être un audit + quatre correctifs ciblés + un socle de test, pas une réécriture architecturale. `atelier-app`, déjà construite pour le self-service, sert de base à la bascule — aucune nouvelle infrastructure à monter pour démarrer.
 
-Pas de domaine personnalisé par client (décision du 2026-09-16, voir `DEPLOIEMENT_CLIENT.md`) : chaque organisation se connecte sur `app.atelier-btp.fr`, l'identité du client vit dans ses documents (logo, nom, SIRET déjà en base), pas dans l'URL. Clé OpenRouter par organisation construite le 2026-09-16 (`organization_ai_credentials`, voir `DEPLOIEMENT_CLIENT.md`). Reste non construit à ce jour : l'agent de migration des données client. Le rodage avec un vrai deuxième client payant sur `atelier-app` reste l'étape de validation avant généralisation à tout le parc setup 3k.
+Pas de domaine personnalisé par client : chaque organisation se connecte sur `app.atelier-btp.fr`, l’identité du client vit dans ses documents. La clé OpenRouter est chiffrée par organisation ; le mode `client_owned` ne doit jamais se rabattre sur la clé Atelier. Le modèle commercial `billing_model = setup` distingue l’achat initial d’un abonnement ou d’un essai expiré ; les migrations application `215_setup_billing_model.sql` et cockpit `022_setup_purchases.sql` sont nécessaires avant de publier ce parcours. Le profil Hermes « Atelier setup » existe et prépare la reprise des données, sans autorité de paiement ni accès administrateur ; aucun outil d’import Hermes approuvé n’est établi. Voir le parcours et les limites exacts dans `DEPLOIEMENT_CLIENT.md`. Le pilote avec un vrai client payant reste distinct des qualifications locales et n’est pas déclaré réalisé.

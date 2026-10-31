@@ -421,22 +421,35 @@ export async function callAI<T>(params: CallAIParams): Promise<CallAIResult<T>> 
   try {
     let data: T
 
-    // client_owned : la clé du client vit soit dans organization_ai_credentials
-    // (mutualisé, plusieurs orgs sur le même Worker), soit directement dans
-    // OPENROUTER_API_KEY du Worker (modèle dédié historique, 1 org par instance
-    // : le client fournit sa clé au provisioning, voir scripts/deploy-client.sh)
-    // — les deux sont "la clé de ce client", pas orsayn_shared vs client_owned.
-    const apiKey = quotaCheck.aiBillingMode === 'client_owned'
-      ? (await getOrganizationOpenRouterKey(params.organizationId)) ?? process.env.OPENROUTER_API_KEY ?? null
-      : process.env.OPENROUTER_API_KEY ?? null
-
-    if (!apiKey) {
-      if (quotaCheck.aiBillingMode === 'client_owned') {
-        throw new AIProviderCreditError('openrouter', quotaCheck.aiBillingMode, null, 'Clé OpenRouter client manquante.')
+    // En client_owned, seule la clé explicitement enregistrée pour cette
+    // organisation est autorisée. Une clé Worker ne peut pas servir de repli.
+    let apiKey: string | null
+    if (quotaCheck.aiBillingMode === 'client_owned') {
+      try {
+        apiKey = await getOrganizationOpenRouterKey(params.organizationId)
+      } catch {
+        throw new AIProviderCreditError(
+          'openrouter',
+          quotaCheck.aiBillingMode,
+          null,
+          'Clé OpenRouter client absente ou invalide.',
+        )
       }
-      throw new Error('OPENROUTER_API_KEY manquante')
+      if (!apiKey) {
+        throw new AIProviderCreditError(
+          'openrouter',
+          quotaCheck.aiBillingMode,
+          null,
+          'Clé OpenRouter client absente ou invalide.',
+        )
+      }
+    } else {
+      apiKey = process.env.OPENROUTER_API_KEY ?? null
     }
 
+    if (!apiKey) {
+      throw new Error('OPENROUTER_API_KEY manquante')
+    }
     const timeout = withTimeout(params.request.timeoutMs)
 
     try {

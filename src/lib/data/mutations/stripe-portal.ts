@@ -1,9 +1,13 @@
 'use server'
 
 import { getOperatorSigningSecret, signOperatorRequest, OPERATOR_TIMESTAMP_HEADER } from '@/lib/operator'
-import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { getCurrentMembershipContext } from '@/lib/data/queries/membership'
 
 export async function createStripePortalSession(returnUrl: string): Promise<{ url: string } | { error: string }> {
+  const membership = await getCurrentMembershipContext()
+  if (!membership?.organizationId || membership.roleSlug !== 'owner') {
+    return { error: 'Action réservée au dirigeant du compte' }
+  }
   const ingestUrl = process.env.OPERATOR_INGEST_URL?.trim()
   const sourceInstance = process.env.OPERATOR_SOURCE_INSTANCE?.trim()
   const secret = sourceInstance ? getOperatorSigningSecret(sourceInstance) : null
@@ -12,10 +16,7 @@ export async function createStripePortalSession(returnUrl: string): Promise<{ ur
     return { error: 'Configuration opérateur manquante' }
   }
 
-  const organizationId = await getCurrentOrganizationId()
-  if (!organizationId) {
-    return { error: 'Organisation introuvable' }
-  }
+  const organizationId = membership.organizationId
 
   // Dérive l'URL du portail depuis l'URL d'ingest (même worker cockpit)
   const cockpitBase = new URL(ingestUrl).origin

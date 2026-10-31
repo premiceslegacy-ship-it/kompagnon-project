@@ -43,10 +43,11 @@ const publicExactRoutes = [
   '/api/manifest',
   '/api/app-icon',
   '/api/public/quote-attachments',
-  // Appels serveur-à-serveur signés par l'instance mutualisée. Le portail
-  // Stripe reste volontairement absent : il exige la session utilisateur.
+  // Relais serveur signés par l'instance : autorisation propriétaire dans les
+  // mutations de l'application, HMAC et organisation vérifiés dans le cockpit.
   '/api/stripe/checkout-session',
   '/api/stripe/cancel-subscription',
+  '/api/stripe/portal-session',
 ]
 
 const lockedAccessPrefixes = [
@@ -207,7 +208,7 @@ async function updateSession(request: NextRequest, requestHeaders: Headers) {
     // chaque navigation en mode self-service.
     const { data: membership } = await supabase
       .from('memberships')
-      .select('organization_id, organizations(organization_entitlements(organization_id, access_status, effective_tier, preferred_tier, trial_started_at, trial_ends_at, access_ends_at, updated_at))')
+      .select('organization_id, organizations(organization_entitlements(organization_id, billing_model, access_status, effective_tier, preferred_tier, trial_started_at, trial_ends_at, access_ends_at, updated_at))')
       .eq('user_id', user.id)
       .eq('is_active', true)
       .single()

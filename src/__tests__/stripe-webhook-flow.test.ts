@@ -140,11 +140,13 @@ beforeEach(() => {
   h.sendAuthEmail.mockClear()
   h.syncClientQuotaConfig.mockClear()
   h.initializeQuotasForTier.mockClear()
+  h.recordOperatorClientEvent.mockClear()
   h.stripeSubscriptions[SUB] = stripeSubscription()
   table('operator_client_settings').push({ source_instance: 'atelier-app', organization_id: ORG, app_url: APP, contact_email: 'paul@weber.fr' })
   // Un essai Pro en cours, non converti : l'état de départ d'un client qui paie pendant l'essai.
   table('operator_client_subscriptions').push({
     source_instance: 'atelier-app',
+    billing_model: 'subscription',
     organization_id: ORG,
     tier: 'setup_only',
     preferred_tier: 'pro',
@@ -177,7 +179,49 @@ describe('webhook Stripe : sécurité', () => {
     expect(await second.json()).toMatchObject({ duplicate: true })
     expect(emails()).toHaveLength(1)
   })
+  it('refuse un webhook Stripe tardif sans toucher à un setup payé et demande une revue opérateur', async () => {
+    const setup = subscriptionRow()
+    Object.assign(setup, { billing_model: 'setup', stripe_subscription_id: SUB, tier: 'setup_only', access_status: 'active', mrr_ht: 0 })
+    const before = { ...setup }
+
+    const response = await send('invoice.paid', invoice('subscription_create'))
+
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({ error: 'Manual setup billing requires operator review' })
+    expect(subscriptionRow()).toEqual(before)
+    expect(h.syncClientQuotaConfig).not.toHaveBeenCalled()
+    expect(h.initializeQuotasForTier).not.toHaveBeenCalled()
+    expect(h.recordOperatorClientEvent).not.toHaveBeenCalled()
+    expect(emails()).toHaveLength(0)
+    expect(table('webhook_events').at(-1)).toMatchObject({ status: 'failed', error_msg: expect.stringContaining('manually paid setup') })
+  })
+  it('ne répond pas 200 au doublon encore en traitement quand le tenant est setup', async () => {
+    const setup = subscriptionRow()
+    Object.assign(setup, { billing_model: 'setup', stripe_subscription_id: SUB, tier: 'setup_only', access_status: 'active', mrr_ht: 0 })
+    const before = { ...setup }
+    const eventId = 'evt_processing_setup'
+    table('webhook_events').push({
+      provider: 'stripe',
+      source_id: eventId,
+      event_type: 'invoice.paid',
+      status: 'processing',
+      received_at: new Date().toISOString(),
+    })
+
+    const response = await send('invoice.paid', invoice('subscription_create'), eventId)
+
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({ error: 'Manual setup billing requires operator review' })
+    expect(subscriptionRow()).toEqual(before)
+    expect(table('webhook_events').find((row) => row.source_id === eventId)).toMatchObject({
+      status: 'failed',
+      error_msg: expect.stringContaining('manually paid setup'),
+    })
+    expect(h.syncClientQuotaConfig).not.toHaveBeenCalled()
+    expect(emails()).toHaveLength(0)
+  })
 })
+
 
 describe('premier paiement : un client Pro paie pendant son essai', () => {
   it('enregistre la bonne formule, le MRR, les identifiants Stripe et le renouvellement dans le cockpit', async () => {
@@ -186,6 +230,7 @@ describe('premier paiement : un client Pro paie pendant son essai', () => {
 
     expect(subscriptionRow()).toMatchObject({
       tier: 'pro',
+      billing_model: 'subscription',
       preferred_tier: 'pro',
       access_status: 'active',
       stripe_status: 'active',
@@ -208,7 +253,7 @@ describe('premier paiement : un client Pro paie pendant son essai', () => {
     expect(args[1]).toBe(ORG)
     expect(args[2]).toBe(APP)
     expect(args[3]).toBe('pro')
-    expect(args[7]).toMatchObject({ access_status: 'active', effective_tier: 'pro', preferred_tier: 'pro' })
+    expect(args[7]).toMatchObject({ billing_model: 'subscription', access_status: 'active', effective_tier: 'pro', preferred_tier: 'pro' })
   })
 
   it('envoie un seul email « formule active », avec montant et prochain prélèvement', async () => {

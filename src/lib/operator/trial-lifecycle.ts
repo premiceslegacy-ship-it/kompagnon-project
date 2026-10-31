@@ -15,7 +15,7 @@ import {
   normalizeEinvoicingConfigFromDb,
   type EinvoicingConfig,
 } from '@/lib/einvoicing-config'
-import type { EntitlementSyncPayload } from '@/lib/subscription-access'
+import { getSetupEntitlement, type EntitlementSyncPayload } from '@/lib/subscription-access'
 import { TRIAL_DURATION_DAYS, TRIAL_TIER } from '@/lib/subscription-terms'
 
 const AI_BILLING_MODES = new Set(['orsayn_shared', 'client_owned'])
@@ -178,6 +178,41 @@ export async function syncClientQuotaConfig(
     return { status: 'skipped', error: errorMessage }
   }
 
+  // Relire l'autorité juste avant l'envoi : un appel déjà préparé pour un
+  // abonnement ne doit pas reprendre son payeur ou son état après l'achat setup.
+  const { data: current, error: currentError } = await operator
+    .from('operator_client_subscriptions')
+    .select('billing_model, access_status, entitlement_revision, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, super_pdp_emission_enabled, super_pdp_reception_enabled')
+    .eq('source_instance', sourceInstance)
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+  if (currentError || (current?.billing_model === 'setup' && (
+    !Number.isSafeInteger(current.entitlement_revision) || current.entitlement_revision < 0
+    || !['active', 'locked'].includes(current.access_status)
+  ))) {
+    const errorMessage = 'État commercial autoritaire impossible à vérifier'
+    await operator.from('operator_client_settings').update({
+      config_sync_status: 'failed', config_sync_error: errorMessage, updated_at: new Date().toISOString(),
+    }).eq('source_instance', sourceInstance).eq('organization_id', organizationId)
+    return { status: 'failed', error: errorMessage }
+  }
+  if (current?.billing_model === 'setup') {
+    tier = 'setup_only'
+    aiBillingMode = 'client_owned'
+    overflowMode = 'block'
+    entitlement = getSetupEntitlement(current.access_status === 'active', current.entitlement_revision)
+    einvoicingConfig = normalizeEinvoicingConfigFromDb({
+      mode: current.einvoicing_mode,
+      provider: current.einvoicing_provider,
+      environment: current.einvoicing_environment,
+      annuaire_status: current.einvoicing_annuaire_status,
+      oauth_status: current.oauth_status,
+      oauth_connected_at: current.oauth_connected_at,
+      super_pdp_connection_id: current.super_pdp_connection_id,
+      emission_enabled: current.super_pdp_emission_enabled,
+      reception_enabled: current.super_pdp_reception_enabled,
+    })
+  }
   const syncedTier = aiBillingMode === 'client_owned' ? 'expert' : tier
   const modules = getModulesForTier(syncedTier)
   const quotaConfig = getQuotaConfigForTier(syncedTier)
@@ -245,51 +280,28 @@ export async function syncClientQuotaConfig(
 }
 
 /**
- * Résout organizationId depuis operator_clients avant de charger settings/subscription,
- * car ces deux dernières tables ont organization_id dans leur clé (composite avec
- * source_instance) : sans le connaître d'abord, .maybeSingle() plante (PGRST116) dès
- * qu'une instance mutualisée porte plusieurs organisations.
- * organizationId optionnel : si déjà connu par l'appelant (ex. résolu via un autre
- * canal), évite une requête et lève l'ambiguïté "quelle organisation de l'instance".
+ * Charge un contexte identifié par la clé complète (source_instance, organization_id).
+ * Une instance mutualisée ne permet jamais de déduire l'organisation d'un appel.
  */
-export async function getOperatorClientContext(sourceInstance: string, organizationId?: string) {
+export async function getOperatorClientContext(sourceInstance: string, organizationId: string | undefined) {
+  if (!organizationId || organizationId === UNRESOLVED_ORGANIZATION_ID) {
+    throw new TypeError('organization_id explicite requis pour cette opération opérateur.')
+  }
   const operator = createOperatorAdminClient()
 
-  // La sentinelle sert uniquement à conserver une fiche de préconfiguration
-  // avant la résolution réelle de l'organisation. Elle ne doit jamais être
-  // utilisée pour lire ou synchroniser une instance cliente.
-  let resolvedOrganizationId = organizationId && organizationId !== UNRESOLVED_ORGANIZATION_ID
-    ? organizationId
-    : null
-  if (!resolvedOrganizationId) {
-    const { data: client, error: clientError } = await operator
-      .from('operator_clients')
-      .select('organization_id')
-      .eq('source_instance', sourceInstance)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    if (clientError) throw new Error(clientError.message)
-    resolvedOrganizationId = client?.organization_id ?? null
-  }
-
   const [settingResult, subscriptionResult] = await Promise.all([
-    resolvedOrganizationId
-      ? operator
-        .from('operator_client_settings')
-        .select('app_url')
-        .eq('source_instance', sourceInstance)
-        .eq('organization_id', resolvedOrganizationId)
-        .maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
-    resolvedOrganizationId
-      ? operator
-        .from('operator_client_subscriptions')
-        .select('tier, ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, super_pdp_emission_enabled, super_pdp_reception_enabled, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at')
-        .eq('source_instance', sourceInstance)
-        .eq('organization_id', resolvedOrganizationId)
-        .maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
+    operator
+      .from('operator_client_settings')
+      .select('app_url')
+      .eq('source_instance', sourceInstance)
+      .eq('organization_id', organizationId)
+      .maybeSingle(),
+    operator
+      .from('operator_client_subscriptions')
+      .select('billing_model, tier, ai_billing_mode, overflow_mode, einvoicing_mode, einvoicing_provider, einvoicing_environment, einvoicing_annuaire_status, oauth_status, oauth_connected_at, super_pdp_connection_id, super_pdp_emission_enabled, super_pdp_reception_enabled, trial_tier, trial_started_at, trial_ends_at, trial_converted, preferred_tier, access_status, access_ends_at')
+      .eq('source_instance', sourceInstance)
+      .eq('organization_id', organizationId)
+      .maybeSingle(),
   ])
 
   if (settingResult.error) throw new Error(settingResult.error.message)
@@ -315,9 +327,10 @@ export async function getOperatorClientContext(sourceInstance: string, organizat
 
   return {
     operator,
-    organizationId: resolvedOrganizationId,
+    organizationId,
     appUrl: settingResult.data?.app_url ?? null,
     subscription: {
+      billingModel: subscription?.billing_model === 'setup' ? 'setup' as const : 'subscription' as const,
       tier,
       aiBillingMode,
       overflowMode,
@@ -353,7 +366,7 @@ export async function expireTrialForInstance(input: {
     return { status: 'skipped', error: 'organization_id introuvable pour cette instance' }
   }
 
-  if (!subscription.trialTier || !subscription.trialEndsAt || subscription.trialConverted) {
+  if (subscription.billingModel === 'setup' || !subscription.trialTier || !subscription.trialEndsAt || subscription.trialConverted) {
     return { status: 'skipped' }
   }
 
@@ -393,6 +406,7 @@ export async function expireTrialForInstance(input: {
     subscription.aiBillingMode,
     subscription.einvoicingConfig,
     selfServiceTrial ? {
+      billing_model: 'subscription',
       access_status: 'expired',
       effective_tier: targetTier,
       preferred_tier: subscription.preferredTier,
