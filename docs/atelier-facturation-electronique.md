@@ -148,7 +148,7 @@ Base API confirmée : `https://api.superpdp.tech`.
 
 Deux flux distincts :
 
-- **`client_credentials`** : l'application agit sur ses propres données (style clé API simple) — usage propre d'Orsayn, pas pour piloter un client. `POST /oauth2/token` avec `grant_type=client_credentials`.
+- **`client_credentials`** : l'application agit sur ses propres données (style clé API simple). Peut servir à un diagnostic technique de l'application ; ce token ne constitue ni une connexion PA client, ni un mandat d'émission/réception pour Orsayn. Jamais un fallback pour piloter un client non connecté. `POST /oauth2/token` avec `grant_type=client_credentials`.
 - **`authorization_code`** via `GET /oauth2/authorize` : l'application agit "pour le compte" d'une entité tierce. **Testé en conditions réelles et fonctionnel** : le tunnel a authentifié l'entreprise sandbox préconfigurée "Tricatel" (SIREN fictif du bac à sable), distincte du porteur Orsayn de l'application. **Le modèle multi-tenant est donc confirmé — un tiers peut bien autoriser l'app Atelier.**
 
 **Détails de l'échange confirmés (réponse brute, sandbox) :**
@@ -188,25 +188,33 @@ Deux flux distincts :
 ```
 **`id` (entier, ex. `68809`) est l'identifiant stable à stocker dans `super_pdp_connection_id`** — pas un SIREN. `env`/`number_scheme` permettent de vérifier côté callback qu'on ne mélange pas un token sandbox avec une config `environment = 'production'`.
 
-**Application OAuth Atelier** : une seule application créée (confirmé par action réelle dans la console Super PDP) :
+**Application OAuth Atelier** : application de production centralisée pour le SaaS, pas une application à créer par artisan :
 - Champ "Entreprise" **verrouillé à une seule option pré-remplie** (Orsayn, le porteur de l'application — pas une restriction à un seul client final, confirmé par test réel de l'utilisateur).
 - Type d'application : **Confidentielle** (client_secret côté serveur Cloudflare Workers).
 - Format AFNOR : **Factur-X**.
 - URL de redirection production : `https://orsayn-cockpit.mbebourasam.workers.dev/api/einvoicing/oauth/callback?env=production`. Elle doit correspondre exactement à celle enregistrée chez le fournisseur ; le callback utilise l’environnement configuré côté cockpit, pas une valeur choisie par l’appelant.
-- Une deuxième application dédiée au bac à sable existe, même configuration.
+- Application sandbox distincte pour les essais ; anciennes applications conservées, sans suppression ni rotation de secret indiscriminée.
 
-**Conséquence architecturale** : puisqu'une seule application = un seul porteur (Orsayn), **c'est le cockpit qui détient et rafraîchit tous les tokens OAuth**, pas chaque instance cliente. Chaque instance passe par un endpoint proxy côté cockpit pour les opérations de facturation électronique.
+**Choix d'architecture Atelier** : **le cockpit détient et rafraîchit les tokens OAuth délégués**, isolés par `(source_instance, organization_id)` et environnement ; aucune credential PA client dans l'instance. Le porteur technique de l'application n'est pas l'entreprise qui accorde le mandat. Chaque instance passe par un endpoint proxy côté cockpit pour les opérations de facturation électronique.
 
 ### 7.3. Flux d’activation OAuth
 
 1. L’owner d’une organisation lance la connexion depuis les paramètres de son instance Atelier, après contrôle de `einvoicing.configure`.
 2. L’instance signe un `state` HMAC contenant `source_instance`, `organization_id`, un nonce et l’heure d’émission, avec son propre secret dérivé. Le state est valable dix minutes.
 3. L’instance redirige vers `/oauth2/authorize` de Super PDP. Au retour, seul le cockpit vérifie le state : `OPERATOR_MASTER_SECRET` est obligatoire et sert à dériver la clé attendue pour le `source_instance` décodé. Aucun accès au contexte client avant validation du HMAC ; les anciens alias partagés ne sont pas un fallback de vérification.
-4. L'owner autorise côté Super PDP — **partiellement confirmé** : dans le test sandbox du 25/08/2026, le tunnel a directement authentifié une entreprise déjà préconfigurée dans le bac à sable ("Tricatel"), sans étape KYC visible. **Reste non confirmé** : le comportement pour un SIREN client réel qui n'a jamais eu de compte Super PDP en production — création à la volée vs redirection vers un formulaire séparé (email/mot de passe/KYC). À revalider avec le support Super PDP ou un premier client pilote avant la mise en production.
+4. L'owner autorise **sa propre entreprise cliente** côté Super PDP. Le sandbox historique a directement authentifié « Tricatel », déjà préconfigurée, sans KYC visible. L'écran de production observé le 30/10/2026 affiche cinq étapes : adresse email, entreprise, accord formel, vérification d'identité, autorisation. L'accord formel et l'inscription immédiate à l'annuaire sont deux cases distinctes. Aucun mandat ni justificatif de production n'a été validé pendant cette qualification. Le succès complet d'un premier client réel et les exigences/frais exacts de KYC restent à qualifier avec son consentement.
 5. Super PDP redirige vers le callback unique côté cockpit (`/api/einvoicing/oauth/callback`).
 6. Le cockpit échange le `code` contre `access_token`/`refresh_token`, les chiffre (AES-256-GCM, `src/lib/crypto/secrets.ts`), les stocke dans `super_pdp_oauth_credentials` (DB opérateur uniquement).
 7. Le cockpit met à jour `organization_einvoicing_config` de l'instance cliente concernée (`oauth_status = 'connected'`, `super_pdp_connection_id`) via le mécanisme `config-sync` existant.
 8. Le cockpit redirige l'utilisateur vers son instance d'origine (décodée depuis le `state`), avec le statut de connexion affiché.
+
+**L'éditeur n'est pas le client activé.** Le consentement OAuth de l'application ne remplace pas l'accord formel de chaque entreprise cliente. L'activation est à son choix ; mandat, identité et éventuelle inscription à effet immédiat dans l'annuaire concernent son SIREN réel. Ne pas activer la PA d'Orsayn pour « qualifier le SaaS », ni confondre une organisation de test Atelier avec une entreprise fictive chez le fournisseur. Les essais sans client pilote consentant utilisent le bac à sable.
+
+**Refus sans identité de substitution.** Le vrai SDK et les RPC ont été exercés sur la frontière de production : organisation sans connexion → 404 ; autre source avec l'identifiant d'une organisation existante → 404 ; grant sandbox sous configuration production → 409. Trois appels SQL, zéro requête fournisseur : aucun repli `client_credentials` sur l'identité du porteur.
+
+**Qualification technique du 31/10/2026.** Deux clients fictifs locaux A/B ont exercé le SaaS courant contre le vrai fournisseur sandbox. L'action de A produit son state ; Tricatel fictif accorde à « Atelier Btp » l'accès aux factures, leur envoi et la gestion des lignes d'annuaire. Seul l'accord formel a été coché, pas l'inscription immédiate. Le callback réel échange un vrai code, vérifie l'entreprise sandbox, conserve les deux tokens chiffrés et synchronise l'app par HMAC : A connecté/réception active/émission inactive, B non connecté. Déchiffrement authentifié des deux ciphertexts, lecture fournisseur via le vrai SDK pour A, refus 404 pour B et une autre source. Aucun compte ou mandat de production, justificatif d'identité réel, envoi de facture ou inscription réelle à l'annuaire.
+
+Le callback de test `https://localhost:8082/callback` était déjà enregistré sur l'app sandbox ; aucune application fournisseur modifiée. Safari refusant le certificat local jetable, le dernier transport a utilisé TLS strict avec épinglage de ce certificat, sans exception navigateur ni changement de confiance système. Ce test qualifie le backend et son état applicatif, pas un retour navigateur localhost automatique ni le parcours KYC d'un premier client réel. Les credentials de production et le compte PA personnel d'Orsayn ne servent pas de fixture.
 
 ### 7.4. Émission et réception de factures (Phase 2-3)
 
