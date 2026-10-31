@@ -137,7 +137,9 @@ Next 14 n’est pas conservé. Le choix de Next 16 tient aussi à la fenêtre de
 - Dépréciations transitives et politique npm de scripts d’installation restent à suivre. Aucun script fournisseur réel n’a été approuvé ou activé pour contourner les contrôles.
 - Des chargements et copies de données inutiles ont été retirés des lecteurs documentaires ; les images sont bornées. **Aucun gain chiffré de vitesse ni dimensionnement de production n’est revendiqué.**
 
-## Risques opérationnels encore ouverts
+## Risques identifiés avant livraison
+
+Les constats ci-dessous décrivent l'état initial de l'audit. Le suivi de livraison du 30 octobre, après cette liste, indique les opérations réellement réalisées et les limites restantes.
 
 ### 1. Historique public — traitement prioritaire
 
@@ -181,6 +183,41 @@ Les alias Storage personnalisés, sources historiques externes et configurations
 ### 4. Fournisseurs et réglementation
 
 Aucun nouveau test réel de livraison email, PA/Super PDP, Stripe, Sentry ou fournisseur IA payant n’a été exécuté. Les secrets ont été neutralisés pendant les essais locaux. Avant ouverture, exercer les scénarios sandbox requis, accusés, refus et réponses ambiguës, puis les configurations de production autorisées. Le succès de la signature locale ou la présence de Factur-X dans un PDF ne garantit pas une notification délivrée, une identité qualifiée ou une conformité fiscale générale.
+
+## Livraison effective du 30 octobre 2026
+
+### Code, bases et contrôles de production
+
+- Lot applicatif intégré sur `main` au commit `bc9b28c6c796201ddaa7e588cdb92e0b65b80d22` ; CI hébergée du push de ce commit réussie (`41207144082`). Après le dernier correctif : typecheck, lint et **503 tests dans 39 fichiers** réussis ; audit des dépendances de production à **0 vulnérabilité signalée**.
+- App et cockpit reconstruits séparément avec leurs configurations et namespaces KV propres, bundles compilés et examinés sans credential opérationnelle détectée, puis publiés avec OpenNext. Versions observées : app `1abe07d0-f458-4ab4-903f-36093049ab64`, cockpit `8e5411d0-a968-4196-8924-d56906093bbb`. Les artefacts OpenNext doivent être rematérialisés à leur chemin de compilation avant promotion : déplacer leur répertoire seul ne les rend pas relogeables.
+- App : migrations **193–214** appliquées sur le projet explicitement vérifié. Cockpit : **013–016 et 018–021** appliquées sur son projet distinct. Les cinq migrations historiques distantes portant un identifiant horodaté ont été récupérées dans le workdir privé de livraison ; aucun faux repair ni changement de leur historique distant.
+- Gates réels réussis : préflight strict des deux rôles, clôture des anciennes pièces, schéma refresh PA et sécurité des tables opérateur. Les huit tables opérateur ont RLS actif, sans policy ni privilège anon/authenticated, y compris TRUNCATE ; le service conserve les opérations requises.
+- Comparaisons avant/après : données financières existantes, archives et signatures conservées ; adhésions et droits existants inchangés. Les capacités publiques anciennes ont été révoquées ; un contrat non signé a été dépublié conformément à l'autorisation. Une pièce non attribuable a été mise en quarantaine privée sans perte d'octets.
+- Pages de connexion réelles accessibles ; navigateur sans erreur observée sur l'app. Sur les deux services, appel non authentifié du cron d'effacement refusé **401** sans exécution ; ingest opérateur refusé **404** côté app et **401** côté cockpit.
+
+### Secrets et correctifs révélés par la qualification
+
+- Master HMAC conservé uniquement au cockpit, clés d'instance côté app ; anciennes clés globales supprimées du cockpit, bindings centraux retirés de l'app. Secrets PA de production et profils privés alignés ; `.env.local` de contrôle conservé séparément. La clé AES existante n'a pas été remplacée aveuglément.
+- Le vrai callback OAuth échouait **500** car son vérificateur dépendait encore d'un alias global retiré. Signature et vérification utilisent maintenant la frontière canonique master/instance, sans fallback global. Régression permanente et callback déployé exercés : state valide plus annulation fournisseur donne **307** vers les paramètres attendus, sans code d'autorisation ni appel fournisseur.
+- Les nouveaux avis modérés glob/minimatch ont été corrigés, sans exclusion d'audit : glob 14.0.2 et son minimatch 11.0.3. API glob synchrone/asynchrone, minification réelle par node-minify/Terser et suppression rimraf exercées, puis builds des deux rôles réussis. Le résultat d'audit à zéro concerne la production, pas toutes les dépendances de développement.
+- Parsing dotenv natif : une annotation après une valeur entre guillemets polluait la configuration du portail Stripe ; valeur réelle validée auprès de Stripe, sans changement de portail ou de prix.
+
+### Fournisseurs : preuves et frontière d'autorisation
+
+- **Email** : un unique message technique autorisé a été livré au destinataire de contrôle ; aucun second envoi de qualification.
+- **Stripe** : Checkout carte **Test** Pro 69 EUR/mois, vrais événements signés du fournisseur, réception par le backend, droits synchronisés cockpit/app, annulation puis expiration exercés. Ressources de test nettoyées ; aucune facturation Live ni destination webhook Test ajoutée à la production. Endpoint Live et configuration existants vérifiés en lecture seule ; égalité des credentials runtime requises établie sans les restituer.
+- **PA** : nouvelle application confidentielle de production créée sur le contrat existant, anciennes applications conservées. API propre entreprise vérifiée en production. Organisation de qualification réelle séparée, propriétaire inactif, espace courant inchangé, accès verrouillé et émission désactivée. **Consentement OAuth délégué encore non accordé** : le flux demande `scope=""` (droits par défaut non détaillés), pas des droits de lecture seule établis. Aucune émission réelle, aucune qualification fiscale générale revendiquée.
+- Pas de nouveau test réel Sentry ni de consommation fournisseur IA payante ; aucune campagne de charge ni certification de pentest externe déduite de ces essais ciblés.
+
+### Reprise et exploitation
+
+- Sauvegardes SQL chiffrées et restauration réelle des deux bases exercées en PostgreSQL isolé, sans réseau ni ports exposés ; migrations et invariants relus après restauration. Catalogue Auth exact et véritable historique géré utilisés pour le cockpit, pas un schéma Auth deviné. Les pièces Storage ont chacune été sauvegardées, déchiffrées et vérifiées par hash ; aucune restauration d'octets Storage en production.
+- Limite : sauvegardes privées locales et preuve de reprise à un instant donné, **pas de copie hors site indépendante ni de PITR fournisseur établi**.
+- Historique de `main` nettoyé, ancien matériel Server Actions renouvelé par les nouveaux builds, capacités révoquées. Cela n'efface pas les copies externes antérieures. L'ancien checkout local pré-réécriture ne doit pas être poussé.
+- `main` protégé avec PR et CI requises ; environnement `Atelier CDF` limité à main, revue humaine requise et bypass administrateur désactivé. Configurations privées app/cockpit et credentials de déploiement provisionnés dans cet environnement.
+- CI et workflows **Atelier App / Cockpit Orsayn actifs**, toujours soumis à ces gates. Workflows générique client et tous-clients conservés **désactivés** ; aucune livraison de clients non qualifiés déclenchée.
+- Quatre helpers cron rétablis avec leurs horaires d'avant maintenance, relus via API ; aucun traitement métier lancé manuellement. L'horaire supplémentaire de quinze minutes présent dans le code d'operator-cron mais absent de sa configuration effective n'a pas été ajouté.
+- Avertissements non masqués : Middleware, date de compatibilité workerd et queue ISR directe. Cette livraison n'établit ni zéro incident futur, ni dimensionnement en charge, ni conformité réglementaire universelle.
 
 ## Revue du skill `backend-orsayn`
 
