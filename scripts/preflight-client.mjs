@@ -140,8 +140,14 @@ const deploymentDoc = existsSync(path.join(root, 'DEPLOIEMENT_CLIENT.md'))
 const missingInDoc = migrations.filter((name) => !deploymentDoc.includes(name))
 check(missingInDoc.length === 0, 'DEPLOIEMENT_CLIENT.md liste toutes les migrations', `migrations absentes de DEPLOIEMENT_CLIENT.md: ${missingInDoc.join(', ')}`, failures, warnings, true)
 
+const appOnlyRequiredEnv = new Set([
+  'MEMBER_SESSION_SECRET',
+  'ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY',
+  'VAPID_PRIVATE_KEY',
+  'NEXT_PUBLIC_VAPID_PUBLIC_KEY',
+])
 const requiredForTarget = env.OPERATOR_MODE === 'true'
-  ? requiredWorkerEnv.filter((key) => !key.startsWith('OPERATOR_'))
+  ? requiredWorkerEnv.filter((key) => !key.startsWith('OPERATOR_') && !appOnlyRequiredEnv.has(key))
   : requiredWorkerEnv
 for (const key of requiredForTarget) {
   check(Boolean(env[key]) && !PLACEHOLDER.test(env[key]), `${key} disponible localement`, `${key} absent ou placeholder pour le Worker visé`, failures, warnings, !strictEnv)

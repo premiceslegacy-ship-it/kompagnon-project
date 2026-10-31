@@ -310,6 +310,8 @@ npm run preflight:client -- atelier-nomclient --with-open-next-build
 
 `--strict-env` transforme les secrets manquants en erreur. Le déploiement vérifie la cible exacte : `.env.client-<nom-complet-du-worker>` ou `.env.cockpit`, sans repli sur `.env.local`. `CRON_SECRET`, `MEMBER_SESSION_SECRET` et `RATE_LIMIT_SECRET` sont trois secrets distincts de 32 octets encodés en 64 hexadécimaux, uniques par instance. `ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY` est une clé différente de 32 octets encodée en **base64**, pas en hexadécimal.
 
+Les exigences suivent le rôle : le cockpit conserve ses propres `CRON_SECRET` et `RATE_LIMIT_SECRET`, ainsi que son master HMAC et ses credentials opérateur. Il n’exige pas les secrets du portail membre, de chiffrement IA client ou de Web Push d’une app (`MEMBER_SESSION_SECRET`, `ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY`, `VAPID_PRIVATE_KEY`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`). Ne pas copier ces identités clientes pour satisfaire artificiellement un préflight cockpit. Le chiffrement OAuth PA du cockpit utilise `SUPER_PDP_ENCRYPTION_KEY`.
+
 **Automatisation T4 :**
 ```bash
 # Dry-run — affiche secrets + vars texte, n'écrit rien
