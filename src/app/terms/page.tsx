@@ -13,7 +13,7 @@ export default function TermsPage() {
       eyebrow="Conditions générales"
       title="CGV et conditions d'utilisation"
       description="Ces conditions régissent la fourniture d'ATELIER comme logiciel métier B2B. Elles valent conditions générales de vente au sens de l'article L.441-1 du Code de commerce."
-      updatedAt="9 août 2026"
+      updatedAt="31 octobre 2026"
     >
       <section className="space-y-4">
         <h2 className="text-2xl font-bold">Objet du service</h2>
