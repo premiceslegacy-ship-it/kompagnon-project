@@ -312,6 +312,8 @@ npm run preflight:client -- atelier-nomclient --with-open-next-build
 
 Les exigences suivent le rôle : le cockpit conserve ses propres `CRON_SECRET` et `RATE_LIMIT_SECRET`, ainsi que son master HMAC et ses credentials opérateur. Il n’exige pas les secrets du portail membre, de chiffrement IA client ou de Web Push d’une app (`MEMBER_SESSION_SECRET`, `ORGANIZATION_AI_CREDENTIALS_ENCRYPTION_KEY`, `VAPID_PRIVATE_KEY`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`). Ne pas copier ces identités clientes pour satisfaire artificiellement un préflight cockpit. Le chiffrement OAuth PA du cockpit utilise `SUPER_PDP_ENCRYPTION_KEY`.
 
+`preflight-client.mjs` et `prepare-cloudflare-env.mjs` lisent les fichiers avec `node:util.parseEnv`, comme le chargement natif `node --env-file` des workflows. Aucun `source` ou `eval`. Écrire les annotations en commentaires `#` hors des guillemets ; les bindings Cloudflare doivent recevoir la valeur brute, sans les guillemets ni les annotations du fichier dotenv.
+
 **Automatisation T4 :**
 ```bash
 # Dry-run — affiche secrets + vars texte, n'écrit rien
