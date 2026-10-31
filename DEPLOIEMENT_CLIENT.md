@@ -104,7 +104,20 @@ Résultats finaux : 523 tests applicatifs, 65 tests d’isolation, les deux rég
 3. Construire pour chaque cible avec sa configuration réelle puis publier **le cockpit avant l’application**. Ne pas réutiliser les builds de recette contenant des URL et identifiants fictifs. Ne pas activer de setup tant que les deux versions ne sont pas en service : l’ancien récepteur n’accepte pas la nouvelle révision setup, et le nouveau récepteur exige le modèle de facturation envoyé par le nouveau cockpit.
 4. Contrôler la santé et les refus non autorisés des deux surfaces, puis ouvrir les activations. Le premier règlement et la première recette client restent de vraies opérations commerciales, avec preuve réelle ; ne pas fabriquer d’achat de production pour tester.
 
-Cette évolution n’est pas déclarée publiée par le présent guide. Les versions, migrations réellement appliquées et preuves après publication doivent être consignées dans le compte rendu de release.
+**Publication vérifiée le 31/10/2026.** Code `f1089cf833a187b0f39bba393d914710741dfdc9`, issu des PR #11 et #12 ; CI du main `41247678451` réussie, avec audit des dépendances, scan de secrets, SBOM, isolation et smoke SQL. L’environnement GitHub protégé a été approuvé séparément pour respecter l’ordre des deux cibles.
+
+| Cible | Migration appliquée et journal vérifié | Version active à 100 % | Publication UTC | Workflow réussi |
+|---|---|---|---|---|
+| Cockpit `orsayn-cockpit` | `022` sur `ghkacozmtvvmlbbwwnlp` | `fc78dd64-cdea-429a-aa66-740b20133a1f` | 22:28:36 | `41247974714` |
+| Application `atelier-app` | `215` sur `pyxnmohknxmbpbcuvudg` | `03f20646-a010-4f88-a01c-d694df2f88eb` | 22:33:17 | `41247974749` |
+
+Les versions actives correspondent aux identifiants publiés dans les logs des workflows, pas à une simple version téléversée ou au premier élément d’une liste historique. Les migrations ont conservé les colonnes métier préexistantes dans leur transaction ; une seule évolution d’`updated_at` a été observée hors migration dans les réglages opérateur, sans changement de leurs champs métier.
+
+Contrôles sur les services publiés : pages de connexion et conditions `200`, portail/trial cockpit non signés `401`, config-sync applicative non signée `401`, configuration setup signée sans révision `400` avant écriture. Le gate SQL cockpit passe via le vrai REST de service et refuse le rôle anonyme (`401`, code `42501`). Les RPC mutantes nouvelles n’accordent pas d’exécution aux rôles `anon`/`authenticated`. L’application possède ses clés de chiffrement d’organisation et de signature, mais aucune des autorités maître, base opérateur, Stripe privé ou OAuth PA réservées au cockpit. Les conditions ont été relues dans le navigateur sur `app.atelier-btp.fr/terms`, datées du 31 octobre 2026.
+
+Aucune organisation n’était `client_owned` avant bascule ; les anciennes lignes ne sont pas devenues des achats par inférence. Après vérification : zéro achat setup et zéro accès setup créés en production pour cette recette. Aucun nouveau projet, paiement, mandat PA ou appel IA payant n’a été déclenché.
+
+Les deux bases ont été sauvegardées avant DDL : schéma, données et rôles chiffrés, avec authentification et comparaison intégrale après déchiffrement. Cela ne constitue pas une nouvelle restauration complète de ces instantanés, une preuve de PITR/offsite ou une recapture des octets Storage. Les preuves privées sont conservées hors Git. La première livraison à un vrai client reste soumise au règlement réel, à sa recette et à ses consentements ; Hermes reste limité à la préparation tant qu’un outil d’import borné n’est pas validé.
 
 ### Rappel : la mutualisation ne ferme pas la porte à un self-hosted
 
@@ -2072,10 +2085,10 @@ Créer un cron-job.org gratuit → ping `https://<ref>.supabase.co/rest/v1/` tou
 
 ## ─── REGISTRE DES CLIENTS DÉPLOYÉS ─────────────────────────────────────────────
 
-Le registre suit les infrastructures, pas une ligne par organisation cliente. Les nouveaux setups mutualisés utiliseront `atelier-app` après publication de l’évolution `215`/`022` ; leur achat sera suivi dans le cockpit.
+Le registre suit les infrastructures, pas une ligne par organisation cliente. Le parcours setup mutualisé est publié sur `atelier-app` ; les futurs achats sont suivis par organisation dans le cockpit.
 
 | Instance | Project Ref | Domaine | Rôle | Migrations à jour au | Fact. élec. |
 |--------|-------------|---------|------|------------|------------|
-| `atelier-app` (application mutualisée) | `pyxnmohknxmbpbcuvudg` | app.atelier-btp.fr | Worker unique, organisations isolées ; setups après release `215`/`022` | 214 en production lors de la release du 30/10/2026 ; 215 qualifiée localement, pas déclarée publiée | Qualification client réelle distincte, avec consentement propre |
+| `atelier-app` (application mutualisée) | `pyxnmohknxmbpbcuvudg` | app.atelier-btp.fr | Worker unique, organisations isolées ; accès setup hors abonnement publié | 215 appliquée et journal source vérifié le 31/10/2026 | Qualification client réelle distincte, avec consentement propre |
 
-Le cockpit (`ghkacozmtvvmlbbwwnlp`) reste une infrastructure opérateur distincte : migrations jusqu’à `021` en production lors de la release du 30/10/2026 ; `022` qualifiée localement, pas déclarée publiée. Aucun nouveau Supabase ni Worker n’est requis à l’ajout d’un client setup standard.
+Le cockpit (`ghkacozmtvvmlbbwwnlp`) reste une infrastructure opérateur distincte : migration `022` appliquée et journal source vérifié le 31/10/2026. Aucun nouveau Supabase ni Worker n’est requis à l’ajout d’un client setup standard. Versions et preuves de publication : section « Qualification et publication de l’évolution setup ».
