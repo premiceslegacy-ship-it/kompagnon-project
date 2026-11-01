@@ -83,7 +83,7 @@ Le cockpit dispose d’une activation setup explicite, distincte du choix du tie
 
 ### Dossier interne setup et brief Hermes
 
-**Évolution qualifiée en local le 01/11/2026, non publiée dans ce passage.** Après application de `supabase/operator-migrations/023_setup_client_onboarding.sql` sur la base cockpit et publication du code compatible, ouvrir **Cockpit > Clients > fiche de l’organisation exacte > Dossier setup**. Aucune migration application ni nouvelle infrastructure par client n’est nécessaire pour ce dossier.
+**Évolution publiée et vérifiée le 01/11/2026.** La migration cockpit `supabase/operator-migrations/023_setup_client_onboarding.sql` et le code compatible sont en service ; preuves et limites dans « Publication du dossier interne — 01/11/2026 » ci-dessous. Ouvrir **Cockpit > Clients > fiche de l’organisation exacte > Dossier setup** après vérification de son achat setup. Aucune migration application ni nouvelle infrastructure par client n’est nécessaire pour ce dossier.
 
 Exécuter les DDL de `023` dans une transaction unique, y compris création de table, RLS, révocation des droits et trigger. Avec `psql`, utiliser `--single-transaction -v ON_ERROR_STOP=1 -f supabase/operator-migrations/023_setup_client_onboarding.sql` après vérification de la base cockpit ciblée. Ne pas exposer une table partiellement protégée entre des commandes appliquées séparément.
 
@@ -156,6 +156,17 @@ Contrôles sur les services publiés : pages de connexion et conditions `200`, p
 Aucune organisation n’était `client_owned` avant bascule ; les anciennes lignes ne sont pas devenues des achats par inférence. Après vérification : zéro achat setup et zéro accès setup créés en production pour cette recette. Aucun nouveau projet, paiement, mandat PA ou appel IA payant n’a été déclenché.
 
 Les deux bases ont été sauvegardées avant DDL : schéma, données et rôles chiffrés, avec authentification et comparaison intégrale après déchiffrement. Cela ne constitue pas une nouvelle restauration complète de ces instantanés, une preuve de PITR/offsite ou une recapture des octets Storage. Les preuves privées sont conservées hors Git. La première livraison à un vrai client reste soumise au règlement réel, à sa recette et à ses consentements ; Hermes reste limité à la préparation tant qu’un outil d’import borné n’est pas validé.
+
+#### Publication du dossier interne — 01/11/2026
+
+PR #14 intégrée au commit `7ecd92827c88404ca99c9f88b450284a3f3963ff`. [CI du main `41351735754`](https://github.com/premiceslegacy-ship-it/kompagnon-project/actions/runs/41351735754) réussie : types, lint, tests, audit des dépendances, scan de secrets, SBOM et isolation SQL. [Déploiement cockpit `41352067484`](https://github.com/premiceslegacy-ship-it/kompagnon-project/actions/runs/41352067484) approuvé explicitement dans l’environnement protégé ; version `5bc33931-f198-4c83-8496-791f8bdb3fb6` active à 100 % depuis `2026-11-01T21:33:09.696582Z`, identique à celle annoncée dans ses logs. `/orsayn/emails` figure dans le build.
+
+Sur le seul projet opérateur `ghkacozmtvvmlbbwwnlp`, `023` et son journal ont été appliqués dans une transaction avec précondition `022`, verrouillage bref et comparaison intégrale des lignes publiques préexistantes avant/après : aucune n’a changé. Le journal contient le fichier source exact. Le catalogue confirme RLS, zéro policy publique, trois clés étrangères validées et les seuls droits SELECT/INSERT/UPDATE pour `service_role` ; `anon` et `authenticated` n’ont aucun droit sur la table. Les helpers ne sont pas exécutables publiquement.
+
+Contrôles distants : gate `assert_operator_table_security` et lecture de la nouvelle table via REST de service `200` ; lecture anonyme de cette table refusée `401` avec code PostgreSQL `42501`, absence de clé projet refusée `401`. Connexion `200`, `/orsayn` et `/orsayn/emails` redirigent sans session vers `/login` (`307`) ; la surface de connexion a été observée dans le navigateur. Cibles Supabase, mode opérateur et namespaces KV sont conservés ; les autorités requises restent des bindings secrets.
+
+Les sauvegardes privées chiffrées portent sur le schéma public, ses données et le dump des rôles, avec authentification et comparaison après déchiffrement ; aucune nouvelle répétition de restauration complète, preuve de PITR/offsite ou sauvegarde Storage n’est revendiquée. La version cockpit précédente `fc78dd64-cdea-429a-aa66-740b20133a1f` est identifiée pour retour arrière. Le workflow application `41352067518` a été annulé : aucune publication d’`atelier-app` dans cette release. Aucun achat, activation, paiement ou traitement de paie n’a été créé. Le parcours positif du dossier est qualifié localement ; sa première utilisation en production reste liée à un vrai client setup, sans achat fictif de recette. Ces contrôles ne sont pas un pentest externe.
+
 
 ### Rappel : la mutualisation ne ferme pas la porte à un self-hosted
 
@@ -2129,4 +2140,4 @@ Le registre suit les infrastructures, pas une ligne par organisation cliente. Le
 |--------|-------------|---------|------|------------|------------|
 | `atelier-app` (application mutualisée) | `pyxnmohknxmbpbcuvudg` | app.atelier-btp.fr | Worker unique, organisations isolées ; accès setup hors abonnement publié | 215 appliquée et journal source vérifié le 31/10/2026 | Qualification client réelle distincte, avec consentement propre |
 
-Le cockpit (`ghkacozmtvvmlbbwwnlp`) reste une infrastructure opérateur distincte : migration `022` appliquée et journal source vérifié le 31/10/2026. Aucun nouveau Supabase ni Worker n’est requis à l’ajout d’un client setup standard. Versions et preuves de publication : section « Qualification et publication de l’évolution setup ».
+Le cockpit (`ghkacozmtvvmlbbwwnlp`) reste une infrastructure opérateur distincte : migration `023` appliquée et journal source vérifié le 01/11/2026. Aucun nouveau Supabase ni Worker n’est requis à l’ajout d’un client setup standard. Versions et preuves de publication : section « Qualification et publication de l’évolution setup ».
