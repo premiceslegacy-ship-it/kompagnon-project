@@ -8,6 +8,10 @@ Ce dossier contient toutes les migrations SQL pour déployer Atelier sur un nouv
 
 **Publication réelle vérifiée le 31/10/2026 :** migrations application `215` et cockpit `022` appliquées et journaux comparés à leurs fichiers source ; cockpit puis application publiés depuis le main validé par CI. Les versions actives, workflows, refus d’autorisation et limites de qualification sont consignés dans la section « Qualification et publication de l’évolution setup » du guide de livraison.
 
+**Dossier interne setup, évolution 023 :** `operator-migrations/023_setup_client_onboarding.sql` ajoute les métadonnées de préparation dans le cockpit, pas dans la base application. Appliquer sur une base cockpit 001–022 identifiée, puis publier le code compatible. Recette locale du 01/11/2026 : sauvegarde/relecture, validation humaine, brief Hermes, conflits de révision et refus d’accès ; régression transactionnelle `tests/isolation/operator-023-onboarding.sql`. Cette évolution n’a pas été appliquée en production dans ce passage. Le détail du formulaire et le statut paie figurent dans le guide de livraison.
+
+Les migrations opérateur sont appliquées fichier par fichier dans une transaction unique (`psql --single-transaction -v ON_ERROR_STOP=1 -f ...` dans la CI). Conserver cette atomicité à la publication : création, trigger, RLS et droits ne doivent pas laisser une table intermédiaire exposée.
+
 ---
 
 ## Ordre des migrations

@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   ChevronRight,
+  ClipboardCheck,
   Clock3,
   Database,
   FileText,
@@ -33,6 +34,8 @@ import {
   upsertOperatorClientVerticalPack,
   upsertOperatorSubscription,
 } from './actions'
+import SetupIntakeDossier from './SetupIntakeDossier'
+import type { SetupIntakeLoadResult } from './setup-intake-domain'
 import SetupActivationForm from './SetupActivationForm'
 import ActionForm from './ActionForm'
 import type { ClientRow } from './types'
@@ -68,6 +71,7 @@ import { UsageTrendChart } from './UsageCharts'
 const inputClass = 'cockpit-input w-full'
 const tabs = [
   { id: 'offer', label: 'Offre', icon: FileText },
+  { id: 'setup', label: 'Dossier setup', icon: ClipboardCheck },
   { id: 'usage', label: 'Consommation', icon: Zap },
   { id: 'modules', label: 'Modules', icon: Layers3 },
   { id: 'history', label: 'Historique', icon: History },
@@ -206,9 +210,51 @@ function DangerZone({ row }: { row: ClientRow }) {
   )
 }
 
-export default function ClientDetail({ row }: { row: ClientRow }) {
+export default function ClientDetail({ row, initialSetupIntake }: { row: ClientRow; initialSetupIntake: SetupIntakeLoadResult | null }) {
   const [activeTab, setActiveTab] = useState<DetailTab>('offer')
   const sync = getSyncBadge(row.lastSeenAt, row.lastStatus)
   const einvoicing = getEinvoicingBadge(row.einvoicingConfig)
-  return <main className="cockpit-shell"><header className="cockpit-header"><div className="flex min-w-0 items-start gap-3"><Link href="/orsayn/clients" className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center border border-[var(--cockpit-line)] text-secondary hover:text-primary"><ArrowLeft className="h-4 w-4" /></Link><div className="min-w-0"><p className="cockpit-kicker">Fiche client</p><h1 className="mt-2 truncate text-3xl font-semibold tracking-tight text-primary sm:text-4xl">{row.label}</h1><p className="mt-2 flex items-center gap-2 text-sm text-secondary"><UserRound className="h-4 w-4" />{row.contactEmail ?? 'Aucun contact renseigné'} <ChevronRight className="h-3.5 w-3.5" /> {formatClientOffer(row)}</p></div></div><div className="flex flex-wrap items-center gap-2"><span className={`cockpit-tag ${sync.className}`}>{sync.label}</span><span className={`cockpit-tag ${einvoicing.className}`}>{einvoicing.label}</span></div></header><Panel className="p-5 sm:p-6"><div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-5"><Stat label="Forfait mensuel" value={row.monthlyFee === null ? 'À compléter' : formatMoney(row.monthlyFee, row.billingCurrency)} /><Stat label="Coût IA du mois" value={formatMoney(row.monthCostEur)} hint={row.aiBillingMode === 'client_owned' ? 'Clé du client' : 'Pris en charge'} /><Stat label="Marge brute" value={row.grossMarginEur === null ? 'À compléter' : formatMoney(row.grossMarginEur)} /><Stat label="Taux de marge" value={row.marginPct === null ? 'À compléter' : `${row.marginPct.toFixed(1)} %`} /><Stat label="Dernière activité" value={formatDate(row.lastSeenAt)} /></div></Panel><LifecyclePanel row={row} /><nav aria-label="Sections de la fiche" className="flex gap-1 overflow-x-auto border-b border-[var(--cockpit-line)]">{tabs.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => setActiveTab(id)} className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition ${activeTab === id ? 'border-accent text-primary' : 'border-transparent text-secondary hover:text-primary'}`}><Icon className="h-4 w-4" />{label}</button>)}</nav>{activeTab === 'offer' && <OfferTab row={row} />}{activeTab === 'usage' && <UsageTab row={row} />}{activeTab === 'modules' && <ModulesTab row={row} />}{activeTab === 'history' && <HistoryTab row={row} />}<DangerZone row={row} /></main>
+  const visibleTabs = tabs.filter(({ id }) => id !== 'setup' || row.billingModel === 'setup')
+
+  return (
+    <main className="cockpit-shell">
+      <header className="cockpit-header">
+        <div className="flex min-w-0 items-start gap-3">
+          <Link href="/orsayn/clients" className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center border border-[var(--cockpit-line)] text-secondary hover:text-primary"><ArrowLeft className="h-4 w-4" /></Link>
+          <div className="min-w-0">
+            <p className="cockpit-kicker">Fiche client</p>
+            <h1 className="mt-2 truncate text-3xl font-semibold tracking-tight text-primary sm:text-4xl">{row.label}</h1>
+            <p className="mt-2 flex items-center gap-2 text-sm text-secondary"><UserRound className="h-4 w-4" />{row.contactEmail ?? 'Aucun contact renseigné'} <ChevronRight className="h-3.5 w-3.5" /> {formatClientOffer(row)}</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`cockpit-tag ${sync.className}`}>{sync.label}</span>
+          <span className={`cockpit-tag ${einvoicing.className}`}>{einvoicing.label}</span>
+        </div>
+      </header>
+      <Panel className="p-5 sm:p-6">
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-5">
+          <Stat label="Forfait mensuel" value={row.monthlyFee === null ? 'À compléter' : formatMoney(row.monthlyFee, row.billingCurrency)} />
+          <Stat label="Coût IA du mois" value={formatMoney(row.monthCostEur)} hint={row.aiBillingMode === 'client_owned' ? 'Clé du client' : 'Pris en charge'} />
+          <Stat label="Marge brute" value={row.grossMarginEur === null ? 'À compléter' : formatMoney(row.grossMarginEur)} />
+          <Stat label="Taux de marge" value={row.marginPct === null ? 'À compléter' : `${row.marginPct.toFixed(1)} %`} />
+          <Stat label="Dernière activité" value={formatDate(row.lastSeenAt)} />
+        </div>
+      </Panel>
+      <LifecyclePanel row={row} />
+      <nav aria-label="Sections de la fiche" className="flex gap-1 overflow-x-auto border-b border-[var(--cockpit-line)]">
+        {visibleTabs.map(({ id, label, icon: Icon }) => (
+          <button key={id} type="button" aria-pressed={activeTab === id} onClick={() => setActiveTab(id)} className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition ${activeTab === id ? 'border-accent text-primary' : 'border-transparent text-secondary hover:text-primary'}`}>
+            <Icon className="h-4 w-4" />{label}
+          </button>
+        ))}
+      </nav>
+      {activeTab === 'offer' && <OfferTab row={row} />}
+      {activeTab === 'setup' && row.billingModel === 'setup' && initialSetupIntake && <SetupIntakeDossier row={row} initialResult={initialSetupIntake} />}
+      {activeTab === 'usage' && <UsageTab row={row} />}
+      {activeTab === 'modules' && <ModulesTab row={row} />}
+      {activeTab === 'history' && <HistoryTab row={row} />}
+      <DangerZone row={row} />
+    </main>
+  )
 }

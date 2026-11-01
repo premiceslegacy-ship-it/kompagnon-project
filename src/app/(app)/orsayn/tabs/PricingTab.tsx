@@ -138,6 +138,7 @@ export default function PricingTab({ featureUsageRows, modelUsageRows, pricingSi
                 </p>
                 <form action={recordOperatorCommercialAction} className="mt-3 grid gap-2">
                   <input type="hidden" name="sourceInstance" value={recommendation.sourceInstance} />
+                  <input type="hidden" name="organizationId" value={recommendation.organizationId ?? ''} />
                   <input type="hidden" name="clientLabel" value={recommendation.clientLabel} />
                   <input type="hidden" name="currentTier" value={recommendation.currentTier} />
                   <input type="hidden" name="suggestedTier" value={recommendation.suggestedTier} />
