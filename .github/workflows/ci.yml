@@ -108,9 +108,10 @@ jobs:
           psql "$DB_URL" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE atelier_operator_ci'
           operator_db_url="${DB_URL%/*}/atelier_operator_ci"
           for migration in supabase/operator-migrations/*.sql; do
-            psql "$operator_db_url" -v ON_ERROR_STOP=1 -f "$migration"
+            psql "$operator_db_url" --single-transaction -v ON_ERROR_STOP=1 -f "$migration"
           done
           psql "$operator_db_url" -v ON_ERROR_STOP=1 -f tests/isolation/operator-019-smoke.sql
           psql "$operator_db_url" -v ON_ERROR_STOP=1 -f tests/isolation/operator-020-refresh.sql
           psql "$operator_db_url" -v ON_ERROR_STOP=1 -f tests/isolation/operator-021-security.sql
           psql "$operator_db_url" -v ON_ERROR_STOP=1 -f tests/isolation/operator-022-setup.sql
+          psql "$operator_db_url" -v ON_ERROR_STOP=1 -f tests/isolation/operator-023-onboarding.sql

@@ -33,23 +33,6 @@ import {
   UNRESOLVED_ORGANIZATION_ID,
 } from '@/lib/operator/trial-lifecycle'
 
-/** Résout l'organization_id depuis operator_clients pour une instance, en prenant
- *  la ligne la plus récemment mise à jour. Fallback UNIQUEMENT si l'appelant n'a
- *  pas d'organizationId explicite (champ de formulaire) : sur une instance mutualisée
- *  à N organisations, ce fallback peut résoudre la mauvaise organisation. */
-async function resolveOrganizationId(
-  operator: ReturnType<typeof createOperatorAdminClient>,
-  sourceInstance: string,
-): Promise<string | null> {
-  const { data } = await operator
-    .from('operator_clients')
-    .select('organization_id')
-    .eq('source_instance', sourceInstance)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  return data?.organization_id ?? null
-}
 
 const SUPPORTED_BILLING_CURRENCIES = new Set(['EUR', 'USD'])
 const AI_BILLING_MODES = new Set(['orsayn_shared', 'client_owned'])
@@ -784,8 +767,10 @@ export async function recordOperatorCommercialAction(formData: FormData) {
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
 
-  const operator = createOperatorAdminClient()
-  const organizationId = await resolveOrganizationId(operator, sourceInstance)
+  const organizationId = String(formData.get('organizationId') ?? '').trim()
+  if (!organizationId || organizationId === UNRESOLVED_ORGANIZATION_ID) {
+    throw new Error('organization_id explicite requis pour cette opération opérateur.')
+  }
 
   const clientLabel = String(formData.get('clientLabel') ?? sourceInstance).trim() || sourceInstance
   const currentTier = parseTier(formData.get('currentTier'))
@@ -1027,13 +1012,9 @@ export async function upsertOperatorClientModules(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
-  const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
-
-  const operator = createOperatorAdminClient()
-  const orgId = requestedOrganizationId ?? await resolveOrganizationId(operator, sourceInstance)
-
-  if (!orgId) {
-    throw new Error('Client introuvable ou organization_id manquant')
+  const orgId = String(formData.get('organizationId') ?? '').trim()
+  if (!orgId || orgId === UNRESOLVED_ORGANIZATION_ID) {
+    throw new Error('organization_id explicite requis pour cette opération opérateur.')
   }
 
   const admin = createAdminClient()
@@ -1082,13 +1063,9 @@ export async function upsertOperatorClientVerticalPack(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
-  const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
-
-  const operator = createOperatorAdminClient()
-  const orgId = requestedOrganizationId ?? await resolveOrganizationId(operator, sourceInstance)
-
-  if (!orgId) {
-    throw new Error('Client introuvable ou organization_id manquant')
+  const orgId = String(formData.get('organizationId') ?? '').trim()
+  if (!orgId || orgId === UNRESOLVED_ORGANIZATION_ID) {
+    throw new Error('organization_id explicite requis pour cette opération opérateur.')
   }
 
   const rawPackId = String(formData.get('vertical_pack_id') ?? '').trim()
@@ -1129,13 +1106,9 @@ export async function upsertOperatorClientMetalPricing(formData: FormData) {
 
   const sourceInstance = String(formData.get('sourceInstance') ?? '').trim()
   if (!sourceInstance) throw new Error('source_instance requis')
-  const requestedOrganizationId = String(formData.get('organizationId') ?? '').trim() || undefined
-
-  const operator = createOperatorAdminClient()
-  const orgId = requestedOrganizationId ?? await resolveOrganizationId(operator, sourceInstance)
-
-  if (!orgId) {
-    throw new Error('Client introuvable ou organization_id manquant')
+  const orgId = String(formData.get('organizationId') ?? '').trim()
+  if (!orgId || orgId === UNRESOLVED_ORGANIZATION_ID) {
+    throw new Error('organization_id explicite requis pour cette opération opérateur.')
   }
 
   const hasMetalPricing = formData.get('hasMetalPricing') === 'on'
