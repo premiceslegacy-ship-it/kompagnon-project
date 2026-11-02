@@ -150,7 +150,7 @@ export default function AuthPage() {
 
             {/* ── LOGIN FORM ── */}
             {mode === 'login' && (
-              <form onSubmit={handleLogin} className="space-y-4">
+              <form method="post" onSubmit={handleLogin} className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex items-center">
                     <label className="text-[11px] font-semibold tracking-widest uppercase text-white/35">
@@ -203,7 +203,7 @@ export default function AuthPage() {
 
             {/* ── SIGNUP FORM ── */}
             {mode === 'signup' && (
-              <form onSubmit={handleSignup} className="space-y-4">
+              <form method="post" onSubmit={handleSignup} className="space-y-4">
                 <input type="hidden" name="intent" value={searchParams.get('intent') === 'trial' ? 'trial' : 'none'} />
                 <input type="hidden" name="preferred_tier" value={searchParams.get('preferred') === 'expert' ? 'expert' : 'pro'} />
                 <input type="hidden" name="signup_source" value={searchParams.get('source') ?? 'app'} />
