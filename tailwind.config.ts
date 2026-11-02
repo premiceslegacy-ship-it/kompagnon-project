@@ -27,6 +27,10 @@ const config = {
         danger: "rgb(var(--danger) / <alpha-value>)",
         warning: "rgb(var(--warning) / <alpha-value>)",
       },
+      screens: {
+        atelier: '900px',
+      },
+
       boxShadow: {
         'kompagnon': 'var(--elevation-shadow)',
         'glass': '0 8px 32px 0 rgba(0, 0, 0, 0.8)',
@@ -49,7 +53,7 @@ const config = {
         'pill': '9999px',   /* Pill buttons & badges */
       },
       fontFamily: {
-        display: ['var(--font-jakarta)', 'sans-serif'],
+        display: ['var(--font-geist)', 'sans-serif'],
         body: ['var(--font-inter)', 'sans-serif'],
       },
       fontVariantNumeric: {
