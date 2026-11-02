@@ -1,4 +1,6 @@
 import nextVitals from 'eslint-config-next/core-web-vitals'
+import noHardcodedColors from './eslint/rules/no-hardcoded-colors.mjs'
+
 
 
 const eslintConfig = [
@@ -19,6 +21,20 @@ const eslintConfig = [
       'react/no-unescaped-entities': 'off',
     },
   },
+  {
+    files: ['src/**/*.{js,jsx,ts,tsx}'],
+    plugins: {
+      atelier: {
+        rules: {
+          'no-hardcoded-colors': noHardcodedColors,
+        },
+      },
+    },
+    rules: {
+      'atelier/no-hardcoded-colors': 'error',
+    },
+  },
+
   {
     ignores: [
       '.next/**',

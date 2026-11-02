@@ -1,5 +1,129 @@
 @import "tailwindcss";
 @config "../../tailwind.config.ts";
+/* Valeurs issues du CSS Atelier rendu et des tokens eco ; le CSS prime sur les exports JSON. */
+@theme inline {
+  --color-fond: var(--at-fond);
+  --color-carte: var(--at-carte);
+  --color-carte-2: var(--at-carte-2);
+  --color-encre: var(--at-encre);
+  --color-encre-2: var(--at-encre-2);
+  --color-encre-3: var(--at-encre-3);
+  --color-trait: var(--at-trait);
+  --color-remplissage: var(--at-remplissage);
+  --color-sur-accent: var(--at-sur-accent);
+  --color-accent-texte: var(--at-accent-texte);
+  --color-hausse: var(--at-hausse);
+  --color-baisse: var(--at-baisse);
+  --color-alerte: var(--at-alerte);
+  --color-alerte-texte: var(--at-alerte-texte);
+  --color-s1: var(--at-s1);
+  --color-s2: var(--at-s2);
+  --color-s3: var(--at-s3);
+  --color-s4: var(--at-s4);
+  --color-s5: var(--at-s5);
+
+  --spacing-espace-2: var(--at-espace-2);
+  --spacing-espace-4: var(--at-espace-4);
+  --spacing-espace-8: var(--at-espace-8);
+  --spacing-espace-12: var(--at-espace-12);
+  --spacing-espace-16: var(--at-espace-16);
+  --spacing-espace-20: var(--at-espace-20);
+  --spacing-espace-24: var(--at-espace-24);
+  --spacing-espace-32: var(--at-espace-32);
+  --spacing-espace-48: var(--at-espace-48);
+
+  --text-titre-large: var(--at-taille-titre-large);
+  --text-titre-large--line-height: var(--at-interligne-titre-large);
+  --text-titre-large--letter-spacing: var(--at-approche-titre-large);
+  --text-titre-large--font-weight: var(--at-poids-titre-large);
+  --text-titre-1: var(--at-taille-titre-1);
+  --text-titre-1--line-height: var(--at-interligne-titre-1);
+  --text-titre-1--letter-spacing: var(--at-approche-titre-1);
+  --text-titre-1--font-weight: var(--at-poids-titre-1);
+  --text-titre-2: var(--at-taille-titre-2);
+  --text-titre-2--line-height: var(--at-interligne-titre-2);
+  --text-titre-2--letter-spacing: var(--at-approche-titre-2);
+  --text-titre-2--font-weight: var(--at-poids-titre-2);
+  --text-titre-3: var(--at-taille-titre-3);
+  --text-titre-3--line-height: var(--at-interligne-titre-3);
+  --text-titre-3--letter-spacing: var(--at-approche-titre-3);
+  --text-titre-3--font-weight: var(--at-poids-titre-3);
+  --text-titre-ligne: var(--at-taille-titre-ligne);
+  --text-titre-ligne--line-height: var(--at-interligne-titre-ligne);
+  --text-titre-ligne--letter-spacing: var(--at-approche-titre-ligne);
+  --text-titre-ligne--font-weight: var(--at-poids-titre-ligne);
+  --text-corps: var(--at-taille-corps);
+  --text-corps--line-height: var(--at-interligne-corps);
+  --text-corps--letter-spacing: var(--at-approche-corps);
+  --text-corps--font-weight: var(--at-poids-corps);
+  --text-accroche: var(--at-taille-accroche);
+  --text-accroche--line-height: var(--at-interligne-accroche);
+  --text-accroche--letter-spacing: var(--at-approche-accroche);
+  --text-accroche--font-weight: var(--at-poids-accroche);
+  --text-sous-titre: var(--at-taille-sous-titre);
+  --text-sous-titre--line-height: var(--at-interligne-sous-titre);
+  --text-sous-titre--letter-spacing: var(--at-approche-sous-titre);
+  --text-sous-titre--font-weight: var(--at-poids-sous-titre);
+  --text-note: var(--at-taille-note);
+  --text-note--line-height: var(--at-interligne-note);
+  --text-note--letter-spacing: var(--at-approche-note);
+  --text-note--font-weight: var(--at-poids-note);
+  --text-legende-1: var(--at-taille-legende-1);
+  --text-legende-1--line-height: var(--at-interligne-legende-1);
+  --text-legende-1--letter-spacing: var(--at-approche-legende-1);
+  --text-legende-1--font-weight: var(--at-poids-legende-1);
+  --text-legende-2: var(--at-taille-legende-2);
+  --text-legende-2--line-height: var(--at-interligne-legende-2);
+  --text-legende-2--letter-spacing: var(--at-approche-legende-2);
+  --text-legende-2--font-weight: var(--at-poids-legende-2);
+  --text-chiffre-vedette: var(--at-taille-chiffre-vedette);
+  --text-chiffre-vedette--line-height: var(--at-interligne-chiffre-vedette);
+  --text-chiffre-vedette--letter-spacing: var(--at-approche-chiffre-vedette);
+  --text-chiffre-vedette--font-weight: var(--at-poids-chiffre-vedette);
+  --text-prix: var(--at-taille-prix);
+  --text-prix--line-height: var(--at-interligne-prix);
+  --text-prix--letter-spacing: var(--at-approche-prix);
+  --text-prix--font-weight: var(--at-poids-prix);
+
+  --font-weight-atelier-normal: var(--at-poids-normal);
+  --font-weight-atelier-medium: var(--at-poids-medium);
+  --font-weight-atelier-bold: var(--at-poids-bold);
+
+  --radius-controle-petit: var(--at-rayon-controle-petit);
+  --radius-champ: var(--at-rayon-champ);
+  --radius-bouton-arrondi: var(--at-rayon-bouton-arrondi);
+  --radius-vignette: var(--at-rayon-vignette);
+  --radius-liste-tuile: var(--at-rayon-liste-tuile);
+  --radius-carte: var(--at-rayon-carte);
+  --radius-groupe-liste: var(--at-rayon-groupe-liste);
+  --radius-feuille: var(--at-rayon-feuille);
+  --radius-dock: var(--at-rayon-dock);
+  --radius-menu: var(--at-rayon-menu);
+  --radius-alerte: var(--at-rayon-alerte);
+  --radius-bouton-grand: var(--at-rayon-bouton-grand);
+  --radius-recherche: var(--at-rayon-recherche);
+  --radius-segment: var(--at-rayon-segment);
+  --radius-segment-actif: var(--at-rayon-segment-actif);
+  --radius-widget: var(--at-rayon-widget);
+  --radius-carte-web: var(--at-rayon-carte-web);
+  --radius-carte-web-petite: var(--at-rayon-carte-web-petite);
+  --radius-pilule: var(--at-rayon-pilule);
+
+  --transition-duration-appui: var(--at-duree-appui);
+  --transition-duration-apparition: var(--at-duree-apparition);
+  --transition-duration-deplacement: var(--at-duree-deplacement);
+  --transition-duration-couleur: var(--at-duree-couleur);
+  --transition-duration-ressort: var(--at-duree-ressort);
+  --transition-duration-sortie: var(--at-duree-sortie);
+  --transition-duration-reduit: var(--at-duree-reduit);
+  --ease-appui: var(--at-courbe-appui);
+  --ease-couleur: var(--at-courbe-couleur);
+  --ease-deplacement: var(--at-courbe-deplacement);
+  --ease-entree: var(--at-courbe-ressort);
+  --ease-sortie: var(--at-courbe-sortie);
+  --ease-reussite: var(--at-courbe-ressort-vif);
+}
+
 
 @layer base {
   :root {
@@ -131,6 +255,227 @@
     --cockpit-paper: 28 28 28;
     --cockpit-line: #ffffff24;
   }
+  /* Les nouveaux rôles restent absents du cockpit ; les anciens canaux y restent inchangés. */
+  html[data-atelier-surface="app"] {
+    --font-jakarta: var(--font-geist);
+    --at-fond-rgb: 242 242 247;
+    --at-carte-rgb: 253 253 254;
+    --at-carte-2-rgb: 242 242 247;
+    --at-encre-rgb: 26 26 26;
+    --at-encre-2-rgb: 110 110 111;
+    --at-encre-3-rgb: 146 146 146;
+    --at-trait-rgb: 216 216 217;
+    --at-remplissage-rgb: 230 230 231;
+    --at-accent-rgb: 255 159 28;
+    --at-sur-accent-rgb: 13 13 13;
+    --at-accent-texte-rgb: 176 93 0;
+    --at-hausse-rgb: 52 199 89;
+    --at-baisse-rgb: 255 59 48;
+    --at-alerte-rgb: var(--at-accent-rgb);
+    --at-alerte-texte-rgb: var(--at-accent-texte-rgb);
+    --at-s1-rgb: var(--at-accent-rgb);
+    --at-s2-rgb: 91 141 239;
+    --at-s3-rgb: 47 168 78;
+    --at-s4-rgb: 175 82 222;
+    --at-s5-rgb: 142 142 147;
+
+    --at-fond: rgb(var(--at-fond-rgb));
+    --at-carte: rgb(var(--at-carte-rgb));
+    --at-carte-2: rgb(var(--at-carte-2-rgb));
+    --at-encre: rgb(var(--at-encre-rgb));
+    --at-encre-2: rgb(var(--at-encre-2-rgb));
+    --at-encre-3: rgb(var(--at-encre-3-rgb));
+    --at-trait: rgb(var(--at-trait-rgb));
+    --at-remplissage: rgb(var(--at-remplissage-rgb));
+    --at-accent: rgb(var(--at-accent-rgb));
+    --at-sur-accent: rgb(var(--at-sur-accent-rgb));
+    --at-accent-texte: rgb(var(--at-accent-texte-rgb));
+    --at-hausse: rgb(var(--at-hausse-rgb));
+    --at-baisse: rgb(var(--at-baisse-rgb));
+    --at-alerte: rgb(var(--at-alerte-rgb));
+    --at-alerte-texte: rgb(var(--at-alerte-texte-rgb));
+    --at-s1: rgb(var(--at-s1-rgb));
+    --at-s2: rgb(var(--at-s2-rgb));
+    --at-s3: rgb(var(--at-s3-rgb));
+    --at-s4: rgb(var(--at-s4-rgb));
+    --at-s5: rgb(var(--at-s5-rgb));
+
+    --at-espace-2: 2px;
+    --at-espace-4: 4px;
+    --at-espace-8: 8px;
+    --at-espace-12: 12px;
+    --at-espace-16: 16px;
+    --at-espace-20: 20px;
+    --at-espace-24: 24px;
+    --at-espace-32: 32px;
+    --at-espace-48: 48px;
+
+    --at-taille-titre-large: 34px;
+    --at-interligne-titre-large: 41px;
+    --at-approche-titre-large: 0.4px;
+    --at-poids-titre-large: 400;
+    --at-taille-titre-1: 28px;
+    --at-interligne-titre-1: 34px;
+    --at-approche-titre-1: 0.38px;
+    --at-poids-titre-1: 400;
+    --at-taille-titre-2: 22px;
+    --at-interligne-titre-2: 28px;
+    --at-approche-titre-2: -0.26px;
+    --at-poids-titre-2: 400;
+    --at-taille-titre-3: 20px;
+    --at-interligne-titre-3: 25px;
+    --at-approche-titre-3: -0.45px;
+    --at-poids-titre-3: 400;
+    --at-taille-titre-ligne: 17px;
+    --at-interligne-titre-ligne: 22px;
+    --at-approche-titre-ligne: -0.43px;
+    --at-poids-titre-ligne: 590;
+    --at-taille-corps: 17px;
+    --at-interligne-corps: 22px;
+    --at-approche-corps: -0.43px;
+    --at-poids-corps: 400;
+    --at-taille-accroche: 16px;
+    --at-interligne-accroche: 21px;
+    --at-approche-accroche: -0.31px;
+    --at-poids-accroche: 400;
+    --at-taille-sous-titre: 15px;
+    --at-interligne-sous-titre: 20px;
+    --at-approche-sous-titre: -0.23px;
+    --at-poids-sous-titre: 400;
+    --at-taille-note: 13px;
+    --at-interligne-note: 18px;
+    --at-approche-note: -0.08px;
+    --at-poids-note: 400;
+    --at-taille-legende-1: 12px;
+    --at-interligne-legende-1: 16px;
+    --at-approche-legende-1: 0px;
+    --at-poids-legende-1: 400;
+    --at-taille-legende-2: 11px;
+    --at-interligne-legende-2: 13px;
+    --at-approche-legende-2: 0.06px;
+    --at-poids-legende-2: 400;
+    --at-taille-chiffre-vedette: 44px;
+    --at-interligne-chiffre-vedette: 48px;
+    --at-approche-chiffre-vedette: -0.03em;
+    --at-poids-chiffre-vedette: 700;
+    --at-famille-chiffre-vedette: var(--font-geist);
+    --at-taille-prix: 40px;
+    --at-interligne-prix: 44px;
+    --at-approche-prix: -0.034em;
+    --at-poids-prix: 700;
+    --at-famille-prix: var(--font-geist);
+    --at-poids-normal: 400;
+    --at-poids-medium: 590;
+    --at-poids-bold: 700;
+
+    --at-rayon-controle-petit: 6px;
+    --at-rayon-champ: 10px;
+    --at-rayon-bouton-arrondi: 12px;
+    --at-rayon-vignette: 10px;
+    --at-rayon-liste-tuile: 7.5px;
+    --at-rayon-carte: 24px;
+    --at-rayon-groupe-liste: 20px;
+    --at-rayon-feuille: 26px;
+    --at-rayon-dock: 26px;
+    --at-rayon-menu: 16px;
+    --at-rayon-alerte: 16px;
+    --at-rayon-bouton-grand: 14px;
+    --at-rayon-recherche: 11px;
+    --at-rayon-segment: 9px;
+    --at-rayon-segment-actif: 7px;
+    --at-rayon-widget: 28px;
+    --at-rayon-carte-web: 28px;
+    --at-rayon-carte-web-petite: 18px;
+    --at-rayon-pilule: 999px;
+
+    --at-duree-appui: 0.1s;
+    --at-duree-apparition: 0.24s;
+    --at-duree-deplacement: 0.3s;
+    --at-duree-couleur: 0.32s;
+    --at-duree-ressort: 0.5s;
+    --at-duree-sortie: 0.2s;
+    --at-duree-reduit: 0.12s;
+    --at-courbe-appui: linear;
+    --at-courbe-couleur: cubic-bezier(0.4, 0, 0.6, 1);
+    --at-courbe-deplacement: cubic-bezier(0, 0, 0.5, 1);
+    --at-courbe-ressort: cubic-bezier(0.22, 1, 0.36, 1);
+    --at-courbe-ressort-vif: cubic-bezier(0.34, 1.32, 0.64, 1);
+    --at-courbe-sortie: cubic-bezier(0.4, 0, 1, 1);
+
+    --bg-base: var(--at-fond-rgb);
+    --bg-surface: var(--at-carte-rgb);
+    --bg-interactive: var(--at-carte-2-rgb);
+    --text-primary: var(--at-encre-rgb);
+    --text-secondary: var(--at-encre-2-rgb);
+    --hard-edge: var(--at-trait);
+    --accent-primary: var(--at-accent-rgb);
+    --warning: var(--at-alerte-texte-rgb);
+  }
+
+  html[data-atelier-surface="app"].dark {
+    --at-fond-rgb: 0 0 0;
+    --at-carte-rgb: 27 27 27;
+    --at-carte-2-rgb: 44 44 44;
+    --at-encre-rgb: 242 242 247;
+    --at-encre-2-rgb: 177 177 181;
+    --at-encre-3-rgb: 103 103 105;
+    --at-trait-rgb: 74 74 76;
+    --at-remplissage-rgb: 61 61 62;
+    --at-accent-rgb: 255 159 28;
+    --at-sur-accent-rgb: 13 13 13;
+    --at-accent-texte-rgb: 255 179 71;
+    --at-hausse-rgb: 48 209 88;
+    --at-baisse-rgb: 255 69 58;
+    --at-s1-rgb: var(--at-accent-rgb);
+    --at-s2-rgb: 91 141 239;
+    --at-s3-rgb: 52 199 89;
+    --at-s4-rgb: 175 82 222;
+    --at-s5-rgb: 142 142 147;
+  }
+
+  html[data-atelier-surface="app"] .font-body {
+    font-family: var(--font-inter), sans-serif;
+  }
+
+  html[data-atelier-surface="app"] .font-display {
+    font-family: var(--font-geist), sans-serif;
+  }
+
+  html[data-atelier-surface="app"] :is(h1, h2, h3, h4, h5, h6, .font-tabular, .tabular-nums) {
+    font-family: var(--font-geist), sans-serif;
+  }
+
+  html[data-atelier-surface="app"] .text-chiffre-vedette {
+    font-family: var(--at-famille-chiffre-vedette);
+  }
+
+  html[data-atelier-surface="app"] .text-prix {
+    font-family: var(--at-famille-prix);
+  }
+
+  html[data-atelier-surface="cockpit"] {
+    --font-inter: var(--font-geist);
+    --font-jakarta: var(--font-geist);
+  }
+
+  html[data-atelier-surface="cockpit"] .font-body,
+  html[data-atelier-surface="cockpit"] .font-display {
+    font-family: var(--font-geist), sans-serif;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html[data-atelier-surface="app"] {
+      --at-duree-apparition: 0.12s;
+      --at-duree-deplacement: 0.01s;
+      --at-duree-couleur: 0.12s;
+      --at-duree-ressort: 0.01s;
+      --at-duree-sortie: 0.12s;
+      --at-courbe-couleur: linear;
+      --at-courbe-sortie: linear;
+    }
+  }
+
+
 }
 
 @layer base {
