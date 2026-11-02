@@ -27,6 +27,12 @@ L’ancienne suite `einvoicing-settings.spec.ts` a été remplacée : son asser
 
 L’ancien script public contenait aussi des replis d’identifiants de démonstration en clair. Le nouveau test n’en utilise aucun, mais leur suppression du fichier ne les retire pas de l’historique public. Leur validité n’a pas été testée en production ; s’ils sont encore actifs, ils doivent être révoqués ou changés côté authentification. Aucun essai de connexion en production ni aucune rotation n’a été effectué dans ce lot.
 
+## Scan historique des clés
+
+La CI a signalé trois occurrences historiques de `NEXT_PUBLIC_POSTHOG_KEY`, dans les anciens templates expert, pro et setup-only du commit `00eb3ca`. Leur type `phc_` a été vérifié en mémoire sans afficher ni utiliser les valeurs. Il s’agit de tokens d’ingestion navigateur, pas de clés personnelles ou de clés secrètes donnant accès à l’API privée ; la [documentation PostHog](https://posthog.com/docs/api) distingue explicitement ces usages.
+
+`.gitleaksignore` répertorie seulement les trois empreintes exactes commit/chemin/règle/ligne de ces occurrences publiques, conformément à l’exception déjà revue pour l’ancien template unique. Aucun dossier, préfixe de clé ou ensemble de variables `NEXT_PUBLIC_*` n’est exempté. Le scan de tout l’historique reste actif : une autre occurrence de credential continue de devoir être qualifiée, et le nom `NEXT_PUBLIC` ne suffit jamais à rendre un secret public.
+
 ## Environnement obligatoire
 
 Exécuter depuis un worktree dédié sans `.env`, `.env.local` ou variante chargée par Next. Le lanceur refuse ces fichiers ; il ne faut pas supprimer ceux du dossier de travail habituel pour contourner cette protection.
