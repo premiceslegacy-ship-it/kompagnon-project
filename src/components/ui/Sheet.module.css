@@ -1,0 +1,207 @@
+.overlay {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  background: var(--at-voile);
+}
+.overlay[data-state='open'] {
+  animation: overlay-in var(--at-duree-apparition) var(--at-courbe-ressort) both;
+}
+
+.overlay[data-state='closed'] {
+  animation: overlay-out var(--at-duree-sortie) var(--at-courbe-sortie) both;
+}
+
+.panel {
+  --sheet-drag-y: 0px;
+  position: fixed;
+  z-index: 61;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 92dvh;
+  overflow: hidden;
+  border-radius: var(--at-rayon-feuille) var(--at-rayon-feuille) 0 0;
+  background: var(--at-fond);
+  color: var(--at-encre);
+  transform: translate3d(0, var(--sheet-drag-y), 0);
+  transition: transform var(--at-duree-ressort) var(--at-courbe-surface);
+}
+
+.panel[data-dragging='true'] {
+  transition: none;
+}
+
+.panel[data-state='open'] {
+  animation: sheet-mobile-in var(--at-duree-ressort) var(--at-courbe-surface) both;
+}
+
+.panel[data-state='closed'] {
+  animation: sheet-mobile-out var(--at-duree-sortie) var(--at-courbe-sortie) both;
+}
+
+.header {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr);
+  align-items: center;
+  gap: 4px;
+  min-height: 68px;
+  padding: 18px 12px 8px;
+  touch-action: none;
+  user-select: none;
+}
+
+.handle {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 36px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--at-encre-3);
+  transform: translateX(-50%);
+}
+
+.headerAction {
+  position: relative;
+  z-index: 1;
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: 4px;
+  white-space: nowrap;
+}
+
+.header > .headerAction:first-of-type {
+  justify-self: start;
+}
+
+.header > .headerAction:last-child {
+  justify-self: end;
+}
+
+.heading {
+  min-width: 0;
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  color: var(--at-encre);
+  font-family: var(--font-inter);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 22px;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.description {
+  display: block;
+  margin-top: 4px;
+  color: var(--at-encre-2);
+  font-family: var(--font-inter);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  text-wrap: pretty;
+}
+
+.body {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 4px 16px calc(24px + env(safe-area-inset-bottom));
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (min-width: 900px) {
+
+  .panel {
+    top: 50%;
+    right: auto;
+    bottom: auto;
+    left: 50%;
+    width: min(560px, calc(100vw - 40px));
+    max-height: 86dvh;
+    border-radius: var(--at-rayon-feuille);
+    transform: translate3d(-50%, calc(-50% + var(--sheet-drag-y)), 0);
+  }
+
+  .panel[data-state='open'] {
+    animation: sheet-desktop-in var(--at-duree-ressort) var(--at-courbe-surface) both,
+      fade-in var(--at-duree-surface-fondu) ease both;
+  }
+
+  .panel[data-state='closed'] {
+    animation-name: sheet-desktop-out;
+  }
+
+  .handle {
+    display: none;
+  }
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes sheet-mobile-in {
+  from { transform: translate3d(0, 100%, 0); }
+  to { transform: translate3d(0, var(--sheet-drag-y), 0); }
+}
+
+@keyframes sheet-mobile-out {
+  from { transform: translate3d(0, var(--sheet-drag-y), 0); }
+  to { transform: translate3d(0, 100%, 0); }
+}
+
+@keyframes sheet-desktop-in {
+  from { transform: translate3d(-50%, calc(-50% + 40px), 0) scale(0.96); }
+  to { transform: translate3d(-50%, calc(-50% + var(--sheet-drag-y)), 0) scale(1); }
+}
+
+@keyframes sheet-desktop-out {
+  from { transform: translate3d(-50%, calc(-50% + var(--sheet-drag-y)), 0) scale(1); opacity: 1; }
+  to { transform: translate3d(-50%, calc(-50% + var(--sheet-drag-y)), 0) scale(0.98); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay[data-state='open'],
+  .overlay[data-state='closed'],
+  .panel[data-state='open'],
+  .panel[data-state='closed'] {
+    animation-duration: var(--at-duree-reduit);
+    animation-timing-function: linear;
+  }
+
+  .panel[data-state='open'] {
+    animation-name: fade-in;
+  }
+
+  .panel[data-state='closed'] {
+    animation-name: fade-out;
+  }
+
+  .panel {
+    transition-duration: var(--at-duree-reduit);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
