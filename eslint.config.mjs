@@ -1,6 +1,16 @@
 import nextVitals from 'eslint-config-next/core-web-vitals'
-import noHardcodedColors from './eslint/rules/no-hardcoded-colors.mjs'
+import noHardcodedColors, { noHardcodedColorsCssProcessor } from './eslint/rules/no-hardcoded-colors.mjs'
 
+
+
+const atelierPlugin = {
+  rules: {
+    'no-hardcoded-colors': noHardcodedColors,
+  },
+  processors: {
+    css: noHardcodedColorsCssProcessor,
+  },
+}
 
 
 const eslintConfig = [
@@ -24,15 +34,19 @@ const eslintConfig = [
   {
     files: ['src/**/*.{js,jsx,ts,tsx}'],
     plugins: {
-      atelier: {
-        rules: {
-          'no-hardcoded-colors': noHardcodedColors,
-        },
-      },
+      atelier: atelierPlugin,
     },
     rules: {
       'atelier/no-hardcoded-colors': 'error',
     },
+  },
+
+  {
+    files: ['src/**/*.module.css'],
+    plugins: {
+      atelier: atelierPlugin,
+    },
+    processor: 'atelier/css',
   },
 
   {
