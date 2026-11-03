@@ -1,0 +1,153 @@
+.overlay {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  background: var(--at-voile-alerte);
+}
+.overlay[data-state='open'] {
+  animation: alert-overlay-in var(--at-duree-alerte-fondu) ease both;
+}
+
+.overlay[data-state='closed'] {
+  animation: alert-overlay-out var(--at-duree-alerte-fondu) ease both;
+}
+
+.content {
+  position: fixed;
+  z-index: 91;
+  top: 50%;
+  left: 50%;
+  width: min(300px, calc(100vw - 40px));
+  overflow: hidden;
+  border-radius: var(--at-rayon-alerte);
+  background: color-mix(in srgb, var(--at-carte-2) 92%, transparent);
+  backdrop-filter: blur(30px) saturate(1.8);
+  -webkit-backdrop-filter: blur(30px) saturate(1.8);
+  color: var(--at-encre);
+  box-shadow: var(--at-ombre-alerte);
+  transform: translate(-50%, -50%);
+}
+
+.content[data-state='open'] {
+  animation: alert-dialog-in var(--at-duree-apparition) var(--at-courbe-ressort-court) both,
+    alert-dialog-fade var(--at-duree-alerte-fondu) ease both;
+}
+
+.content[data-state='closed'] {
+  animation: alert-dialog-out var(--at-duree-apparition) var(--at-courbe-ressort-court) both,
+    alert-dialog-fade-out var(--at-duree-alerte-fondu) ease both;
+}
+
+.message {
+  padding: 20px 18px 16px;
+  text-align: center;
+}
+
+.title {
+  display: block;
+  margin: 0;
+  color: var(--at-encre);
+  font-family: var(--font-inter);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 22px;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+}
+
+.description {
+  margin: 4px 0 0;
+  color: var(--at-encre-aide);
+  font-family: var(--font-inter);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  text-wrap: pretty;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  min-height: 47px;
+  border-top: 0.5px solid var(--at-trait);
+  background: transparent;
+}
+
+.actions > :first-child,
+.actions > :last-child {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 0;
+  outline-offset: -2px;
+}
+
+.actions > :first-child {
+  font-weight: 400;
+}
+
+.actions > :last-child {
+  border-left: 0.5px solid var(--at-trait);
+  color: var(--at-danger-texte);
+  font-weight: 600;
+}
+
+.actions > button:is(:hover, :active):not(:disabled):not([aria-disabled='true']) {
+  transform: none;
+  filter: none;
+}
+
+.actions > button:active:not(:disabled):not([aria-disabled='true']) {
+  background: var(--at-remplissage);
+}
+
+.actions > :last-child:active:not(:disabled):not([aria-disabled='true']) {
+  color: var(--at-danger-texte-remplissage);
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlay[data-state='open'],
+  .overlay[data-state='closed'],
+  .content[data-state='open'],
+  .content[data-state='closed'] {
+    animation-duration: var(--at-duree-reduit);
+    animation-timing-function: linear;
+  }
+
+  .overlay[data-state='open'],
+  .content[data-state='open'] {
+    animation-name: alert-dialog-fade;
+  }
+
+  .overlay[data-state='closed'],
+  .content[data-state='closed'] {
+    animation-name: alert-dialog-fade-out;
+  }
+}
+
+@keyframes alert-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes alert-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes alert-dialog-in {
+  from { transform: translate(-50%, -50%) scale(1.12); }
+  to { transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes alert-dialog-out {
+  from { transform: translate(-50%, -50%) scale(1); }
+  to { transform: translate(-50%, -50%) scale(1.12); }
+}
+
+
+@keyframes alert-dialog-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes alert-dialog-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
