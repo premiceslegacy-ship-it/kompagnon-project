@@ -159,10 +159,12 @@ async function openSignatureAsRecipient(page: Page, link: string): Promise<void>
     localStorage.clear()
     sessionStorage.clear()
   })
+  await page.setViewportSize({ width: 390, height: 844 })
   await navigateToSignatureLink(page, link)
 }
 
 async function signQuoteAsRecipient(page: Page, tenant: QualificationTenant, link: string): Promise<void> {
+  const ownerViewport = page.viewportSize()
   await openSignatureAsRecipient(page, link)
   await expect(page.getByText('Montant TTC', { exact: true })).toBeVisible()
   await expect(page.getByText(tenant.clientName, { exact: true })).toBeVisible()
@@ -171,6 +173,10 @@ async function signQuoteAsRecipient(page: Page, tenant: QualificationTenant, lin
   const canvas = page.locator('canvas').first()
   await expect(canvas).toBeVisible()
   await canvas.scrollIntoViewIfNeeded()
+  await expect.poll(async () => canvas.evaluate((element: HTMLCanvasElement) => {
+    const rect = element.getBoundingClientRect()
+    return Math.abs((rect.width / rect.height) / (element.width / element.height) - 1)
+  })).toBeLessThan(0.01)
   const bounds = await canvas.boundingBox()
   if (!bounds) throw new Error('The local signature pad is unavailable.')
   const left = bounds.x + bounds.width * 0.2
@@ -185,6 +191,7 @@ async function signQuoteAsRecipient(page: Page, tenant: QualificationTenant, lin
   await page.getByRole('button', { name: /J'accepte ce devis/ }).click()
   await expect(page.getByRole('heading', { name: /devis accepté/i })).toBeVisible()
   await expect(page.getByText(euroPattern(EXPECTED_TOTAL_TTC))).toBeVisible()
+  if (ownerViewport) await page.setViewportSize(ownerViewport)
 }
 
 async function createAndAcceptQuote(page: Page, tenant: QualificationTenant, title: string) {

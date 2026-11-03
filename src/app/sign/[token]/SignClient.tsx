@@ -2,7 +2,8 @@
 
 import React, { useState, useTransition } from 'react'
 import { acceptQuoteByToken } from '@/lib/data/mutations/sign'
-import SignaturePad from '@/components/SignaturePad'
+import { SignaturePad } from '@/components/ui/SignaturePad'
+import { useViewportWidth } from '@/lib/hooks/use-viewport-width'
 import { CheckCircle2, Loader2, ShieldCheck, FileText, AlertTriangle, ExternalLink, Download } from 'lucide-react'
 
 const fmt = (n: number, currency = 'EUR') =>
@@ -36,6 +37,7 @@ export default function SignClient({
   const [signatoryName, setSignatoryName] = useState(initialSignatoryName ?? '')
   const [signatoryRole, setSignatoryRole] = useState('')
   const [signatureImage, setSignatureImage] = useState<string | null>(null)
+  const viewportWidth = useViewportWidth()
 
   const fmtDate = (iso: string) =>
     new Date(iso).toLocaleDateString('fr-FR', {
@@ -210,7 +212,8 @@ export default function SignClient({
               <SignaturePad
                 value={signatureImage}
                 onChange={setSignatureImage}
-                width={Math.max(280, Math.min(480, typeof window !== 'undefined' ? window.innerWidth - 80 : 480))}
+                surface="paper"
+                width={viewportWidth === null ? 480 : Math.max(280, Math.min(480, viewportWidth - 80))}
                 height={170}
               />
             </div>
