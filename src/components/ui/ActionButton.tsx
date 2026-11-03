@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import styles from './Button.module.css'
 
 export interface ActionButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -63,7 +64,7 @@ export const ActionButton = React.forwardRef<HTMLButtonElement, ActionButtonProp
       <button
         ref={ref}
         type={type ?? 'button'}
-        className={cn('relative', className)}
+        className={cn(styles.hitArea, className)}
         disabled={disabled || isLoading}
         aria-busy={isLoading || undefined}
         onClick={onClick ? handleClick : undefined}
@@ -71,7 +72,7 @@ export const ActionButton = React.forwardRef<HTMLButtonElement, ActionButtonProp
       >
         {isLoading && (
           <Loader2
-            className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 animate-spin"
+            className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 motion-safe:animate-spin"
             aria-hidden="true"
           />
         )}
