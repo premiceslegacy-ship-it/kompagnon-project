@@ -1,31 +1,50 @@
 'use client'
 
+import { useId } from 'react'
+import styles from './Switch.module.css'
+
 type SwitchProps = {
   checked: boolean
   onChange: (next: boolean) => void
   disabled?: boolean
   label: string
+  id?: string
+  loading?: boolean
+  error?: string
 }
 
-/** Interrupteur style iOS, accessible (role=switch), pour les réglages on/off binaires. */
-export function Switch({ checked, onChange, disabled, label }: SwitchProps) {
+/** Interrupteur style Atelier, accessible (role=switch), pour les réglages binaires. */
+export function Switch({ checked, onChange, disabled = false, label, id, loading = false, error }: SwitchProps) {
+  const errorId = useId()
+  const isDisabled = disabled || loading
+
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-        checked ? 'bg-emerald-500' : 'bg-black/15 dark:bg-white/15'
-      }`}
-    >
-      <span
-        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
-          checked ? 'translate-x-6' : 'translate-x-1'
-        }`}
-      />
-    </button>
+    <span className={styles.root}>
+      <button
+        type="button"
+        id={id}
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        aria-busy={loading || undefined}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        disabled={isDisabled}
+        onClick={() => onChange(!checked)}
+        className={styles.switch}
+      >
+        <span aria-hidden="true" className={styles.thumb} />
+      </button>
+      {loading && (
+        <span className={styles.visuallyHidden} role="status">
+          Chargement
+        </span>
+      )}
+      {error && (
+        <span id={errorId} className={styles.error} role="alert">
+          {error}
+        </span>
+      )}
+    </span>
   )
 }
