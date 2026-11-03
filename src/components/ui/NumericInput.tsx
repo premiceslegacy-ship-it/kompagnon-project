@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useRef, useState } from 'react'
+import styles from './NumericInput.module.css'
 
 interface NumericInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange' | 'min' | 'max'> {
   value: number | null | undefined
@@ -13,10 +14,10 @@ interface NumericInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElem
 }
 
 /**
- * Champ numérique à saisie libre — remplace type="number" pour éliminer
+ * Champ numérique à saisie libre : remplace type="number" pour éliminer
  * les flèches du navigateur et permettre la frappe directe (virgule ou point).
- * La valeur numérique est émise au blur ; pendant la frappe, le texte brut
- * est conservé pour ne pas gêner la saisie intermédiaire ("1.", "0,5", etc.).
+ * La valeur numérique est émise à chaque saisie valide après bornage/arrondi ;
+ * le blur normalise l'affichage sans gêner les saisies intermédiaires.
  */
 export function NumericInput({
   value,
@@ -102,7 +103,7 @@ export function NumericInput({
       onChange={handleChange}
       onBlur={handleBlur}
       onFocus={handleFocus}
-      className={className}
+      className={className ?? styles.input}
       {...rest}
     />
   )

@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
+import styles from './UnitSelect.module.css'
 import { getUnitGroups, isBuiltInUnit, normalizeUnit } from '@/lib/units'
 
 type UnitSelectProps = {
@@ -29,10 +30,10 @@ export function UnitSelect({
   const unitGroups = getUnitGroups(allowedUnits)
 
   useEffect(() => {
-    if (showFreeInput && freeInputRef.current) {
+    if (!disabled && showFreeInput && freeInputRef.current) {
       freeInputRef.current.focus()
     }
-  }, [showFreeInput])
+  }, [showFreeInput, disabled])
 
   // Sync if parent changes value to a built-in
   useEffect(() => {
@@ -75,8 +76,8 @@ export function UnitSelect({
     }
   }
 
-  const baseSelectCls = `bg-transparent border border-white/10 rounded-lg text-primary text-sm outline-none focus:border-accent transition-colors cursor-pointer ${compact ? 'px-1 py-1 text-xs' : 'px-2 py-1.5'} ${className}`
-  const baseFreeInputCls = `bg-transparent border border-accent rounded-lg text-primary text-sm outline-none px-2 py-1.5 text-center ${compact ? 'text-xs w-16' : 'w-24'} ${className}`
+  const selectClassName = [styles.control, styles.select, compact ? styles.compact : undefined, className].filter(Boolean).join(' ')
+  const freeInputClassName = [styles.control, styles.freeInput, compact ? styles.compact : undefined, className].filter(Boolean).join(' ')
 
   if (showFreeInput) {
     return (
@@ -89,7 +90,7 @@ export function UnitSelect({
         onKeyDown={handleFreeInputKeyDown}
         placeholder="ex: m³/h"
         disabled={disabled}
-        className={baseFreeInputCls}
+        className={freeInputClassName}
       />
     )
   }
@@ -99,7 +100,7 @@ export function UnitSelect({
       value={selectValue}
       onChange={handleSelectChange}
       disabled={disabled}
-      className={baseSelectCls}
+      className={selectClassName}
     >
       {unitGroups.map(group => (
         <optgroup key={group.label} label={group.label}>

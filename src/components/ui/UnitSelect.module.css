@@ -1,0 +1,55 @@
+/* Shared defaults stay below caller utilities. */
+@layer properties, theme, base, components, utilities;
+
+@layer components {
+  .control {
+    box-sizing: border-box;
+    padding: 6px 8px;
+    border: 1px solid var(--at-trait);
+    border-radius: 8px;
+    outline: none;
+    background: transparent;
+    color: var(--at-encre);
+    font: 400 14px/20px var(--font-inter);
+  }
+
+  .select {
+    cursor: pointer;
+  }
+
+  .select.compact {
+    padding: 4px;
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .freeInput {
+    width: 6rem;
+    border-color: var(--at-accent);
+    text-align: center;
+  }
+
+  .freeInput.compact {
+    width: 4rem;
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .control:focus {
+    border-color: var(--at-accent);
+  }
+
+  .control:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--at-accent-texte);
+  }
+
+  .control:disabled {
+    color: var(--at-encre-3);
+    cursor: not-allowed;
+  }
+
+  .freeInput::placeholder {
+    color: var(--at-encre-aide);
+    opacity: 1;
+  }
+}

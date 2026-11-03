@@ -1,0 +1,178 @@
+.field {
+  min-width: 0;
+  width: 100%;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 0 16px;
+}
+
+.label {
+  flex: 0 0 104px;
+  width: 104px;
+  min-width: 0;
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-inter);
+  letter-spacing: -0.022em;
+  overflow-wrap: anywhere;
+}
+
+.control {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  height: 50px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-inter);
+  letter-spacing: -0.022em;
+  text-align: right;
+}
+
+.control::placeholder,
+.textarea::placeholder {
+  color: var(--at-encre-aide);
+  opacity: 1;
+}
+
+.control:focus-visible {
+  outline: none;
+}
+
+.selectControl {
+  cursor: pointer;
+}
+
+.numberControl {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+  height: 50px;
+}
+
+.numberControl :global(input) {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: var(--at-encre);
+  font-family: var(--font-geist);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.numberControl :global(input:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+.row:focus-within {
+  box-shadow: inset 0 0 0 2px var(--at-accent-texte);
+}
+
+.stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  min-height: 0;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+.stackedLabel {
+  flex: none;
+  width: auto;
+  max-width: none;
+  color: var(--at-encre-2);
+  font: 500 13px/18px var(--font-inter);
+  letter-spacing: -0.006em;
+}
+
+.stacked .control {
+  flex: none;
+  height: 44px;
+  text-align: left;
+}
+
+.stacked .numberControl {
+  height: 44px;
+}
+
+.stacked .numberControl :global(input) {
+  text-align: left;
+}
+
+.field[data-disabled] .label {
+  color: var(--at-encre-3);
+}
+
+.control:disabled,
+.numberControl :global(input:disabled),
+.textarea:disabled {
+  color: var(--at-encre-3);
+  cursor: not-allowed;
+}
+
+.textareaRow {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+}
+
+.textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 150px;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 20px;
+  outline: none;
+  resize: vertical;
+  background: var(--at-carte);
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-inter);
+  letter-spacing: -0.022em;
+  text-align: left;
+}
+
+.textarea:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--at-accent-texte);
+}
+
+.message {
+  margin: 6px 16px 0;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+  letter-spacing: -0.006em;
+}
+
+.error {
+  color: color-mix(in srgb, var(--at-baisse) 78%, var(--at-encre));
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.014em;
+}
+
+.textareaRow + .message {
+  margin-right: 0;
+  margin-left: 0;
+}
