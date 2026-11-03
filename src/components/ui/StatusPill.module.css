@@ -1,0 +1,34 @@
+.pill {
+  display: inline-flex;
+  box-sizing: border-box;
+  flex: none;
+  align-items: center;
+  height: 22px;
+  padding-inline: 9px;
+  border-radius: var(--at-rayon-pilule);
+  background: color-mix(in srgb, var(--status-color) 16%, transparent);
+  color: color-mix(in srgb, var(--status-color) var(--at-sens-texte-badge), var(--at-encre));
+  font-family: var(--font-inter);
+  font-size: var(--at-taille-legende-1);
+  font-weight: 600;
+  line-height: var(--at-interligne-legende-1);
+  letter-spacing: var(--at-approche-legende-1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pill[data-status='wait'] {
+  --status-color: var(--at-accent);
+}
+
+.pill[data-status='success'] {
+  --status-color: var(--at-hausse);
+}
+
+.pill[data-status='danger'] {
+  --status-color: var(--at-baisse);
+}
+
+.pill[data-status='neutral'] {
+  --status-color: var(--at-s5);
+}
