@@ -1,33 +1,37 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import { Eraser, Pen } from 'lucide-react'
+import { Button } from '@/components/ui/Button'
+import { DOCUMENT_INK, DOCUMENT_PAPER } from '@/lib/document/colors'
+import styles from './SignaturePad.module.css'
 
-type Props = {
+export type SignaturePadProps = {
   value: string | null
   onChange: (dataUrl: string | null) => void
   width?: number
   height?: number
+  surface?: 'app' | 'paper'
   hint?: string
 }
 
 const MAX_SIGNATURE_PNG_WIDTH = 2000
 const MAX_SIGNATURE_PNG_HEIGHT = 1000
 
-export default function SignaturePad({ value, onChange, width = 480, height = 180, hint }: Props) {
+export function SignaturePad({ value, onChange, width = 480, height = 180, surface = 'app', hint }: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const drawingRef = useRef(false)
   const lastPointRef = useRef<{ x: number; y: number } | null>(null)
   const [hasDrawing, setHasDrawing] = useState<boolean>(Boolean(value))
+  const hintId = useId()
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    if (!canvas || typeof CanvasRenderingContext2D === 'undefined') return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Keep the exported PNG inside the server's dimension limits even on high-DPI screens.
-    // Lower the backing resolution, rather than resizing the finished image, so no strokes are clipped.
+    // Cap DPR directly so exported signatures stay inside the server's dimension limits.
     const ratio = Math.min(
       window.devicePixelRatio || 1,
       MAX_SIGNATURE_PNG_WIDTH / width,
@@ -37,22 +41,21 @@ export default function SignaturePad({ value, onChange, width = 480, height = 18
     const pixelHeight = Math.max(1, Math.min(MAX_SIGNATURE_PNG_HEIGHT, Math.round(height * ratio)))
     canvas.width = pixelWidth
     canvas.height = pixelHeight
-    canvas.style.width = `${width}px`
-    canvas.style.height = `${height}px`
     ctx.setTransform(pixelWidth / width, 0, 0, pixelHeight / height, 0, 0)
     ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
     ctx.lineWidth = 2
-    ctx.strokeStyle = '#0a0a0a'
-    ctx.fillStyle = '#ffffff'
+    ctx.strokeStyle = DOCUMENT_INK
+    ctx.fillStyle = DOCUMENT_PAPER
     ctx.fillRect(0, 0, width, height)
 
     if (value) {
-      const img = new Image()
-      img.onload = () => {
-        ctx.drawImage(img, 0, 0, width, height)
+      const image = new Image()
+      image.onload = () => {
+        ctx.drawImage(image, 0, 0, width, height)
         setHasDrawing(true)
       }
-      img.src = value
+      image.src = value
     }
   }, [width, height, value])
 
@@ -105,45 +108,53 @@ export default function SignaturePad({ value, onChange, width = 480, height = 18
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
-    ctx.fillStyle = '#ffffff'
+    ctx.fillStyle = DOCUMENT_PAPER
     ctx.fillRect(0, 0, width, height)
     setHasDrawing(false)
     onChange(null)
   }
 
+  const frameStyle = {
+    '--signature-width': `${width}px`,
+    '--signature-ratio': `${width} / ${height}`,
+  } as React.CSSProperties
+
   return (
-    <div className="space-y-2">
-      <div className="relative inline-block max-w-full">
+    <div className={surface === 'paper' ? `${styles.container} ${styles.paper}` : styles.container}>
+      <div className={styles.frame} style={frameStyle}>
         <canvas
           ref={canvasRef}
+          width={width}
+          height={height}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={finishStroke}
           onPointerLeave={finishStroke}
           onPointerCancel={finishStroke}
-          className="rounded-lg border border-gray-200 bg-white touch-none cursor-crosshair block max-w-full"
-          style={{ touchAction: 'none' }}
+          className={styles.canvas}
+          aria-label="Zone de signature"
+          aria-describedby={hint ? hintId : undefined}
         />
         {!hasDrawing && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="flex items-center gap-2 text-gray-400 text-sm">
-              <Pen className="w-4 h-4" />
-              <span>Signez ici</span>
-            </div>
+          <div className={styles.placeholder} aria-hidden="true">
+            <Pen />
+            <span>Signez ici</span>
           </div>
         )}
       </div>
-      <div className="flex items-center gap-2">
-        <button
+      <div className={styles.controls}>
+        <Button
           type="button"
+          variant="text"
+          size="sm"
+          className={styles.clearButton}
           onClick={handleClear}
           disabled={!hasDrawing}
-          className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <Eraser className="w-3.5 h-3.5" />
+          <Eraser aria-hidden="true" />
           Effacer
-        </button>
-        {hint !== undefined && <p className="text-xs text-gray-500">{hint}</p>}
+        </Button>
+        {hint !== undefined && <p id={hintId} className={styles.hint}>{hint}</p>}
       </div>
     </div>
   )

@@ -2,7 +2,8 @@
 
 import React, { useState, useTransition } from 'react'
 import { CheckCircle2, FileText, Loader2, ShieldCheck, AlertTriangle, ExternalLink, MessageSquare, X, ChevronDown, Download } from 'lucide-react'
-import SignaturePad from '@/components/SignaturePad'
+import { SignaturePad } from '@/components/ui/SignaturePad'
+import { useViewportWidth } from '@/lib/hooks/use-viewport-width'
 import { submitClientSignatureWithQuote, sendQuoteDeclineMessage } from '@/lib/data/mutations/contract-sign'
 
 type LinkedQuote = {
@@ -68,6 +69,7 @@ export default function ContractSignClient({
   const [signatoryName, setSignatoryName] = useState(counterpartyName ?? '')
   const [signatoryRole, setSignatoryRole] = useState('')
   const [signatureImage, setSignatureImage] = useState<string | null>(null)
+  const viewportWidth = useViewportWidth()
   const [confirmed, setConfirmed] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -349,7 +351,8 @@ export default function ContractSignClient({
                 <SignaturePad
                   value={signatureImage}
                   onChange={setSignatureImage}
-                  width={Math.min(560, typeof window !== 'undefined' ? window.innerWidth - 80 : 480)}
+                  surface="paper"
+                  width={viewportWidth === null ? 480 : Math.min(560, viewportWidth - 80)}
                   height={180}
                 />
               </div>

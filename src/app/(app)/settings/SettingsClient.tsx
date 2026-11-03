@@ -22,7 +22,7 @@ import { updateProfile, updatePassword } from '@/lib/data/mutations/profile';
 import { updatePublicFormSettings } from '@/lib/data/mutations/quote-requests';
 import { createOrganizationExport } from '@/lib/data/mutations/organization-exports'
 import { requestAccountDeletion, cancelAccountDeletion } from '@/lib/data/mutations/account-deletion';
-import SignaturePad from '@/components/SignaturePad'
+import { SignaturePad } from '@/components/ui/SignaturePad'
 import ExportComptableModal from '@/components/ExportComptableModal';
 import { upsertEmailTemplate, resetEmailTemplate } from '@/lib/data/mutations/email-templates';
 import type { EmailTemplate, EmailTemplateSlug } from '@/lib/data/queries/emailTemplates';
