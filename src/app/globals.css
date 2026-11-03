@@ -165,6 +165,10 @@
     --elevation-2: rgba(0, 0, 0, 0.07);
     --elevation-3: rgba(0, 0, 0, 0.10);
     --glass-blur: 0px;
+
+    /* Chargements legacy partagés avec le cockpit : conserver les valeurs Tailwind v4. */
+    --skeleton-block: oklch(92.8% 0.006 264.531);
+    --skeleton-line: oklch(87.2% 0.01 258.338);
     --accent-glow: none;
 
     /* Header */
@@ -254,6 +258,8 @@
     --cockpit-blue: 0 12 225;
     --cockpit-paper: 28 28 28;
     --cockpit-line: #ffffff24;
+    --skeleton-block: color-mix(in oklab, #fff 5%, transparent);
+    --skeleton-line: color-mix(in oklab, #fff 3%, transparent);
   }
   /* Les nouveaux rôles restent absents du cockpit ; les anciens canaux y restent inchangés. */
   html[data-atelier-surface="app"] {
@@ -299,6 +305,31 @@
     --at-s3: rgb(var(--at-s3-rgb));
     --at-s4: rgb(var(--at-s4-rgb));
     --at-s5: rgb(var(--at-s5-rgb));
+
+    --at-sens-texte: 55%;
+    --at-accent-texte-fort: color-mix(in srgb, var(--at-accent-texte) 80%, var(--at-encre));
+    --at-danger-texte: color-mix(in srgb, var(--at-baisse) 70%, var(--at-encre));
+    --at-danger-texte-remplissage: var(--at-danger-texte);
+    --at-encre-aide: color-mix(in srgb, var(--at-encre-2) 85%, var(--at-encre));
+    --at-sens-texte-badge: 50%;
+    --at-voile: rgb(0 0 0 / 0.32);
+    --at-voile-alerte: rgb(0 0 0 / 0.4);
+    --at-pouce: #fff;
+    --at-ombre-pouce: 0 2px 4px rgb(0 0 0 / 0.25);
+    --at-ombre-segment: 0 1px 3px rgb(0 0 0 / 0.12);
+    --at-ombre-dock: 0 0 0 0.5px var(--at-trait), 0 8px 30px -10px rgb(0 0 0 / 0.25);
+    --at-ombre-menu: 0 0 0 0.5px var(--at-trait), 0 18px 44px -12px rgb(0 0 0 / 0.3);
+    --at-ombre-hud: 0 0 0 0.5px var(--at-trait), 0 12px 36px -10px rgb(0 0 0 / 0.35);
+    --at-ombre-alerte: 0 24px 60px -12px rgb(0 0 0 / 0.4);
+    --at-document-fond: #fff;
+    --at-document-encre: #0a0a0a;
+    --at-document-encre-2: #6b6b70;
+    --at-document-trait: var(--at-document-encre-2);
+    --at-aura-1: #ff9f0a;
+    --at-aura-2: #ff6482;
+    --at-aura-3: #bf5af2;
+    --at-aura-4: #5e9bff;
+    --at-aura-5: #ffb340;
 
     --at-espace-2: 2px;
     --at-espace-4: 4px;
@@ -378,7 +409,7 @@
     --at-rayon-feuille: 26px;
     --at-rayon-dock: 26px;
     --at-rayon-menu: 16px;
-    --at-rayon-alerte: 16px;
+    --at-rayon-alerte: 18px;
     --at-rayon-bouton-grand: 14px;
     --at-rayon-recherche: 11px;
     --at-rayon-segment: 9px;
@@ -393,7 +424,15 @@
     --at-duree-deplacement: 0.3s;
     --at-duree-couleur: 0.32s;
     --at-duree-ressort: 0.5s;
+    --at-duree-surface-fondu: 0.25s;
     --at-duree-sortie: 0.2s;
+    --at-duree-rotation: 0.7s;
+    --at-duree-menu: 0.35s;
+    --at-duree-menu-fondu: 0.15s;
+    --at-duree-alerte-fondu: 0.2s;
+    --at-courbe-ressort-court: cubic-bezier(0.32, 1.2, 0.5, 1);
+    --at-courbe-surface: cubic-bezier(0.32, 0.72, 0, 1);
+    --at-courbe-coche: cubic-bezier(0.32, 1.5, 0.5, 1);
     --at-duree-reduit: 0.12s;
     --at-courbe-appui: linear;
     --at-courbe-couleur: cubic-bezier(0.4, 0, 0.6, 1);
@@ -426,6 +465,11 @@
     --at-accent-texte-rgb: 255 179 71;
     --at-hausse-rgb: 48 209 88;
     --at-baisse-rgb: 255 69 58;
+    --at-accent-texte-fort: color-mix(in srgb, var(--at-accent-texte) 65%, var(--at-encre));
+    --at-danger-texte: color-mix(in srgb, var(--at-baisse) 78%, var(--at-encre));
+    --at-danger-texte-remplissage: color-mix(in srgb, var(--at-baisse) 55%, var(--at-encre));
+    --at-encre-aide: var(--at-encre-2);
+    --at-sens-texte-badge: 55%;
     --at-s1-rgb: var(--at-accent-rgb);
     --at-s2-rgb: 91 141 239;
     --at-s3-rgb: 52 199 89;
