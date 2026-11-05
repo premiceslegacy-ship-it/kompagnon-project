@@ -546,7 +546,7 @@ export default function MonEspaceDashboardClient({
               key={goal.id}
               title={goalLabel(goal)}
               description={`${goal.percent} % atteint`}
-              trailing={<span className="text-sous-titre text-encre tabular-nums">{goal.current}{goal.unit ?? ''} / {goal.target}{goal.unit ?? ''}</span>}
+              trailing={<span className="whitespace-nowrap text-sous-titre text-encre tabular-nums">{goal.current}{goal.unit ?? ''} / {goal.target}{goal.unit ?? ''}</span>}
             />
           ))}
         </ListGroup>
@@ -585,7 +585,7 @@ export default function MonEspaceDashboardClient({
                 key={p.id}
                 title={p.chantier_title}
                 description={p.description ?? undefined}
-                trailing={<span className="text-sous-titre text-encre tabular-nums">{fmtHours(p.hours)}</span>}
+                trailing={<span className="whitespace-nowrap text-sous-titre text-encre tabular-nums">{fmtHours(p.hours)}</span>}
               />
             ))}
           </ListGroup>
