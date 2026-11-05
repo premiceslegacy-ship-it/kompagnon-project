@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useTransition, useRef, useCallback, useEffect } from 'react'
+import React, { useState, useTransition, useRef, useCallback } from 'react'
 import { useFormState, useFormStatus } from 'react-dom'
 import { type Client } from '@/lib/data/queries/clients'
 import {
@@ -12,7 +12,7 @@ import { formatCurrency, ActionMenu } from '@/components/shared'
 import { getClientDisplayName } from '@/lib/client'
 import { todayParis } from '@/lib/utils'
 import Link from 'next/link'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   Search, Upload, Download, Users, Euro, Filter,
   FileText, Eye, Edit2, X, Loader2, CheckCircle2, AlertCircle, Building2, Trash2,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { ActionButton } from '@/components/ui/ActionButton'
 import EmailComposerModal from './EmailComposerModal'
+import { useCreationIntent } from '@/lib/hooks/use-creation-intent'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -738,21 +739,13 @@ function EmptyState({ filtered }: { filtered: boolean }) {
 export default function ClientsClient({ initialClients, canCreate, canEdit, canDelete, canImport, canEmail, orgEmail, orgName, orgSignature, hasAI }: Props) {
   const router = useRouter()
   const pathname = usePathname()
-  const searchParams = useSearchParams()
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [sortBy, setSortBy] = useState('created_at')
   const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false)
 
-  // "Nouveau Client" du dashboard (?new=1) ouvre directement le modal,
-  // sans forcer l'artisan à re-cliquer une fois sur la liste.
-  useEffect(() => {
-    if (searchParams.get('new') === '1') {
-      setIsNewClientModalOpen(true)
-      router.replace(pathname, { scroll: false })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const openNewClient = useCallback(() => setIsNewClientModalOpen(true), [])
+  useCreationIntent(canCreate, openNewClient)
   const [isNewLeadModalOpen, setIsNewLeadModalOpen] = useState(false)
   const [isImportCSVModalOpen, setIsImportCSVModalOpen] = useState(false)
   const [importIsLeads, setImportIsLeads] = useState(false)
