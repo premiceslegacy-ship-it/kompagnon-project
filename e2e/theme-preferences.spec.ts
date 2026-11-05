@@ -28,6 +28,7 @@ test('Préférences de thème Atelier : respecter le mouvement réduit lors du c
     return durations
   })
 
+  await page.getByRole('button', { name: `${qualification.companyName}, ${qualification.companyName}`, exact: true }).click()
   await page.getByRole('button', { name: 'Passer en mode clair', exact: true }).click()
   await page.waitForFunction(() => !document.documentElement.classList.contains('dark'))
   await page.evaluate(() => new Promise<void>(resolve => {
