@@ -46,7 +46,7 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
         <X className="h-4 w-4" />
       </button>
 
-      <div className="flex flex-col gap-5 pr-8 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-5 pr-8 2xl:flex-row 2xl:items-center 2xl:justify-between">
         <div className="flex min-w-0 items-start gap-4">
           <span className="status-pill status-pill-accent flex h-11 w-11 shrink-0 items-center justify-center px-0 py-0">
             <Settings2 className="h-5 w-5" />
@@ -68,7 +68,7 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
           </div>
         </div>
 
-        <div className="shrink-0 lg:w-[390px]">
+        <div className="shrink-0 2xl:w-[390px]">
           <div className="mb-2 flex items-center justify-between text-xs font-semibold text-secondary">
             <span>Configuration</span>
             <span>{progress}%</span>
@@ -76,7 +76,7 @@ export default function SetupChecklist({ readiness }: { readiness: DashboardSetu
           <div className="h-1.5 overflow-hidden rounded-full bg-[rgb(var(--bg-interactive))] dark:bg-white/10">
             <div className="h-full rounded-full bg-accent" style={{ width: `${progress}%` }} />
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2 sm:flex-nowrap">
+          <div className="mt-4 flex flex-wrap items-center gap-2 xl:flex-nowrap">
             <Link href="/settings?tab=entreprise" className="btn-secondary inline-flex min-h-10 flex-1 items-center justify-center gap-2 whitespace-nowrap px-4 text-sm">
               Compléter mes infos
               <ArrowRight className="h-4 w-4" />
