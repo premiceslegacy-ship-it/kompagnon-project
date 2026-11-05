@@ -9,7 +9,7 @@ import type { CollaborateurDashboard, MyTask } from '@/lib/data/queries/dashboar
 import type { MemberGoalWithProgress } from '@/lib/data/queries/member-goals'
 import { updateMyAssignedTaskStatus } from '@/lib/data/mutations/chantiers'
 import { StatusPill } from '@/components/ui/StatusPill'
-import styles from './Today.module.css'
+import styles from '@/components/layout/Screen.module.css'
 
 const NB = ' '
 const fmtTime = (t: string | null) => (t ? t.slice(0, 5) : '')

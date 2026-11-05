@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { getWeeklySummary } from '@/lib/data/mutations/ai-summary'
 import { cleanMarkdown } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
-import styles from './Today.module.css'
+import styles from '@/components/layout/Screen.module.css'
 
 /** Résumé de la semaine par Sarah, à la demande. */
 export default function MaSemaineWidget() {

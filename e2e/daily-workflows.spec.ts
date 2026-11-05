@@ -231,8 +231,8 @@ async function createIssuedInvoiceFromAcceptedQuote(page: Page, tenant: Qualific
   await page.getByRole('button', { name: 'Envoyer', exact: true }).click()
 
   await page.waitForURL(/\/finances(?:$|\?)/, { timeout: 30_000 })
-  await page.getByRole('button', { name: 'Factures', exact: true }).click()
-  const invoiceRow = page.getByRole('row').filter({ hasText: quoteTitle })
+  await page.getByRole('radio', { name: 'Factures', exact: true }).check()
+  const invoiceRow = page.getByRole('main').getByRole('listitem').filter({ hasText: quoteTitle })
   await expect(invoiceRow).toContainText('Envoyée')
 }
 

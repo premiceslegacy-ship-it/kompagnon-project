@@ -1,0 +1,330 @@
+/* @atelier-migrated */
+/* Liste Documents : compléments propres à l'écran (maquette documents.js). */
+.actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.segmentRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.segmentRow > :first-child {
+  min-width: min(100%, 300px);
+}
+
+.summary {
+  min-width: 0;
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 400 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+}
+
+.searchRow {
+  margin-top: 12px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.chip,
+.monthChip {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--at-rayon-pilule);
+  background: var(--at-remplissage);
+  color: var(--at-encre);
+  font: 500 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chip[data-on='true'] {
+  background: color-mix(in srgb, var(--at-accent) 18%, var(--at-carte));
+}
+
+.monthChip {
+  gap: 0;
+  padding: 0;
+}
+
+.chipIcon,
+.chipLabel {
+  display: inline-grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chipLabel {
+  padding: 0 4px;
+}
+
+.chipIcon:disabled {
+  color: var(--at-encre-3);
+  cursor: default;
+}
+
+.chipLabel:disabled {
+  cursor: default;
+}
+
+.chip:focus-visible,
+.chipIcon:focus-visible,
+.chipLabel:focus-visible,
+.destructiveRow button:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.lateNote {
+  color: var(--at-danger-texte);
+  font: 600 13px/18px var(--font-inter);
+}
+
+.late {
+  color: var(--at-danger-texte);
+}
+
+.emptyBlock {
+  margin-top: 24px;
+}
+
+.emptyAction {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.pagerLabel {
+  color: var(--at-encre-2);
+  font: 500 15px/20px var(--font-inter);
+  font-variant-numeric: tabular-nums;
+}
+
+.navigating {
+  position: fixed;
+  z-index: 200;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: color-mix(in srgb, var(--at-fond) 80%, transparent);
+  color: var(--at-encre-2);
+  font: 400 15px/20px var(--font-inter);
+  backdrop-filter: blur(8px);
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  border: 2px solid var(--at-accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: documents-spin 0.8s linear infinite;
+}
+
+@keyframes documents-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Feuilles */
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.primary {
+  width: 100%;
+}
+
+.value {
+  color: var(--at-encre-2);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.tick {
+  color: var(--at-accent-texte);
+  font-weight: 700;
+}
+
+.destructiveRow {
+  list-style: none;
+}
+
+.destructiveRow button {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 16px;
+  border: 0;
+  background: none;
+  color: var(--at-danger-texte);
+  font: 400 17px/22px var(--font-inter);
+  letter-spacing: -0.022em;
+  text-align: center;
+  cursor: pointer;
+}
+
+.total {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.total small {
+  color: var(--at-encre-2);
+  font: 500 13px/18px var(--font-inter);
+}
+
+.total b {
+  color: var(--at-encre);
+  font-family: var(--font-geist);
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 41px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fields {
+  overflow: hidden;
+  border-radius: var(--at-rayon-groupe-liste);
+  background: var(--at-carte);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 6px 16px;
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-inter);
+}
+
+.field + .field {
+  border-top: 0.5px solid var(--at-trait);
+}
+
+.field > span {
+  flex: none;
+}
+
+.field input,
+.field select {
+  min-width: 0;
+  max-width: 60%;
+  min-height: 32px;
+  border: 0;
+  background: none;
+  color: var(--at-encre-2);
+  font: inherit;
+  text-align: right;
+}
+
+.field input:focus-visible,
+.field select:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+/* Sur téléphone : bouton rond « + », segment pleine largeur, mois abrégé. */
+.createRound {
+  display: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--at-accent);
+  color: var(--at-sur-accent);
+  cursor: pointer;
+}
+
+.createRound:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.shortMonth {
+  display: none;
+}
+
+@media (max-width: 599px) {
+  .createWide {
+    display: none;
+  }
+
+  .createRound {
+    display: inline-grid;
+  }
+
+  .segmentRow > :first-child {
+    width: 100%;
+  }
+
+  .longMonth {
+    display: none;
+  }
+
+  .shortMonth {
+    display: inline;
+  }
+}
+
+@media (min-width: 600px) {
+  .segmentRow > :first-child {
+    flex: 0 1 360px;
+    min-width: 0;
+  }
+}
