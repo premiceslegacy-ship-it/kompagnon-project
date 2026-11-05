@@ -1,0 +1,76 @@
+/* @atelier-migrated */
+.shortcuts {
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 1088px;
+  margin: 0 auto;
+  padding: 12px 24px 0;
+  color: var(--at-encre-2);
+}
+
+.shortcut {
+  box-sizing: border-box;
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 9px;
+  color: inherit;
+  font-family: var(--font-inter);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.shortcut:hover,
+.shortcut.active {
+  background: var(--at-remplissage);
+  color: var(--at-encre);
+}
+
+.shortcut:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 1px;
+}
+
+.shortcut > svg {
+  flex: none;
+}
+
+.label {
+  white-space: nowrap;
+}
+
+.badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding-inline: 4px;
+  border-radius: var(--at-rayon-pilule);
+  background: color-mix(in srgb, var(--at-baisse) 16%, var(--at-carte));
+  color: var(--at-danger-texte);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 599px) {
+  .shortcuts {
+    padding-inline: 12px;
+  }
+}
