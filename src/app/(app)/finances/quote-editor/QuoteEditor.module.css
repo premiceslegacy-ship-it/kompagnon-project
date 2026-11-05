@@ -433,3 +433,42 @@
   outline-offset: 2px;
   border-radius: 6px;
 }
+
+.highlight {
+  box-shadow: inset 0 0 0 2px var(--at-accent);
+}
+
+.nextDate {
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+  text-align: right;
+}
+
+/* Bouton « + » rond sur téléphone, bouton plein ailleurs. */
+.createRound {
+  display: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--at-accent);
+  color: var(--at-sur-accent);
+  cursor: pointer;
+}
+
+.createRound:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+@media (max-width: 599px) {
+  .createWide {
+    display: none;
+  }
+
+  .createRound {
+    display: inline-grid;
+  }
+}

@@ -39,6 +39,8 @@ export function ListGroup({ title, headingLevel = 2, description, action, childr
 }
 
 type ListRowBaseProps = {
+  /** Ancre de la ligne (défilement vers une ligne précise). */
+  id?: string
   title: string
   description?: string
   leading?: ReactNode
@@ -77,7 +79,7 @@ export type ListRowProps = ListRowLinkProps | ListRowButtonProps | ListRowStatic
 
 /** A row whose primary action is a native link or button; side content stays a sibling. */
 export function ListRow(props: ListRowProps) {
-  const { title, description, leading, trailing, className } = props
+  const { id, title, description, leading, trailing, className } = props
   const itemClassName = className ? `${styles.item} ${className}` : styles.item
   const copy = (
     <span className={styles.copy}>
@@ -109,7 +111,7 @@ export function ListRow(props: ListRowProps) {
   }
 
   return (
-    <li className={itemClassName}>
+    <li id={id} className={itemClassName}>
       {leading !== undefined && <div className={styles.leading}>{leading}</div>}
       {action}
       {trailing !== undefined && <div className={styles.trailing}>{trailing}</div>}
