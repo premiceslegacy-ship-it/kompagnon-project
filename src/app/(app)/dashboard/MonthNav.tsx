@@ -1,9 +1,11 @@
 'use client'
+// @atelier-migrated
 
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import styles from './Today.module.css'
 
-const MONTHS_FR = ['Janv.', 'Févr.', 'Mars', 'Avr.', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.']
+const MONTHS_FR = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre']
 
 function offsetMonth(ym: string, delta: number): string {
   const [y, m] = ym.split('-').map(Number)
@@ -23,38 +25,26 @@ export default function MonthNav({ currentMonth }: { currentMonth: string }) {
   const isCurrentMonth = currentMonth === currentYM
 
   const navigate = (delta: number) => {
-    const next = offsetMonth(currentMonth, delta)
-    router.push(`/dashboard?mois=${next}`)
+    router.push(`/dashboard?mois=${offsetMonth(currentMonth, delta)}`)
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={() => navigate(-1)}
-        className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-base transition-colors text-secondary hover:text-primary"
-        title="Mois précédent"
-      >
-        <ChevronLeft className="w-4 h-4" />
+    <div className={styles.monthNav}>
+      <button type="button" className={styles.round} onClick={() => navigate(-1)} aria-label="Mois précédent">
+        <ChevronLeft size={18} aria-hidden="true" />
       </button>
-      <span className="text-sm font-semibold text-primary min-w-[90px] text-center tabular-nums">
+      <span className={styles.monthLabel} aria-live="polite">
         {formatLabel(currentMonth)}
+        {!isCurrentMonth ? (
+          <>
+            {' · '}
+            <button type="button" className={styles.link} onClick={() => router.push('/dashboard')}>Ce mois-ci</button>
+          </>
+        ) : null}
       </span>
-      <button
-        onClick={() => navigate(1)}
-        disabled={isCurrentMonth}
-        className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-base transition-colors text-secondary hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
-        title="Mois suivant"
-      >
-        <ChevronRight className="w-4 h-4" />
+      <button type="button" className={styles.round} onClick={() => navigate(1)} disabled={isCurrentMonth} aria-label="Mois suivant">
+        <ChevronRight size={18} aria-hidden="true" />
       </button>
-      {!isCurrentMonth && (
-        <button
-          onClick={() => router.push('/dashboard')}
-          className="ml-1 text-xs font-semibold text-accent hover:underline"
-        >
-          Aujourd&apos;hui
-        </button>
-      )}
     </div>
   )
 }

@@ -1,132 +1,95 @@
-import React from 'react';
-import Link from 'next/link';
+// @atelier-migrated
 import { getCurrentUserProfile } from '@/lib/data/queries/user';
 import type { DashboardStats } from '@/lib/data/queries/dashboard';
 import { getDashboardStatsCached, getPrevMonthKPIsCached, getDashboardSetupReadinessCached } from '@/lib/data/queries/dashboard-cached';
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients';
-import {
-  FileText, UserPlus,
-  Wallet, Receipt, TrendingUp, HardHat,
-  TrendingDown,
-} from 'lucide-react';
 import { getChantierStats } from '@/lib/data/queries/chantiers';
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules';
 import { getCurrentMembershipContext, getUserPermissions } from '@/lib/data/queries/membership';
 import { getCollaborateurDashboard, getTodayPlanningDigest } from '@/lib/data/queries/dashboard-collaborateur';
 import { getMemberGoalsWithProgress } from '@/lib/data/queries/member-goals';
+import { StatusPill } from '@/components/ui/StatusPill';
 import UrgentTasksClient from './UrgentTasksClient';
 import MonthNav from './MonthNav';
 import MaSemaineWidget from './MaSemaineWidget';
 import CollaborateurDashboard from './CollaborateurDashboard';
 import PlanningDigestWidget from './PlanningDigestWidget';
 import SetupChecklist from './SetupChecklist';
+import TodayHeader from './TodayHeader';
+import styles from './Today.module.css';
 
-
-const cardCls = "rounded-3xl p-6 card transition-all duration-300 ease-out";
+const NB = '\u00a0'
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n)
 
+function todayKicker(): string {
+  const label = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Paris' }).format(new Date())
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+/** Évolution par rapport au mois précédent, sans inventer de chute quand le mois commence. */
 function Delta({ current, prev }: { current: number; prev: number }) {
   if (prev === 0 && current === 0) return null
-  if (prev === 0) return <span className="text-xs font-semibold text-accent-green">Nouveau</span>
-  // current === 0 avec un mois précédent non nul n'est pas une "chute de 100%"
-  // mais l'absence de données sur la période en cours (ex: début de mois).
-  if (current === 0) return <span className="text-xs text-secondary">Pas encore de donnée ce mois-ci</span>
+  if (prev === 0) return <span className={styles.up}>Nouveau ce mois-ci</span>
+  if (current === 0) return <>Pas encore de donnée ce mois-ci</>
   const pct = Math.round(((current - prev) / prev) * 100)
-  if (pct === 0) return <span className="text-xs text-secondary">= mois préc.</span>
-  const up = pct > 0
+  if (pct === 0) return <>Comme le mois précédent</>
   return (
-    <span className={`text-xs font-semibold flex items-center gap-0.5 ${up ? 'text-accent-green' : 'text-red-500'}`}>
-      {up ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-      {up ? '+' : ''}{pct}% vs mois préc.
-    </span>
+    <>
+      <span className={pct > 0 ? styles.up : styles.down}>{pct > 0 ? '+' : '−'}{Math.abs(pct)}{NB}%</span> vs mois précédent
+    </>
   )
 }
 
-const KPIRow = ({
-  stats, prevStats, chantiersEnCours,
+function deltaPill(current: number, prev: number) {
+  if (prev === 0 || current === 0) return null
+  const pct = Math.round(((current - prev) / prev) * 100)
+  if (pct === 0) return null
+  return <StatusPill status={pct > 0 ? 'success' : 'danger'}>{pct > 0 ? '+' : '−'}{Math.abs(pct)}{NB}%</StatusPill>
+}
+
+function Figures({
+  stats, prevStats, chantiersEnCours, month,
 }: {
   stats: DashboardStats
   prevStats: Pick<DashboardStats, 'caMois' | 'encaisseMois'>
   chantiersEnCours: number
-}) => (
-  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-    <div className={`${cardCls} flex flex-col justify-between`}>
-      <div className="flex justify-between items-start">
-        <p className="text-sm font-semibold text-secondary tracking-wider uppercase">Facturé TTC</p>
-        <Wallet className="w-4 h-4 text-accent" />
+  month: string
+}) {
+  return (
+    <>
+      <MonthNav currentMonth={month} />
+      <section className={`${styles.card} ${styles.hero}`} aria-labelledby="today-cash">
+        <div className={styles.label}>
+          <span id="today-cash">Encaissé TTC</span>
+          {deltaPill(stats.encaisseMois, prevStats.encaisseMois)}
+        </div>
+        <div className={styles.big}>{fmt(stats.encaisseMois)}</div>
+        {stats.encaisseMois === 0 ? <div className={styles.sub}><Delta current={stats.encaisseMois} prev={prevStats.encaisseMois} /></div> : null}
+      </section>
+      <div className={styles.duo}>
+        <section className={styles.card} aria-labelledby="today-billed">
+          <div className={styles.label}><span id="today-billed">Facturé TTC</span></div>
+          <div className={styles.big}>{fmt(stats.caMois)}</div>
+          <div className={styles.sub}><Delta current={stats.caMois} prev={prevStats.caMois} /></div>
+        </section>
+        <section className={styles.card} aria-labelledby="today-pending">
+          <div className={styles.label}><span id="today-pending">Devis en attente</span></div>
+          <div className={styles.big}>{stats.devisEnAttente}</div>
+          <div className={styles.sub}>{stats.devisEnAttente === 0 ? 'Aucun en attente de réponse' : 'En attente de réponse'}</div>
+        </section>
       </div>
-      <p className="text-3xl font-bold text-primary tabular-nums mt-4">
-        {stats.caMois > 0 ? fmt(stats.caMois) : '-'}
-      </p>
-      <div className="mt-2">
-        <Delta current={stats.caMois} prev={prevStats.caMois} />
-      </div>
-    </div>
+      <section className={styles.card} aria-labelledby="today-sites">
+        <div className={styles.label}><span id="today-sites">Chantiers en cours</span></div>
+        <div className={styles.big}>{chantiersEnCours}</div>
+        {chantiersEnCours === 0 ? <div className={styles.sub}>Aucun chantier actif</div> : null}
+      </section>
+    </>
+  )
+}
 
-    <div className={`${cardCls} flex flex-col justify-between`}>
-      <div className="flex justify-between items-start">
-        <p className="text-sm font-semibold text-secondary tracking-wider uppercase">Encaissé TTC</p>
-        <Receipt className="w-4 h-4 text-accent-green" />
-      </div>
-      <p className="text-3xl font-bold text-primary tabular-nums mt-4">
-        {stats.encaisseMois > 0 ? fmt(stats.encaisseMois) : '-'}
-      </p>
-      <div className="mt-2">
-        <Delta current={stats.encaisseMois} prev={prevStats.encaisseMois} />
-      </div>
-    </div>
-
-    <div className={`${cardCls} flex flex-col justify-between`}>
-      <div className="flex justify-between items-start">
-        <p className="text-sm font-semibold text-secondary tracking-wider uppercase">Devis en attente</p>
-        <TrendingUp className="w-4 h-4 text-blue-500" />
-      </div>
-      {stats.devisEnAttente > 0 ? (
-        <p className="text-3xl font-bold text-primary tabular-nums mt-4">{stats.devisEnAttente}</p>
-      ) : (
-        <p className="text-sm text-secondary mt-4">Aucun devis en attente de réponse.</p>
-      )}
-    </div>
-
-    <div className={`${cardCls} flex flex-col justify-between`}>
-      <div className="flex justify-between items-start">
-        <p className="text-sm font-semibold text-secondary tracking-wider uppercase">Chantiers en cours</p>
-        <HardHat className="w-4 h-4 text-amber-500" />
-      </div>
-      {chantiersEnCours > 0 ? (
-        <p className="text-3xl font-bold text-primary tabular-nums mt-4">{chantiersEnCours}</p>
-      ) : (
-        <p className="text-sm text-secondary mt-4">Aucun chantier actif.</p>
-      )}
-    </div>
-  </div>
-);
-
-
-const QuickActions = () => (
-  <div className={`${cardCls} p-8 flex flex-col`}>
-    <h3 className="text-xl font-bold text-primary mb-6">Actions Rapides</h3>
-    <div className="flex flex-col gap-4">
-      <Link
-        href={`/finances/quote-editor?returnTo=${encodeURIComponent('/dashboard')}`}
-        className="btn-primary w-full py-4 text-lg flex items-center justify-center gap-2"
-      >
-        <FileText className="w-5 h-5" />
-        Nouveau Devis
-      </Link>
-      <Link
-        href="/clients?new=1"
-        className="btn-secondary w-full py-4 text-lg flex items-center justify-center gap-2"
-      >
-        <UserPlus className="w-5 h-5" />
-        Nouveau Client
-      </Link>
-    </div>
-  </div>
-);
-
+const SENT_TYPES = new Set(['recently_sent', 'task_completed'])
 
 function getCurrentMonthYM(): string {
   const now = new Date()
@@ -160,7 +123,6 @@ export default async function DashboardPage({
   ])
 
   const firstName = profile?.full_name?.split(' ')[0] ?? null
-  const greeting = profile?.onboarding_done ? 'Bon retour,' : 'Bienvenue,'
   const roleSlug = membership?.roleSlug ?? null
   const isCollabView = roleSlug !== null && COLLAB_ROLES.has(roleSlug)
   const canViewCA = perms.has('*') || perms.has('dashboard.view_ca')
@@ -181,15 +143,11 @@ export default async function DashboardPage({
       : []
 
     return (
-      <main className="page-container space-y-6 md:space-y-8">
-        <div>
-          <h1 className="text-2xl sm:text-3xl md:text-4xl tracking-tight text-primary">
-            <span className="font-normal">{greeting} </span>
-            <span className="font-bold">{firstName ?? 'dans ATELIER'}</span>
-          </h1>
-          <p className="text-secondary text-base md:text-lg mt-0.5">Voici votre tableau de bord personnel.</p>
+      <main className={styles.root}>
+        <div className={styles.page}>
+          <TodayHeader kicker={todayKicker()} title={firstName ? `Bonjour ${firstName}` : 'Bonjour'} />
+          <CollaborateurDashboard data={collabData} goals={realGoals} firstName={firstName} />
         </div>
-        <CollaborateurDashboard data={collabData} goals={realGoals} firstName={firstName} />
       </main>
     )
   }
@@ -208,32 +166,27 @@ export default async function DashboardPage({
     roleSlug === 'owner' && orgId ? getDashboardSetupReadinessCached(orgId) : Promise.resolve(null),
   ])
 
+  const toFollow = stats.urgentItems.filter(item => !SENT_TYPES.has(item.type)).length
+  const title = toFollow === 0
+    ? 'Tout est à jour'
+    : `${toFollow} point${toFollow > 1 ? 's' : ''} à suivre`
+
   return (
-    <main className="page-container space-y-6 md:space-y-8">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl sm:text-3xl md:text-4xl tracking-tight text-primary">
-            <span className="font-normal">{greeting} </span>
-            <span className="font-bold">{firstName ?? 'dans ATELIER'}</span>
-          </h1>
-          <p className="text-secondary text-base md:text-lg mt-0.5">Voici un résumé de votre activité.</p>
-        </div>
-        <MonthNav currentMonth={selectedMonth} />
-      </div>
-
-      {canViewCA && (
-        <KPIRow stats={stats} prevStats={prevStats} chantiersEnCours={chantierStats.enCours} />
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-5 lg:grid-cols-12 gap-6 md:gap-8">
-        <div className="md:col-span-3 lg:col-span-8 space-y-6 md:space-y-8">
-          <SetupChecklist readiness={setupReadiness} />
-          <UrgentTasksClient initialItems={stats.urgentItems} facturesEnRetard={stats.facturesEnRetard} quoteAiEnabled={modules.quote_ai} />
-        </div>
-        <div className="md:col-span-2 lg:col-span-4 flex flex-col gap-6 md:gap-8">
-          <QuickActions />
-          <PlanningDigestWidget slots={todaySlots} />
-          {modules.planning_ai ? <MaSemaineWidget /> : null}
+    <main className={styles.root}>
+      <div className={styles.page}>
+        <TodayHeader kicker={todayKicker()} title={title} />
+        <div className={styles.cols}>
+          <div>
+            <UrgentTasksClient initialItems={stats.urgentItems} facturesEnRetard={stats.facturesEnRetard} quoteAiEnabled={modules.quote_ai} />
+            <PlanningDigestWidget slots={todaySlots} />
+          </div>
+          <div className={styles.side}>
+            <SetupChecklist readiness={setupReadiness} />
+            {canViewCA ? (
+              <Figures stats={stats} prevStats={prevStats} chantiersEnCours={chantierStats.enCours} month={selectedMonth} />
+            ) : null}
+            {modules.planning_ai ? <MaSemaineWidget /> : null}
+          </div>
         </div>
       </div>
     </main>
