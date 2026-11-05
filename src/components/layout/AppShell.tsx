@@ -142,7 +142,8 @@ export function AppShell({
       <NavigationCommandsProvider>
         <>
           <div className={styles.application}>
-            {decennaleExpiringDays !== null && (
+            {/* Sur Aujourd'hui, le rappel est une ligne de la page (TodayHeader). */}
+            {decennaleExpiringDays !== null && pathname !== '/dashboard' && (
               <div
                 className={styles.decennale}
                 data-expired={decennaleExpiringDays < 0 ? 'true' : 'false'}
