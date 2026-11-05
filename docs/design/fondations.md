@@ -156,3 +156,92 @@ L’audit des dépendances runtime remonte zéro vulnérabilité. L’audit comp
 
 Safari/iOS physiques, tous les profils métier, Stripe payant, PDP réelle, délivrabilité externe, micro et push ne sont pas qualifiés par cette phase. Aucune fusion ni mise en production n’est autorisée par ces résultats.
 
+
+## Phase 3 : navigation et assistante
+
+### Contrat fonctionnel
+
+La navigation SaaS repose sur un modèle de destinations partagé, filtré par les permissions et modules existants. La TabBar mobile expose Aujourd'hui, Documents, Chantiers, Clients et Entreprise selon ces droits ; la barre latérale de 248 px reprend les mêmes lieux sur desktop. Entreprise réutilise les groupes et rangées P2 pour Catalogue, Rapports, Entretien, Heures, Équipes et Réglages. Les accès Contrats, Récurrentes, Devis IA, Planning et Demandes restent disponibles lorsqu'ils sont autorisés, sans changer leurs URL.
+
+Le menu personnel reste accessible sans permission métier Réglages. La déconnexion SaaS utilise le SDK d'authentification existant : elle révoque réellement la session locale, n'annonce pas un succès en cas d'échec et propose Réessayer. Le rendu du cockpit reste sur sa navigation et son assistante legacy.
+
+Créer ouvre les éditeurs métier existants. Les seules passerelles ajoutées aux écrans Clients et Chantiers consomment l'intention URL `new=1`, préservent les autres paramètres et le fragment, et ne réinitialisent ni un formulaire déjà ouvert ni son type ou sa saisie. Elles ne changent pas les mutations métier.
+
+La recherche filtre les écrans et créations autorisés ; elle n'est pas une recherche de données métier. Cmd/Ctrl K l'ouvre ou la ferme. Sarah possède une entrée distincte : son ouverture explicite peut préremplir la demande, mais ne l'envoie pas. Les seize catégories du résumé de notifications sont conservées ; la fumée positive porte sur une vraie demande locale, pas sur seize jeux de données positifs.
+
+L'entrée SaaS de Sarah exige à la fois le module `sarah_assistant` et la permission `ai.sarah` ; le contrôle ne repose pas sur le seul nom du rôle. Les indicateurs de navigation appartiennent à la commande qui les a déclenchés, pas à toutes les commandes. Retirer ou changer seulement un fragment ne démarre pas une attente de route.
+
+Un menu contextuel est lié au mode desktop/mobile de son déclencheur. Un changement de côté du breakpoint 900 px le ferme avant le commit et rend le focus au contrôle visible ; il ne transfère pas silencieusement son état vers un autre bouton. Un changement de hauteur ou de largeur restant du même côté ne le ferme pas. La recherche ouverte conserve sa saisie et retrouve un déclencheur visible à la fermeture. Une sélection déjà mise en file reste consommée après la fermeture de sa présentation d'origine.
+
+### Fidélité et adaptations déclarées
+
+- Les dix géométries de glyphes couvertes par la référence sont identiques aux SVG canoniques, via la fabrique Lucide déjà installée. Les autres icônes utilisent la bibliothèque existante.
+- Le titre Entreprise utilise localement Geist 700, 34/41, sans changer le poids global P1. Les mesures de la référence sont conservées : groupes 24/28, tuiles 30 avec rayon 7,5, glyphes 18 et chevrons 14. Les captures finales à 390/1280 sont prises à défilement zéro.
+- Le profil mobile est ajouté à Entreprise pour conserver l'accès personnel de tous les rôles ; il décale les groupes par rapport à la maquette sans profil. Les commandes mobiles d'Entreprise sont alignées avec son titre. Les écrans métier non migrés gardent provisoirement une rangée de commandes avant leur en-tête existant.
+- Les menus riches utilisent un Dialog Radix ancré sur desktop et la Sheet P2 sur mobile, après arbitrage Opus 5.5 MEDIUM. Un DropdownMenu contenant des boutons ordinaires avait réellement bloqué Tab ; cet usage a été retiré.
+- Le texte actif de TabBar utilise `--at-accent-texte-fort`, sans recolorer son icône. Sur le vrai fond translucide de Chantiers, l'ancien texte mesurait 4,485:1 ; le texte corrigé mesure 5,868:1. Aucun token global ni palette nouvelle n'est ajouté.
+- Une exception de lot autorisée limite la compatibilité de Finances à sa grille d'indicateurs : deux colonnes de 900 à moins de 1 280 px avec la barre latérale, sans changement du style legacy, des couleurs existantes, des calculs, des actions ou des API. Les dispositions antérieures à 768/899 px et à 1 280 px sont conservées. Cela ne lance pas la refonte Finances de phase 4.
+- Les exceptions client suivantes restent limitées aux dispositions responsive, sans extraction du moteur, nouvelle convention, couleur, calcul, action ou API modifiés : l'en-tête de facture garde deux colonnes jusqu'à 1 280 px pour les années natives ; l'en-tête de devis empile titre/retour et actions sous 1 280 px ; le rappel empile texte et configuration sous 1 536 px et autorise le retour à la ligne de ses liens sous 1 280 px. Les deux dernières adaptations ont été autorisées séparément après confirmation de contrôles superposés à 1 024 px. La page serveur du tableau de bord reste inchangée.
+
+### Sarah : présentation séparée du moteur
+
+La feuille réutilise Avatar, Button, Sheet et StatusPill. Les propositions gardent leurs libellés Simple, Confirmation et Sensible. Chaque carte place Annuler en texte avant Confirmer en secondaire ; Envoyer reste l'unique action primaire. Les noms de pièces jointes se recomposent sans ellipse. La hauteur du champ suit aussi sa largeur, sans recréer un observateur à chaque frappe ; au-delà de 160 px, le défilement interne reste volontaire.
+
+Le chrome flottant du cockpit est isolé dans `SarahLegacyChrome`. La comparaison AST complète des douze appels directs `fetch` et `useSarahVoice`, arguments et options compris, ne trouve aucun appel ajouté, retiré ou modifié par rapport à la source avant migration. Cela ne prétend pas prouver l'équivalence globale du moteur ou un appel vocal payant.
+
+Hors cockpit, la bulle flottante, son badge d'alertes et le brief automatique au clic sur ce badge sont remplacés par l'entrée explicite de Sarah ; le brief reste disponible par sa suggestion manuelle. Le cockpit conserve la bulle, le badge et l'habillage exact de son avatar partagé.
+
+La durée de vie de la conversation reste celle d'avant : fermer démonte le contenu et réinitialise son brouillon à la réouverture. Le micro n'est pas maintenu monté pour conserver une saisie.
+Le démontage arrête désormais aussi la capture de dictée locale. Cette gestion de durée de vie ne constitue pas une qualification du microphone ou d'un fournisseur vocal.
+
+### Qualification exercée
+
+| Mesure | Résultat observé |
+| --- | --- |
+| Contrôles du candidat final | TypeScript, lint sans avertissement, 625 tests dans 67 fichiers et build de production local réussis |
+| Parcours E2E de production | 21 réussis, dont les régressions Finances, dates, liens, interception du retour de devis et chevauchement du rappel ; trois compositions exclusivement DEV ignorées intentionnellement |
+| Catalogue en développement | Quatre scénarios réussis séparément sur le candidat I, dont menu à deux niveaux, HUD suspendu et glissé refusé ; primitives P2 inchangées depuis |
+| Matrice navigation | 72 captures : trois rôles, quatre largeurs, deux thèmes, trois présentations |
+| Cibles navigation | 1 104 observations de contrôles, 9 936 points tactiles sans échec |
+| Matrice Sarah | 24 captures propriétaire : quatre largeurs, deux thèmes, données normales, vides et doublées |
+| Cibles Sarah | 392 observations actives, 3 528 points tactiles sans échec |
+| Débordements des matrices | Aucun débordement global, libellé d'action sur deux lignes ou métadonnée tronquée détecté dans le périmètre sondé |
+| Champ Sarah après resize | 108 px de hauteur pour 108 px de contenu à 360 ; un brouillon de 1 680 caractères reste plafonné à 160 px sans débordement du document |
+| Contraste texte ciblé | 230 observations sur 34 rendus, minimum 4,555:1, aucun échec parmi les observations mesurables |
+| Compatibilité des pages legacy inchangées depuis L | 44 captures L conservées : Finances, chantiers, planning et facture, sans débordement global dans les états sondés ; leurs sources restent identiques |
+| Dispositions corrigées après L | 52 nouvelles captures M : devis chargé et rappel, treize largeurs de 360 à 1 600 px dans deux thèmes ; 702 points de ciblage sans interception, aucun chevauchement texte/actions, titre nul ou rognage par ancêtre non défilable dans ces cas |
+
+Les présentations vides archivent le client généré et retirent les identités optionnelles, sans supprimer l'organisation ni ses droits requis ; les propositions Sarah en attente sont réellement annulées via leur API. Les données longues doublent les identités, titres et descriptions de propositions ; le nom du PNG synthétique passe de deux à quatre répétitions de son radical. Aucun message d'IA n'est simulé pour produire les cartes.
+
+La compatibilité Finances couvre Devis et Factures à 768/899/900/1 024/1 279/1 280 px, avec contrôle des glyphes des indicateurs dans leurs cartes. Le dépassement réel de 3 px du document à 900 est supprimé sans masquer le contenu. L'onglet de factures reçues n'est pas activé dans cette fixture ; sa branche à deux colonnes n'est pas modifiée et aucun parcours positif n'est revendiqué pour elle.
+
+Les anciennes captures de devis sous le voile de préparation ne sont pas des preuves d'éditeur chargé. Les captures retenues attendent sa disparition et, si nécessaire, cliquent réellement le choix manuel avant mesure, sans génération IA ni envoi. Seize observations des dates dans huit rendus L vérifient les boîtes natives Chromium, sans recouvrement de l'année par le calendrier ; cette source reste inchangée. Les régressions des années masquées et du lien hors carte échouaient avant correction et réussissent après.
+
+La mesure initiale du seul rognage par un ancêtre n'a pas détecté les chevauchements entre frères. La revue HIGH les a signalés, puis les mesures réelles à 1 024 px ont confirmé six points interceptés sur neuf pour Retour et une colonne de texte nulle sous les actions du rappel. Deux régressions supplémentaires échouaient sur L et passent sur M ; le parcours de devis clique effectivement Retour après vérification de sa cible et revient à Finances. La nouvelle matrice sonde 360/390/768/899/900/1 024/1 072/1 152/1 279/1 280/1 535/1 536/1 600 px, clair/sombre : défilement réel avant le ciblage des contrôles hors viewport, neuf points par Retour/lien, plages de texte comparées à la région d'actions et titre de devis visible sans glyphe hors boîte. Ces mesures ne prétendent pas couvrir tous les contrôles métier ni tous leurs états.
+
+Les matrices de géométrie et de cibles ont été prises sur les composants alors stabilisés ; les corrections ultérieures de couleur de TabBar et de propriété d'overlay possèdent leurs preuves ciblées sur le candidat final. Les huit observations de contraste non mesurables sont exclues, pas déclarées passantes : titres de dialogue volontairement masqués et glyphes d'avatar hors du défilement visible. Les placeholders ne sont mesurés que sur la géométrie de leur première ligne.
+
+Les dix fonds réels de TabBar, cinq destinations dans deux thèmes, sont capturés dans le viewport complet avec leur verre et leur contenu arrière. Les menus Profil, Créer, Notifications et la recherche, ainsi que l'état vide et l'erreur réseau Sarah, sont mesurés en clair/sombre. Les trois risques sont mesurés séparément dans les deux thèmes.
+
+Le clavier natif exerce 24 Tab et huit Maj+Tab dans le profil et dans Sarah, sans sortie du dialogue. Échap rend le focus à un contrôle visible. Les changements 1280→899, 899→900, 900→360 et 360→1280 ferment les menus avec `aria-expanded=false` et sans déplacement du document ; un resize mobile 360×900→390×740 garde le profil ouvert. La sélection native Mon profil suivie immédiatement d'un changement de breakpoint produit une seule navigation observée vers Réglages.
+
+En mouvement réduit, Sarah n'a aucune animation infinie active dans l'état exercé. Deux POST Sarah échouent réellement dans le navigateur mis hors ligne, avec `ERR_INTERNET_DISCONNECTED` et l'alerte réseau visible. Ce sont des échecs de transport avant le serveur, pas des réponses d'un fournisseur IA.
+
+### Comparaisons sans gain de clic inventé
+
+| Parcours mobile, hors saisie et enregistrement | Avant | Après |
+| --- | ---: | ---: |
+| Ouvrir Documents / Facturation | 1 | 1 |
+| Ouvrir Planning | 2 | 2 |
+| Commencer un client depuis un autre écran | 2 | 2 |
+| Commencer un chantier, choix du type compris | 3 | 3 |
+
+La nouvelle navigation et Entreprise n'ajoutent aucune action primaire ; Sarah en conserve une seule, y compris avec plusieurs propositions. Le contrôle de couleurs existant, forcé en mémoire pour la comparaison, signale 26 attributs JSX dans les anciennes Topbar/BottomNav, contre zéro dans la nouvelle navigation SaaS et ses styles. Il s'agit de diagnostics typés, pas d'un décompte de couleurs uniques. L'attribut coloré du bandeau décennale du seul chemin cockpit est conservé ; le fichier mixte de Sarah n'est pas faussement présenté comme dépourvu de couleurs legacy.
+
+### Limites
+
+Le cockpit final est réellement ouvert avec une base opérateur distincte et une entreprise fictive : ses notifications et son assistante flottante restent utilisables. Sa navigation legacy conserve un document de 1 324 px à viewport 1 280 ; ce passage n'est pas une certification responsive globale du cockpit. Aucune configuration client n'est renvoyée ou synchronisée par cette fumée.
+
+Les écrans métier non refondus conservent encore des comportements hérités, notamment l'ellipse explicitement prévue pour les titres longs et les libellés d'actions rapides pouvant revenir sur plusieurs lignes. L'éditeur de devis n'a changé que par l'exception de disposition de son en-tête ; la page serveur du tableau de bord reste inchangée. Ces pages ne sont pas présentées comme conformes aux maquettes des futurs écrans métier. Les preuves distinguent le rognage, le chevauchement et les cibles réellement atteintes ; elles ne constituent pas une certification visuelle générale de tous les écrans legacy.
+
+Les écrans métier encore legacy, Safari/iOS physiques, la restitution audio d'un lecteur d'écran, les permissions micro/push, les envois externes, Stripe, Super PDP et les réponses IA payantes ne sont pas qualifiés par cette phase. Les preuves ciblées ne constituent pas une certification AA globale. Les captures et traces brutes restent privées ; aucune fusion, branche `main` ou production n'est modifiée.

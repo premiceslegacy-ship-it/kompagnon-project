@@ -17,6 +17,36 @@ Pour la facture émise, les quantités, prix unitaires et taux de TVA sont compa
 
 Aucune mutation métier n’est remplacée par un mock. Les identités, organisations et documents restent fictifs et portent le marqueur Qualification.
 
+## Navigation de phase 3
+
+`e2e/navigation.spec.ts` ajoute dix parcours avec les vrais formulaires, le vrai routeur et la base locale :
+
+- ouvrir deux fois la création client sur la même page sans perdre le brouillon ;
+- ouvrir deux fois la création chantier sans réinitialiser le type choisi ni la saisie ;
+- consommer `new=1` sans retirer les autres paramètres ni le fragment du lien client ;
+- conserver le menu personnel mobile malgré un droit métier Réglages explicitement retiré dans la fixture, puis vérifier que la déconnexion interdit réellement un nouvel accès protégé ;
+- ouvrir une demande de devis depuis les notifications alors que sa page est déjà courante, sans laisser la navigation occupée ;
+- conserver le document dans le viewport et le libellé de l'indicateur financier dans sa carte à 900 px, après le chargement des polices ;
+- vérifier à 1 024 px que les années des deux dates natives de facture restent dans leur zone de texte, sans passer sous l'icône calendrier ;
+- vérifier à 900 px que le lien de facturation électronique du rappel reste entièrement contenu dans sa carte non défilable ;
+- vérifier à 1 024 px les neuf points de ciblage du bouton Retour du devis chargé, puis le cliquer et retrouver Finances ;
+- vérifier à 1 024 px que le texte du rappel garde une largeur positive et ne recouvre pas sa région d'actions.
+
+La fixture de rôle exige une origine locale et un propriétaire généré. Elle réutilise les rôles de sa seule organisation, prouve l’organisation temporaire créée par le déclencheur Auth, rattache le compte généré, puis nettoie uniquement ses objets. Le retrait de permission du scénario ne modifie aucun rôle de production.
+
+Chaque test reçoit sa propre organisation via la fixture `qualification`, supprimée dans son `finally`. Le rôle employee modifié par le scénario personnel appartient uniquement à cette organisation jetable ; aucun rôle partagé n'est rétabli arbitrairement à `true`.
+
+La correction de grille Finances est une exception de compatibilité explicitement autorisée, pas une refonte de cet écran : style legacy et métier inchangés. Le contrôle de régression vérifie les limites réellement rendues du document et des glyphes, pas une classe CSS ou un nombre de colonnes attendu.
+
+Les régressions des années masquées et du lien hors carte ont réellement échoué avant correction. La mesure des dates utilise les boîtes des parties natives Chromium via CDP, pas une estimation de largeur de texte ni la seule présence de la valeur. Deux régressions supplémentaires ont ensuite échoué sur L : Retour intercepté et texte du rappel de largeur nulle sous ses actions ; elles passent sur M. Le ciblage utilise `elementFromPoint` sur neuf points avant le vrai clic Retour, et le chevauchement compare les plages de texte réellement rendues à la région d'actions. Le rappel est préparé explicitement comme non masqué et incomplet dans son organisation locale jetable.
+
+Le scénario de mouvement réduit ouvre désormais le menu personnel avant la bascule du thème. Ses assertions de changement réel de palette et de durée maximale sont conservées. Son échec initial sur le bouton anciennement exposé dans la Topbar a été reproduit avant la migration du parcours.
+
+La recherche de navigation filtre des destinations et créations locales autorisées. Elle ne prétend pas rechercher les données métier. La sélection explicite de Sarah reste séparée et n’envoie pas automatiquement le texte. Lors de la fumée de navigation locale, le moteur conservé a effectué deux GET de contexte et de briefs ; aucune requête de génération ni soumission de message n’a été observée dans cette fenêtre.
+
+Le contrôle d'accès propriétaire à la facturation électronique reste conservé. L'assertion globale sur le seul texte `Statut :` a été retirée après une ambiguïté de sélecteur réellement observée ; elle n'a pas été réépinglée sur une occurrence arbitraire. La fumée native retrouve la section et son contrôle de connexion disponible, sans contacter Super PDP. Aucun code produit de facturation électronique n'est modifié.
+
+
 ## Confidentialité avant hydratation
 
 `e2e/auth-transport.spec.ts` coupe JavaScript et capture la requête native du navigateur pour les formulaires de connexion et d’inscription. Il vérifie le transport POST et l’absence d’identifiants dans l’URL. La réponse est interceptée pour ne pas exécuter une création de compte : ce test couvre le transport des identifiants, pas une authentification sans JavaScript.
