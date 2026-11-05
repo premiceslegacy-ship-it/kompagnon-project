@@ -32,8 +32,11 @@ type TextareaNativeProps = Omit<
   'id' | 'className' | 'disabled' | 'aria-describedby' | 'aria-invalid'
 >
 
+/** Champs saisis au clavier ; `date` et `time` gardent le sélecteur natif du système. */
+export type FieldTextType = 'text' | 'email' | 'tel' | 'date' | 'time'
+
 export type FieldTextProps = FieldSharedProps & InputNativeProps & {
-  type: 'text'
+  type: FieldTextType
 }
 
 export type FieldNumberProps = FieldSharedProps & Omit<
@@ -172,10 +175,8 @@ export function Field(props: FieldProps) {
     }
   }, [measureStacking, type])
 
-  const displayedValue = props.type === 'number' || props.type === 'text' || props.type === 'select'
-    ? props.value
-    : undefined
-  const displayedPlaceholder = props.type === 'number' || props.type === 'text'
+  const displayedValue = props.type !== 'textarea' ? props.value : undefined
+  const displayedPlaceholder = props.type !== 'textarea' && props.type !== 'select'
     ? props.placeholder
     : undefined
   const selectedChildren = props.type === 'select' ? props.children : undefined
@@ -268,9 +269,9 @@ export function Field(props: FieldProps) {
     )
   }
 
-  if (props.type === 'text') {
+  if (props.type === 'text' || props.type === 'email' || props.type === 'tel' || props.type === 'date' || props.type === 'time') {
     const {
-      type: _type,
+      type: inputType,
       label: _label,
       hint: _hint,
       error: _error,
@@ -290,7 +291,7 @@ export function Field(props: FieldProps) {
       <input
         {...nativeProps}
         {...controlA11yProps}
-        type="text"
+        type={inputType}
         onChange={(event) => {
           onChange?.(event)
           setMeasureRevision((revision) => revision + 1)
@@ -334,6 +335,8 @@ export function Field(props: FieldProps) {
     )
   }
 
+  // Seul le type textarea atteint ce point : les autres types ont déjà rendu leur champ.
+  const textareaProps = props as FieldTextareaProps
   const {
     type: _type,
     label: _label,
@@ -348,7 +351,7 @@ export function Field(props: FieldProps) {
     'aria-invalid': _ariaInvalid,
     onInput,
     ...nativeProps
-  } = props
+  } = textareaProps
 
   return renderField(
     <textarea
