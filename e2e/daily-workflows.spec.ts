@@ -420,7 +420,7 @@ test.describe('Parcours métier Atelier : qualification locale isolée', () => {
     }
     expect(new URL(page.url()).pathname).toBe('/mon-espace/dashboard')
     await expect(page.getByRole('heading', { name: 'Bonjour Alex' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Pointer mes heures' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Nouveau pointage' })).toBeVisible()
 
     const { data: consumedToken, error: tokenReadError } = await qualification.admin
       .from('member_space_tokens')
@@ -430,13 +430,13 @@ test.describe('Parcours métier Atelier : qualification locale isolée', () => {
     if (tokenReadError || !consumedToken) throw new Error('Could not verify local member token consumption.')
     expect(Boolean(consumedToken.last_used_at)).toBe(true)
 
-    await page.getByRole('button', { name: 'Pointer mes heures' }).click()
-    const form = page.getByText('Nouveau pointage').locator('..')
+    await page.getByRole('button', { name: 'Nouveau pointage' }).click()
+    const form = page.getByRole('dialog', { name: 'Nouveau pointage' })
     await expect(form).toBeVisible()
-    await form.locator('select').selectOption(member.chantierId)
-    await form.locator('input[type="date"]').fill(member.date)
-    await form.getByPlaceholder('ex : 7.5').fill('3.5')
-    await form.getByPlaceholder('Description (facultatif)').fill('Pointage de qualification')
+    await form.getByLabel('Chantier').selectOption(member.chantierId)
+    await form.getByLabel('Date').fill(member.date)
+    await form.getByLabel('Heures').fill('3,5')
+    await form.getByLabel('Description').fill('Pointage de qualification')
     await form.getByRole('button', { name: 'Pointer', exact: true }).click()
     await expect(form).toBeHidden()
 
@@ -453,10 +453,10 @@ test.describe('Parcours métier Atelier : qualification locale isolée', () => {
     expect(Number(pointage.hours)).toBe(3.5)
     expect(pointage.description).toBe('Pointage de qualification')
 
-    await expect(page.getByRole('button').filter({ hasText: '3h30' }).last()).toBeVisible()
-    await page.getByRole('button').filter({ hasText: '3h30' }).last().click()
-    await expect(page.getByText(member.chantierTitle, { exact: true })).toBeVisible()
-    await expect(page.getByText('Pointage de qualification', { exact: true })).toBeVisible()
+    const main = page.getByRole('main')
+    await expect(main.getByText('3h30', { exact: true }).last()).toBeVisible()
+    await expect(main.getByText(member.chantierTitle, { exact: true }).last()).toBeVisible()
+    await expect(main.getByText('Pointage de qualification', { exact: true })).toBeVisible()
   })
 
 })
