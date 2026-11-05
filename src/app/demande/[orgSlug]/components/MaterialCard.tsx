@@ -1,26 +1,20 @@
 'use client'
 
-import { Minus, Package, Plus } from 'lucide-react'
 import { formatPublicUnit } from '@/lib/catalog-pricing'
-import styles from '../demande.module.css'
+import { Field } from '@/components/ui/Field'
+import { ListGroup } from '@/components/ui/ListGroup'
 import { DimensionInput } from './DimensionInput'
 import { getDimensionFieldMeta, getDimensionMode } from './helpers'
-import type { PublicMaterial } from './types'
+import type { SelectedMaterial } from './types'
 
+const AREA_UNITS = { linear: 'm', area: 'm²', volume: 'm³' } as const
+
+/** Réglages d'un élément du catalogue choisi : quantité ou cotes, nombre et précisions. */
 export function MaterialCard({
-  material, selected, quantity, dimensionCount, details, lengthM, widthM, heightM, itemKindLabel, onToggle, onQty, onSetQty, onSetDimensionCount, onSetDetails, onSetLength, onSetWidth, onSetHeight,
+  material, kindLabel, onSetQty, onSetDimensionCount, onSetDetails, onSetLength, onSetWidth, onSetHeight,
 }: {
-  material: PublicMaterial
-  selected: boolean
-  quantity: number
-  dimensionCount: number
-  details: string
-  lengthM: number | null
-  widthM: number | null
-  heightM: number | null
-  itemKindLabel: string
-  onToggle: () => void
-  onQty: (d: number) => void
+  material: SelectedMaterial
+  kindLabel: string
   onSetQty: (q: number) => void
   onSetDimensionCount: (q: number) => void
   onSetDetails: (v: string) => void
@@ -32,103 +26,40 @@ export function MaterialCard({
   const lengthMeta = getDimensionFieldMeta(material.dimension_schema, 'length', dimensionMode)
   const widthMeta = getDimensionFieldMeta(material.dimension_schema, 'width', dimensionMode)
   const heightMeta = getDimensionFieldMeta(material.dimension_schema, 'height', dimensionMode)
+  const unit = material.unit ? formatPublicUnit(material.unit) : null
+  const computed = dimensionMode !== 'none'
+    ? `Quantité calculée : ${material.quantity.toFixed(2)} ${AREA_UNITS[dimensionMode]}`
+    : undefined
 
   return (
-    <div
-      onClick={onToggle}
-      className={`${styles.itemCard} ${selected ? styles.itemCardSelected : ''}`}
-    >
-      <div className={styles.itemHead}>
-        <div className={`${styles.itemIcon} ${selected ? styles.itemIconSelected : ''}`}>
-          <Package />
-        </div>
-        <div className={`${styles.itemCheck} ${selected ? styles.itemCheckSelected : ''}`}>
-          {selected && (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
+    <ListGroup title={`${material.name} · ${kindLabel}`} headingLevel={3} description={computed}>
+      {dimensionMode !== 'none' ? (
+        <>
+          <li className="border-b border-trait">
+            <DimensionInput label={lengthMeta.label} valueM={material.length_m} fallbackM={material.base_length_m} unit={lengthMeta.unit} onValueM={onSetLength} />
+          </li>
+          {(dimensionMode === 'area' || dimensionMode === 'volume' || widthMeta.enabled) && (
+            <li className="border-b border-trait">
+              <DimensionInput label={widthMeta.label} valueM={material.width_m} fallbackM={material.base_width_m} unit={widthMeta.unit} onValueM={onSetWidth} />
+            </li>
           )}
-        </div>
-        <div className={styles.itemBody}>
-          <p className={styles.itemName}>{material.name}</p>
-          <div className={styles.itemMeta}>
-            {material.unit && <span className={styles.itemMetaText}>{formatPublicUnit(material.unit)}</span>}
-            <span className={styles.itemMetaText}>{itemKindLabel}</span>
-          </div>
-        </div>
-      </div>
-      {material.description && (
-        <p className={styles.itemDescription}>{material.description}</p>
-      )}
-
-      {selected && (
-        <div className={styles.itemDetail} onClick={e => e.stopPropagation()}>
-          {dimensionMode !== 'none' ? (
-            <div className={styles.dimensionGrid}>
-              <label className={styles.dimensionField}>
-                {lengthMeta.label} ({lengthMeta.unit})
-                <DimensionInput valueM={lengthM} fallbackM={material.base_length_m} unit={lengthMeta.unit} onValueM={onSetLength} className={styles.dimensionInput} />
-              </label>
-              {(dimensionMode === 'area' || dimensionMode === 'volume' || widthMeta.enabled) && (
-                <label className={styles.dimensionField}>
-                  {widthMeta.label} ({widthMeta.unit})
-                  <DimensionInput valueM={widthM} fallbackM={material.base_width_m} unit={widthMeta.unit} onValueM={onSetWidth} className={styles.dimensionInput} />
-                </label>
-              )}
-              {(dimensionMode === 'volume' || heightMeta.enabled) && (
-                <label className={styles.dimensionField}>
-                  {heightMeta.label} ({heightMeta.unit})
-                  <DimensionInput valueM={heightM} fallbackM={material.base_height_m} unit={heightMeta.unit} onValueM={onSetHeight} className={styles.dimensionInput} />
-                </label>
-              )}
-              <div className={styles.computedQty}>
-                Quantité calculée : {quantity.toFixed(2)} {dimensionMode === 'linear' ? 'm' : dimensionMode === 'area' ? 'm²' : 'm³'}
-              </div>
-              <div className={styles.counterRow}>
-                <span className={styles.counterLabel}>Nombre</span>
-                <div className={styles.counter}>
-                  <button type="button" onClick={() => onSetDimensionCount(Math.max(1, dimensionCount - 1))} className={styles.counterBtn}>
-                    <Minus />
-                  </button>
-                  <input
-                    type="number"
-                    min="1"
-                    value={dimensionCount || 1}
-                    onChange={e => {
-                      const val = parseInt(e.target.value)
-                      if (!isNaN(val)) onSetDimensionCount(Math.max(1, val))
-                    }}
-                    className={styles.counterInput}
-                  />
-                  <button type="button" onClick={() => onSetDimensionCount(dimensionCount + 1)} className={styles.counterBtn}>
-                    <Plus />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className={styles.counter} style={{ alignSelf: 'flex-end' }}>
-              <button type="button" onClick={() => onQty(-1)} className={styles.counterBtn}>
-                <Minus />
-              </button>
-              <input
-                type="number"
-                min="1"
-                value={quantity || 1}
-                onChange={e => {
-                  const val = parseInt(e.target.value)
-                  if (!isNaN(val)) onSetQty(Math.max(1, val))
-                }}
-                className={styles.counterInput}
-              />
-              <button type="button" onClick={() => onQty(+1)} className={styles.counterBtn}>
-                <Plus />
-              </button>
-            </div>
+          {(dimensionMode === 'volume' || heightMeta.enabled) && (
+            <li className="border-b border-trait">
+              <DimensionInput label={heightMeta.label} valueM={material.height_m} fallbackM={material.base_height_m} unit={heightMeta.unit} onValueM={onSetHeight} />
+            </li>
           )}
-          <input type="text" value={details} onChange={e => onSetDetails(e.target.value)} placeholder="Précisions utiles pour le devis..." className={`${styles.input} ${styles.detailInput}`} />
-        </div>
+          <li className="border-b border-trait">
+            <Field type="number" label="Nombre" value={material.dimension_count || 1} min={1} decimals={0} onChange={v => onSetDimensionCount(Math.max(1, v ?? 1))} />
+          </li>
+        </>
+      ) : (
+        <li className="border-b border-trait">
+          <Field type="number" label={unit ? `Quantité (${unit})` : 'Quantité'} value={material.quantity || 1} min={1} decimals={0} onChange={v => onSetQty(Math.max(1, v ?? 1))} />
+        </li>
       )}
-    </div>
+      <li>
+        <Field type="text" label="Précisions" value={material.details ?? ''} placeholder="Utiles pour le devis (facultatif)" onChange={e => onSetDetails(e.currentTarget.value)} />
+      </li>
+    </ListGroup>
   )
 }
