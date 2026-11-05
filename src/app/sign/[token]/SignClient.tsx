@@ -3,12 +3,12 @@
 import React, { useState, useTransition } from 'react'
 import { acceptQuoteByToken } from '@/lib/data/mutations/sign'
 import { Button } from '@/components/ui/Button'
-import { EmptyState } from '@/components/ui/EmptyState'
 import { Field } from '@/components/ui/Field'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { SignaturePad } from '@/components/ui/SignaturePad'
 import { StatTile } from '@/components/ui/StatTile'
 import { PublicError, PublicHeader, PublicNote, PublicPage, PublicSuccess } from '@/components/public/PublicPage'
+import SignatureLinkExpired from './SignatureLinkExpired'
 
 const fmt = (n: number, currency = 'EUR') =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: 2 }).format(n)
@@ -82,16 +82,7 @@ export default function SignClient({
   }
 
   if (expired) {
-    return (
-      <PublicPage>
-        <PublicHeader name={orgName} address={orgAddress} />
-        <EmptyState
-          headingLevel={1}
-          title="Ce lien n'est plus valide"
-          description={`Contactez ${orgName} pour recevoir un nouveau lien de signature.`}
-        />
-      </PublicPage>
-    )
+    return <SignatureLinkExpired token={token} orgName={orgName} orgAddress={orgAddress} quoteNumber={quoteNumber} />
   }
 
   if (accepted && acceptedAt) {
