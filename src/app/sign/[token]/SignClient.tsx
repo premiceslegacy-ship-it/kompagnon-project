@@ -176,7 +176,6 @@ export default function SignClient({
           surface="paper"
           width={528}
           height={176}
-          hint="Signez avec le doigt ou la souris"
         />
       </section>
 
