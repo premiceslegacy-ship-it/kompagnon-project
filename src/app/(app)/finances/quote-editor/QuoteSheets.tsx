@@ -15,86 +15,14 @@ import { StatusPill } from '@/components/ui/StatusPill'
 import { hasDimensionPricing } from '@/lib/catalog-pricing'
 import { getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import type { CatalogLaborRate, CatalogMaterial } from '@/lib/data/queries/catalog'
-import { clientDisplayName, fmt } from './quoteEditorModel'
+import { fmt } from './quoteEditorModel'
+export { ClientSheet, NewClientSheet, TransportSheet, EquipmentSheet } from '../EditorSheets'
 import type { QuoteEditor } from './useQuoteEditor'
 import styles from './QuoteEditor.module.css'
 
 type SheetProps = { q: QuoteEditor; open: boolean; onClose: () => void }
 
 const tick = <Check size={18} aria-hidden="true" className={styles.accentRow} />
-
-/** Choix du client, avec création à la volée. */
-export function ClientSheet({ q, open, onClose, onNewClient }: SheetProps & { onNewClient: () => void }) {
-  const [search, setSearch] = useState('')
-  const needle = search.trim().toLowerCase()
-  const clients = q.clients.filter(c => !needle || clientDisplayName(c).toLowerCase().includes(needle) || (c.email ?? '').toLowerCase().includes(needle))
-  const select = (id: string) => {
-    q.setClientId(id)
-    q.scheduleHeaderSave({ client_id: id || null })
-    onClose()
-  }
-  return (
-    <Sheet open={open} onOpenChange={next => { if (!next) onClose() }} title="Client" cancelLabel="Fermer">
-      <div className={styles.pickList}>
-        <SearchField value={search} onChange={setSearch} label="Rechercher un client" placeholder="Rechercher" />
-        <ListGroup>
-          <ListRow title="Nouveau client" description="Créer et sélectionner" className={styles.accentRow} onClick={onNewClient} />
-        </ListGroup>
-        <ListGroup>
-          <ListRow title="Sans client" trailing={q.clientId === '' ? tick : undefined} onClick={() => select('')} />
-          {clients.map(c => (
-            <ListRow
-              key={c.id}
-              title={clientDisplayName(c)}
-              description={c.email ?? undefined}
-              trailing={q.clientId === c.id ? tick : undefined}
-              onClick={() => select(c.id)}
-            />
-          ))}
-        </ListGroup>
-      </div>
-    </Sheet>
-  )
-}
-
-export function NewClientSheet({ q, open, onClose }: SheetProps) {
-  const form = q.newClientForm
-  const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    q.setNewClientForm(p => ({ ...p, [key]: e.target.value }))
-  const individual = q.newClientType === 'individual'
-  return (
-    <Sheet
-      open={open}
-      onOpenChange={next => { if (!next) onClose() }}
-      title="Nouveau client"
-      onConfirm={q.handleCreateClientInline}
-      confirmLabel="Créer"
-      confirmLoading={q.newClientPending}
-    >
-      <div className={styles.detail}>
-        <SegmentedControl
-          fullWidth
-          label="Type de client"
-          value={q.newClientType}
-          options={[{ value: 'company', label: 'Professionnel' }, { value: 'individual', label: 'Particulier' }]}
-          onChange={v => q.setNewClientType(v as 'company' | 'individual')}
-        />
-        <div className={styles.fields}>
-          {!individual && <Field type="text" label="Raison sociale" placeholder="Obligatoire" value={form.company_name} onChange={set('company_name')} />}
-          {!individual && <Field type="text" label="Contact" placeholder="Nom du référent" value={form.contact_name} onChange={set('contact_name')} />}
-          <Field type="text" label="Prénom" placeholder={individual ? 'Obligatoire' : 'Facultatif'} value={form.first_name} onChange={set('first_name')} />
-          <Field type="text" label="Nom" placeholder={individual ? 'Obligatoire' : 'Facultatif'} value={form.last_name} onChange={set('last_name')} />
-          <Field type="text" label="Email" placeholder="nom@exemple.fr" inputMode="email" value={form.email} onChange={set('email')} />
-          <Field type="text" label="Téléphone" inputMode="tel" value={form.phone} onChange={set('phone')} />
-          <Field type="text" label="Adresse" value={form.address_line1} onChange={set('address_line1')} />
-          <Field type="text" label="Code postal" inputMode="numeric" value={form.postal_code} onChange={set('postal_code')} />
-          <Field type="text" label="Ville" value={form.city} onChange={set('city')} />
-        </div>
-        {q.newClientError && <p className={`${styles.hint} ${styles.warn}`} role="alert">{q.newClientError}</p>}
-      </div>
-    </Sheet>
-  )
-}
 
 /** Devis de référence (avenant). */
 export function ReferenceSheet({ q, open, onClose }: SheetProps) {
@@ -424,57 +352,6 @@ export function AddLineSheet({ q, sectionId, onClose, onAdding }: { q: QuoteEdit
           />
           <ListRow title="Coût interne" description="Une ligne de coût libre" onClick={() => addFree(true)} />
         </ListGroup>
-      </div>
-    </Sheet>
-  )
-}
-
-export function TransportSheet({ q }: { q: QuoteEditor }) {
-  return (
-    <Sheet
-      open={q.showTransport}
-      onOpenChange={q.setShowTransport}
-      title="Transport"
-      onConfirm={() => void q.handleAddTransport()}
-      confirmLabel="Ajouter"
-    >
-      <div className={styles.detail}>
-        <div className={styles.total}>
-          <small>Coût du carburant</small>
-          <b>{fmt(q.transportCost)}</b>
-        </div>
-        <div className={styles.fields}>
-          <Field type="number" label="Distance A/R (km)" min={1} value={q.transportKm} onChange={v => q.setTransportKm(v ?? 1)} />
-          <Field type="number" label="Conso (L/100 km)" min={1} decimals={2} value={q.transportConso} onChange={v => q.setTransportConso(v ?? 1)} />
-          <Field type="number" label="Carburant (€/L)" min={0} decimals={3} value={q.transportPrixL} onChange={v => q.setTransportPrixL(v ?? 0)} />
-        </div>
-        <p className={styles.hint}>Volume de carburant : {q.transportLiters.toFixed(2).replace('.', ',')}&nbsp;L. Ligne interne, absente du PDF du client.</p>
-      </div>
-    </Sheet>
-  )
-}
-
-export function EquipmentSheet({ q }: { q: QuoteEditor }) {
-  return (
-    <Sheet
-      open={q.showEquipment}
-      onOpenChange={q.setShowEquipment}
-      title="Équipement amorti"
-      onConfirm={() => void q.handleAddEquipment()}
-      confirmLabel="Ajouter"
-      confirmDisabled={q.equipmentPurchase <= 0 || q.equipmentUses <= 0}
-    >
-      <div className={styles.detail}>
-        <div className={styles.total}>
-          <small>Coût par usage</small>
-          <b>{fmt(q.equipmentPurchase > 0 ? q.equipmentCostPerUse : 0)}</b>
-        </div>
-        <div className={styles.fields}>
-          <Field type="text" label="Équipement" placeholder="Aspirateur industriel" value={q.equipmentName} onChange={e => q.setEquipmentName(e.target.value)} />
-          <Field type="number" label="Prix d'achat (€)" min={0} decimals={2} value={q.equipmentPurchase || null} onChange={v => q.setEquipmentPurchase(v ?? 0)} />
-          <Field type="number" label="Usages sur la vie" min={1} decimals={0} value={q.equipmentUses} onChange={v => q.setEquipmentUses(v ?? 1)} />
-        </div>
-        <p className={styles.hint}>Le coût par usage est ajouté à votre coût interne, sans modifier les prix visibles.</p>
       </div>
     </Sheet>
   )

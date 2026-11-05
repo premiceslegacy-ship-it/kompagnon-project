@@ -9,8 +9,6 @@ import { getClientDisplayName } from '@/lib/client'
 
 import { DEFAULT_CONSUMPTION_L_PER_100KM, DEFAULT_FUEL_PRICE_EUR_PER_L } from '@/lib/utils/fuel'
 
-'use client'
-
 export type LocalItem = {
   id: number
   desc: string

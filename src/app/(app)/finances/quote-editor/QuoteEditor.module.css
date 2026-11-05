@@ -415,3 +415,21 @@
   outline-offset: 2px;
   border-radius: 6px;
 }
+
+.dateInput {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-inter);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.dateInput:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+  border-radius: 6px;
+}

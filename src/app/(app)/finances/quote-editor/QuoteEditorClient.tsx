@@ -372,7 +372,7 @@ export default function QuoteEditorClient(props: QuoteEditorProps) {
       {sectionSheet && <SectionSheet q={q} sectionId={sectionSheet} onClose={() => setSectionSheet(null)} />}
       {addSheet && <AddLineSheet q={q} sectionId={addSheet} onClose={() => setAddSheet(null)} onAdding={known => setCreating({ sectionId: addSheet, known })} />}
 
-      <ClientSheet q={q} open={panel === 'client'} onClose={() => setPanel(null)} onNewClient={() => {
+      <ClientSheet clients={q.clients} clientId={q.clientId} onSelect={id => { q.setClientId(id); q.scheduleHeaderSave({ client_id: id || null }) }} open={panel === 'client'} onClose={() => setPanel(null)} onNewClient={() => {
         setPanel(null)
         q.setNewClientError(null)
         q.setNewClientForm({ company_name: '', contact_name: '', first_name: '', last_name: '', email: '', phone: '', address_line1: '', postal_code: '', city: '' })
