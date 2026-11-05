@@ -1199,8 +1199,8 @@ export default function InvoiceEditorClient({
 
       {/* ── Paramètres ── */}
       <div className="rounded-3xl card p-5 sm:p-8 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-          <div className="space-y-2 lg:col-span-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
+          <div className="space-y-2 xl:col-span-2">
             <label className="text-sm font-semibold text-secondary">Intitulé de la facture</label>
             <input type="text" value={title} onChange={e => setTitle(e.target.value)}
               placeholder="Ex : Travaux de toiture - Bâtiment A"
