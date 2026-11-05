@@ -3,10 +3,12 @@ import { pdfText } from '@/lib/pdf/pdf-design-system'
 import { PdfDoc } from '../engine/doc'
 import type { FontBytes } from '../engine/fonts'
 import { loadFontBytes } from '../engine/fonts'
-import { drawImageContained, embedImage } from '../engine/image'
-import { textLineHeight, type TextStyle } from '../engine/text'
-import { drawTable, type TableColumn, type TableRow } from '../engine/table'
-import { COLOR, CONTENT_WIDTH, PAGE, SIZE, SPACE } from '../engine/theme'
+import { embedImage } from '../engine/image'
+import {
+  drawBarChart, drawHeroKpi, drawKpiGrid, drawLineTable, drawMeta, drawSectionTitle, flexWidth,
+  setupChrome, type Kpi, type LineRow, type Tone,
+} from '../engine/layout'
+import { COLOR } from '../engine/theme'
 
 export type ReportInvoice = {
   id: string
@@ -48,6 +50,8 @@ export type MonthlyReportData = {
   organization: Pick<PdfOrganizationData, 'name' | 'logo_url' | 'siret' | 'email'>
   invoices: ReportInvoice[]
   quotes: ReportQuote[]
+  /** Date d'édition (défaut : maintenant). */
+  editedAt?: string | null
 }
 
 const ISSUED_INVOICE_STATUS: Record<string, true> = { sent: true, viewed: true, partial: true, paid: true, overdue: true }
@@ -87,7 +91,6 @@ export async function renderMonthlyReportPdf(data: MonthlyReportData, origin: st
 export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, fontBytes: FontBytes): Promise<Buffer> {
   const { organization, invoices, quotes, month } = data
   const doc = await PdfDoc.create(fontBytes)
-  const F = doc.fonts
 
   const currency = invoices[0]?.currency ?? quotes[0]?.currency ?? 'EUR'
 
@@ -132,205 +135,122 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
 
   const logoImg = organization.logo_url ? await embedImage(doc.doc, organization.logo_url) : null
 
-  doc.onNewPage = ({ page }) => {
-    let y = PAGE.height - PAGE.headerTop
-    const headerTop = y
-    const logoSize = 48
-
-    if (logoImg) {
-      drawImageContained(doc, logoImg, { x: PAGE.margin, y: headerTop - logoSize, w: logoSize, h: logoSize })
-    } else {
-      page.drawRectangle({ x: PAGE.margin, y: headerTop - logoSize, width: logoSize, height: logoSize, color: COLOR.black })
-      const initials = pdfText(organization.name.slice(0, 2).toUpperCase())
-      const iw = F.headingXBold.widthOfTextAtSize(initials, SIZE.lg)
-      page.drawText(initials, { x: PAGE.margin + (logoSize - iw) / 2, y: headerTop - logoSize / 2 - SIZE.lg / 2 + 2, size: SIZE.lg, font: F.headingXBold, color: COLOR.white })
+  // ── Encaissé par semaine (jours 1-7, 8-14, 15-21, 22-28, 29 et suivants) ──
+  const weeks = [0, 0, 0, 0, 0]
+  const weekOf = (date: string) => Math.min(4, Math.floor((Number(date.slice(8, 10)) - 1) / 7))
+  for (const invoice of invoices) {
+    const inMonth = invoice.payments.filter(p => p.payment_date?.startsWith(month))
+    if (inMonth.length) {
+      for (const p of inMonth) weeks[weekOf(p.payment_date!)] += htFromTtc(invoice, p.amount)
+    } else if (invoice.status === 'paid' && invoice.paid_at?.startsWith(month)) {
+      weeks[weekOf(invoice.paid_at)] += htFromTtc(invoice, invoice.total_ttc)
     }
-
-    let ly = headerTop - SIZE.xl
-    page.drawText(pdfText(organization.name), { x: PAGE.margin + logoSize + SPACE.md, y: ly, size: SIZE.xl, font: F.headingXBold, color: COLOR.black })
-    if (organization.siret) { ly -= 3 + SIZE.xs; page.drawText(`SIRET : ${pdfText(organization.siret)}`, { x: PAGE.margin + logoSize + SPACE.md, y: ly, size: SIZE.xs, font: F.regular, color: COLOR.secondary }) }
-    if (organization.email) { ly -= 3 + SIZE.xs; page.drawText(pdfText(organization.email), { x: PAGE.margin + logoSize + SPACE.md, y: ly, size: SIZE.xs, font: F.regular, color: COLOR.secondary }) }
-
-    let ry = headerTop
-    const drawRight = (text: string, style: TextStyle) => {
-      const w = style.font.widthOfTextAtSize(text, style.size)
-      ry -= style.size
-      page.drawText(text, { x: PAGE.width - PAGE.margin - w, y: ry, size: style.size, font: style.font, color: style.color })
-      ry -= textLineHeight(style) - style.size
-    }
-    drawRight(fmtMonth(month), { font: F.headingXBold, size: SIZE.xxxl, color: COLOR.black })
-    drawRight(`Rapport mensuel - généré le ${fmtDate(new Date().toISOString())}`, { font: F.regular, size: SIZE.sm, color: COLOR.secondary })
-
-    y = Math.min(headerTop - logoSize, ry) - SPACE.xl
-    page.drawLine({ start: { x: PAGE.margin, y }, end: { x: PAGE.width - PAGE.margin, y }, thickness: 1, color: COLOR.divider })
-    y -= SPACE.xl
-    return y
   }
+  const [year, monthNum] = month.split('-').map(Number)
+  const daysInMonth = new Date(Date.UTC(year, monthNum, 0)).getUTCDate()
+  const weekCount = daysInMonth > 28 ? 5 : 4
 
+  setupChrome(doc, {
+    title: 'Rapport mensuel',
+    reference: fmtMonth(month),
+    logo: logoImg,
+    orgName: organization.name,
+    footerLines: [[organization.name, organization.siret ? `SIRET ${organization.siret}` : null, organization.email].filter(Boolean).join(' · ')].map(l => pdfText(l)),
+  })
   doc.addPage()
 
-  doc.onFinishPage = ({ page, pageIndex, pageCount }) => {
-    const label = `${organization.name} - Rapport ${fmtMonth(month)} - ATELIER`
-    const w = F.regular.widthOfTextAtSize(label, SIZE.xxs)
-    page.drawText(label, { x: (PAGE.width - w) / 2, y: 24, size: SIZE.xxs, font: F.regular, color: COLOR.secondary })
-    if (pageCount > 1) {
-      const pageLabel = `${pageIndex + 1} / ${pageCount}`
-      const pw = F.regular.widthOfTextAtSize(pageLabel, SIZE.xxs)
-      page.drawText(pageLabel, { x: PAGE.width - PAGE.margin - pw, y: 12, size: SIZE.xxs, font: F.regular, color: COLOR.secondary })
-    }
-  }
+  drawMeta(doc, [
+    { label: 'Période', value: `1 au ${daysInMonth} ${MONTHS_FR[monthNum - 1].toLowerCase()} ${year}` },
+    { label: 'Édité le', value: fmtDate(data.editedAt ?? new Date().toISOString()) },
+    { label: 'Société', value: pdfText(organization.name) },
+  ])
 
-  // ── KPI Factures ──
-  drawSectionTitle(doc, 'Synthèse facturation', F)
-  const kpiItems: { label: string; value: string; sub?: string; accent?: boolean }[] = [
-    { label: 'Montant facturé HT', value: fmt(caHt, currency), sub: `${sentPaidCount} facture${sentPaidCount > 1 ? 's' : ''}`, accent: true },
-    { label: 'Encaissé HT', value: fmt(encaisseHt, currency), sub: `TTC : ${fmt(encaisseTtc, currency)}` },
-    { label: 'Reste à recouvrer', value: fmt(resteHt, currency), sub: `${sentCount} facture${sentCount > 1 ? 's' : ''} en attente` },
-  ]
-  if (hasMargin) kpiItems.push({ label: 'Bénéfice prévu', value: `${margePct}%`, sub: `${fmt(margeHt, currency)} HT · coûts lignes` })
-  drawKpiRow(doc, kpiItems, F)
-  doc.moveDown(SPACE.md)
-
-  // ── TVA ──
-    drawInfoBand(doc, F, (cy) => {
-      doc.page.drawText('TVA COLLECTÉE', { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.xxs, font: F.regular, color: COLOR.secondary })
-      cy -= SPACE.xs + SIZE.lg
-      doc.page.drawText(fmt(tvaTotale, currency), { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.lg, font: F.headingXBold, color: COLOR.black })
-      cy -= 4 + SIZE.xxs
-      doc.page.drawText(`Calculée sur ${fmt(encaisseTtc, currency)} TTC encaissé`, { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.xxs, font: F.regular, color: COLOR.secondary })
-    })
-  doc.moveDown(SPACE.md)
-
-  // ── KPI Devis ──
-  drawSectionTitle(doc, 'Synthèse devis', F)
-  drawKpiRow(doc, [
+  // ── Synthèse ──
+  drawHeroKpi(doc, { label: 'Encaissé HT', value: fmt(encaisseHt, currency), note: `TTC : ${fmt(encaisseTtc, currency)}`, noteColor: COLOR.ink3 })
+  const kpis: Kpi[] = [
     { label: 'Devis émis', value: String(qEmis) },
-    { label: 'Acceptés', value: String(qAccepted), sub: `${fmt(qAcceptedHt, currency)} HT` },
-    { label: 'Taux de conversion', value: `${qConvRate}%`, accent: true },
-  ], F)
+    { label: 'Devis acceptés', value: String(qAccepted), note: `${fmt(qAcceptedHt, currency)} HT` },
+    { label: 'Taux de conversion', value: `${qConvRate} %` },
+    { label: 'Montant facturé HT', value: fmt(caHt, currency), note: `${sentPaidCount} facture${sentPaidCount > 1 ? 's' : ''}` },
+    { label: 'Reste à recouvrer', value: fmt(resteHt, currency), note: `${sentCount} facture${sentCount > 1 ? 's' : ''} en attente` },
+    { label: 'TVA collectée', value: fmt(tvaTotale, currency), note: `Calculée sur ${fmt(encaisseTtc, currency)} TTC encaissé` },
+  ]
+  if (hasMargin) kpis.push({ label: 'Bénéfice prévu', value: `${margePct} %`, note: `${fmt(margeHt, currency)} HT · coûts lignes` })
+  drawKpiGrid(doc, kpis, { columns: kpis.length > 6 ? 4 : 3 })
 
-  doc.moveDown(SPACE.lg)
-  doc.ensureSpace(1)
-  doc.page.drawLine({ start: { x: PAGE.margin, y: doc.y }, end: { x: PAGE.width - PAGE.margin, y: doc.y }, thickness: 0.5, color: COLOR.divider })
-  doc.moveDown(SPACE.lg)
-
-  // ── Tableau factures ──
-  if (invoices.length > 0) {
-    drawSectionTitle(doc, 'Détail des factures', F)
-    doc.moveDown(SPACE.sm)
-
-    const numW = 55, dateW = 65, htW = 65, tvaW = 50, ttcW = 60
-    const clientW = CONTENT_WIDTH - numW - dateW - htW - tvaW - ttcW - 75
-    const statusW = 75
-
-    const cols: TableColumn[] = [
-      { width: numW, header: 'N°' },
-      { width: clientW, header: 'Client' },
-      { width: dateW, header: 'Date' },
-      { width: htW, header: 'HT', align: 'right' },
-      { width: tvaW, header: 'TVA', align: 'right' },
-      { width: ttcW, header: 'TTC', align: 'right' },
-      { width: statusW, header: 'Statut', align: 'right' },
-    ]
-    const rows: TableRow[] = invoices.map(inv => ({
-      cells: [
-        { value: inv.number ?? '—' },
-        { value: pdfText(inv.client_name ?? '—') },
-        { value: fmtDate(inv.issue_date ?? inv.created_at) },
-        { value: fmt(inv.total_ht, inv.currency), style: { font: F.heading } },
-        { value: fmt(inv.total_tva, inv.currency) },
-        { value: fmt(inv.total_ttc, inv.currency) },
-        { value: STATUS_LABELS[inv.status] ?? inv.status },
-      ],
-    }))
-    drawTable(doc, cols, rows, {
-      x: PAGE.margin,
-      headerStyle: { font: F.headingXBold, size: SIZE.xxs, color: COLOR.black },
-      cellStyle: { font: F.regular, size: SIZE.xs, color: COLOR.body },
-      detailStyle: { font: F.regular, size: SIZE.xs, color: COLOR.muted },
-      rowPaddingY: SPACE.xs,
-      headerPaddingY: SPACE.xs,
-      repeatHeader: true,
-    })
+  if (weeks.some(w => w > 0)) {
+    const max = Math.max(...weeks.slice(0, weekCount))
+    drawBarChart(doc, 'Encaissé HT par semaine', weeks.slice(0, weekCount).map((v, i) => ({
+      label: `Sem. ${i + 1}`,
+      value: v,
+      highlight: v === max && v > 0,
+      valueLabel: v > 0 ? fmt(Math.round(v), currency).replace(/,00\s/, ' ') : undefined,
+    })), { height: 75 })
   }
 
-  // ── Tableau devis ──
-  if (quotes.length > 0) {
-    doc.moveDown(SPACE.lg)
-    drawSectionTitle(doc, 'Détail des devis', F)
-    doc.moveDown(SPACE.sm)
-
-    const numW = 55, dateW = 65, htW = 75, statusW = 60
-    const remaining = CONTENT_WIDTH - numW - dateW - htW - statusW
-    const titleW = remaining * 0.56
-    const clientW = remaining - titleW
-
-    const cols: TableColumn[] = [
-      { width: numW, header: 'N°' },
-      { width: titleW, header: 'Titre' },
-      { width: clientW, header: 'Client' },
-      { width: dateW, header: 'Date' },
-      { width: htW, header: 'HT', align: 'right' },
-      { width: statusW, header: 'Statut', align: 'right' },
-    ]
-    const rows: TableRow[] = quotes.map(q => ({
+  // ── Détail des factures ──
+  if (invoices.length > 0) {
+    drawSectionTitle(doc, 'Détail des factures')
+    const fixed = [52.5, 52.5, 61.5, 52.5, 61.5, 63]
+    const rows: LineRow[] = invoices.map(inv => ({
       cells: [
-        { value: q.number ?? '—' },
-        { value: pdfText(q.title ?? 'Sans titre') },
-        { value: pdfText(q.client_name ?? '—'), style: { color: COLOR.secondary } },
-        { value: fmtDate(q.created_at) },
-        { value: fmt(q.total_ht, q.currency), style: { font: F.heading } },
-        { value: QUOTE_STATUS_LABELS[q.status] ?? q.status },
+        inv.number ?? '-',
+        pdfText(inv.client_name ?? '-'),
+        fmtDate(inv.issue_date ?? inv.created_at),
+        { text: fmt(inv.total_ht, inv.currency), bold: true },
+        fmt(inv.total_tva, inv.currency),
+        fmt(inv.total_ttc, inv.currency),
+        { text: STATUS_LABELS[inv.status] ?? inv.status, pill: invoiceTone(inv.status) },
       ],
     }))
-    drawTable(doc, cols, rows, {
-      x: PAGE.margin,
-      headerStyle: { font: F.headingXBold, size: SIZE.xxs, color: COLOR.black },
-      cellStyle: { font: F.regular, size: SIZE.xs, color: COLOR.body },
-      detailStyle: { font: F.regular, size: SIZE.xs, color: COLOR.muted },
-      rowPaddingY: SPACE.xs,
-      headerPaddingY: SPACE.xs,
-      repeatHeader: true,
-    })
+    drawLineTable(doc, [
+      { header: 'N°', width: 52.5 },
+      { header: 'Client', width: flexWidth(fixed) },
+      { header: 'Date', width: 52.5, align: 'left' },
+      { header: 'HT', width: 61.5 },
+      { header: 'TVA', width: 52.5 },
+      { header: 'TTC', width: 61.5 },
+      { header: 'État', width: 63 },
+    ], rows, { marginTop: 4.5, leftColumns: 2, tight: true })
+  }
+
+  // ── Détail des devis ──
+  if (quotes.length > 0) {
+    drawSectionTitle(doc, 'Détail des devis')
+    const fixed = [52.5, 105, 52.5, 61.5, 63]
+    const rows: LineRow[] = quotes.map(q => ({
+      cells: [
+        q.number ?? '-',
+        pdfText(q.title ?? 'Sans titre'),
+        pdfText(q.client_name ?? '-'),
+        fmtDate(q.created_at),
+        { text: fmt(q.total_ht, q.currency), bold: true },
+        { text: QUOTE_STATUS_LABELS[q.status] ?? q.status, pill: quoteTone(q.status) },
+      ],
+    }))
+    drawLineTable(doc, [
+      { header: 'N°', width: 52.5 },
+      { header: 'Titre', width: flexWidth(fixed) },
+      { header: 'Client', width: 105 },
+      { header: 'Date', width: 52.5, align: 'left' },
+      { header: 'HT', width: 61.5 },
+      { header: 'État', width: 63 },
+    ], rows, { marginTop: 4.5, leftColumns: 3, tight: true })
   }
 
   return doc.save()
 }
 
-// ─── Helpers de blocs ────────────────────────────────────────────────────────
-
-function drawSectionTitle(doc: PdfDoc, label: string, F: PdfDoc['fonts']): void {
-  doc.ensureSpace(SIZE.sm + SPACE.sm)
-  doc.y -= SIZE.sm
-  doc.page.drawText(pdfText(label).toUpperCase(), { x: PAGE.margin, y: doc.y, size: SIZE.sm, font: F.heading, color: COLOR.black })
-  doc.y -= SPACE.sm
+function invoiceTone(status: string): Tone {
+  if (status === 'paid') return 'ok'
+  if (status === 'overdue') return 'alert'
+  if (status === 'sent' || status === 'viewed' || status === 'partial') return 'warn'
+  return 'neutral'
 }
 
-function drawKpiRow(doc: PdfDoc, items: { label: string; value: string; sub?: string; accent?: boolean }[], F: PdfDoc['fonts']): void {
-  const gap = SPACE.sm
-  const boxW = (CONTENT_WIDTH - gap * (items.length - 1)) / items.length
-  const boxH = 62
-  doc.ensureSpace(boxH)
-  const y = doc.y
-  items.forEach((item, i) => {
-    const x = PAGE.margin + i * (boxW + gap)
-    doc.page.drawRectangle({ x, y: y - boxH, width: boxW, height: boxH, color: item.accent ? COLOR.accent : COLOR.surface })
-    let cy = y - SPACE.md - SIZE.xxs
-    doc.page.drawText(item.label.toUpperCase(), { x: x + SPACE.md, y: cy, size: SIZE.xxs, font: F.regular, color: item.accent ? COLOR.black : COLOR.secondary })
-    cy -= 6 + SIZE.xl
-    doc.page.drawText(item.value, { x: x + SPACE.md, y: cy, size: SIZE.xl, font: F.headingXBold, color: COLOR.black })
-    if (item.sub) {
-      cy -= 4 + SIZE.xxs
-      doc.page.drawText(pdfText(item.sub), { x: x + SPACE.md, y: cy, size: SIZE.xxs, font: F.regular, color: item.accent ? COLOR.black : COLOR.secondary })
-    }
-  })
-  doc.y = y - boxH
-}
-
-function drawInfoBand(doc: PdfDoc, F: PdfDoc['fonts'], draw: (cy: number) => void): void {
-  const boxH = SPACE.sm * 2 + SIZE.xxs + 6 + SIZE.lg
-  doc.ensureSpace(boxH)
-  doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - boxH, width: CONTENT_WIDTH, height: boxH, color: COLOR.surface })
-  draw(doc.y - SPACE.sm)
-  doc.y -= boxH
+function quoteTone(status: string): Tone {
+  if (status === 'accepted' || status === 'converted' || status === 'fully_invoiced') return 'ok'
+  if (status === 'refused' || status === 'expired') return 'alert'
+  if (status === 'sent' || status === 'viewed') return 'warn'
+  return 'neutral'
 }

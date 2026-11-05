@@ -4,10 +4,16 @@ import { PAGE } from './theme'
 import type { FontBytes } from './fonts'
 
 export type Fonts = {
+  /** Inter Regular : texte courant. */
   regular: PDFFont
+  /** Inter Bold : valeurs et libellés appuyés dans le texte. */
   bold: PDFFont
+  /** Geist Sans Bold : titres. */
   heading: PDFFont
+  /** Geist Sans Bold (alias historique de `heading`). */
   headingXBold: PDFFont
+  /** Geist Sans Medium : intitulé du document, plus petit et non gras. */
+  title: PDFFont
 }
 
 export type PageHook = (ctx: { page: PDFPage; pageIndex: number }) => number // retourne le y de départ du contenu
@@ -21,6 +27,8 @@ export class PdfDoc {
   private pages: PDFPage[] = []
   onNewPage?: PageHook
   onFinishPage?: FinishHook
+  /** Limite basse du contenu (au-dessus du pied de page). Réglée par le gabarit. */
+  bottomLimit: number = PAGE.footerHeight
 
   private constructor(doc: PDFDocument, fonts: Fonts) {
     this.doc = doc
@@ -30,13 +38,13 @@ export class PdfDoc {
   static async create(fontBytes: FontBytes): Promise<PdfDoc> {
     const doc = await PDFDocument.create()
     doc.registerFontkit(fontkit)
-    const [regular, bold, heading, headingXBold] = await Promise.all([
+    const [regular, bold, heading, title] = await Promise.all([
       doc.embedFont(fontBytes.interRegular, { subset: true }),
       doc.embedFont(fontBytes.interBold, { subset: true }),
-      doc.embedFont(fontBytes.headingBold, { subset: true }),
-      doc.embedFont(fontBytes.headingXBold, { subset: true }),
+      doc.embedFont(fontBytes.geistBold, { subset: true }),
+      doc.embedFont(fontBytes.geistMedium, { subset: true }),
     ])
-    return new PdfDoc(doc, { regular, bold, heading, headingXBold })
+    return new PdfDoc(doc, { regular, bold, heading, headingXBold: heading, title })
   }
 
   addPage(): PDFPage {
@@ -52,10 +60,19 @@ export class PdfDoc {
 
   /** Réserve `height` de hauteur ; saute de page si ça ne rentre pas. */
   ensureSpace(height: number): void {
-    const bottomLimit = PAGE.footerHeight
-    if (this.y - height < bottomLimit) {
+    if (this.y - height < this.bottomLimit) {
       this.addPage()
     }
+  }
+
+  get pageCount(): number {
+    return this.pages.length
+  }
+
+  /** Place un bloc de `height` en bas de la page courante, juste au-dessus du pied (saute de page s'il ne tient pas). */
+  pinToBottom(height: number): void {
+    if (this.y - height < this.bottomLimit) this.addPage()
+    this.y = this.bottomLimit + height
   }
 
   moveDown(gap: number): void {

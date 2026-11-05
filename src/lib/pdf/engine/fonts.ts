@@ -9,14 +9,16 @@
 
 import { inter_regular_base64 } from './font-data/inter-regular'
 import { inter_bold_base64 } from './font-data/inter-bold'
-import { plus_jakarta_sans_bold_base64 } from './font-data/plus-jakarta-sans-bold'
-import { plus_jakarta_sans_extrabold_base64 } from './font-data/plus-jakarta-sans-extrabold'
+import { geist_bold_base64 } from './font-data/geist-bold'
+import { geist_medium_base64 } from './font-data/geist-medium'
 
 export type FontBytes = {
   interRegular: ArrayBuffer
   interBold: ArrayBuffer
-  headingBold: ArrayBuffer
-  headingXBold: ArrayBuffer
+  /** Geist Sans Bold : titres, noms, montants mis en avant. */
+  geistBold: ArrayBuffer
+  /** Geist Sans Medium : intitulé du document (« Devis », « Facture »), discret. */
+  geistMedium: ArrayBuffer
 }
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
@@ -34,8 +36,8 @@ export async function loadFontBytes(_origin: string): Promise<FontBytes> {
   cached = {
     interRegular: base64ToArrayBuffer(inter_regular_base64),
     interBold: base64ToArrayBuffer(inter_bold_base64),
-    headingBold: base64ToArrayBuffer(plus_jakarta_sans_bold_base64),
-    headingXBold: base64ToArrayBuffer(plus_jakarta_sans_extrabold_base64),
+    geistBold: base64ToArrayBuffer(geist_bold_base64),
+    geistMedium: base64ToArrayBuffer(geist_medium_base64),
   }
   return cached
 }

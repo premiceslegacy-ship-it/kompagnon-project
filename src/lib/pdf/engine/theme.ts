@@ -21,6 +21,20 @@ export const COLOR = {
   green: hexToRgb('#16A34A'),
   orange: hexToRgb('#EA580C'),
   gray: hexToRgb('#888888'),
+  ink: hexToRgb(DS.color.ink),
+  ink2: hexToRgb(DS.color.ink2),
+  ink3: hexToRgb(DS.color.ink3),
+  line: hexToRgb(DS.color.line),
+  lineStrong: hexToRgb(DS.color.lineStrong),
+  lineTotal: hexToRgb(DS.color.lineTotal),
+  fill: hexToRgb(DS.color.fill),
+  pill: hexToRgb(DS.color.pill),
+  okBg: hexToRgb(DS.color.okBg),
+  okInk: hexToRgb(DS.color.okInk),
+  warnBg: hexToRgb(DS.color.warnBg),
+  warnInk: hexToRgb(DS.color.warnInk),
+  alertBg: hexToRgb(DS.color.alertBg),
+  alertInk: hexToRgb(DS.color.alertInk),
 }
 
 export const SIZE = DS.size
