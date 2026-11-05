@@ -111,6 +111,8 @@ test('La barre latérale ne fait pas déborder le résumé et la liste Documents
     if (!main) throw new Error('Documents screen unavailable.')
     const bounds = main.getBoundingClientRect()
     const overflowing = [...main.querySelectorAll('*')].filter(element => {
+      // Les annonces vocales (Hud) sont des régions invisibles collées au bord de la fenêtre.
+      if (window.getComputedStyle(element).clipPath !== 'none' || element.closest('[aria-live], [role="status"], [role="alert"]')) return false
       const rect = element.getBoundingClientRect()
       return rect.width > 0 && (rect.right > bounds.right + 1 || rect.left < bounds.left - 1)
     }).length
