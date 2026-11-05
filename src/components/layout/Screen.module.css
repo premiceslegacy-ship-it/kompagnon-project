@@ -1,5 +1,5 @@
 /* @atelier-migrated */
-/* Écran Aujourd'hui : valeurs reprises de la maquette (app.css et tableau.js). */
+/* Briques d’écran partagées (Aujourd’hui, Documents…) : valeurs reprises de la maquette (app.css). */
 .root {
   min-width: 0;
   padding: 0 16px 40px;
@@ -37,7 +37,8 @@
   line-height: var(--at-interligne-titre-large);
   letter-spacing: -0.024em;
   text-wrap: balance;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  hyphens: manual;
 }
 
 .ask {

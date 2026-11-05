@@ -4,7 +4,7 @@
 import Link from 'next/link'
 import { ChevronRight, Mic, ShieldAlert } from 'lucide-react'
 import { useNavigationAccess } from '@/components/layout/NavigationAccess'
-import styles from './Today.module.css'
+import styles from '@/components/layout/Screen.module.css'
 
 const NB = ' '
 

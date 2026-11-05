@@ -1,12 +1,12 @@
 'use client'
+// @atelier-migrated
 
 import React, { useEffect, useState } from 'react'
-import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { Quote } from '@/lib/data/queries/quotes'
 import type { Invoice } from '@/lib/data/queries/invoices'
 import type { ReceivedInvoice } from '@/lib/data/queries/received-invoices'
-import { formatCurrency, ActionMenu } from '@/components/shared'
+import { formatCurrency } from '@/components/shared'
 import { archiveQuote, markQuoteAccepted, duplicateQuote } from '@/lib/data/mutations/quotes'
 import { archiveInvoice, markInvoicePaid, generateDepositInvoice, recordScheduledPayment } from '@/lib/data/mutations/invoices'
 import { createChantierFromQuote } from '@/lib/data/mutations/chantiers'
@@ -16,17 +16,24 @@ import SituationsSection from '@/components/situations/SituationsSection'
 import { loadSituationsSummary } from './actions'
 import type { SituationsSummary } from '@/lib/data/queries/invoices'
 import { todayParis } from '@/lib/utils'
-import {
-  Search, Plus, FileText, Bot,
-  CheckCircle2, Clock, Percent, Wallet, Receipt, AlertTriangle,
-  Edit2, Trash2, FileDown, Eye, Repeat, Check, Copy, Landmark, HardHat,
-  ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Upload, Loader2, CalendarClock, X, RefreshCw, Inbox,
-} from 'lucide-react'
-import { AssistantAvatar } from '@/components/ai/AssistantAvatar'
+import { ChevronDown, ChevronLeft, ChevronRight, MoreHorizontal, Plus } from 'lucide-react'
+import { Avatar } from '@/components/ui/Avatar'
+import { Button } from '@/components/ui/Button'
+import { Hud } from '@/components/ui/Hud'
+import { ListGroup, ListRow } from '@/components/ui/ListGroup'
+import { Menu } from '@/components/ui/Menu'
+import { SearchField } from '@/components/ui/SearchField'
+import { SegmentedControl } from '@/components/ui/SegmentedControl'
+import { Sheet } from '@/components/ui/Sheet'
+import { StatusPill, type StatusPillStatus } from '@/components/ui/StatusPill'
+import screen from '@/components/layout/Screen.module.css'
+import styles from './Documents.module.css'
+
+const NB = ' '
 
 // ─── Helpers mois ─────────────────────────────────────────────────────────────
 
-const MONTHS_FR = ['Janv.', 'Févr.', 'Mars', 'Avr.', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.']
+const MONTHS_FR = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre']
 
 function getCurrentYM() {
   const now = new Date()
@@ -44,56 +51,49 @@ function fmtYM(ym: string): string {
   return `${MONTHS_FR[m - 1]} ${y}`
 }
 
-function DeltaBadge({ current, prev }: { current: number; prev: number }) {
-  if (prev === 0 && current === 0) return null
-  if (prev === 0) return <span className="text-xs font-semibold text-accent-green">Nouveau</span>
-  const pct = Math.round(((current - prev) / prev) * 100)
-  if (pct === 0) return <span className="text-xs text-secondary">= mois préc.</span>
-  const up = pct > 0
-  return (
-    <span className={`text-xs font-semibold flex items-center gap-0.5 ${up ? 'text-accent-green' : 'text-red-500'}`}>
-      {up ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-      {up ? '+' : ''}{pct}% vs mois préc.
-    </span>
-  )
+const MONTHS_SHORT = ['Janv.', 'Févr.', 'Mars', 'Avr.', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.']
+
+function fmtShortYM(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  return `${MONTHS_SHORT[m - 1]} ${y}`
 }
 
-const STATUS: Record<string, { label: string; cls: string }> = {
-  draft:     { label: 'Brouillon', cls: 'bg-secondary/10 text-secondary' },
-  sent:      { label: 'Envoyé',    cls: 'bg-accent/10 text-accent' },
-  viewed:    { label: 'Consulté',  cls: 'bg-blue-500/10 text-blue-500' },
-  accepted:  { label: 'Accepté',   cls: 'bg-accent-green/10 text-accent-green' },
-  refused:   { label: 'Refusé',    cls: 'bg-red-500/10 text-red-500' },
-  expired:   { label: 'Expiré',    cls: 'bg-orange-500/10 text-orange-500' },
-  converted: { label: 'Converti',  cls: 'bg-purple-500/10 text-purple-500' },
+function pct(current: number, prev: number): string {
+  if (prev === 0 || current === 0) return ''
+  const p = Math.round(((current - prev) / prev) * 100)
+  if (p === 0) return ''
+  return ` (${p > 0 ? '+' : '−'}${Math.abs(p)}${NB}% vs mois précédent)`
 }
 
-const INVOICE_STATUS: Record<string, { label: string; cls: string }> = {
-  draft:     { label: 'Brouillon',           cls: 'bg-secondary/10 text-secondary' },
-  sent:      { label: 'Envoyée',             cls: 'bg-accent/10 text-accent' },
-  partial:   { label: 'Partiellement payée', cls: 'bg-blue-500/10 text-blue-500' },
-  paid:      { label: 'Payée',               cls: 'bg-accent-green/10 text-accent-green' },
-  cancelled: { label: 'Annulée',             cls: 'bg-red-500/10 text-red-500' },
+type Status = { label: string; status: StatusPillStatus }
+
+const STATUS: Record<string, Status> = {
+  draft:          { label: 'Brouillon', status: 'neutral' },
+  sent:           { label: 'Envoyé',    status: 'wait' },
+  viewed:         { label: 'Consulté',  status: 'wait' },
+  accepted:       { label: 'Accepté',   status: 'success' },
+  refused:        { label: 'Refusé',    status: 'danger' },
+  expired:        { label: 'Expiré',    status: 'neutral' },
+  converted:      { label: 'Converti',  status: 'success' },
+  fully_invoiced: { label: 'Facturé',   status: 'success' },
 }
 
-const RECEIVED_INVOICE_STATUS: Record<string, { label: string; cls: string }> = {
-  received:  { label: 'Reçue',     cls: 'bg-accent/10 text-accent' },
-  verified:  { label: 'À payer',   cls: 'bg-blue-500/10 text-blue-500' },
-  accounted: { label: 'Payée',     cls: 'bg-accent-green/10 text-accent-green' },
-  rejected:  { label: 'Rejetée',   cls: 'bg-red-500/10 text-red-500' },
+const INVOICE_STATUS: Record<string, Status> = {
+  draft:     { label: 'Brouillon',           status: 'neutral' },
+  sent:      { label: 'Envoyée',             status: 'wait' },
+  partial:   { label: 'Partiellement payée', status: 'wait' },
+  paid:      { label: 'Payée',               status: 'success' },
+  cancelled: { label: 'Annulée',             status: 'danger' },
 }
 
-function StatCard({ icon, label, value, danger }: { icon: React.ReactNode; label: string; value: string; danger?: boolean }) {
-  return (
-    <div className="rounded-3xl card p-6 flex items-center gap-4">
-      <div className="flex-shrink-0">{icon}</div>
-      <div>
-        <p className="text-sm font-semibold text-secondary uppercase tracking-wider">{label}</p>
-        <p className={`text-2xl font-bold tabular-nums ${danger ? 'text-red-500' : 'text-primary'}`}>{value}</p>
-      </div>
-    </div>
-  )
+const RECEIVED_INVOICE_STATUS: Record<string, Status> = {
+  received:  { label: 'Reçue',   status: 'wait' },
+  verified:  { label: 'À payer', status: 'wait' },
+  accounted: { label: 'Payée',   status: 'success' },
+  rejected:  { label: 'Rejetée', status: 'danger' },
 }
+
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
 
 function buildEditorHref(path: string, params: Record<string, string | null | undefined> = {}) {
   const query = new URLSearchParams()
@@ -104,31 +104,10 @@ function buildEditorHref(path: string, params: Record<string, string | null | un
   return qs ? `${path}?${qs}` : path
 }
 
-function EmptyState({ type, canCreate, returnTo }: { type: 'quotes' | 'invoices'; canCreate: boolean; returnTo: string }) {
-  return (
-    <div className="flex flex-col items-center gap-4">
-      <FileText className="w-10 h-10 text-secondary opacity-20" />
-      <div>
-        <p className="text-xl font-bold text-primary">
-          Aucun {type === 'quotes' ? 'devis' : 'facture'} pour l&apos;instant
-        </p>
-        <p className="text-secondary mt-1">
-          {type === 'quotes' ? 'Créez votre premier devis pour commencer.' : 'Vos factures apparaîtront ici une fois créées.'}
-        </p>
-      </div>
-      {canCreate && type === 'quotes' && (
-        <Link href={buildEditorHref('/finances/quote-editor', { returnTo })} className="mt-2 px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap">
-          <AssistantAvatar assistant="chloe" size={16} />Nouveau Devis
-        </Link>
-      )}
-      {canCreate && type === 'invoices' && (
-        <Link href={buildEditorHref('/finances/invoice-editor', { returnTo })} className="mt-2 px-6 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center gap-2 hover:bg-base transition-all whitespace-nowrap">
-          <Plus className="w-4 h-4" />Nouvelle Facture
-        </Link>
-      )}
-    </div>
-  )
-}
+type Selected =
+  | { kind: 'quote'; id: string }
+  | { kind: 'invoice'; id: string }
+  | { kind: 'received'; id: string }
 
 export default function FinancesClient({
   initialQuotes, initialInvoices,
@@ -155,6 +134,8 @@ export default function FinancesClient({
   linkableChantiers?: { id: string; title: string }[]
   canLinkReceivedInvoice?: boolean
 }) {
+  const [selected, setSelected] = useState<Selected | null>(null)
+  const [notice, setNotice] = useState<{ message: string; error?: boolean } | null>(null)
   const router = useRouter()
   const searchParams = useSearchParams()
   const [activeTab, setActiveTab] = useState<'quotes' | 'invoices' | 'received'>(
@@ -344,7 +325,7 @@ export default function FinancesClient({
     setMarkPaidLoadingId(null)
     if (res.error) {
       setInvoices(previousInvoices)
-      alert(res.error)
+      setNotice({ message: res.error, error: true })
       return
     }
     setInvoices(prev => prev.map(inv =>
@@ -481,9 +462,11 @@ export default function FinancesClient({
     setLinkingReceivedInvoiceId(null)
     if (res.error) {
       setReceivedInvoices(previousReceivedInvoices)
-      alert(res.error)
+      setNotice({ message: res.error, error: true })
     }
   }
+
+  // ── Retours d'action et détail ───────────────────────────────────────────────
 
   const activeStatusMap = activeTab === 'quotes' ? STATUS : activeTab === 'invoices' ? INVOICE_STATUS : RECEIVED_INVOICE_STATUS
 
@@ -491,236 +474,539 @@ export default function FinancesClient({
     ? Math.round((depositModal.quoteTtc ?? 0) * depositRate / 100 * 100) / 100
     : 0
 
+  const go = (href: string) => { setIsNavigating(true); router.push(href) }
+
+  const openPayment = async (inv: Invoice) => {
+    setLoadingScheduleId(inv.id)
+    try {
+      const res = await fetch(`/api/invoices/${inv.id}/schedule`)
+      const data = await res.json()
+      const unpaid = (data.schedule ?? []).filter((s: { paid_payment_id?: string | null }) => !s.paid_payment_id)
+      const scheduleToShow = unpaid.length > 0 ? unpaid : [{
+        id: '__full__',
+        label: 'Paiement intégral',
+        due_date: todayParis(),
+        amount: inv.total_ttc ?? 0,
+        amount_type: 'amount' as const,
+        percentage: null,
+      }]
+      setPaymentScheduleItemId(scheduleToShow[0].id)
+      setPaymentDate(todayParis())
+      setPaymentMethod('virement')
+      setPaymentRef('')
+      setPaymentError(null)
+      setSelected(null)
+      setPaymentModal({ invoiceId: inv.id, invoiceNumber: inv.number, schedule: scheduleToShow })
+    } finally {
+      setLoadingScheduleId(null)
+    }
+  }
+
+  const openDeposit = (q: Quote) => {
+    setDepositRate(30); setDepositDueDate(''); setDepositBalanceDueDate(''); setDepositError(null)
+    setSelected(null)
+    setDepositModal({ quoteId: q.id, quoteTitle: q.title, quoteTtc: q.total_ttc })
+  }
+
+  const run = async (fn: () => Promise<void>, message: string) => {
+    setSelected(null)
+    await fn()
+    setNotice({ message })
+  }
+
+  const selectedQuote = selected?.kind === 'quote' ? quotes.find(q => q.id === selected.id) ?? null : null
+  const selectedInvoice = selected?.kind === 'invoice' ? invoices.find(i => i.id === selected.id) ?? null : null
+  const selectedReceived = selected?.kind === 'received' ? receivedInvoices.find(r => r.id === selected.id) ?? null : null
+
+  const acceptedLike = (s: string) => s === 'accepted' || s === 'converted' || s === 'fully_invoiced'
+
+  // Action principale du détail, d'après la maquette (un seul bouton plein).
+  function quotePrimary(q: Quote): { label: string; onClick: () => void } | null {
+    if (q.status === 'draft' && canEditQuote) return { label: 'Modifier le devis', onClick: () => go(quoteEditorHref(q.id)) }
+    if ((q.status === 'sent' || q.status === 'viewed') && canSendQuote) return { label: 'Marquer accepté', onClick: () => run(() => handleMarkQuoteAccepted(q.id), `${q.number ?? 'Devis'} accepté`) }
+    if (q.status === 'accepted' && canCreateInvoice) return { label: "Générer l'acompte", onClick: () => openDeposit(q) }
+    if ((q.status === 'converted' || q.status === 'fully_invoiced') && (canCreateSituation || canCreateSolde)) return { label: 'Situations de travaux', onClick: () => { setSelected(null); handleOpenSituations(q.id, q.title) } }
+    if ((q.status === 'refused' || q.status === 'expired') && canCreateQuote) return { label: 'Dupliquer', onClick: () => { setSelected(null); handleDuplicateQuote(q.id) } }
+    return null
+  }
+
+  function invoicePrimary(inv: Invoice): { label: string; onClick: () => void; loading?: boolean } | null {
+    if (inv.status === 'draft' && canSendInvoice) return { label: 'Valider et envoyer', onClick: () => go(invoiceEditorHref(inv.id)) }
+    if ((inv.status === 'sent' || inv.status === 'partial') && canRecordPayment) return { label: 'Encaisser un versement', onClick: () => openPayment(inv), loading: loadingScheduleId === inv.id }
+    return null
+  }
+
+  const clientOf = (doc: Quote | Invoice) => doc.client?.company_name ?? doc.client?.email ?? 'Sans client'
+
+  // ── Résumé du segment, dans l'en-tête de la liste ────────────────────────────
+  const summary = activeTab === 'quotes'
+    ? `${qEmisCount} émis, ${qAcceptedCount} accepté${qAcceptedCount > 1 ? 's' : ''} · ${formatCurrency(qEmisHt)} HT${pct(qEmisHt, qEmisHtPrev)}`
+    : activeTab === 'invoices'
+      ? `${formatCurrency(caMois)} HT facturé${pct(caMois, caMoisPrev)} · ${formatCurrency(totalEncaisse)} encaissé${pct(totalEncaisse, totalEncaissePrev)}`
+      : `${receivedToPayTotal > 0 ? `${formatCurrency(receivedToPayTotal)} à payer` : 'Rien à payer'}${receivedOverdueCount > 0 ? ` · ${receivedOverdueCount} en retard` : ''}`
+
+  const noun = activeTab === 'quotes' ? 'devis' : activeTab === 'invoices' ? 'facture' : 'facture reçue'
+  const listIsEmpty = activeFilteredCount === 0
+  const filtersActive = statusFilter !== 'all' || searchTerm.trim() !== ''
+
+  const segments = [
+    { value: 'quotes', label: 'Devis' },
+    { value: 'invoices', label: 'Factures' },
+    ...(canViewReceivedInvoices ? [{ value: 'received', label: 'Reçues' }] : []),
+  ]
+
+  const listMenu = [
+    { label: isRefreshing ? 'Actualisation…' : 'Actualiser', onSelect: handleRefresh },
+    { label: 'Importer des documents', onSelect: () => { setImportDefaultType(activeTab === 'invoices' ? 'invoices' : 'quotes'); setImportOpen(true) } },
+    { label: 'Factures récurrentes', onSelect: () => router.push('/finances/recurring') },
+    { label: 'Contrats', onSelect: () => router.push('/contracts') },
+    ...(activeTab === 'invoices' ? [{ label: reportLoading ? 'Génération du rapport…' : `Rapport ${fmtYM(statsMonth).toLocaleLowerCase('fr-FR')} (PDF)`, onSelect: handleDownloadMonthlyReport, disabled: reportLoading }] : []),
+  ]
+
+  const month = activeTab === 'quotes' ? quoteStatsMonth : statsMonth
+  const setMonth = (delta: number | 'now') => {
+    const update = (m: string) => delta === 'now' ? getCurrentYM() : offsetYM(m, delta)
+    if (activeTab === 'quotes') setQuoteStatsMonth(update)
+    else setStatsMonth(update)
+    setPage(1)
+  }
+  const atCurrentMonth = activeTab === 'quotes' ? isCurrentQuoteMonth : isCurrentMonth
+
+  const statusItems = [
+    { label: 'Tous les statuts', onSelect: () => { setStatusFilter('all'); setPage(1) }, checked: statusFilter === 'all' },
+    ...Object.entries(activeStatusMap).map(([key, s]) => ({ label: s.label, onSelect: () => { setStatusFilter(key); setPage(1) }, checked: statusFilter === key })),
+  ]
+
+  const createPrimary = activeTab === 'invoices'
+    ? (canCreateInvoice ? { label: 'Nouvelle facture', href: invoiceEditorHref() } : null)
+    : activeTab === 'quotes'
+      ? (canCreateQuote ? { label: 'Nouveau devis', href: quoteEditorHref() } : null)
+      : null
+
   return (
-    <main className="page-container space-y-6 md:space-y-8">
-
-      {isNavigating && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-base/80 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin" />
-            <p className="text-sm text-secondary">Chargement...</p>
+    <main className={screen.root}>
+      <div className={screen.page}>
+        {isNavigating && (
+          <div className={styles.navigating} role="status">
+            <span className={styles.spinner} aria-hidden="true" />
+            <span>Chargement…</span>
           </div>
-        </div>
-      )}
+        )}
 
-      <ImportDocumentsModal
-        isOpen={importOpen}
-        onClose={() => setImportOpen(false)}
-        defaultType={importDefaultType}
-      />
+        <ImportDocumentsModal
+          isOpen={importOpen}
+          onClose={() => setImportOpen(false)}
+          defaultType={importDefaultType}
+        />
 
-      {/* ── Modale paiement échéancier ── */}
-      {paymentModal && (
-        <div className="modal-overlay">
-          <div className="modal-panel space-y-5 sm:max-w-sm">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl flex items-center justify-center">
-                  <CalendarClock className="w-5 h-5 text-blue-500" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-primary">Encaisser un versement</h2>
-                  <p className="text-xs text-secondary">{paymentModal.invoiceNumber ?? 'Facture'}</p>
-                </div>
-              </div>
-              <button onClick={() => setPaymentModal(null)} className="text-secondary hover:text-primary transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-semibold text-secondary">Échéance à solder</label>
-              <select
-                value={paymentScheduleItemId}
-                onChange={e => setPaymentScheduleItemId(e.target.value)}
-                className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-blue-500/50 appearance-none"
-              >
-                <option value="">Sélectionner...</option>
-                {paymentModal.schedule.map(s => (
-                  <option key={s.id} value={s.id}>
-                    {s.label} - {s.amount_type === 'percentage' && s.percentage ? `${s.percentage}% · ` : ''}{new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(s.amount)} · {new Date(s.due_date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-secondary">Date de réception</label>
-                <input
-                  type="date"
-                  value={paymentDate}
-                  onChange={e => setPaymentDate(e.target.value)}
-                  className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-blue-500/50 tabular-nums"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-secondary">Mode</label>
-                <select
-                  value={paymentMethod}
-                  onChange={e => setPaymentMethod(e.target.value)}
-                  className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-blue-500/50 appearance-none"
-                >
-                  <option value="virement">Virement</option>
-                  <option value="cheque">Chèque</option>
-                  <option value="cb">CB</option>
-                  <option value="especes">Espèces</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-semibold text-secondary">Référence (optionnel)</label>
-              <input
-                type="text"
-                value={paymentRef}
-                onChange={e => setPaymentRef(e.target.value)}
-                placeholder="N° virement, chèque..."
-                className="w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-              />
-            </div>
-
-            {paymentError && <p className="text-xs text-red-500">{paymentError}</p>}
-
-            <div className="flex gap-3 pt-1">
-              <button
-                onClick={() => setPaymentModal(null)}
-                className="flex-1 py-3 rounded-full border border-[var(--elevation-border)] text-secondary font-semibold hover:text-primary transition-colors"
-              >
-                Annuler
-              </button>
-              <button
-                onClick={handleRecordScheduledPayment}
-                disabled={paymentLoading || !paymentScheduleItemId}
-                className="flex-1 py-3 rounded-full bg-blue-500 text-white font-bold flex items-center justify-center gap-2 hover:bg-blue-600 transition-colors disabled:opacity-50"
-              >
-                {paymentLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                Encaisser
-              </button>
-            </div>
+        <header className={screen.header}>
+          <div>
+            <p className={screen.kicker}>{activeTab === 'received' ? 'Factures fournisseurs' : fmtYM(month)}</p>
+            <h1 className={screen.title}>Documents</h1>
           </div>
-        </div>
-      )}
+          <div className={styles.actions}>
+            <Menu
+              title="Documents"
+              items={listMenu}
+              trigger={<button type="button" className={screen.round} aria-label="Plus d'options"><MoreHorizontal size={20} aria-hidden="true" /></button>}
+            />
+            {createPrimary ? (
+              <>
+                <Button size="md" className={styles.createWide} onClick={() => go(createPrimary.href)}>{createPrimary.label}</Button>
+                <button type="button" className={styles.createRound} onClick={() => go(createPrimary.href)} aria-label={createPrimary.label}>
+                  <Plus size={20} aria-hidden="true" />
+                </button>
+              </>
+            ) : null}
+          </div>
+        </header>
 
-      {/* ── Modale acompte ── */}
-      {depositModal && (
-        <div className="modal-overlay">
-          <div className="modal-panel space-y-6 sm:max-w-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl flex items-center justify-center">
-                <Landmark className="w-5 h-5 text-accent" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-primary">Facture d&apos;acompte</h2>
-                <p className="text-xs text-secondary truncate max-w-[200px]">{depositModal.quoteTitle ?? 'Devis'}</p>
-              </div>
+        <div className={styles.segmentRow}>
+          <SegmentedControl
+            label="Type de document"
+            fullWidth
+            options={segments}
+            value={activeTab}
+            onChange={(v) => handleTabChange(v as 'quotes' | 'invoices' | 'received')}
+          />
+          <p className={styles.summary}>{summary}</p>
+        </div>
+
+        <div className={styles.searchRow}>
+          <SearchField
+            value={searchTerm}
+            onChange={(v) => { setSearchTerm(v); setPage(1) }}
+            label="Rechercher"
+            placeholder={activeTab === 'received' ? 'Fournisseur ou numéro' : 'Client, numéro ou titre'}
+          />
+        </div>
+
+        <div className={styles.chips}>
+          {activeTab !== 'received' ? (
+            <div className={styles.monthChip}>
+              <button type="button" className={styles.chipIcon} onClick={() => setMonth(-1)} aria-label="Mois précédent"><ChevronLeft size={16} aria-hidden="true" /></button>
+              <button type="button" className={styles.chipLabel} onClick={() => setMonth('now')} disabled={atCurrentMonth} aria-label={atCurrentMonth ? fmtYM(month) : `${fmtYM(month)}, revenir au mois en cours`}><span className={styles.longMonth}>{fmtYM(month)}</span><span className={styles.shortMonth} aria-hidden="true">{fmtShortYM(month)}</span></button>
+              <button type="button" className={styles.chipIcon} onClick={() => setMonth(1)} disabled={atCurrentMonth} aria-label="Mois suivant"><ChevronRight size={16} aria-hidden="true" /></button>
             </div>
-            <div className="space-y-3">
-              <label className="text-sm font-semibold text-secondary">Taux d&apos;acompte</label>
-              <div className="flex items-center gap-3">
-                {[20, 30, 40, 50].map(pct => (
-                  <button
-                    key={pct}
-                    onClick={() => setDepositRate(pct)}
-                    className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all border ${depositRate === pct ? 'bg-accent text-black border-accent' : 'bg-base border-[var(--elevation-border)] text-secondary hover:text-primary'}`}
-                  >
-                    {pct}%
-                  </button>
-                ))}
+          ) : null}
+          <Menu
+            title="Statut"
+            items={statusItems}
+            trigger={
+              <button type="button" className={styles.chip} data-on={statusFilter !== 'all' ? 'true' : 'false'}>
+                {statusFilter === 'all' ? 'Tous les statuts' : activeStatusMap[statusFilter]?.label ?? 'Statut'}
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+            }
+          />
+          {activeTab === 'invoices' && enRetardCount > 0 ? (
+            <span className={styles.lateNote}>{enRetardCount} en retard</span>
+          ) : null}
+        </div>
+
+        {listIsEmpty ? (
+          <div className={`${screen.empty} ${styles.emptyBlock}`}>
+            <b>{filtersActive ? `Aucun ${noun} ne correspond` : activeTab === 'received' ? "Aucune facture reçue pour l'instant" : `Aucun${activeTab === 'invoices' ? 'e' : ''} ${noun} ce mois-ci`}</b>
+            {filtersActive
+              ? 'Essayez un autre statut ou une autre recherche.'
+              : activeTab === 'received'
+                ? 'Les factures reçues par votre plateforme de facturation électronique apparaîtront ici.'
+                : 'Changez de mois, ou créez un document.'}
+            {filtersActive ? (
+              <div className={styles.emptyAction}>
+                <Button variant="secondary" size="md" onClick={() => { setStatusFilter('all'); setSearchTerm(''); setPage(1) }}>Effacer les filtres</Button>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1} max={100}
-                  value={depositRate}
-                  onChange={e => setDepositRate(Math.min(100, Math.max(1, Number(e.target.value))))}
-                  className="w-24 p-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm text-center focus:outline-none focus:ring-2 focus:ring-accent/50"
-                />
-                <span className="text-sm text-secondary">% du total TTC</span>
+            ) : null}
+          </div>
+        ) : (
+          <section className={screen.group} aria-label={`Liste des ${noun}s`}>
+            <ul className={screen.list}>
+              {activeTab === 'quotes' && paginatedQuotes.map(q => {
+                const st = STATUS[q.status] ?? STATUS.draft
+                const client = clientOf(q)
+                return (
+                  <li key={q.id}>
+                    <button type="button" className={screen.row} onClick={() => setSelected({ kind: 'quote', id: q.id })} aria-haspopup="dialog">
+                      <span aria-hidden="true"><Avatar name={client} size={34} /></span>
+                      <span className={screen.mid}>
+                        <span className={screen.rowTitle}>{client}</span>
+                        <span className={screen.rowSub}>{[q.number ?? 'Sans numéro', q.title ?? 'Sans titre'].join(' · ')}</span>
+                      </span>
+                      <span className={screen.rowEnd}>
+                        <span className={screen.amount}>{q.total_ttc != null ? formatCurrency(q.total_ttc) : '/'}</span>
+                        <StatusPill status={st.status}>{st.label}</StatusPill>
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+              {activeTab === 'invoices' && paginatedInvoices.map(inv => {
+                const st = INVOICE_STATUS[inv.status] ?? INVOICE_STATUS.draft
+                const client = clientOf(inv)
+                const isOverdue = (inv.status === 'sent' || inv.status === 'partial') && inv.due_date != null && inv.due_date < today
+                const kind = inv.invoice_type === 'acompte' ? 'Acompte' : inv.invoice_type === 'solde' ? 'Solde' : inv.invoice_type === 'situation' ? 'Situation' : null
+                return (
+                  <li key={inv.id}>
+                    <button type="button" className={screen.row} onClick={() => setSelected({ kind: 'invoice', id: inv.id })} aria-haspopup="dialog">
+                      <span aria-hidden="true"><Avatar name={client} size={34} /></span>
+                      <span className={screen.mid}>
+                        <span className={screen.rowTitle}>{client}</span>
+                        <span className={screen.rowSub}>
+                          {[inv.number ?? 'Sans numéro', kind, inv.title].filter(Boolean).join(' · ')}
+                          {isOverdue && inv.due_date ? <span className={styles.late}> · échue le {shortDate(inv.due_date)}</span> : null}
+                        </span>
+                      </span>
+                      <span className={screen.rowEnd}>
+                        <span className={screen.amount}>{inv.total_ttc != null ? formatCurrency(inv.total_ttc) : '/'}</span>
+                        <StatusPill status={isOverdue ? 'danger' : st.status}>{isOverdue ? 'En retard' : st.label}</StatusPill>
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+              {activeTab === 'received' && paginatedReceivedInvoices.map(ri => {
+                const st = RECEIVED_INVOICE_STATUS[ri.status] ?? RECEIVED_INVOICE_STATUS.received
+                const isOverdue = ri.status === 'verified' && ri.due_date != null && ri.due_date < today
+                return (
+                  <li key={ri.id}>
+                    <button type="button" className={screen.row} onClick={() => setSelected({ kind: 'received', id: ri.id })} aria-haspopup="dialog">
+                      <span aria-hidden="true"><Avatar name={ri.supplier_name} size={34} /></span>
+                      <span className={screen.mid}>
+                        <span className={screen.rowTitle}>{ri.supplier_name}</span>
+                        <span className={screen.rowSub}>
+                          {[ri.invoice_number, shortDate(ri.invoice_date), ri.chantier_title].filter(Boolean).join(' · ')}
+                          {isOverdue && ri.due_date ? <span className={styles.late}> · échue le {shortDate(ri.due_date)}</span> : null}
+                        </span>
+                      </span>
+                      <span className={screen.rowEnd}>
+                        <span className={screen.amount}>{formatCurrency(ri.total_ttc)}</span>
+                        <StatusPill status={isOverdue ? 'danger' : st.status}>{isOverdue ? 'En retard' : st.label}</StatusPill>
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+            {totalPages > 1 ? (
+              <div className={styles.pager}>
+                <button type="button" className={screen.round} onClick={() => setPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} aria-label="Page précédente"><ChevronLeft size={18} aria-hidden="true" /></button>
+                <span className={styles.pagerLabel}>Page {currentPage} sur {totalPages}</span>
+                <button type="button" className={screen.round} onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} aria-label="Page suivante"><ChevronRight size={18} aria-hidden="true" /></button>
               </div>
-              {depositModal.quoteTtc != null && (
-                <div className="p-3 rounded-xl bg-accent/5 border border-accent/20">
-                  <p className="text-xs text-secondary">Montant de l&apos;acompte</p>
-                  <p className="text-xl font-bold text-primary tabular-nums">{formatCurrency(depositPreview)}</p>
+            ) : null}
+          </section>
+        )}
+      </div>
+
+      {/* ── Détail d'un devis ── */}
+      <Sheet
+        open={selectedQuote !== null}
+        onOpenChange={(open) => { if (!open) setSelected(null) }}
+        title={selectedQuote ? `Devis ${selectedQuote.number ?? ''}`.trim() : 'Devis'}
+        description={selectedQuote ? clientOf(selectedQuote) : undefined}
+      >
+        {selectedQuote ? (() => {
+          const q = selectedQuote
+          const st = STATUS[q.status] ?? STATUS.draft
+          const primary = quotePrimary(q)
+          const next: React.ReactNode[] = []
+          if (canSendQuote && (q.status === 'sent' || q.status === 'viewed') && primary?.label !== 'Marquer accepté') next.push(<ListRow key="acc" title="Marquer accepté" description="Le client a donné son accord" onClick={() => run(() => handleMarkQuoteAccepted(q.id), `${q.number ?? 'Devis'} accepté`)} />)
+          if (canCreateInvoice && acceptedLike(q.status)) {
+            if (primary?.label !== "Générer l'acompte") next.push(<ListRow key="dep" title="Générer l'acompte" description="Taux et échéances au choix" onClick={() => openDeposit(q)} />)
+            next.push(<ListRow key="ch" title="Créer le chantier" description="À partir de ce devis" onClick={() => { setSelected(null); handleCreateChantierFromQuote(q.id) }} />)
+          }
+          if ((canCreateSituation || canCreateSolde) && acceptedLike(q.status) && primary?.label !== 'Situations de travaux') next.push(<ListRow key="sit" title="Situations de travaux" description="Facturer selon l'avancement" onClick={() => { setSelected(null); handleOpenSituations(q.id, q.title) }} />)
+          const edit: React.ReactNode[] = []
+          if (canEditQuote && primary?.label !== 'Modifier le devis') edit.push(<ListRow key="ed" title="Modifier" onClick={() => go(quoteEditorHref(q.id))} />)
+          if (canCreateQuote && primary?.label !== 'Dupliquer') edit.push(<ListRow key="dup" title="Dupliquer" description="Nouveau brouillon avec les mêmes lignes" onClick={() => { setSelected(null); handleDuplicateQuote(q.id) }} />)
+          return (
+            <div className={styles.detail}>
+              <section className={`${screen.card} ${screen.hero}`}>
+                <div className={screen.label}><span>Total TTC</span><StatusPill status={st.status}>{st.label}</StatusPill></div>
+                <div className={screen.big}>{q.total_ttc != null ? formatCurrency(q.total_ttc) : '/'}</div>
+                <div className={screen.sub}>{q.total_ht != null ? `${formatCurrency(q.total_ht)} HT` : ''}{q.title ? ` · ${q.title}` : ''}</div>
+              </section>
+              {primary ? <Button size="lg" className={styles.primary} onClick={primary.onClick}>{primary.label}</Button> : null}
+              <ListGroup title="Informations">
+                <ListRow title="Créé le" trailing={<span className={styles.value}>{shortDate(q.created_at)}</span>} />
+                {q.valid_until ? <ListRow title="Valable jusqu'au" trailing={<span className={styles.value}>{shortDate(q.valid_until)}</span>} /> : null}
+              </ListGroup>
+              <ListGroup title="Document">
+                <ListRow title="Aperçu du PDF" href={`/api/pdf/quote/${q.id}`} />
+                <ListRow title="Télécharger le PDF" href={`/api/pdf/quote/${q.id}?download=1`} />
+              </ListGroup>
+              {next.length ? <ListGroup title="Ensuite">{next}</ListGroup> : null}
+              {edit.length ? <ListGroup>{edit}</ListGroup> : null}
+              {canDeleteQuote ? (
+                <ListGroup>
+                  <li className={styles.destructiveRow}>
+                    <button type="button" onClick={() => run(() => handleArchiveQuote(q.id), `${q.number ?? 'Devis'} archivé`)}>Archiver le devis</button>
+                  </li>
+                </ListGroup>
+              ) : null}
+            </div>
+          )
+        })() : null}
+      </Sheet>
+
+      {/* ── Détail d'une facture ── */}
+      <Sheet
+        open={selectedInvoice !== null}
+        onOpenChange={(open) => { if (!open) setSelected(null) }}
+        title={selectedInvoice ? `Facture ${selectedInvoice.number ?? ''}`.trim() : 'Facture'}
+        description={selectedInvoice ? clientOf(selectedInvoice) : undefined}
+      >
+        {selectedInvoice ? (() => {
+          const inv = selectedInvoice
+          const st = INVOICE_STATUS[inv.status] ?? INVOICE_STATUS.draft
+          const isOverdue = (inv.status === 'sent' || inv.status === 'partial') && inv.due_date != null && inv.due_date < today
+          const primary = invoicePrimary(inv)
+          const next: React.ReactNode[] = []
+          if (canRecordPayment && inv.status === 'sent') next.push(<ListRow key="paid" title="Marquer payée" description="Paiement intégral reçu" disabled={markPaidLoadingId !== null} onClick={() => run(() => handleMarkPaid(inv.id), `${inv.number ?? 'Facture'} marquée payée`)} />)
+          if (canCreateInvoice) next.push(<ListRow key="rec" title="Convertir en facture récurrente" onClick={() => go(`/finances/recurring?from_invoice=${inv.id}`)} />)
+          const remaining = inv.status === 'partial' ? Math.max(0, (inv.total_ttc ?? 0) - (inv.total_paid ?? 0)) : null
+          return (
+            <div className={styles.detail}>
+              <section className={`${screen.card} ${screen.hero}`}>
+                <div className={screen.label}><span>Total TTC</span><StatusPill status={isOverdue ? 'danger' : st.status}>{isOverdue ? 'En retard' : st.label}</StatusPill></div>
+                <div className={screen.big}>{inv.total_ttc != null ? formatCurrency(inv.total_ttc) : '/'}</div>
+                <div className={screen.sub}>
+                  {inv.total_ht != null ? `${formatCurrency(inv.total_ht)} HT` : ''}
+                  {remaining != null ? ` · reste ${formatCurrency(remaining)}` : ''}
                 </div>
+              </section>
+              {primary ? <Button size="lg" className={styles.primary} onClick={primary.onClick} loading={primary.loading}>{primary.label}</Button> : null}
+              <ListGroup title="Informations">
+                <ListRow title="Émise le" trailing={<span className={styles.value}>{shortDate(invDate(inv))}</span>} />
+                {inv.due_date ? <ListRow title="Échéance" trailing={<span className={`${styles.value}${isOverdue ? ` ${styles.late}` : ''}`}>{shortDate(inv.due_date)}</span>} /> : null}
+                {inv.title ? <ListRow title="Objet" trailing={<span className={styles.value}>{inv.title}</span>} /> : null}
+              </ListGroup>
+              <ListGroup title="Document">
+                <ListRow title="Aperçu du PDF" href={`/api/pdf/invoice/${inv.id}`} />
+                <ListRow title="Télécharger le PDF" href={`/api/pdf/invoice/${inv.id}?download=1`} />
+              </ListGroup>
+              {next.length ? <ListGroup title="Ensuite">{next}</ListGroup> : null}
+              {canSendInvoice && inv.status !== 'draft' ? <ListGroup><ListRow title="Modifier" onClick={() => go(invoiceEditorHref(inv.id))} /></ListGroup> : null}
+              {canDeleteInvoice ? (
+                <ListGroup>
+                  <li className={styles.destructiveRow}>
+                    <button type="button" onClick={() => run(() => handleArchiveInvoice(inv.id), `${inv.number ?? 'Facture'} archivée`)}>Archiver la facture</button>
+                  </li>
+                </ListGroup>
+              ) : null}
+            </div>
+          )
+        })() : null}
+      </Sheet>
+
+      {/* ── Détail d'une facture reçue ── */}
+      <Sheet
+        open={selectedReceived !== null}
+        onOpenChange={(open) => { if (!open) setSelected(null) }}
+        title={selectedReceived ? `Facture ${selectedReceived.invoice_number}` : 'Facture reçue'}
+        description={selectedReceived?.supplier_name}
+      >
+        {selectedReceived ? (() => {
+          const ri = selectedReceived
+          const st = RECEIVED_INVOICE_STATUS[ri.status] ?? RECEIVED_INVOICE_STATUS.received
+          return (
+            <div className={styles.detail}>
+              <section className={`${screen.card} ${screen.hero}`}>
+                <div className={screen.label}><span>Montant TTC</span><StatusPill status={st.status}>{st.label}</StatusPill></div>
+                <div className={screen.big}>{formatCurrency(ri.total_ttc)}</div>
+                <div className={screen.sub}>{formatCurrency(ri.total_ht)} HT · TVA {formatCurrency(ri.total_tva)}</div>
+              </section>
+              <ListGroup title="Informations">
+                <ListRow title="Reçue le" trailing={<span className={styles.value}>{shortDate(ri.invoice_date)}</span>} />
+                {ri.due_date ? <ListRow title="Échéance" trailing={<span className={styles.value}>{shortDate(ri.due_date)}</span>} /> : null}
+                {ri.status === 'rejected' && ri.rejection_reason ? <ListRow title="Motif du rejet" description={ri.rejection_reason} /> : null}
+              </ListGroup>
+              {canLinkReceivedInvoice ? (
+                <ListGroup title="Chantier rattaché" description="La facture compte dans la rentabilité du chantier choisi.">
+                  {[{ id: '', title: 'Aucun chantier' }, ...linkableChantiers].map(c => {
+                    const on = (ri.chantier_id ?? '') === c.id
+                    return (
+                      <ListRow
+                        key={c.id || 'none'}
+                        title={c.title}
+                        trailing={on ? <span className={styles.tick} aria-label="Sélectionné">✓</span> : undefined}
+                        disabled={linkingReceivedInvoiceId === ri.id}
+                        onClick={() => { if (!on) handleLinkReceivedInvoiceChantier(ri.id, c.id || null) }}
+                      />
+                    )
+                  })}
+                </ListGroup>
+              ) : (
+                <ListGroup title="Chantier rattaché"><ListRow title={ri.chantier_title ?? 'Aucun chantier'} /></ListGroup>
               )}
             </div>
-            <div className="space-y-4 pt-1 border-t border-[var(--elevation-border)]">
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-secondary">Échéance de cet acompte</label>
-                <input
-                  type="date"
-                  value={depositDueDate}
-                  onChange={e => setDepositDueDate(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
+          )
+        })() : null}
+      </Sheet>
+
+      {/* ── Encaisser un versement ── */}
+      <Sheet
+        open={paymentModal !== null}
+        onOpenChange={(open) => { if (!open && !paymentLoading) setPaymentModal(null) }}
+        title="Encaisser un versement"
+        description={paymentModal?.invoiceNumber ?? undefined}
+        onConfirm={handleRecordScheduledPayment}
+        confirmLabel="Encaisser"
+        confirmLoading={paymentLoading}
+        confirmDisabled={!paymentScheduleItemId}
+      >
+        {paymentModal ? (
+          <div className={styles.detail}>
+            <ListGroup title="Échéance à solder">
+              {paymentModal.schedule.map(s => (
+                <ListRow
+                  key={s.id}
+                  title={s.label}
+                  description={`${s.amount_type === 'percentage' && s.percentage ? `${s.percentage}${NB}% · ` : ''}${shortDate(s.due_date)}`}
+                  trailing={<span className={styles.value}>{formatCurrency(s.amount)}{paymentScheduleItemId === s.id ? <span className={styles.tick} aria-label=", sélectionnée"> ✓</span> : null}</span>}
+                  onClick={() => setPaymentScheduleItemId(s.id)}
                 />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-secondary">Échéance du solde restant</label>
-                <p className="text-xs text-secondary/70">Date à laquelle le reste du montant devra être réglé.</p>
-                <input
-                  type="date"
-                  value={depositBalanceDueDate}
-                  onChange={e => setDepositBalanceDueDate(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
-                />
-              </div>
+              ))}
+            </ListGroup>
+            <div className={styles.fields}>
+              <label className={styles.field}>
+                <span>Date de réception</span>
+                <input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} />
+              </label>
+              <label className={styles.field}>
+                <span>Mode de paiement</span>
+                <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
+                  <option value="virement">Virement</option>
+                  <option value="cheque">Chèque</option>
+                  <option value="cb">Carte</option>
+                  <option value="especes">Espèces</option>
+                </select>
+              </label>
+              <label className={styles.field}>
+                <span>Référence</span>
+                <input type="text" value={paymentRef} onChange={e => setPaymentRef(e.target.value)} placeholder="Facultatif" />
+              </label>
             </div>
-            {depositError && <p className="text-xs text-red-500">{depositError}</p>}
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setDepositModal(null); setDepositError(null) }}
-                className="flex-1 py-2.5 rounded-xl border border-[var(--elevation-border)] text-secondary text-sm font-semibold hover:text-primary transition-colors"
-              >
-                Annuler
-              </button>
-              <button
-                onClick={handleGenerateDeposit}
-                disabled={depositLoading}
-                className="flex-1 py-2.5 rounded-xl bg-accent text-black text-sm font-bold hover:scale-105 transition-all disabled:opacity-50 disabled:hover:scale-100"
-              >
-                {depositLoading ? 'Création…' : 'Générer'}
-              </button>
-            </div>
+            {paymentError ? <p className={screen.error} role="alert">{paymentError}</p> : null}
           </div>
-        </div>
-      )}
+        ) : null}
+      </Sheet>
 
-      {/* ── Modal situations de travaux ── */}
-      {situationsPanel && (
-        <div className="modal-overlay">
-          <div className="modal-panel space-y-5 sm:max-w-xl">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0">
-                  <TrendingUp className="w-5 h-5 text-accent" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-primary">Situations de travaux</h2>
-                  <p className="text-xs text-secondary truncate max-w-[240px]">{situationsPanel.quoteTitle ?? 'Devis'}</p>
-                </div>
+      {/* ── Facture d'acompte ── */}
+      <Sheet
+        open={depositModal !== null}
+        onOpenChange={(open) => { if (!open && !depositLoading) { setDepositModal(null); setDepositError(null) } }}
+        title="Facture d'acompte"
+        description={depositModal?.quoteTitle ?? undefined}
+        onConfirm={handleGenerateDeposit}
+        confirmLabel="Générer"
+        confirmLoading={depositLoading}
+      >
+        {depositModal ? (
+          <div className={styles.detail}>
+            {depositModal.quoteTtc != null ? (
+              <div className={styles.total}>
+                <small>Montant de l&apos;acompte</small>
+                <b>{formatCurrency(depositPreview)}</b>
               </div>
-              <button
-                onClick={() => { setSituationsPanel(null); setSituationsSummary(null) }}
-                className="w-8 h-8 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex-shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
+            ) : null}
+            <SegmentedControl
+              label="Taux d'acompte"
+              options={[20, 30, 40, 50].map(p => ({ value: String(p), label: `${p}${NB}%` }))}
+              value={[20, 30, 40, 50].includes(depositRate) ? String(depositRate) : ''}
+              onChange={(v) => setDepositRate(Number(v))}
+            />
+            <div className={styles.fields}>
+              <label className={styles.field}>
+                <span>Autre taux (% du TTC)</span>
+                <input type="number" min={1} max={100} inputMode="numeric" value={depositRate} onChange={e => setDepositRate(Math.min(100, Math.max(1, Number(e.target.value))))} />
+              </label>
+              <label className={styles.field}>
+                <span>Échéance de l&apos;acompte</span>
+                <input type="date" value={depositDueDate} onChange={e => setDepositDueDate(e.target.value)} />
+              </label>
+              <label className={styles.field}>
+                <span>Échéance du solde</span>
+                <input type="date" value={depositBalanceDueDate} onChange={e => setDepositBalanceDueDate(e.target.value)} />
+              </label>
             </div>
+            {depositError ? <p className={screen.error} role="alert">{depositError}</p> : null}
+          </div>
+        ) : null}
+      </Sheet>
 
-            {situationsSummaryLoading && (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-accent" />
-              </div>
-            )}
-
-            {!situationsSummaryLoading && !situationsSummary && (
-              <p className="text-sm text-secondary text-center py-6">
-                Impossible de charger les situations pour ce devis.
-              </p>
-            )}
-
-            {!situationsSummaryLoading && situationsSummary && situationsPanel.chantierId && (
+      {/* ── Situations de travaux ── */}
+      <Sheet
+        open={situationsPanel !== null}
+        onOpenChange={(open) => { if (!open) { setSituationsPanel(null); setSituationsSummary(null) } }}
+        title="Situations de travaux"
+        description={situationsPanel?.quoteTitle ?? undefined}
+      >
+        {situationsPanel ? (
+          <div className={styles.detail}>
+            {situationsSummaryLoading ? <p className={screen.sub} role="status">Chargement des situations…</p> : null}
+            {!situationsSummaryLoading && !situationsSummary ? <p className={screen.sub}>Impossible de charger les situations pour ce devis.</p> : null}
+            {!situationsSummaryLoading && situationsSummary && situationsPanel.chantierId ? (
               <SituationsSection
                 chantierId={situationsPanel.chantierId}
                 summary={situationsSummary}
@@ -728,10 +1014,9 @@ export default function FinancesClient({
                 canCreateSolde={canCreateSolde}
                 returnTo="/finances?tab=quotes"
               />
-            )}
-
-            {!situationsSummaryLoading && situationsSummary && !situationsPanel.chantierId && (
-              <div className="space-y-4">
+            ) : null}
+            {!situationsSummaryLoading && situationsSummary && !situationsPanel.chantierId ? (
+              <>
                 <SituationsSection
                   chantierId=""
                   summary={situationsSummary}
@@ -739,541 +1024,26 @@ export default function FinancesClient({
                   canCreateSolde={false}
                   returnTo="/finances?tab=quotes"
                 />
-                <p className="text-xs text-secondary border-t border-[var(--elevation-border)] pt-3">
-                  Pour créer une situation, ce devis doit être lié à un chantier.{' '}
-                  <button
-                    onClick={() => { setSituationsPanel(null); handleCreateChantierFromQuote(situationsPanel.quoteId) }}
-                    className="text-accent underline"
-                  >
-                    Créer le chantier
-                  </button>
-                </p>
-              </div>
-            )}
+                <p className={screen.sub}>Pour créer une situation, ce devis doit être lié à un chantier.</p>
+                <Button variant="secondary" size="md" onClick={() => { const id = situationsPanel.quoteId; setSituationsPanel(null); handleCreateChantierFromQuote(id) }}>Créer le chantier</Button>
+              </>
+            ) : null}
           </div>
-        </div>
-      )}
+        ) : null}
+      </Sheet>
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 text-center md:text-left">
-        <div className="flex flex-col gap-2 items-center md:items-start">
-          <h1 className="text-4xl font-bold text-primary">Devis & Factures</h1>
-          <p className="text-secondary text-lg">Gérez vos documents financiers et suivez vos encaissements.</p>
-        </div>
-        <div className="flex items-center justify-center md:justify-end gap-2 flex-wrap">
-          {canCreateInvoice && (
-            <Link href={invoiceEditorHref()} className="px-5 py-3 rounded-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] text-primary font-semibold flex items-center justify-center gap-2 hover:bg-base transition-all whitespace-nowrap">
-              <Plus className="w-4 h-4" />Nouvelle Facture
-            </Link>
-          )}
-          {canCreateQuote && (
-            <Link href={quoteEditorHref()} className="px-6 py-3 rounded-full bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-105 transition-all shadow-lg shadow-accent/20 whitespace-nowrap">
-              <AssistantAvatar assistant="chloe" size={16} />Nouveau Devis
-            </Link>
-          )}
-          <ActionMenu actions={[
-            { label: isRefreshing ? 'Actualisation...' : 'Actualiser', icon: <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />, onClick: handleRefresh },
-            { label: 'Importer', icon: <Upload className="w-4 h-4" />, onClick: () => { setImportDefaultType(activeTab === 'invoices' ? 'invoices' : 'quotes'); setImportOpen(true) } },
-            { label: 'Factures récurrentes', icon: <Repeat className="w-4 h-4" />, onClick: () => router.push('/finances/recurring') },
-          ]} />
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex items-center gap-2 p-1 bg-base/50 rounded-full w-fit border border-[var(--elevation-border)] mx-auto md:mx-0">
-        <button onClick={() => handleTabChange('quotes')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'quotes' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>Devis</button>
-        <button onClick={() => handleTabChange('invoices')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'invoices' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>Factures</button>
-        {canViewReceivedInvoices && (
-          <button onClick={() => handleTabChange('received')} className={`px-8 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'received' ? 'bg-surface dark:bg-white/10 text-primary shadow-sm' : 'text-secondary hover:text-primary'}`}>Factures reçues</button>
-        )}
-      </div>
-
-      {/* Stats */}
-      <div className="space-y-3">
-        {/* Sélecteur de mois */}
-        {(activeTab === 'invoices' || activeTab === 'quotes') && (
-          <div className="flex items-center justify-between gap-3">
-            {/* Nav mois */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-secondary uppercase tracking-wider">Période :</span>
-              <button
-                onClick={() => activeTab === 'quotes' ? setQuoteStatsMonth(m => offsetYM(m, -1)) : setStatsMonth(m => offsetYM(m, -1))}
-                title="Mois précédent"
-                aria-label="Mois précédent"
-                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-base transition-colors text-secondary hover:text-primary"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="text-sm font-bold text-primary min-w-[80px] text-center">
-                {fmtYM(activeTab === 'quotes' ? quoteStatsMonth : statsMonth)}
-              </span>
-              <button
-                onClick={() => activeTab === 'quotes' ? setQuoteStatsMonth(m => offsetYM(m, 1)) : setStatsMonth(m => offsetYM(m, 1))}
-                disabled={activeTab === 'quotes' ? isCurrentQuoteMonth : isCurrentMonth}
-                title="Mois suivant"
-                aria-label="Mois suivant"
-                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-base transition-colors text-secondary hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-              {(activeTab === 'quotes' ? !isCurrentQuoteMonth : !isCurrentMonth) && (
-                <button
-                  onClick={() => activeTab === 'quotes' ? setQuoteStatsMonth(getCurrentYM()) : setStatsMonth(getCurrentYM())}
-                  className="text-xs font-semibold text-accent hover:underline"
-                >
-                  Aujourd&apos;hui
-                </button>
-              )}
-            </div>
-            {/* Bouton rapport - uniquement onglet factures */}
-            {activeTab === 'invoices' && (
-              <button
-                onClick={handleDownloadMonthlyReport}
-                disabled={reportLoading}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--elevation-border)] text-secondary dark:text-secondary bg-transparent hover:text-accent hover:border-accent dark:hover:text-accent dark:hover:border-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {reportLoading
-                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  : <FileDown className="w-3.5 h-3.5" />
-                }
-                {reportLoading ? 'Génération…' : `Rapport ${fmtYM(statsMonth)}`}
-              </button>
-            )}
-          </div>
-        )}
-        <div className={`grid grid-cols-2 gap-4 ${activeTab === 'quotes' ? 'md:max-atelier:grid-cols-4 xl:grid-cols-4' : activeTab === 'received' ? 'md:grid-cols-2' : 'md:max-atelier:grid-cols-3 xl:grid-cols-3'}`}>
-          {activeTab === 'received' ? (
-            <>
-              <div className="rounded-3xl card p-6 flex items-center gap-4">
-                <Wallet className="w-6 h-6 text-blue-500 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">À payer</p>
-                  <p className="text-2xl font-bold tabular-nums text-primary">{formatCurrency(receivedToPayTotal)}</p>
-                  <p className="text-xs text-secondary mt-0.5">{receivedToPayCount} facture{receivedToPayCount > 1 ? 's' : ''}</p>
-                </div>
-              </div>
-              <div className="rounded-3xl card p-6 flex items-center gap-4">
-                <AlertTriangle className={`w-6 h-6 flex-shrink-0 ${receivedOverdueCount > 0 ? 'text-red-500' : 'text-secondary'}`} />
-                <div>
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">En retard</p>
-                  <p className={`text-2xl font-bold tabular-nums ${receivedOverdueCount > 0 ? 'text-red-500' : 'text-primary'}`}>{receivedOverdueCount}</p>
-                </div>
-              </div>
-            </>
-          ) : activeTab === 'quotes' ? (
-            <>
-              <div className="rounded-3xl card p-6 flex items-center gap-4">
-                <FileText className="w-6 h-6 text-accent flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Devis émis</p>
-                  <p className="text-2xl font-bold tabular-nums text-primary">{qEmisCount}</p>
-                  <DeltaBadge current={qEmisCount} prev={qEmisCountPrev} />
-                </div>
-              </div>
-              <div className="rounded-3xl card p-6 flex items-center gap-4">
-                <Wallet className="w-6 h-6 text-accent-green flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Montant proposé HT</p>
-                  <p className="text-2xl font-bold tabular-nums text-primary">{formatCurrency(qEmisHt)}</p>
-                  <DeltaBadge current={qEmisHt} prev={qEmisHtPrev} />
-                </div>
-              </div>
-              <div className="rounded-3xl card p-6 flex items-center gap-4">
-                <CheckCircle2 className="w-6 h-6 text-accent-green flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Accepté HT</p>
-                  <p className="text-2xl font-bold tabular-nums text-primary">{formatCurrency(qAcceptedHt)}</p>
-                  <DeltaBadge current={qAcceptedHt} prev={qAcceptedHtPrev} />
-                </div>
-              </div>
-              <div className="rounded-3xl card p-6 flex items-center gap-4">
-                <Percent className="w-6 h-6 text-blue-500 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Taux de conversion</p>
-                  <p className="text-2xl font-bold tabular-nums text-primary">{qConvRate}%</p>
-                  <DeltaBadge current={qConvRate} prev={qConvRatePrev} />
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="rounded-3xl card p-6 flex items-center gap-4">
-                <Wallet className="w-6 h-6 text-accent-green flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Montant facturé HT</p>
-                  <p className="text-2xl font-bold tabular-nums text-primary">{formatCurrency(caMois)}</p>
-                  {caMoisPrev > 0 || caMois > 0 ? (
-                    <DeltaBadge current={caMois} prev={caMoisPrev} />
-                  ) : null}
-                </div>
-              </div>
-              <div className="rounded-3xl card p-6 flex items-center gap-4">
-                <Receipt className="w-6 h-6 text-accent flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Encaissé TTC</p>
-                  <p className="text-2xl font-bold tabular-nums text-primary">{formatCurrency(totalEncaisse)}</p>
-                  {totalEncaissePrev > 0 || totalEncaisse > 0 ? (
-                    <DeltaBadge current={totalEncaisse} prev={totalEncaissePrev} />
-                  ) : null}
-                </div>
-              </div>
-              <div className="rounded-3xl card p-6 flex items-center gap-4">
-                <AlertTriangle className={`w-6 h-6 flex-shrink-0 ${enRetardCount > 0 ? 'text-red-500' : 'text-secondary'}`} />
-                <div>
-                  <p className="text-sm font-semibold text-secondary uppercase tracking-wider">En retard</p>
-                  <p className={`text-2xl font-bold tabular-nums ${enRetardCount > 0 ? 'text-red-500' : 'text-primary'}`}>{enRetardCount}</p>
-                  {resteARecouvrer > 0 && <p className="text-xs text-secondary mt-0.5">{formatCurrency(resteARecouvrer)} TTC à recouvrer</p>}
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="rounded-3xl card overflow-visible">
-        <div className="p-6 border-b border-[var(--elevation-border)] flex flex-col sm:flex-row items-center gap-4">
-          <div className="relative w-full max-w-md">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-secondary" />
-            <input
-              type="text"
-              placeholder={`Rechercher ${activeTab === 'quotes' ? 'un devis' : activeTab === 'received' ? 'une facture reçue' : 'une facture'}...`}
-              value={searchTerm}
-              onChange={e => { setSearchTerm(e.target.value); setPage(1) }}
-              className="w-full pl-12 pr-4 py-3 rounded-full bg-base/50 border border-[var(--elevation-border)] focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all text-primary"
-            />
-          </div>
-          <select
-            value={statusFilter}
-            onChange={e => { setStatusFilter(e.target.value); setPage(1) }}
-            className="w-full sm:w-auto px-4 py-3 rounded-full bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all appearance-none"
-          >
-            <option value="all">Tous les statuts</option>
-            {Object.entries(activeStatusMap).map(([val, { label }]) => (
-              <option key={val} value={val}>{label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="overflow-visible sm:overflow-x-auto">
-          <table className="w-full text-left border-collapse table-fixed sm:table-auto">
-            <thead className="hidden sm:table-header-group">
-              {activeTab === 'received' ? (
-                <tr className="bg-base/30">
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Fournisseur</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">N° facture</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Date</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Montant TTC</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Chantier</th>
-                </tr>
-              ) : (
-                <tr className="bg-base/30">
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">N°</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Titre / Client</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Date</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Montant HT</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
-                  <th className="px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
-                </tr>
-              )}
-            </thead>
-            <tbody className="divide-y divide-[var(--elevation-border)]">
-              {activeTab === 'received' ? (
-                filteredReceivedInvoices.length > 0 ? paginatedReceivedInvoices.map(ri => {
-                  const st = RECEIVED_INVOICE_STATUS[ri.status] ?? RECEIVED_INVOICE_STATUS['received']
-                  const date = new Date(ri.invoice_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
-                  const isOverdue = ri.status === 'verified' && ri.due_date != null && ri.due_date < today
-                  return (
-                    <tr key={ri.id} className="hover:bg-accent/5 transition-colors">
-                      <td className="px-4 sm:px-6 py-3 sm:py-4 min-w-0">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <p className="font-bold text-primary truncate min-w-0" title={ri.supplier_name}>{ri.supplier_name}</p>
-                          <span className={`sm:hidden px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shrink-0 ${st.cls}`}>
-                            {st.label}
-                          </span>
-                        </div>
-                        <p className="sm:hidden text-[11px] text-secondary/70 truncate mt-0.5">
-                          {ri.invoice_number} · {date}
-                        </p>
-                        {isOverdue && ri.due_date && (
-                          <p className="text-xs text-red-500 font-semibold mt-0.5">
-                            Échue le {new Date(ri.due_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
-                          </p>
-                        )}
-                      </td>
-                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm font-mono text-secondary">{ri.invoice_number}</p></td>
-                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm text-secondary">{date}</p></td>
-                      <td className="pl-2 pr-3 sm:px-6 py-3 sm:py-4 text-right w-[92px] sm:w-auto">
-                        <p className="text-sm font-semibold sm:font-medium text-primary tabular-nums whitespace-nowrap">
-                          {formatCurrency(ri.total_ttc)}
-                        </p>
-                      </td>
-                      <td className="hidden sm:table-cell px-6 py-4">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${st.cls}`}>
-                          {st.label}
-                        </span>
-                        {ri.status === 'rejected' && ri.rejection_reason && (
-                          <p className="text-xs text-secondary mt-1 max-w-[220px] truncate" title={ri.rejection_reason}>{ri.rejection_reason}</p>
-                        )}
-                      </td>
-                      <td className="px-4 sm:px-6 py-3 sm:py-4">
-                        {canLinkReceivedInvoice ? (
-                          <select
-                            value={ri.chantier_id ?? ''}
-                            onChange={e => handleLinkReceivedInvoiceChantier(ri.id, e.target.value || null)}
-                            disabled={linkingReceivedInvoiceId === ri.id}
-                            className="w-full sm:w-auto max-w-[200px] px-3 py-2 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-sm text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all appearance-none disabled:opacity-50"
-                          >
-                            <option value="">Aucun chantier</option>
-                            {linkableChantiers.map(c => (
-                              <option key={c.id} value={c.id}>{c.title}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <p className="text-sm text-secondary">{ri.chantier_title ?? 'Aucun chantier'}</p>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                }) : (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-20 text-center">
-                      <div className="flex flex-col items-center gap-4">
-                        <Inbox className="w-10 h-10 text-secondary opacity-20" />
-                        <div>
-                          <p className="text-xl font-bold text-primary">Aucune facture reçue pour l&apos;instant</p>
-                          <p className="text-secondary mt-1">Les factures reçues par votre plateforme de facturation électronique apparaîtront ici.</p>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              ) : activeTab === 'quotes' ? (
-                filtered.length > 0 ? paginatedQuotes.map(q => {
-                  const st = STATUS[q.status] ?? STATUS['draft']
-                  const date = new Date(q.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
-                  const clientName = q.client?.company_name ?? q.client?.email ?? '/'
-                  return (
-                    <tr
-                      key={q.id}
-                      className="hover:bg-accent/5 transition-colors cursor-pointer"
-                      onClick={() => router.push(quoteEditorHref(q.id))}
-                    >
-                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm font-mono text-secondary">{q.number ?? '/'}</p></td>
-                      <td className="px-4 sm:px-6 py-3 sm:py-4 min-w-0">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <p className="font-bold text-primary truncate min-w-0" title={q.title ?? 'Sans titre'}>{q.title ?? 'Sans titre'}</p>
-                            <span className={`sm:hidden px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shrink-0 ${st.cls}`}>
-                              {st.label}
-                            </span>
-                          </div>
-                          <p className="text-xs text-secondary truncate mt-0.5" title={clientName}>{clientName}</p>
-                          <p className="sm:hidden text-[11px] text-secondary/70 truncate mt-0.5">
-                            {q.number ?? 'Sans n°'} · {date}
-                          </p>
-                        </div>
-                      </td>
-                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm text-secondary">{date}</p></td>
-                      <td className="pl-2 pr-3 sm:px-6 py-3 sm:py-4 text-right w-[92px] sm:w-auto">
-                        <p className="text-sm font-semibold sm:font-medium text-primary tabular-nums whitespace-nowrap">
-                          {q.total_ht != null ? formatCurrency(q.total_ht) : '/'}
-                        </p>
-                      </td>
-                      <td className="hidden sm:table-cell px-6 py-4">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${st.cls}`}>
-                          {st.label}
-                        </span>
-                      </td>
-                      <td className="pl-3 pr-4 sm:px-6 py-3 sm:py-4 text-right w-14 sm:w-auto" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => router.push(`/api/pdf/quote/${q.id}`)}
-                            title="Aperçu PDF"
-                            className="hidden sm:flex w-8 h-8 rounded-lg items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-                          <a
-                            href={`/api/pdf/quote/${q.id}?download=1`}
-                            download
-                            title="Télécharger PDF"
-                            className="hidden sm:flex w-8 h-8 rounded-lg items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                          >
-                            <FileDown className="w-4 h-4" />
-                          </a>
-                          <ActionMenu actions={[
-                            ...(canSendQuote && (q.status === 'sent' || q.status === 'viewed') ? [{ label: 'Marquer accepté', icon: <Check className="w-4 h-4" />, onClick: () => handleMarkQuoteAccepted(q.id) }] : []),
-                            ...(canCreateInvoice && (q.status === 'accepted' || q.status === 'converted' || q.status === 'fully_invoiced') ? [
-                              { label: 'Générer acompte', icon: <Landmark className="w-4 h-4" />, onClick: () => { setDepositRate(30); setDepositDueDate(''); setDepositBalanceDueDate(''); setDepositError(null); setDepositModal({ quoteId: q.id, quoteTitle: q.title, quoteTtc: q.total_ttc }) } },
-                              { label: 'Créer chantier', icon: <HardHat className="w-4 h-4" />, onClick: () => handleCreateChantierFromQuote(q.id) },
-                            ] : []),
-                            ...((canCreateSituation || canCreateSolde) && (q.status === 'accepted' || q.status === 'converted' || q.status === 'fully_invoiced') ? [
-                              { label: 'Situations de travaux', icon: <TrendingUp className="w-4 h-4" />, onClick: () => handleOpenSituations(q.id, q.title) },
-                            ] : []),
-                            ...(canEditQuote ? [{ label: 'Modifier', icon: <Edit2 className="w-4 h-4" />, onClick: () => router.push(quoteEditorHref(q.id)) }] : []),
-                            ...(canCreateQuote ? [{ label: 'Dupliquer', icon: <Copy className="w-4 h-4" />, onClick: () => handleDuplicateQuote(q.id) }] : []),
-                            ...(canDeleteQuote ? [{ label: 'Archiver', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => handleArchiveQuote(q.id) }] : []),
-                          ]} />
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                }) : (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-20 text-center">
-                      <EmptyState type="quotes" canCreate={canCreateQuote} returnTo={returnTo} />
-                    </td>
-                  </tr>
-                )
-              ) : (
-                filteredInvoices.length > 0 ? paginatedInvoices.map(inv => {
-                  const st = INVOICE_STATUS[inv.status] ?? INVOICE_STATUS['draft']
-                  const date = new Date(invDate(inv)).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
-                  const clientName = inv.client?.company_name ?? inv.client?.email ?? '/'
-                  const isOverdue = (inv.status === 'sent' || inv.status === 'partial') && inv.due_date != null && inv.due_date < today
-                  return (
-                    <tr
-                      key={inv.id}
-                      className="hover:bg-accent/5 transition-colors cursor-pointer"
-                      onClick={() => router.push(invoiceEditorHref(inv.id))}
-                    >
-                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm font-mono text-secondary">{inv.number ?? '/'}</p></td>
-                      <td className="px-4 sm:px-6 py-3 sm:py-4 min-w-0">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <p className="font-bold text-primary truncate min-w-0" title={inv.title ?? 'Sans titre'}>{inv.title ?? 'Sans titre'}</p>
-                          {inv.invoice_type === 'acompte' && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400 uppercase tracking-wide flex-shrink-0">Acompte</span>
-                          )}
-                          {inv.invoice_type === 'solde' && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-accent/10 text-accent uppercase tracking-wide flex-shrink-0">Solde</span>
-                          )}
-                          <span className={`sm:hidden px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shrink-0 ${st.cls}`}>
-                            {st.label}
-                          </span>
-                        </div>
-                        <p className="text-xs text-secondary truncate mt-0.5" title={clientName}>{clientName}</p>
-                        <p className="sm:hidden text-[11px] text-secondary/70 truncate mt-0.5">
-                          {inv.number ?? 'Sans n°'} · {date}
-                        </p>
-                        {isOverdue && inv.due_date && (
-                          <p className="text-xs text-red-500 font-semibold mt-0.5">
-                            Échue le {new Date(inv.due_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
-                          </p>
-                        )}
-                      </td>
-                      <td className="hidden sm:table-cell px-6 py-4"><p className="text-sm text-secondary">{date}</p></td>
-                      <td className="pl-2 pr-3 sm:px-6 py-3 sm:py-4 text-right w-[92px] sm:w-auto">
-                        <p className="text-sm font-semibold sm:font-medium text-primary tabular-nums whitespace-nowrap">
-                          {inv.total_ht != null ? formatCurrency(inv.total_ht) : '/'}
-                        </p>
-                      </td>
-                      <td className="hidden sm:table-cell px-6 py-4">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${st.cls}`}>
-                          {st.label}
-                        </span>
-                      </td>
-                      <td className="pl-3 pr-4 sm:px-6 py-3 sm:py-4 text-right w-14 sm:w-auto" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => router.push(`/api/pdf/invoice/${inv.id}`)}
-                            title="Aperçu PDF"
-                            className="hidden sm:flex w-8 h-8 rounded-lg items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-                          <a
-                            href={`/api/pdf/invoice/${inv.id}?download=1`}
-                            download
-                            title="Télécharger PDF"
-                            className="hidden sm:flex w-8 h-8 rounded-lg items-center justify-center text-secondary hover:text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                          >
-                            <FileDown className="w-4 h-4" />
-                          </a>
-                          {canRecordPayment && inv.status === 'sent' && (
-                            <button
-                              onClick={() => handleMarkPaid(inv.id)}
-                              disabled={!!markPaidLoadingId}
-                              title="Marquer payée"
-                              className="hidden sm:flex w-8 h-8 rounded-lg items-center justify-center text-accent-green hover:bg-accent-green/10 transition-colors disabled:opacity-50"
-                            >
-                              {markPaidLoadingId === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                            </button>
-                          )}
-                          <ActionMenu actions={[
-                            ...(canSendInvoice ? [{ label: 'Modifier', icon: <Edit2 className="w-4 h-4" />, onClick: () => router.push(invoiceEditorHref(inv.id)) }] : []),
-                            ...(canCreateInvoice ? [{ label: 'Convertir en récurrente', icon: <Repeat className="w-4 h-4" />, onClick: () => router.push(`/finances/recurring?from_invoice=${inv.id}`) }] : []),
-                            ...(canRecordPayment && (inv.status === 'sent' || inv.status === 'partial') ? [{
-                              label: 'Encaisser un versement',
-                              icon: loadingScheduleId === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />,
-                              onClick: async () => {
-                                setLoadingScheduleId(inv.id)
-                                try {
-                                  const res = await fetch(`/api/invoices/${inv.id}/schedule`)
-                                  const data = await res.json()
-                                  const unpaid = (data.schedule ?? []).filter((s: any) => !s.paid_payment_id)
-                                  const scheduleToShow = unpaid.length > 0 ? unpaid : [{
-                                    id: '__full__',
-                                    label: 'Paiement intégral',
-                                    due_date: todayParis(),
-                                    amount: inv.total_ttc ?? 0,
-                                    amount_type: 'amount',
-                                    percentage: null,
-                                  }]
-                                  setPaymentScheduleItemId(scheduleToShow[0].id)
-                                  setPaymentDate(todayParis())
-                                  setPaymentMethod('virement')
-                                  setPaymentRef('')
-                                  setPaymentError(null)
-                                  setPaymentModal({ invoiceId: inv.id, invoiceNumber: inv.number, schedule: scheduleToShow })
-                                } finally {
-                                  setLoadingScheduleId(null)
-                                }
-                              },
-                            }] : []),
-                            ...(canDeleteInvoice ? [{ label: 'Archiver', icon: <Trash2 className="w-4 h-4" />, danger: true, onClick: () => handleArchiveInvoice(inv.id) }] : []),
-                          ]} />
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                }) : (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-20 text-center">
-                      <EmptyState type="invoices" canCreate={canCreateInvoice} returnTo={returnTo} />
-                    </td>
-                  </tr>
-                )
-              )}
-            </tbody>
-          </table>
-        </div>
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between px-6 py-3 border-t border-[var(--elevation-border)]">
-            <span className="text-xs text-secondary">
-              {pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, activeFilteredCount)} sur {activeFilteredCount}
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                title="Page précédente"
-              >
-                <ChevronLeft className="w-4 h-4 text-secondary" />
-              </button>
-              <span className="px-2 text-xs font-semibold text-secondary">Page {currentPage} / {totalPages}</span>
-              <button
-                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-                className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                title="Page suivante"
-              >
-                <ChevronRight className="w-4 h-4 text-secondary" />
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+      <Hud
+        open={notice !== null && !notice.error}
+        onOpenChange={(open) => { if (!open) setNotice(null) }}
+        message={notice && !notice.error ? notice.message : ''}
+      />
+      <Hud
+        open={notice !== null && notice.error === true}
+        onOpenChange={(open) => { if (!open) setNotice(null) }}
+        variant="error"
+        message={notice?.error ? notice.message : ''}
+        onRetry={() => { setNotice(null); handleRefresh() }}
+      />
     </main>
   )
 }

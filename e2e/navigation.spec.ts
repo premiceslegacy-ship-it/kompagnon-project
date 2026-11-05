@@ -99,24 +99,23 @@ test('Une notification vers la page courante ne laisse pas la navigation occupé
   await expect(trigger).not.toHaveAttribute('aria-busy', 'true')
 })
 
-test('La barre latérale ne fait pas déborder les indicateurs financiers à 900 px', async ({ page, qualification }) => {
+test('La barre latérale ne fait pas déborder le résumé et la liste Documents à 900 px', async ({ page, qualification }) => {
   await page.setViewportSize({ width: 900, height: 900 })
   await signIn(page, qualification)
   await page.goto('/finances')
-  const label = page.getByRole('main').getByText('Taux de conversion', { exact: true })
-  await expect(label).toBeVisible()
+  const segment = page.getByRole('main').getByRole('radio', { name: 'Devis', exact: true })
+  await expect(segment).toBeChecked()
   await page.evaluate(() => document.fonts.ready)
-  await expect.poll(() => label.evaluate(element => {
-    const card = element.closest('.card')
-    if (!card) throw new Error('Financial indicator card unavailable.')
-    const bounds = card.getBoundingClientRect()
-    const range = document.createRange()
-    range.selectNodeContents(element)
-    return {
-      documentFits: document.documentElement.scrollWidth <= window.innerWidth + 1,
-      labelFitsCard: [...range.getClientRects()].every(rect => rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1),
-    }
-  })).toEqual({ documentFits: true, labelFitsCard: true })
+  await expect.poll(() => page.evaluate(() => {
+    const main = document.querySelector('main')
+    if (!main) throw new Error('Documents screen unavailable.')
+    const bounds = main.getBoundingClientRect()
+    const overflowing = [...main.querySelectorAll('*')].filter(element => {
+      const rect = element.getBoundingClientRect()
+      return rect.width > 0 && (rect.right > bounds.right + 1 || rect.left < bounds.left - 1)
+    }).length
+    return { documentFits: document.documentElement.scrollWidth <= window.innerWidth + 1, overflowing }
+  })).toEqual({ documentFits: true, overflowing: 0 })
 })
 
 test('Les années des dates de facture restent lisibles avec la barre latérale à 1024 px', async ({ page, qualification }) => {

@@ -13,7 +13,7 @@ import { Hud } from '@/components/ui/Hud'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { Sheet } from '@/components/ui/Sheet'
 import { StatusPill, type StatusPillStatus } from '@/components/ui/StatusPill'
-import styles from './Today.module.css'
+import styles from '@/components/layout/Screen.module.css'
 
 const NB = ' '
 const DAY = 86_400_000

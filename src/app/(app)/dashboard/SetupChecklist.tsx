@@ -8,7 +8,7 @@ import { Check } from 'lucide-react'
 import type { DashboardSetupReadiness } from '@/lib/data/queries/dashboard'
 import { Button } from '@/components/ui/Button'
 import { dismissSetupChecklist } from './actions'
-import styles from './Today.module.css'
+import styles from '@/components/layout/Screen.module.css'
 
 const NB = ' '
 

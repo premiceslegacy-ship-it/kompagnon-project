@@ -16,7 +16,7 @@ import CollaborateurDashboard from './CollaborateurDashboard';
 import PlanningDigestWidget from './PlanningDigestWidget';
 import SetupChecklist from './SetupChecklist';
 import TodayHeader from './TodayHeader';
-import styles from './Today.module.css';
+import styles from '@/components/layout/Screen.module.css';
 
 const NB = '\u00a0'
 

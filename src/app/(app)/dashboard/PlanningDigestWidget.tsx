@@ -1,7 +1,7 @@
 // @atelier-migrated
 import Link from 'next/link'
 import type { MyPlanningSlot } from '@/lib/data/queries/dashboard-collaborateur'
-import styles from './Today.module.css'
+import styles from '@/components/layout/Screen.module.css'
 
 const fmtTime = (t: string | null) => (t ? t.slice(0, 5) : '')
 
