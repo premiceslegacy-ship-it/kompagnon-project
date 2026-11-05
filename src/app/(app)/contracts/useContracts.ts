@@ -21,6 +21,7 @@ import {
   sendContract,
   updateContract,
 } from '@/lib/data/mutations/contracts'
+import { paginate } from '@/lib/pagination'
 import {
   applyContractChantier,
   applyContractClient,
@@ -32,7 +33,6 @@ import {
   contractStats,
   filterContracts,
   firstTemplateFor,
-  paginate,
   type ContractFormState,
 } from './contractsModel'
 

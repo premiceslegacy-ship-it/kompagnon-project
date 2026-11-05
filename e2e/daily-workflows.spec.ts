@@ -358,19 +358,19 @@ test.describe('Parcours métier Atelier : qualification locale isolée', () => {
     await signInAsOwner(page, qualification)
     await page.goto('/clients')
     await page.waitForLoadState('networkidle')
-    await page.getByRole('button', { name: 'Nouveau Client', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'Nouveau Client' })).toBeVisible()
+    await page.getByRole('button', { name: 'Nouveau client', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Nouveau client' })).toBeVisible()
 
     const clientName = `Client créé qualification ${qualification.orgId.slice(0, 8)}`
     const clientEmail = `qualification-created-${qualification.orgId.slice(0, 8)}@atelier.test`
     await page.locator('input[name="company_name"]').fill(clientName)
     await page.locator('input[name="contact_name"]').fill('Sacha Qualification')
     await page.locator('input[name="email"]').fill(clientEmail)
-    await page.getByRole('button', { name: 'Créer le client' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Créer', exact: true }).click()
 
-    await expect(page.getByRole('heading', { name: 'Nouveau Client' })).toBeHidden()
+    await expect(page.getByRole('heading', { name: 'Nouveau client' })).toBeHidden()
     await expect(page.getByText(clientName, { exact: true })).toBeVisible()
-    await expect(page.getByText(clientEmail, { exact: true })).toBeVisible()
+    await expect(page.getByText(new RegExp(escapeRegex(clientEmail)))).toBeVisible()
     await expect.poll(async () => {
       const { data, error } = await qualification.admin
         .from('clients')

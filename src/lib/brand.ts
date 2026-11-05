@@ -9,7 +9,7 @@ export const AI_ASSISTANTS = {
   lea:      { name: 'Léa',     role: 'Assistante catalogue', avatar: '/brand/lea-avatar.webp' },
 } as const
 
-export const AI_NAME = AI_ASSISTANTS.chloe.name
+export const AI_NAME = AI_ASSISTANTS.sarah.name
 
 export type BrandBackground = 'light' | 'dark'
 

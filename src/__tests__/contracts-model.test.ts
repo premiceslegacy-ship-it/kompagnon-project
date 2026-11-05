@@ -10,8 +10,8 @@ import {
   contractPayload,
   contractStats,
   filterContracts,
-  paginate,
 } from '@/app/(app)/contracts/contractsModel'
+import { paginate } from '@/lib/pagination'
 import type { Chantier } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
 import type { ContractListItem, ContractTemplateOption } from '@/lib/data/queries/contracts'
