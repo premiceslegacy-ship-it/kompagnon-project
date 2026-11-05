@@ -218,10 +218,7 @@ export default function PublicFormClient({
           )}
 
           {(customModeEnabled || !form.hasCatalog) && (
-            <ListGroup
-              title={form.hasCatalog ? 'Autre besoin' : 'Votre besoin'}
-              description={form.hasCatalog ? 'Facultatif si vous avez sélectionné des éléments.' : undefined}
-            >
+            <ListGroup description={form.hasCatalog ? 'Facultatif si vous avez sélectionné des éléments.' : undefined}>
               <li>
                 <Field
                   type="textarea"
