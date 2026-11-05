@@ -33,7 +33,8 @@ const TODAY: NavigationEntry = { id: 'today', label: "Aujourd'hui", href: '/dash
 const DOCUMENTS: NavigationEntry = { id: 'documents', label: 'Documents', href: '/finances', icon: 'document' }
 const CONTRACTS: NavigationEntry = { id: 'contracts', label: 'Contrats', href: '/contracts', icon: 'contracts' }
 const RECURRING: NavigationEntry = { id: 'recurring', label: 'Récurrentes', href: '/finances/recurring', icon: 'recurring' }
-const QUOTE_AI: NavigationEntry = { id: 'quote-ai', label: 'Devis IA', href: '/atelier-ia', icon: 'assistant' }
+// Reachable from the quote editor (« Assisté ») and from the search, not as a navigation shortcut.
+const QUOTE_AI: NavigationEntry = { id: 'quote-ai', label: 'Devis avec Sarah', description: 'Dicter, décrire ou importer un document', href: '/atelier-ia', icon: 'assistant' }
 const CHANTIERS: NavigationEntry = { id: 'chantiers', label: 'Chantiers', href: '/chantiers', icon: 'chantier' }
 const PLANNING: NavigationEntry = { id: 'planning', label: 'Planning', href: '/chantiers/planning', icon: 'planning' }
 const CLIENTS: NavigationEntry = { id: 'clients', label: 'Clients', href: '/clients', icon: 'clients' }
@@ -66,10 +67,10 @@ export function buildNavigationModel({ permissionKeys, currentRoleSlug, modules 
   const can = (key: string) => wildcard || permissions.has(key)
   const financeVisible = can('quotes.view') || can('invoices.view')
   const documents: NavigationEntry[] = []
-  if (financeVisible) documents.push(DOCUMENTS)
+  if (financeVisible) documents.push({ ...DOCUMENTS, label: 'Devis et factures' })
   if (can('contracts.view')) documents.push(CONTRACTS)
   if (financeVisible) documents.push(RECURRING)
-  if ((currentRoleSlug === 'owner' || currentRoleSlug === 'admin') && (modules.quote_ai || modules.document_import_ai || modules.voice_input)) documents.push(QUOTE_AI)
+  const quoteAi = (currentRoleSlug === 'owner' || currentRoleSlug === 'admin') && (modules.quote_ai || modules.document_import_ai || modules.voice_input)
   const chantiers = can('chantiers.view') ? [CHANTIERS, PLANNING] : []
   const clients: NavigationEntry[] = []
   if (can('clients.view')) clients.push(CLIENTS)
@@ -86,7 +87,7 @@ export function buildNavigationModel({ permissionKeys, currentRoleSlug, modules 
     primary,
     companyGroups,
     secondary: { documents, chantiers, clients },
-    allLinks: [...(can('dashboard.view') ? [TODAY] : []), ...documents, ...chantiers, ...clients, COMPANY, ...companyGroups.flat()],
+    allLinks: [...(can('dashboard.view') ? [TODAY] : []), ...documents, ...(quoteAi ? [QUOTE_AI] : []), ...chantiers, ...clients, COMPANY, ...companyGroups.flat()],
     creations: CREATIONS.filter(entry => can(entry.permission)),
     canUseAssistant: modules.sarah_assistant && can('ai.sarah'),
   }
