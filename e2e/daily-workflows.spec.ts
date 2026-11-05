@@ -407,6 +407,73 @@ test.describe('Parcours métier Atelier : qualification locale isolée', () => {
     expect(emails.filter((email) => emailRecipients(email).includes(qualification.clientEmail))).toHaveLength(2)
   })
 
+  test('demander un nouveau lien de signature expiré et le recevoir après accord de l’artisan', async ({ page, qualification }) => {
+    // Deux envois, une demande et deux connexions : ce parcours dépasse la limite par défaut de 90 s.
+    test.setTimeout(240_000)
+    const title = `Devis lien expiré qualification ${qualification.orgId.slice(0, 8)}`
+    await signInAsOwner(page, qualification)
+    await createQuoteInUi(page, qualification, title)
+    await waitForPersistedDraft(qualification, title)
+    const { quote, signLink } = await waitForPublishedQuote(page, qualification, title)
+
+    const { error: expireError } = await qualification.admin
+      .from('quotes')
+      .update({ signature_token_expires_at: new Date(Date.now() - 60_000).toISOString() })
+      .eq('id', quote.id)
+      .eq('organization_id', qualification.orgId)
+    if (expireError) throw new Error('Could not expire the local qualification signature link.')
+
+    const ownerViewport = page.viewportSize()
+    await openSignatureAsRecipient(page, signLink)
+    await expect(page.getByRole('heading', { name: 'Ce lien n\'est plus valide' })).toBeVisible({ timeout: 30_000 })
+    await page.getByRole('button', { name: 'Demander un nouveau lien' }).click()
+    await expect(page.getByRole('heading', { name: 'Demande envoyée' })).toBeVisible({ timeout: 30_000 })
+
+    const openRequest = async () => {
+      const { data, error } = await qualification.admin
+        .from('signature_link_requests')
+        .select('id, resolved_at')
+        .eq('quote_id', quote.id)
+        .eq('organization_id', qualification.orgId)
+      if (error) throw new Error('Could not read the local signature link request.')
+      return data ?? []
+    }
+    expect(await openRequest()).toEqual([expect.objectContaining({ resolved_at: null })])
+    // L'artisan est prévenu à son adresse d'envoi, sinon à son email de contact (même règle que l'acceptation).
+    const { data: orgAddresses } = await qualification.admin
+      .from('organizations')
+      .select('email, email_from_address')
+      .eq('id', qualification.orgId)
+      .single()
+    const proEmail = orgAddresses?.email_from_address || orgAddresses?.email
+    expect(proEmail).toBeTruthy()
+    const afterRequest = await waitForEmailCount(2)
+    expect(afterRequest.filter((email) => emailRecipients(email).includes(proEmail!))).toHaveLength(1)
+    const { data: unchanged } = await qualification.admin.from('quotes').select('signature_token, status').eq('id', quote.id).single()
+    expect(unchanged?.status).toBe('sent')
+    expect(signLink.endsWith(`/sign/${unchanged?.signature_token}`)).toBe(true)
+
+    // Deuxième demande : pas de second message à l'artisan.
+    await navigateToSignatureLink(page, signLink)
+    await expect(page.getByRole('heading', { name: 'Demande déjà transmise' })).toBeVisible({ timeout: 30_000 })
+
+    if (ownerViewport) await page.setViewportSize(ownerViewport)
+    await signInAsOwner(page, qualification)
+    await page.goto(`/finances/quote-editor?id=${quote.id}&returnTo=%2Ffinances`)
+    await page.waitForLoadState('networkidle')
+    await publishQuote(page)
+    await expect.poll(async () => (await openRequest()).every((request) => request.resolved_at !== null), { timeout: 30_000 }).toBe(true)
+
+    const emails = await waitForEmailCount(3)
+    const resent = [...emails].reverse().find((email) => emailRecipients(email).includes(qualification.clientEmail))
+    const newLink = resent ? extractSignatureLink(resent, qualification.baseUrl) : null
+    expect(newLink).toBeTruthy()
+    expect(newLink).not.toBe(signLink)
+    await openSignatureAsRecipient(page, newLink!)
+    await expect(page.getByText('Montant TTC', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Signer le devis' })).toBeVisible()
+  })
+
   test('pointer des heures depuis le magic link intervenant à usage unique', async ({ page, qualification }) => {
     const member = await qualification.createMemberAccess()
     const link = new URL('/api/auth/member-verify', qualification.baseUrl)

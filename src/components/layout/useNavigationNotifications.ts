@@ -59,6 +59,7 @@ export function useNavigationNotifications(
     (notifications.planningToday ?? 0) +
     (notifications.missingPointages ?? 0) +
     (notifications.newRequests ?? 0) +
+    (notifications.signatureLinkRequests ?? 0) +
     (notifications.chantiersAtRisk ?? 0) +
     (notifications.maintenanceDue ?? 0) +
     (notifications.maintenanceBillingPending ?? 0)
@@ -77,6 +78,7 @@ export function useNavigationNotifications(
     notifications.missingPointages ?? 0,
     notifications.completedTasks ?? 0,
     notifications.newRequests ?? 0,
+    notifications.signatureLinkRequests ?? 0,
     notifications.chantiersAtRisk ?? 0,
     notifications.maintenanceDue ?? 0,
     notifications.maintenanceBillingPending ?? 0,
@@ -100,6 +102,7 @@ export function useNavigationNotifications(
     if ((notifications.completedTasks ?? 0) > 0) routes.add('/dashboard')
     if ((notifications.chantiersAtRisk ?? 0) > 0) routes.add('/chantiers')
     if ((notifications.newRequests ?? 0) > 0) routes.add('/requests')
+    if ((notifications.signatureLinkRequests ?? 0) > 0) routes.add('/finances')
     return Array.from(routes)
   }, [
     notifications.overdueInvoices,
@@ -118,6 +121,7 @@ export function useNavigationNotifications(
     notifications.completedTasks,
     notifications.chantiersAtRisk,
     notifications.newRequests,
+    notifications.signatureLinkRequests,
   ])
 
   useEffect(() => {
