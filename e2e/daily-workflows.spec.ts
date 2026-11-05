@@ -222,13 +222,13 @@ async function createAndAcceptQuote(page: Page, tenant: QualificationTenant, tit
 async function createIssuedInvoiceFromAcceptedQuote(page: Page, tenant: QualificationTenant, quoteTitle: string): Promise<void> {
   await page.goto('/finances/invoice-editor?returnTo=%2Ffinances')
   await page.waitForLoadState('networkidle')
-  await page.getByRole('button', { name: 'Sélectionner un devis' }).click()
+  await page.getByRole('button', { name: /Facturer depuis un devis/ }).click()
   await expect(page.getByRole('heading', { name: 'Importer un devis accepté' })).toBeVisible()
   await page.getByRole('button', { name: new RegExp(escapeRegex(quoteTitle)) }).click()
   await expect(page.getByPlaceholder('Ex : Travaux de toiture - Bâtiment A')).toHaveValue(quoteTitle)
   await expect(page.getByText(euroPattern(EXPECTED_TOTAL_TTC)).first()).toBeVisible()
 
-  await page.getByRole('button', { name: /Valider\s*&\s*Envoyer/ }).click()
+  await page.getByRole('button', { name: 'Valider et envoyer', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Envoyer la facture' })).toBeVisible()
   await page.getByRole('button', { name: 'Envoyer', exact: true }).click()
 
