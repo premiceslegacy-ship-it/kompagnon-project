@@ -2,12 +2,27 @@
 
 import React, { useState, useTransition } from 'react'
 import { acceptQuoteByToken } from '@/lib/data/mutations/sign'
+import { Button } from '@/components/ui/Button'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { Field } from '@/components/ui/Field'
+import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { SignaturePad } from '@/components/ui/SignaturePad'
-import { useViewportWidth } from '@/lib/hooks/use-viewport-width'
-import { CheckCircle2, Loader2, ShieldCheck, FileText, AlertTriangle, ExternalLink, Download } from 'lucide-react'
+import { StatTile } from '@/components/ui/StatTile'
+import { PublicError, PublicHeader, PublicNote, PublicPage, PublicSuccess } from '@/components/public/PublicPage'
 
 const fmt = (n: number, currency = 'EUR') =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: 2 }).format(n)
+
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+
+const fmtDateTime = (iso: string) =>
+  new Date(iso).toLocaleDateString('fr-FR', {
+    day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+
+/** Message renvoyé par `acceptQuoteByToken` quand le lien expire pendant la saisie. */
+const EXPIRED_ERROR = 'Ce lien de signature a expiré.'
 
 type Props = {
   token: string
@@ -33,27 +48,22 @@ export default function SignClient({
   const [accepted, setAccepted] = useState(alreadySigned)
   const [acceptedAt, setAcceptedAt] = useState<string | null>(signedAt)
   const [error, setError] = useState<string | null>(null)
-  const [confirmed, setConfirmed] = useState(false)
+  const [expired, setExpired] = useState(false)
   const [signatoryName, setSignatoryName] = useState(initialSignatoryName ?? '')
   const [signatoryRole, setSignatoryRole] = useState('')
   const [signatureImage, setSignatureImage] = useState<string | null>(null)
-  const viewportWidth = useViewportWidth()
 
-  const fmtDate = (iso: string) =>
-    new Date(iso).toLocaleDateString('fr-FR', {
-      day: '2-digit', month: 'long', year: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    })
-
-  const validUntilDate = validUntil
-    ? new Date(validUntil).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })
-    : null
+  const pdfUrl = `/api/pdf/quote/${quoteId}?token=${encodeURIComponent(token)}`
+  const subtitle = [quoteNumber ? `Devis ${quoteNumber}` : 'Devis', quoteTitle].filter(Boolean).join(' · ')
+  const recipientLine = [
+    clientName ? `Pour ${clientName}` : null,
+    validUntil ? `valable jusqu'au ${fmtDate(validUntil)}` : null,
+  ].filter(Boolean).join(' · ')
 
   function handleAccept() {
     setError(null)
-    if (!signatoryName.trim()) return setError('Veuillez renseigner votre nom complet.')
-    if (!signatureImage) return setError('Veuillez dessiner votre signature.')
-    if (!confirmed) return setError('Veuillez confirmer votre accord.')
+    if (!signatoryName.trim()) return setError('Indiquez votre nom complet.')
+    if (!signatureImage) return setError('Dessinez votre signature.')
     startTransition(async () => {
       const res = await acceptQuoteByToken({
         token,
@@ -62,7 +72,8 @@ export default function SignClient({
         signatureImage,
       })
       if (res.error) {
-        setError(res.error)
+        if (res.error === EXPIRED_ERROR) setExpired(true)
+        else setError(res.error)
       } else {
         setAccepted(true)
         setAcceptedAt(res.signedAt)
@@ -70,196 +81,124 @@ export default function SignClient({
     })
   }
 
-  // ── État : déjà signé ──
-  if (accepted && acceptedAt) {
+  if (expired) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-50 flex items-center justify-center p-6">
-        <div className="bg-white rounded-3xl shadow-xl max-w-md w-full p-10 text-center space-y-6">
-          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-            <CheckCircle2 className="w-10 h-10 text-green-600" />
-          </div>
-          <div className="space-y-2">
-            <h1 className="text-2xl font-bold text-gray-900">Devis accepté !</h1>
-            <p className="text-gray-500 text-sm leading-relaxed">
-              Vous avez accepté {quoteNumber ? `le devis N°\u00a0${quoteNumber}` : 'ce devis'}
-              {quoteTitle ? ` « ${quoteTitle} »` : ''} le{' '}
-              <strong className="text-gray-700">{fmtDate(acceptedAt)}</strong>.
-            </p>
-          </div>
-          {totalTtc != null && (
-            <div className="bg-green-50 border border-green-200 rounded-2xl p-5">
-              <p className="text-sm text-green-700 font-medium">Montant TTC accepté</p>
-              <p className="text-3xl font-bold text-green-800 mt-1">{fmt(totalTtc, currency)}</p>
-            </div>
-          )}
-          <a
-            href={`/api/pdf/quote/${quoteId}?token=${token}&download=1`}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white text-sm font-semibold rounded-xl hover:bg-gray-800 transition-colors"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Download className="w-4 h-4" />
-            Télécharger le devis signé
-          </a>
-          <p className="text-xs text-gray-400 leading-relaxed">
-            Votre accord est enregistré. Téléchargez et conservez le devis signé.
-          </p>
-        </div>
-      </div>
+      <PublicPage>
+        <PublicHeader name={orgName} address={orgAddress} />
+        <EmptyState
+          headingLevel={1}
+          title="Ce lien n'est plus valide"
+          description={`Contactez ${orgName} pour recevoir un nouveau lien de signature.`}
+        />
+      </PublicPage>
     )
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-start p-6 pt-12">
-      <div className="w-full max-w-lg space-y-6">
-
-        {/* Header émetteur */}
-        <div className="text-center mb-2">
-          <p className="text-sm font-semibold text-gray-500 uppercase tracking-widest mb-1">{orgName}</p>
-          {orgAddress && <p className="text-xs text-gray-400">{orgAddress}</p>}
-        </div>
-
-        {/* Carte devis */}
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-          {/* Bandeau titre */}
-          <div className="bg-gray-900 px-8 py-6">
-            <div className="flex items-center gap-3 mb-1">
-              <FileText className="w-5 h-5 text-white/60" />
-              <span className="text-white/60 text-sm font-medium uppercase tracking-wider">
-                Devis{quoteNumber ? ` N°\u00a0${quoteNumber}` : ''}
-              </span>
-            </div>
-            <h1 className="text-white text-xl font-bold leading-tight">
-              {quoteTitle ?? 'Proposition commerciale'}
-            </h1>
-            {validUntilDate && (
-              <p className="text-white/50 text-xs mt-2">Valable jusqu&apos;au {validUntilDate}</p>
-            )}
-          </div>
-
-          {/* Détails */}
-          <div className="px-8 py-6 space-y-4">
-            {clientName && (
-              <div className="flex justify-between items-start">
-                <span className="text-sm text-gray-500">Destinataire</span>
-                <span className="text-sm font-semibold text-gray-800 text-right">{clientName}</span>
-              </div>
-            )}
-            {totalTtc != null && (
-              <div className="flex justify-between items-center pt-2 border-t border-gray-100">
-                <span className="text-sm text-gray-500">Montant TTC</span>
-                <span className="text-2xl font-bold text-gray-900">{fmt(totalTtc, currency)}</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Carte signature */}
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 px-8 py-7 space-y-5">
-          <div className="flex items-start gap-3">
-            <ShieldCheck className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-gray-500 leading-relaxed">
-              En signant ce devis, vous confirmez avoir lu et approuvé l&apos;ensemble des conditions décrites
-              dans ce document. La date, l&apos;heure et votre adresse IP seront
-              enregistrées comme preuve d&apos;accord.
-            </p>
-          </div>
-
-          <a
-            href={`/api/pdf/quote/${quoteId}?token=${token}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-between gap-3 p-4 border border-gray-200 rounded-xl hover:border-gray-900 transition-colors group"
-          >
-            <div className="flex items-center gap-3">
-              <FileText className="w-5 h-5 text-gray-700" />
-              <div>
-                <p className="text-sm font-semibold text-gray-900">Consulter le devis</p>
-                <p className="text-xs text-gray-500">Ouvre le PDF dans un nouvel onglet</p>
-              </div>
-            </div>
-            <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-gray-900" />
-          </a>
-
-          <div className="space-y-3 pt-2 border-t border-gray-100">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Votre nom complet</label>
-              <input
-                type="text"
-                value={signatoryName}
-                onChange={e => setSignatoryName(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-200 rounded-xl text-gray-900 focus:border-gray-900 focus:ring-1 focus:ring-gray-900 outline-none"
-                placeholder="Prénom et nom"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">
-                Fonction <span className="font-normal text-gray-400">(optionnel)</span>
-              </label>
-              <input
-                type="text"
-                value={signatoryRole}
-                onChange={e => setSignatoryRole(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-200 rounded-xl text-gray-900 focus:border-gray-900 focus:ring-1 focus:ring-gray-900 outline-none"
-                placeholder="Ex : Gérant, Responsable achats…"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Signature manuscrite</label>
-              <SignaturePad
-                value={signatureImage}
-                onChange={setSignatureImage}
-                surface="paper"
-                width={viewportWidth === null ? 480 : Math.max(280, Math.min(480, viewportWidth - 80))}
-                height={170}
-              />
-            </div>
-          </div>
-
-          {/* Checkbox confirmation */}
-          <label className="flex items-start gap-3 cursor-pointer group">
-            <div className="relative mt-0.5 flex-shrink-0">
-              <input
-                type="checkbox"
-                checked={confirmed}
-                onChange={e => setConfirmed(e.target.checked)}
-                className="w-5 h-5 rounded border-gray-300 text-gray-900 focus:ring-gray-900 cursor-pointer"
-              />
-            </div>
-            <span className="text-sm text-gray-700 leading-relaxed select-none">
-              J&apos;ai lu et j&apos;accepte les conditions de ce devis. Ma signature vaut bon pour accord.
-            </span>
-          </label>
-
-          {error && (
-            <div className="flex items-start gap-2 text-red-600 text-sm bg-red-50 rounded-xl p-3">
-              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <span>{error}</span>
-            </div>
+  if (accepted && acceptedAt) {
+    return (
+      <PublicPage>
+        <PublicHeader name={orgName} address={orgAddress} />
+        <PublicSuccess
+          title="Devis accepté"
+          description={`Vous avez accepté ${quoteNumber ? `le devis ${quoteNumber}` : 'ce devis'} le ${fmtDateTime(acceptedAt)}. Téléchargez et conservez le devis signé.`}
+        >
+          {totalTtc != null && (
+            <StatTile className="mb-[18px] mt-[10px]" label="Montant TTC accepté" value={fmt(totalTtc, currency)} />
           )}
-
-          {/* CTA */}
-          <button
-            onClick={handleAccept}
-            disabled={!confirmed || !signatureImage || !signatoryName.trim() || isPending}
-            className="w-full py-4 rounded-2xl bg-gray-900 text-white font-bold text-base flex items-center justify-center gap-3 hover:bg-gray-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          <Button
+            size="lg"
+            className="w-full"
+            onClick={() => window.open(`${pdfUrl}&download=1`, '_blank', 'noopener,noreferrer')}
           >
-            {isPending ? (
-              <><Loader2 className="w-5 h-5 animate-spin" />Enregistrement…</>
-            ) : (
-              <><CheckCircle2 className="w-5 h-5" />J&apos;accepte ce devis</>
-            )}
-          </button>
-        </div>
+            Télécharger le devis signé
+          </Button>
+        </PublicSuccess>
+      </PublicPage>
+    )
+  }
 
-        {/* Sécurité */}
-        <p className="text-center text-xs text-gray-400 pb-8">
-          Lien sécurisé, transmis par {orgName}
-        </p>
+  const canSign = Boolean(signatoryName.trim() && signatureImage)
+
+  return (
+    <PublicPage>
+      <PublicHeader name={orgName} address={orgAddress} subtitle={subtitle} />
+
+      {totalTtc != null ? (
+        <StatTile
+          className="mt-[6px]"
+          label="Montant TTC"
+          value={fmt(totalTtc, currency)}
+          detail={recipientLine || undefined}
+        />
+      ) : recipientLine ? <PublicNote>{recipientLine}</PublicNote> : null}
+
+      <ListGroup>
+        <ListRow
+          title="Consulter le devis"
+          description="Ouvre le PDF dans un nouvel onglet"
+          href={pdfUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+        />
+      </ListGroup>
+
+      <ListGroup>
+        <li className="border-b border-trait">
+          <Field
+            type="text"
+            label="Nom complet"
+            value={signatoryName}
+            onChange={(event) => setSignatoryName(event.currentTarget.value)}
+            placeholder="Prénom et nom"
+            autoComplete="name"
+            required
+          />
+        </li>
+        <li>
+          <Field
+            type="text"
+            label="Fonction"
+            value={signatoryRole}
+            onChange={(event) => setSignatoryRole(event.currentTarget.value)}
+            placeholder="Fonction (facultatif)"
+            autoComplete="organization-title"
+          />
+        </li>
+      </ListGroup>
+
+      <section className="mt-espace-24" aria-labelledby="signature-heading">
+        <h2 id="signature-heading" className="mx-espace-16 mb-[6px] mt-0 text-note font-atelier-medium text-encre-2">
+          Signature manuscrite
+        </h2>
+        <SignaturePad
+          value={signatureImage}
+          onChange={setSignatureImage}
+          surface="paper"
+          width={528}
+          height={176}
+          hint="Signez avec le doigt ou la souris"
+        />
+      </section>
+
+      <PublicNote>
+        En signant ce devis, vous confirmez avoir lu et approuvé l&apos;ensemble des conditions décrites.
+      </PublicNote>
+
+      <PublicError>{error}</PublicError>
+
+      <div className="mt-espace-20">
+        <Button
+          size="lg"
+          className="w-full"
+          onClick={handleAccept}
+          disabled={!canSign}
+          loading={isPending}
+          loadingText="Signature en cours…"
+        >
+          Signer le devis
+        </Button>
       </div>
-    </div>
+      <PublicNote centered>Adresse IP et horodatage enregistrés comme preuve de signature.</PublicNote>
+    </PublicPage>
   )
 }
