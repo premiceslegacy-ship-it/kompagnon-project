@@ -36,22 +36,24 @@ async function createQuoteInUi(page: Page, tenant: QualificationTenant, title: s
   await page.goto('/finances/quote-editor?returnTo=%2Ffinances')
   await page.waitForLoadState('networkidle')
   await page.getByRole('button', { name: 'Je fais le devis moi-même' }).click()
-  await page.locator('#quote-info select').selectOption(tenant.clientId)
+  await page.getByRole('button', { name: 'Client', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: tenant.clientName }).click()
   await page.getByPlaceholder('Ex: Rénovation toiture').fill(title)
 
   await page.getByRole('button', { name: 'Ajouter une section' }).first().click()
-  await page.getByRole('button', { name: 'Saisie libre' }).click()
+  await page.getByRole('button', { name: 'Ajouter une ligne' }).first().click()
+  await page.getByRole('button', { name: /Saisie libre/ }).click()
 
   const description = page.getByPlaceholder('Désignation...')
   await expect(description).toBeVisible()
   await description.fill(QUALIFICATION_DESCRIPTION)
-  const row = description.locator('xpath=../../..')
-  const numericInputs = row.locator('input:visible')
-  await expect(numericInputs).toHaveCount(3)
-  await numericInputs.nth(0).fill(String(QUALIFICATION_QUANTITY))
-  await numericInputs.nth(0).press('Tab')
-  await numericInputs.nth(1).fill(String(QUALIFICATION_UNIT_PRICE))
-  await numericInputs.nth(1).press('Tab')
+  const quantity = page.getByRole('dialog').getByLabel('Quantité', { exact: true })
+  await quantity.fill(String(QUALIFICATION_QUANTITY))
+  await quantity.press('Tab')
+  const unitPrice = page.getByRole('dialog').getByLabel('Prix unitaire', { exact: true })
+  await unitPrice.fill(String(QUALIFICATION_UNIT_PRICE))
+  await unitPrice.press('Tab')
+  await page.getByRole('dialog').getByRole('button', { name: 'OK', exact: true }).click()
 }
 
 async function readQuote(tenant: QualificationTenant, title: string) {
@@ -94,7 +96,7 @@ async function waitForPersistedDraft(tenant: QualificationTenant, title: string)
 }
 
 async function publishQuote(page: Page): Promise<void> {
-  await page.getByRole('button', { name: /PDF & email/ }).click()
+  await page.getByRole('button', { name: 'Envoyer le devis', exact: true }).click()
   const heading = page.getByRole('heading', { name: 'Envoyer le devis' })
   await expect(heading).toBeVisible({ timeout: 30_000 })
   await page.locator('.card').filter({ has: heading }).getByRole('button', { name: 'Envoyer', exact: true }).click()

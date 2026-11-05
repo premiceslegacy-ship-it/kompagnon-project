@@ -404,6 +404,7 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
   // En mode manuel, l'artisan choisit le poids (%) de chaque ligne visible ;
   // la somme doit faire 100 % avant de pouvoir répartir.
   const [manualDistributionMode, setManualDistributionMode] = useState(false)
+  const [distributionConfirm, setDistributionConfirm] = useState<{ kind: 'distribute' | 'integrate'; title: string; message: string } | null>(null)
   const [distributionWeights, setDistributionWeights] = useState<Map<string, number>>(new Map())
 
   function distributionKey(sectionTempId: string, itemTempId: string) {
@@ -451,7 +452,7 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
     window.scrollTo({ top, behavior: 'smooth' })
   }
 
-  function handleDistributeInternalCostsIntoVisiblePrices() {
+  function handleDistributeInternalCostsIntoVisiblePrices(skipConfirm = false) {
     const currentSections = sectionsRef.current
     const internalTotal = roundCurrency(
       currentSections.flatMap(section => section.items).filter(item => item.is_internal).reduce((sum, item) => sum + getInternalSaleTotal(item), 0),
@@ -482,12 +483,16 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
       return
     }
 
-    const confirmed = window.confirm(
-      useManualWeights
-        ? `Répartir ${fmt(internalTotal)} HT de montant interne selon les poids choisis ? Les lignes internes resteront masquées et leur coût de revient restera utilisé pour la marge.`
-        : `Répartir ${fmt(internalTotal)} HT de montant interne vendu dans les prix des lignes visibles ? Les lignes internes resteront masquées et leur coût de revient restera utilisé pour la marge.`,
-    )
-    if (!confirmed) return
+    if (!skipConfirm) {
+      setDistributionConfirm({
+        kind: 'distribute',
+        title: 'Répartir le montant interne ?',
+        message: useManualWeights
+          ? `Répartir ${fmt(internalTotal)} HT de montant interne selon les poids choisis ? Les lignes internes resteront masquées et leur coût de revient restera utilisé pour la marge.`
+          : `Répartir ${fmt(internalTotal)} HT de montant interne vendu dans les prix des lignes visibles ? Les lignes internes resteront masquées et leur coût de revient restera utilisé pour la marge.`,
+      })
+      return
+    }
 
     const visibleTotal = visibleEntries.reduce((sum, entry) => sum + entry.item.quantity * entry.item.unit_price, 0)
     let remaining = internalTotal
@@ -530,7 +535,7 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
     closeManualDistribution()
   }
 
-  function handleMarkInternalSalesAlreadyDistributed() {
+  function handleMarkInternalSalesAlreadyDistributed(skipConfirm = false) {
     const currentSections = sectionsRef.current
     const internalEntries = currentSections.flatMap(section =>
       section.items
@@ -543,10 +548,14 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
       return
     }
 
-    const confirmed = window.confirm(
-      `Marquer ${fmt(internalTotal)} HT comme déjà répartis ? Les prix visibles ne seront pas modifiés. Les lignes internes garderont leur coût de revient pour la marge.`,
-    )
-    if (!confirmed) return
+    if (!skipConfirm) {
+      setDistributionConfirm({
+        kind: 'integrate',
+        title: 'Marquer comme intégré ?',
+        message: `Marquer ${fmt(internalTotal)} HT comme déjà répartis ? Les prix visibles ne seront pas modifiés. Les lignes internes garderont leur coût de revient pour la marge.`,
+      })
+      return
+    }
 
     const updates = new Map<string, Partial<LocalItem>>()
     internalEntries.forEach(entry => {
@@ -1826,6 +1835,12 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     }
   }
 
+  function updateIntro(value: string) {
+    introTouchedRef.current = true
+    setNotesClient(value)
+    scheduleHeaderSave({ notes_client: value })
+  }
+
   // ─── Catalog filter ───────────────────────────────────────────────────────
 
   const catalogFiltered = [
@@ -2015,6 +2030,8 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     setDistributionWeight,
     distributionWeightSum,
     distributionWeightValid,
+    distributionConfirm,
+    setDistributionConfirm,
     scrollToQuoteArea,
     handleDistributeInternalCostsIntoVisiblePrices,
     handleMarkInternalSalesAlreadyDistributed,
@@ -2085,5 +2102,8 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     handleInsertMOItems,
     handlePrestationSelect,
     catalogFiltered,
+    updateIntro,
   }
 }
+
+export type QuoteEditor = ReturnType<typeof useQuoteEditor>

@@ -190,14 +190,14 @@ test('Le retour du devis reste atteignable sans interception à 1024 px', async 
   await page.setViewportSize({ width: 1024, height: 900 })
   await signIn(page, qualification)
   await page.goto('/finances/quote-editor?returnTo=%2Ffinances')
-  await expect(page.locator('select').first()).toBeVisible()
-  await expect(page.getByText('Préparation du devis...', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('main').getByRole('button', { name: 'Documents', exact: true })).toBeVisible()
+  await expect(page.getByText('Préparation du devis…', { exact: true })).toHaveCount(0)
   const manualChoice = page.getByRole('button', { name: /Je fais le devis moi-même/ })
   if (await manualChoice.isVisible()) await manualChoice.click()
   await expect(manualChoice).toHaveCount(0)
   await page.evaluate(() => document.fonts.ready)
   const title = page.getByRole('main').getByRole('heading', { level: 1 })
-  const back = title.locator('..').locator('..').getByRole('button')
+  const back = page.getByRole('main').getByRole('button', { name: 'Documents', exact: true })
   await expect.poll(() => back.evaluate(element => {
     const box = element.getBoundingClientRect()
     return [0.2, 0.5, 0.8].every(y => [0.2, 0.5, 0.8].every(x => {

@@ -19,6 +19,8 @@ export interface SheetProps {
   children: React.ReactNode
   description?: string
   onCancel?: () => void
+  /** Libellé du bouton de gauche ; « Fermer » quand les changements sont déjà appliqués. */
+  cancelLabel?: string
   onConfirm?: () => void
   confirmLabel?: string
   confirmLoading?: boolean
@@ -52,6 +54,7 @@ export function Sheet({
   children,
   description,
   onCancel,
+  cancelLabel = 'Annuler',
   onConfirm,
   confirmLabel = 'OK',
   confirmLoading = false,
@@ -212,7 +215,7 @@ export function Sheet({
             >
               <span className={styles.handle} aria-hidden="true" />
               <Button className={styles.headerAction} variant="text" size="md" onClick={requestDismiss}>
-                Annuler
+                {cancelLabel}
               </Button>
               <div className={styles.heading}>
                 <Dialog.Title className={styles.title}>{title}</Dialog.Title>
