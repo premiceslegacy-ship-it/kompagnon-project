@@ -840,7 +840,7 @@ export default function FinancesClient({
             )}
           </div>
         )}
-        <div className={`grid grid-cols-2 gap-4 ${activeTab === 'quotes' ? 'md:grid-cols-4' : activeTab === 'received' ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+        <div className={`grid grid-cols-2 gap-4 ${activeTab === 'quotes' ? 'md:max-atelier:grid-cols-4 xl:grid-cols-4' : activeTab === 'received' ? 'md:grid-cols-2' : 'md:max-atelier:grid-cols-3 xl:grid-cols-3'}`}>
           {activeTab === 'received' ? (
             <>
               <div className="rounded-3xl card p-6 flex items-center gap-4">
