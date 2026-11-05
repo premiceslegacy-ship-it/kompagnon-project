@@ -19,7 +19,7 @@ describe('isReadyToPrepare', () => {
 
   it('utilise trois jours quand le délai est absent', () => {
     vi.setSystemTime(new Date('2026-12-07T08:00:00'))
-    expect(isReadyToPrepare(model({ confirmation_delay_days: null }))).toBe(true)
+    expect(isReadyToPrepare(model({ confirmation_delay_days: undefined }))).toBe(true)
   })
 
   it('attend la date d’envoi quand aucune confirmation n’est demandée', () => {
