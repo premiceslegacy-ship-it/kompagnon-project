@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -13,6 +13,7 @@ import type { Chantier, ChantierStats } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
 import type { QuoteStub } from '@/lib/data/queries/quotes'
 import { createChantier, updateChantier, deleteChantier } from '@/lib/data/mutations/chantiers'
+import { useCreationIntent } from '@/lib/hooks/use-creation-intent'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -471,6 +472,8 @@ export default function ChantiersClient({
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState<Status | 'tous'>('tous')
   const [createStep, setCreateStep] = useState<'choice' | 'form' | null>(null)
+  const openCreateChoice = useCallback(() => setCreateStep(current => current ?? 'choice'), [])
+  useCreationIntent(canCreate, openCreateChoice)
   const [isNavigating, setIsNavigating] = useState(false)
   const [navigationLabel, setNavigationLabel] = useState('Ouverture du chantier...')
   const [page, setPage] = useState(1)
