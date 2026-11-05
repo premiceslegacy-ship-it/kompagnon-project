@@ -2515,7 +2515,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
       )}
 
       {/* Topbar */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
         {/* Titre + statut sauvegarde */}
         <div className="flex items-center gap-3 min-w-0">
           <button onClick={() => router.replace(returnTo)} className="w-10 h-10 rounded-full bg-surface border border-[var(--elevation-border)] flex items-center justify-center text-secondary hover:text-primary transition-colors dark:bg-white/5 shrink-0">
