@@ -3,10 +3,12 @@ import { fmtCapitalSocial, pdfText } from '@/lib/pdf/pdf-design-system'
 import { PdfDoc } from '../engine/doc'
 import type { FontBytes } from '../engine/fonts'
 import { loadFontBytes } from '../engine/fonts'
-import { drawImageContained, embedImage } from '../engine/image'
-import { textLineHeight, wrapText, type TextStyle } from '../engine/text'
-import { COLOR, CONTENT_WIDTH, PAGE, SIZE, SPACE } from '../engine/theme'
-import { rgb } from 'pdf-lib'
+import { embedImage } from '../engine/image'
+import {
+  drawCardRow, drawCentered, drawLineTable, drawMeta, drawParties, drawTotals, flexWidth,
+  legalFooterLines, setupChrome, signatureCard, type LineRow,
+} from '../engine/layout'
+import { COLOR } from '../engine/theme'
 
 type DgdPdfOrganization = Pick<
   PdfOrganizationData,
@@ -55,6 +57,8 @@ export type DgdPdfData = {
   receptionDate?: string | null
   receptionStatus?: string | null
   organization: DgdPdfOrganization
+  /** Date d'édition (défaut : maintenant). */
+  editedAt?: string | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -63,24 +67,28 @@ const fmt = (n: number) =>
   pdfText(new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n))
 
 const fmtDate = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'
-
-const TYPE_COLORS: Record<DgdLine['type'], ReturnType<typeof rgb>> = {
-  marche: rgb(0x1e / 255, 0x40 / 255, 0xaf / 255),
-  avenant: rgb(0x7c / 255, 0x3a / 255, 0xed / 255),
-  situation: COLOR.body,
-  solde: rgb(0x06 / 255, 0x5f / 255, 0x46 / 255),
-  liberation_rg: rgb(0xb4 / 255, 0x53 / 255, 0x09 / 255),
-  total: COLOR.black,
-}
+  iso ? new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'
 
 const TYPE_LABELS: Record<DgdLine['type'], string> = {
   marche: 'Marché',
   avenant: 'Avenant',
   situation: 'Situation',
   solde: 'Solde',
-  liberation_rg: 'Libération RG',
-  total: 'TOTAL',
+  liberation_rg: 'Libération de la retenue',
+  total: 'Total',
+}
+
+const RECEPTION_LABELS: Record<string, string> = {
+  sans_reserve: 'sans réserve',
+  reserve_levee: 'réserves levées',
+}
+
+/** Libellés posés par le serveur sans accents (« TOTAL GENERAL », « Marche initial »). */
+function displayLabel(line: DgdLine): string {
+  const label = pdfText(line.label)
+  if (line.type === 'total' && /^total general$/i.test(label)) return 'Total général'
+  if (/^marche initial$/i.test(label)) return 'Marché initial'
+  return label
 }
 
 export async function renderDgdPdf(data: DgdPdfData, origin: string): Promise<Buffer> {
@@ -95,227 +103,88 @@ export async function renderDgdPdfWithFonts(data: DgdPdfData, fontBytes: FontByt
     receptionDate, receptionStatus, organization,
   } = data
   const doc = await PdfDoc.create(fontBytes)
-  const F = doc.fonts
-
-  const orgPostalCity = [organization.postal_code, organization.city].filter(Boolean).join(' ')
-
-  const line2Parts: string[] = []
-  if (organization.siret) line2Parts.push(`SIRET : ${organization.siret}`)
-  if (organization.rcs && organization.rcs_ville) line2Parts.push(`RCS ${organization.rcs_ville} ${organization.rcs}`)
-  else if (organization.rcs) line2Parts.push(`RCS ${organization.rcs}`)
   const isVatSubject = organization.is_vat_subject !== false
-  if (!isVatSubject) line2Parts.push('TVA non applicable, art. 293B du CGI')
-  else if (organization.vat_number) line2Parts.push(`TVA : ${organization.vat_number}`)
-
-  const legalLines: string[] = [
-    [organization.forme_juridique, fmtCapitalSocial(organization.capital_social) ? `Capital social : ${fmtCapitalSocial(organization.capital_social)}` : null].filter(Boolean).join(' · '),
-    line2Parts.join(' · '),
-    organization.insurance_info ? `Assurance RC${organization.decennale_enabled ? ' et décennale' : ''} : ${organization.insurance_info}` : null,
-  ].filter((l): l is string => !!l && l.length > 0)
-
   const logoImg = organization.logo_url ? await embedImage(doc.doc, organization.logo_url) : null
 
-  doc.onNewPage = ({ page }) => {
-    let y = PAGE.height - PAGE.headerTop
-    const headerTop = y
-
-    if (logoImg) {
-      drawImageContained(doc, logoImg, { x: PAGE.margin, y: headerTop - 45, w: 90, h: 45 })
-    } else {
-      page.drawRectangle({ x: PAGE.margin, y: headerTop - 45, width: 90, height: 45, color: COLOR.black })
-      page.drawText(pdfText(organization.name.slice(0, 2).toUpperCase()), { x: PAGE.margin + 30, y: headerTop - 28, size: SIZE.lg, font: F.headingXBold, color: COLOR.white })
-    }
-
-    const rightX = PAGE.width - PAGE.margin - 210
-    let ry = headerTop
-    const drawRight = (text: string, style: TextStyle) => {
-      const w = style.font.widthOfTextAtSize(text, style.size)
-      ry -= style.size
-      page.drawText(text, { x: rightX + 210 - w, y: ry, size: style.size, font: style.font, color: style.color })
-      ry -= textLineHeight(style) - style.size
-    }
-    drawRight(pdfText(organization.name).toUpperCase(), { font: F.headingXBold, size: SIZE.md, color: COLOR.black })
-    ry -= 4
-    if (organization.address_line1) drawRight(pdfText(organization.address_line1), { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
-    if (orgPostalCity) drawRight(pdfText(orgPostalCity), { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
-    if (organization.phone) drawRight(pdfText(organization.phone), { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
-
-    y = Math.min(headerTop - 45, ry) - SPACE.md
-    page.drawLine({ start: { x: PAGE.margin, y }, end: { x: PAGE.width - PAGE.margin, y }, thickness: 1, color: COLOR.divider })
-    y -= SPACE.md
-    return y
-  }
-
+  setupChrome(doc, {
+    title: 'Décompte général définitif',
+    reference: 'NF P 03-001, marché privé de travaux',
+    logo: logoImg,
+    orgName: organization.name,
+    footerLines: legalFooterLines(organization, { isVatSubject, capital: fmtCapitalSocial(organization.capital_social) }),
+  })
   doc.addPage()
 
-  doc.onFinishPage = ({ page }) => {
-    const footerY = 14
-    let ly = footerY + legalLines.length * (SIZE.xxs * 1.4)
-    for (const line of legalLines) {
-      page.drawText(line, { x: PAGE.margin, y: ly, size: SIZE.xxs, font: F.regular, color: COLOR.muted })
-      ly -= SIZE.xxs * 1.4
-    }
-  }
+  // ── Métadonnées ──
+  const receptionLabel = receptionDate
+    ? `${fmtDate(receptionDate)}, ${RECEPTION_LABELS[receptionStatus ?? ''] ?? 'avec réserves'}`
+    : ''
+  drawMeta(doc, [
+    { label: 'Date', value: fmtDate(data.editedAt ?? new Date().toISOString()) },
+    { label: 'Marché', value: pdfText(marketReference) },
+    { label: 'Réception', value: receptionLabel },
+  ])
 
-  // ── Titre ──
-  doc.ensureSpace(SIZE.lg + SIZE.sm + SPACE.lg)
-  doc.y -= 16
-  doc.page.drawText('DECOMPTE GENERAL DEFINITIF', { x: PAGE.margin, y: doc.y, size: 16, font: F.heading, color: COLOR.black })
-  doc.y -= SPACE.xs
-  doc.y -= SIZE.sm
-  doc.page.drawText('NF P 03-001 / Marche prive de travaux', { x: PAGE.margin, y: doc.y, size: SIZE.sm, font: F.regular, color: COLOR.muted })
-  doc.moveDown(SPACE.lg)
+  // ── Entreprise / Maître d'ouvrage ──
+  drawParties(doc,
+    {
+      label: 'Entreprise',
+      name: organization.name,
+      lines: [
+        [organization.address_line1, [organization.postal_code, organization.city].filter(Boolean).join(' ')].filter(Boolean).join(', '),
+        [organization.phone, organization.siret ? `SIRET ${organization.siret}` : null].filter(Boolean).join(' · '),
+      ],
+    },
+    { label: "Maître d'ouvrage", name: clientName || '-', lines: [] },
+  )
 
-  // ── Infos chantier / client ──
-  const twoBoxW = clientName ? (CONTENT_WIDTH - SPACE.lg) / 2 : CONTENT_WIDTH
-  function measureChantierBox(): number {
-    let n = 1
-    if (chantierAddress) n++
-    if (marketReference) n++
-    if (receptionDate) n++
-    return SPACE.md * 2 + SIZE.xs + 2 + SIZE.md + n * (SIZE.sm + 2) - (SIZE.sm + 2)
-  }
-  const chantierBoxH = measureChantierBox()
-  const clientBoxH = SPACE.md * 2 + SIZE.xs + 2 + SIZE.md
-  const rowH = Math.max(chantierBoxH, clientBoxH)
-  doc.ensureSpace(rowH)
-  const rowY = doc.y
-
-  doc.page.drawRectangle({ x: PAGE.margin, y: rowY - rowH, width: twoBoxW, height: rowH, color: COLOR.surface })
-  let cy = rowY - SPACE.md - SIZE.xs
-  doc.page.drawText('CHANTIER', { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.xs, font: F.headingXBold, color: COLOR.muted })
-  cy -= 2 + SIZE.md
-  doc.page.drawText(pdfText(chantierTitle), { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.md, font: F.heading, color: COLOR.black })
-  if (chantierAddress) { cy -= SIZE.sm + 2; doc.page.drawText(pdfText(chantierAddress), { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.sm, font: F.regular, color: COLOR.body }) }
-  if (marketReference) { cy -= SIZE.sm + 2; doc.page.drawText(pdfText(`Ref. marche : ${marketReference}`), { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.sm, font: F.regular, color: COLOR.muted }) }
-  if (receptionDate) {
-    cy -= SIZE.sm + 2
-    const statusLabel = receptionStatus === 'sans_reserve' ? 'sans reserve' : receptionStatus === 'reserve_levee' ? 'reserves levees' : 'avec reserves'
-    doc.page.drawText(pdfText(`Reception : ${fmtDate(receptionDate)} (${statusLabel})`), { x: PAGE.margin + SPACE.md, y: cy, size: SIZE.sm, font: F.regular, color: COLOR.muted })
-  }
-
-  if (clientName) {
-    const cx = PAGE.margin + twoBoxW + SPACE.lg
-    doc.page.drawRectangle({ x: cx, y: rowY - rowH, width: twoBoxW, height: rowH, color: COLOR.surface })
-    let cy2 = rowY - SPACE.md - SIZE.xs
-    doc.page.drawText("MAITRE D'OUVRAGE", { x: cx + SPACE.md, y: cy2, size: SIZE.xs, font: F.headingXBold, color: COLOR.muted })
-    cy2 -= 2 + SIZE.md
-    doc.page.drawText(pdfText(clientName), { x: cx + SPACE.md, y: cy2, size: SIZE.md, font: F.heading, color: COLOR.black })
-  }
-
-  doc.y = rowY - rowH
-  doc.moveDown(SPACE.xl)
+  // ── Marché ──
+  drawCentered(doc, 'Marché privé de travaux', [
+    [chantierTitle, chantierAddress].filter(Boolean).join(', ') + '.',
+    `Décompte établi selon la norme NF P 03-001${receptionDate ? `, après réception des travaux le ${fmtDate(receptionDate)}` : ''}.`,
+  ].join(' '), { marginTop: 13.5 })
 
   // ── Tableau des lignes ──
-  const colDesignW = CONTENT_WIDTH - 60 - 80 - 60 - 85
-  doc.ensureSpace(2)
-  doc.page.drawLine({ start: { x: PAGE.margin, y: doc.y }, end: { x: PAGE.width - PAGE.margin, y: doc.y }, thickness: 1, color: COLOR.divider })
-  doc.moveDown(SPACE.xs)
-
-  doc.ensureSpace(SIZE.xs + SPACE.xs)
-  const headerY = doc.y
-  const headerStyle: TextStyle = { font: F.headingXBold, size: SIZE.xs, color: COLOR.muted }
-  doc.page.drawText('DESIGNATION', { x: PAGE.margin + SPACE.sm, y: headerY - SIZE.xs, size: SIZE.xs, font: headerStyle.font, color: headerStyle.color })
-  drawRightHeader(doc, 'AVCT %', PAGE.margin + SPACE.sm + colDesignW, 60, headerStyle)
-  drawRightHeader(doc, 'MONTANT HT', PAGE.margin + SPACE.sm + colDesignW + 60, 80, headerStyle)
-  drawRightHeader(doc, 'RG', PAGE.margin + SPACE.sm + colDesignW + 60 + 80, 60, headerStyle)
-  drawRightHeader(doc, 'NET HT', PAGE.margin + SPACE.sm + colDesignW + 60 + 80 + 60, 85, headerStyle)
-  doc.y -= SIZE.xs + SPACE.xs
-  doc.page.drawLine({ start: { x: PAGE.margin, y: doc.y }, end: { x: PAGE.width - PAGE.margin, y: doc.y }, thickness: 0.5, color: COLOR.divider })
-
-  for (const line of lines) {
-    const isTotal = line.type === 'total'
-    const labelText = pdfText(`[${TYPE_LABELS[line.type]}] ${line.label}`)
-    const labelStyle: TextStyle = { font: isTotal ? F.heading : F.regular, size: SIZE.sm, color: TYPE_COLORS[line.type], maxWidth: colDesignW }
-    const labelLines = wrapText(labelText, labelStyle.font, labelStyle.size, colDesignW)
-    let extraLines = 0
-    if (line.reference) extraLines++
-    if (line.date) extraLines++
-    const rowH2 = SPACE.xs * 2 + labelLines.length * textLineHeight(labelStyle) + extraLines * (SIZE.xs + 1)
-
-    doc.ensureSpace(rowH2)
-    const rowTop = doc.y
-    if (isTotal) {
-      doc.page.drawRectangle({ x: PAGE.margin, y: rowTop - rowH2, width: CONTENT_WIDTH, height: rowH2, color: COLOR.surface })
-    }
-
-    let cy2 = rowTop - SPACE.xs
-    for (const l of labelLines) {
-      cy2 -= labelStyle.size
-      doc.page.drawText(l, { x: PAGE.margin + SPACE.sm, y: cy2, size: labelStyle.size, font: labelStyle.font, color: labelStyle.color })
-      cy2 -= textLineHeight(labelStyle) - labelStyle.size
-    }
-    if (line.reference) { cy2 -= SIZE.xs; doc.page.drawText(pdfText(line.reference), { x: PAGE.margin + SPACE.sm, y: cy2, size: SIZE.xs, font: F.regular, color: COLOR.muted }); cy2 -= 1 }
-    if (line.date) { cy2 -= SIZE.xs; doc.page.drawText(pdfText(fmtDate(line.date)), { x: PAGE.margin + SPACE.sm, y: cy2, size: SIZE.xs, font: F.regular, color: COLOR.muted }); cy2 -= 1 }
-
-    const firstLineY = rowTop - SPACE.xs - labelStyle.size
-    drawRightCell(doc, line.cumulative_pct != null ? `${line.cumulative_pct}%` : '', PAGE.margin + SPACE.sm + colDesignW, 60, firstLineY, { font: F.regular, size: SIZE.sm, color: COLOR.body })
-    drawRightCell(doc, fmt(line.amount_ht), PAGE.margin + SPACE.sm + colDesignW + 60, 80, firstLineY, { font: isTotal ? F.heading : F.regular, size: SIZE.sm, color: TYPE_COLORS[line.type] })
-    drawRightCell(doc, line.retention_amount ? `-${fmt(line.retention_amount)}` : '', PAGE.margin + SPACE.sm + colDesignW + 60 + 80, 60, firstLineY, { font: F.regular, size: SIZE.sm, color: rgb(0xea / 255, 0x58 / 255, 0x0c / 255) })
-    drawRightCell(doc, fmt(line.net_ht ?? line.amount_ht), PAGE.margin + SPACE.sm + colDesignW + 60 + 80 + 60, 85, firstLineY, { font: isTotal ? F.heading : F.regular, size: SIZE.sm, color: isTotal ? COLOR.black : COLOR.body })
-
-    doc.y = rowTop - rowH2
-    doc.page.drawLine({ start: { x: PAGE.margin, y: doc.y }, end: { x: PAGE.width - PAGE.margin, y: doc.y }, thickness: 0.5, color: COLOR.divider })
-  }
+  const fixed = [40, 69, 61.5, 69]
+  const rows: LineRow[] = lines.map((line): LineRow => {
+    const cells = [
+      line.type === 'total'
+        ? { text: displayLabel(line) }
+        : {
+            text: displayLabel(line),
+            detail: [[TYPE_LABELS[line.type], line.reference, line.date ? fmtDate(line.date) : null].filter(Boolean).join(' · ')],
+          },
+      line.cumulative_pct != null ? `${line.cumulative_pct} %` : '',
+      { text: fmt(line.amount_ht) },
+      line.retention_amount ? { text: `−${fmt(line.retention_amount)}`, color: COLOR.warnInk } : '',
+      { text: fmt(line.net_ht ?? line.amount_ht), bold: true },
+    ]
+    return line.type === 'total' ? { kind: 'total', cells } : { cells }
+  })
+  drawLineTable(doc, [
+    { header: 'Désignation', width: flexWidth(fixed) },
+    { header: 'Avct.', width: 40 },
+    { header: 'Montant HT', width: 69 },
+    { header: 'Retenue', width: 61.5 },
+    { header: 'Net HT', width: 69 },
+  ], rows)
 
   // ── Récapitulatif ──
-  doc.moveDown(SPACE.xl)
-  const recapW = 280
-  const recapX = PAGE.width - PAGE.margin - recapW
-  doc.ensureSpace(SIZE.md + SPACE.xs * 3 + SIZE.sm * 2 + 8)
-
-  function drawRecapRow(label: string, value: string, style: TextStyle): void {
-    doc.y -= style.size
-    const w = style.font.widthOfTextAtSize(value, style.size)
-    doc.page.drawText(label, { x: recapX, y: doc.y, size: style.size, font: style.font, color: style.color })
-    doc.page.drawText(value, { x: recapX + recapW - w, y: doc.y, size: style.size, font: style.font, color: style.color })
-    doc.y -= 4
-  }
-
-  drawRecapRow('Marche initial + avenants HT', fmt(totalMarcheHt), { font: F.regular, size: SIZE.sm, color: COLOR.muted })
-  drawRecapRow('Total facture HT', fmt(totalSituationsHt), { font: F.regular, size: SIZE.sm, color: COLOR.body })
-  if (totalRetentionHt > 0) {
-    drawRecapRow('Retenues de garantie prélevées', `-${fmt(totalRetentionHt)}`, { font: F.regular, size: SIZE.sm, color: rgb(0xea / 255, 0x58 / 255, 0x0c / 255) })
-  }
-  doc.page.drawLine({ start: { x: recapX, y: doc.y }, end: { x: recapX + recapW, y: doc.y }, thickness: 1, color: COLOR.black })
-  doc.y -= 4
-  drawRecapRow('SOLDE NET HT', fmt(totalNetHt), { font: F.heading, size: SIZE.md, color: COLOR.black })
-
-  // ── Signatures ──
-  doc.moveDown(SPACE.xl * 2)
-  const sigColW = (CONTENT_WIDTH - SPACE.xl) / 2
-  doc.ensureSpace(SIZE.sm + SPACE.xs + SIZE.xs * 2 + SPACE.xl + SPACE.xs)
-  const sigTopY = doc.y
-  doc.page.drawLine({ start: { x: PAGE.margin, y: sigTopY }, end: { x: PAGE.margin + sigColW, y: sigTopY }, thickness: 1, color: COLOR.divider })
-  doc.page.drawLine({ start: { x: PAGE.margin + sigColW + SPACE.xl, y: sigTopY }, end: { x: PAGE.margin + sigColW + SPACE.xl + sigColW, y: sigTopY }, thickness: 1, color: COLOR.divider })
-
-  const parties = [
-    { label: `L'Entrepreneur (${organization.name})`, sub: organization.signatory_name ?? '' },
-    { label: "Le Maitre d'ouvrage", sub: clientName ?? '' },
-  ]
-  parties.forEach((party, i) => {
-    const x = PAGE.margin + i * (sigColW + SPACE.xl)
-    let cy2 = sigTopY - SPACE.sm - SIZE.sm
-    doc.page.drawText(pdfText(party.label), { x, y: cy2, size: SIZE.sm, font: F.heading, color: COLOR.black })
-    if (party.sub) { cy2 -= SPACE.xs + SIZE.xs; doc.page.drawText(pdfText(party.sub), { x, y: cy2, size: SIZE.xs, font: F.regular, color: COLOR.muted }) }
-    cy2 -= SPACE.lg
-    doc.page.drawText('Date :', { x, y: cy2, size: SIZE.xs, font: F.regular, color: COLOR.muted })
-    cy2 -= SPACE.xl
-    doc.page.drawLine({ start: { x, y: cy2 }, end: { x: x + sigColW, y: cy2 }, thickness: 0.5, color: COLOR.divider })
-    cy2 -= SPACE.xs
-    doc.page.drawText('Signature :', { x, y: cy2, size: SIZE.xs, font: F.regular, color: COLOR.muted })
+  drawTotals(doc, {
+    width: 250,
+    lines: [
+      { label: 'Marché initial et avenants HT', value: fmt(totalMarcheHt) },
+      { label: 'Total facturé HT', value: fmt(totalSituationsHt) },
+      ...(totalRetentionHt > 0 ? [{ label: 'Retenues de garantie prélevées', value: `−${fmt(totalRetentionHt)}`, color: COLOR.warnInk }] : []),
+    ],
+    grands: [{ label: 'Solde net HT', value: fmt(totalNetHt) }],
   })
 
+  // ── Signatures, en bas de la dernière page ──
+  drawCardRow(doc, [
+    signatureCard(doc, "Le maître d'ouvrage", 'Date et signature', { lines: [clientName ?? ''] }),
+    signatureCard(doc, "L'entreprise", 'Date et signature', { lines: [[organization.name, organization.signatory_name].filter(Boolean).join(', ')] }),
+  ], { pin: true, marginTop: 13.5 })
+
   return doc.save()
-}
-
-function drawRightHeader(doc: PdfDoc, label: string, x: number, w: number, style: TextStyle): void {
-  const lw = style.font.widthOfTextAtSize(label, style.size)
-  doc.page.drawText(label, { x: x + w - lw, y: doc.y - style.size, size: style.size, font: style.font, color: style.color })
-}
-
-function drawRightCell(doc: PdfDoc, text: string, x: number, w: number, y: number, style: TextStyle): void {
-  if (!text) return
-  const tw = style.font.widthOfTextAtSize(text, style.size)
-  doc.page.drawText(text, { x: x + w - tw, y, size: style.size, font: style.font, color: style.color })
 }

@@ -1,7 +1,7 @@
 import type { PDFFont, RGB } from 'pdf-lib'
 import type { PdfDoc } from './doc'
 import { measureTextHeight, textLineHeight, wrapText, type TextStyle } from './text'
-import { COLOR, PAGE } from './theme'
+import { COLOR } from './theme'
 
 export type TableColumn = {
   width: number
@@ -141,8 +141,7 @@ export function drawTable(doc: PdfDoc, cols: TableColumn[], rows: TableRow[], op
 
   for (const row of rows) {
     const rowHeight = measureRowHeight(row, cols, opts)
-    const bottomLimit = PAGE.footerHeight
-    if (doc.y - rowHeight < bottomLimit) {
+    if (doc.y - rowHeight < doc.bottomLimit) {
       doc.addPage()
       if (opts.repeatHeader) {
         drawHeaderRow(doc, cols, opts)
