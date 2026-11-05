@@ -273,7 +273,6 @@ export default function ContractSignClient({
           surface="paper"
           width={608}
           height={184}
-          hint="Signez avec le doigt ou la souris"
         />
       </section>
 
