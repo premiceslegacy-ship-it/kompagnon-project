@@ -345,8 +345,8 @@ export function NavigationCommandsProvider({ children }: { children: ReactNode }
               {access.model.canUseAssistant && (
                 <ListGroup title="Assistante" headingLevel={3} className={styles.searchResults}>
                   <ListRow
-                    title="Demander ou rechercher"
-                    description={searchQuery.trim() ? 'Ouvrir Sarah avec le texte saisi' : 'Ouvrir Sarah'}
+                    title="Demander à Sarah"
+                    description={searchQuery.trim() ? 'Avec le texte saisi' : undefined}
                     leading={<MessageCircle className={styles.searchIcon} size={20} aria-hidden="true" />}
                     onClick={() => chooseSearchTarget(ASSISTANT_TARGET)}
                   />
@@ -358,7 +358,7 @@ export function NavigationCommandsProvider({ children }: { children: ReactNode }
                     <ListRow
                       key={target.id}
                       title={target.entry.label}
-                      description={target.entry.description ?? target.entry.href}
+                      description={target.entry.description}
                       leading={<NavigationIcon name={target.entry.icon} />}
                       onClick={() => chooseSearchTarget(target)}
                     />
@@ -475,18 +475,41 @@ function CreateCommand({ id, compact = false }: { id: string; compact?: boolean 
             if (entry) commands.prefetch(entry.href)
           }}
         >
-          <ListGroup title="Créer" headingLevel={3} className={styles.menuGroup}>
-            {commands.model.creations.map((entry) => (
-              <ListRow
-                key={entry.id}
-                title={entry.label}
-                description={entry.description}
-                leading={<NavigationIcon name={entry.icon} />}
-                trailing={commands.pendingNavigation?.source === 'create' && commands.pendingNavigation.route === routeKey(entry.href) ? <Loader2 className={styles.pendingIcon} size={18} aria-hidden="true" /> : undefined}
-                onClick={() => select(() => commands.navigate(entry.href, 'create'))}
-              />
-            ))}
-          </ListGroup>
+          {commands.desktop ? (
+            <ListGroup className={styles.menuGroup}>
+              {commands.model.creations.map((entry) => (
+                <ListRow
+                  key={entry.id}
+                  title={entry.label}
+                  description={entry.description}
+                  leading={<NavigationIcon name={entry.icon} />}
+                  trailing={commands.pendingNavigation?.source === 'create' && commands.pendingNavigation.route === routeKey(entry.href) ? <Loader2 className={styles.pendingIcon} size={18} aria-hidden="true" /> : undefined}
+                  onClick={() => select(() => commands.navigate(entry.href, 'create'))}
+                />
+              ))}
+            </ListGroup>
+          ) : (
+            <ul className={styles.createTiles}>
+              {commands.model.creations.map((entry) => (
+                <li key={entry.id}>
+                  <button
+                    type="button"
+                    className={styles.createTile}
+                    onClick={() => select(() => commands.navigate(entry.href, 'create'))}
+                  >
+                    <span className={styles.createTileIcon}>
+                      <NavigationIcon name={entry.icon} size={26} />
+                      {commands.pendingNavigation?.source === 'create' && commands.pendingNavigation.route === routeKey(entry.href) ? <Loader2 className={styles.pendingIcon} size={18} aria-hidden="true" /> : null}
+                    </span>
+                    <span className={styles.createTileText}>
+                      {entry.label}
+                      {entry.description ? <small>{entry.description}</small> : null}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </NavigationMenu>
@@ -552,7 +575,7 @@ function NotificationPanel({ select }: { select: NavigationMenuSelect }) {
 
   if (notifications.total === 0) {
     return (
-      <ListGroup title="Notifications" headingLevel={3} className={styles.menuGroup} action={pushAction}>
+      <ListGroup className={styles.menuGroup} action={pushAction}>
         <li>
           <EmptyState title="Aucune action requise" headingLevel={4} description="Aucune notification à traiter pour le moment." className={styles.notificationEmpty} />
         </li>
@@ -561,10 +584,10 @@ function NotificationPanel({ select }: { select: NavigationMenuSelect }) {
   }
 
   return (
-    <ListGroup title="Notifications" headingLevel={3} className={styles.menuGroup} action={pushAction}>
+    <ListGroup className={styles.menuGroup} action={pushAction}>
       {data.overdueInvoices > 0 && row(
         `${data.overdueInvoices} facture${data.overdueInvoices > 1 ? 's' : ''} en retard`,
-        'Echéance dépassée, paiement en attente',
+        'Échéance dépassée, paiement en attente',
         '/finances',
         dot('danger'),
       )}
@@ -648,7 +671,7 @@ function NotificationPanel({ select }: { select: NavigationMenuSelect }) {
       )}
       {(data.chantiersAtRisk ?? 0) > 0 && row(
         `${data.chantiersAtRisk} chantier${(data.chantiersAtRisk ?? 0) > 1 ? 's' : ''} en alerte budget`,
-        'Coûts dépassent 90% du budget prévu',
+        'Coûts au-delà de 90\u00a0% du budget prévu',
         '/chantiers',
         dot('warning'),
       )}
@@ -695,7 +718,7 @@ function ProfileCommand({ id, className }: { id: string; className?: string }) {
       title="Profil"
     >
       {(select) => (
-        <ListGroup title="Profil" headingLevel={3} className={styles.menuGroup}>
+        <ListGroup className={styles.menuGroup}>
           {displayName ? (
             <ListRow
               title={displayName}

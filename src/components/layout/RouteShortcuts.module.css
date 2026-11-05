@@ -2,14 +2,21 @@
 .shortcuts {
   box-sizing: border-box;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
   width: 100%;
   max-width: 1088px;
   margin: 0 auto;
   padding: 12px 24px 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
   color: var(--at-encre-2);
+}
+
+.shortcuts::-webkit-scrollbar {
+  display: none;
 }
 
 .shortcut {
@@ -72,5 +79,10 @@
 @media (max-width: 599px) {
   .shortcuts {
     padding-inline: 12px;
+  }
+
+  /* Sur téléphone, le texte seul suffit : la ligne reste sur une seule rangée. */
+  .shortcut > svg {
+    display: none;
   }
 }

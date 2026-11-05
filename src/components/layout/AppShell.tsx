@@ -148,8 +148,8 @@ export function AppShell({
                 data-expired={decennaleExpiringDays < 0 ? 'true' : 'false'}
               >
                 {decennaleExpiringDays < 0
-                  ? `⚠ Votre garantie décennale a expiré il y a ${Math.abs(decennaleExpiringDays)} jour${Math.abs(decennaleExpiringDays) > 1 ? 's' : ''} - renouvelez-la d'urgence dans les Réglages.`
-                  : `⚠ Votre garantie décennale expire dans ${decennaleExpiringDays} jour${decennaleExpiringDays > 1 ? 's' : ''} - pensez au renouvellement (Réglages).`}
+                  ? `Assurance décennale\u00a0: elle a expiré il y a ${Math.abs(decennaleExpiringDays)}\u00a0jour${Math.abs(decennaleExpiringDays) > 1 ? 's' : ''}. Renouvelez-la dans les Réglages.`
+                  : `Assurance décennale\u00a0: elle expire dans ${decennaleExpiringDays}\u00a0jour${decennaleExpiringDays > 1 ? 's' : ''}. Pensez au renouvellement.`}
               </div>
             )}
             <div className={styles.layout}>

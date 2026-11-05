@@ -310,3 +310,74 @@
 .menuContent {
   position: fixed;
 }
+
+/* Feuille Créer sur téléphone : quatre tuiles, comme la maquette. */
+.createTiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.createTile {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 22px;
+  width: 100%;
+  min-height: 104px;
+  padding: 14px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--at-carte);
+  color: var(--at-encre);
+  font: 600 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--at-duree-appui) var(--at-courbe-appui);
+}
+
+.createTile:active {
+  transform: scale(0.97);
+}
+
+.createTile:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.createTileIcon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  color: var(--at-accent-texte);
+}
+
+.createTileText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.createTileText small {
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+  letter-spacing: -0.006em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .createTile {
+    transition-duration: var(--at-duree-reduit);
+  }
+
+  .createTile:active {
+    transform: none;
+  }
+}

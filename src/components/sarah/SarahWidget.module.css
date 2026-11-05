@@ -399,6 +399,13 @@
   text-align: center;
 }
 
+/* Raccourcis clavier inutiles sur un écran tactile. */
+@media (hover: none) and (pointer: coarse) {
+  .keyboardHint {
+    display: none;
+  }
+}
+
 .voiceScreen {
   display: flex;
   flex: 1 1 auto;
