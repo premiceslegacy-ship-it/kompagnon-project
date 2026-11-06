@@ -4,12 +4,16 @@
 
 import { useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Building2, ChevronLeft, FileText, KeyRound, Link2, Lock, Mail, MessageSquare, Receipt, Shield, Star, User, Users } from 'lucide-react'
+import { Building2, ChevronLeft, FileText, KeyRound, Link2, Lock, Mail, MessageSquare, Receipt, Shield, ShieldCheck, Star, User, Users, Wallet } from 'lucide-react'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { createClient } from '@/lib/supabase/client'
+import EntrepriseView from './EntrepriseView'
 import { LegacyTabContent } from './LegacyTabs'
+import LegalView from './LegalView'
+import PaiementView from './PaiementView'
 import ProfilView from './ProfilView'
 import SecuriteView from './SecuriteView'
+import { firstOrgError } from './entrepriseModel'
 import { canOpenTab, fullName, groupTitleOf, isSettingsTab, settingsGroups, type SettingsEntry, type SettingsTab } from './settingsModel'
 import { useSettings, type SettingsProps } from './useSettings'
 import screen from '@/components/layout/Screen.module.css'
@@ -17,7 +21,7 @@ import styles from '../finances/quote-editor/QuoteEditor.module.css'
 import local from './Settings.module.css'
 
 const ICONS: Record<SettingsEntry['icon'], typeof User> = {
-  user: User, lock: Lock, building: Building2, document: FileText, mail: Mail, message: MessageSquare, link: Link2,
+  user: User, lock: Lock, building: Building2, insurance: ShieldCheck, wallet: Wallet, document: FileText, mail: Mail, message: MessageSquare, link: Link2,
   users: Users, key: KeyRound, star: Star, invoice: Receipt, shield: Shield,
 }
 
@@ -48,6 +52,19 @@ export default function SettingsClient(props: SettingsProps) {
     window.scrollTo(0, 0)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Une erreur de saisie sur un autre écran Entreprise : on y va et on place le curseur sur le champ.
+  useEffect(() => {
+    const first = firstOrgError(q.orgFieldErrors)
+    if (!first) return
+    if (first.tab !== tab) open(first.tab)
+    const timer = window.setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(`[data-org-field="${first.field}"]`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el?.focus()
+    }, 80)
+    return () => window.clearTimeout(timer)
+  }, [q.orgFieldErrors]) // eslint-disable-line react-hooks/exhaustive-deps
+
   async function signOut() {
     await createClient().auth.signOut({ scope: 'local' })
     router.replace('/login')
@@ -74,7 +91,10 @@ export default function SettingsClient(props: SettingsProps) {
             <div className={local.detail}>
               {tab === 'profil' ? <ProfilView q={q} />
                 : tab === 'securite' ? <SecuriteView q={q} />
-                  : <div className={local.legacy}><LegacyTabContent q={q} /></div>}
+                  : tab === 'entreprise' ? <EntrepriseView q={q} />
+                    : tab === 'legal' ? <LegalView q={q} />
+                      : tab === 'paiement' ? <PaiementView q={q} />
+                        : <div className={local.legacy}><LegacyTabContent q={q} /></div>}
             </div>
           </>
         ) : (

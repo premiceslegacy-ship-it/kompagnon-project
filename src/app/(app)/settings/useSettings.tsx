@@ -1,12 +1,11 @@
 'use client'
+// @atelier-migrated
 // Réglages : tous les états et handlers (repris tels quels de l'ancien SettingsClient).
-// Contient encore deux petits blocs JSX de l'ancien habillage, retirés avec les écrans qui les utilisent.
 
 import React, { useState, useTransition, useRef, useEffect } from 'react'
 
 import { useRouter } from 'next/navigation'
 
-import { Save } from 'lucide-react'
 import type { TeamMember } from '@/lib/data/queries/team'
 import type { OrgRole, AllPermissionsData } from '@/lib/data/queries/roles'
 import type { Organization } from '@/lib/data/queries/organization'
@@ -346,17 +345,6 @@ export function useSettings({ initialFullName, initialEmail, members, roles, joi
             el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
             el?.focus()
         })
-    }
-
-    function orgInputClass(field: keyof OrganizationFieldErrors) {
-        return `w-full px-4 py-3 bg-base dark:bg-white/5 border ${
-            orgFieldErrors[field] ? 'border-red-500/60 focus:border-red-500 focus:ring-1 focus:ring-red-500/40' : 'border-transparent focus:border-accent focus:ring-1 focus:ring-accent'
-        } rounded-xl text-primary outline-none transition-all`
-    }
-
-    function OrgFieldError({ field }: { field: keyof OrganizationFieldErrors }) {
-        if (!orgFieldErrors[field]) return null
-        return <p className="text-xs text-red-500 font-medium">{orgFieldErrors[field]}</p>
     }
 
     function validateOrganizationDraft(): OrganizationFieldErrors {
@@ -741,26 +729,6 @@ export function useSettings({ initialFullName, initialEmail, members, roles, joi
         });
     }
 
-    function renderOrganizationSaveButton(extraClassName = '') {
-        return (
-            <button
-                onClick={handleSaveOrganization}
-                disabled={isPending || orgSaveStatus === 'saving'}
-                className={`px-8 py-3 rounded-full font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 ${
-                    orgSaveStatus === 'saved' ? 'bg-green-500 text-white shadow-green-500/20' :
-                    orgSaveStatus === 'error' ? 'bg-red-500 text-white shadow-red-500/20' :
-                    'bg-accent text-black shadow-accent/20'
-                } ${extraClassName}`}
-            >
-                <Save className="w-4 h-4" />
-                {orgSaveStatus === 'saving' ? 'Enregistrement...' :
-                 orgSaveStatus === 'saved' ? 'Enregistré !' :
-                 orgSaveStatus === 'error' ? 'Erreur' :
-                 'Sauvegarder'}
-            </button>
-        );
-    }
-
     // Découpage prénom / nom depuis full_name
     const initialFirstName = initialFullName?.split(' ')[0] ?? '';
     const initialLastName = initialFullName?.split(' ').slice(1).join(' ') ?? '';
@@ -1007,8 +975,6 @@ export function useSettings({ initialFullName, initialEmail, members, roles, joi
     hasProcessingExport,
     setOrgFieldError,
     focusFirstOrgError,
-    orgInputClass,
-    OrgFieldError,
     validateOrganizationDraft,
     selectedRoleId,
     setSelectedRoleId,
@@ -1037,7 +1003,6 @@ export function useSettings({ initialFullName, initialEmail, members, roles, joi
     handleRemove,
     handleSaveEmailSettings,
     handleSaveOrganization,
-    renderOrganizationSaveButton,
     initialFirstName,
     initialLastName,
     profileFields,

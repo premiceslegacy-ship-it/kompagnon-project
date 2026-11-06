@@ -21,6 +21,8 @@ import { getOrganizationEinvoicingConfig } from '@/lib/data/queries/einvoicing'
 const SETTINGS_TABS = new Set([
   'profil',
   'entreprise',
+  'legal',
+  'paiement',
   'devis',
   'equipe',
   'roles',

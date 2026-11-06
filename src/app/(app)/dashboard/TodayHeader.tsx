@@ -49,7 +49,7 @@ export default function TodayHeader({ kicker, title }: { kicker: string; title: 
       ) : null}
       {decennaleContent && days !== null ? (
         canSettings ? (
-          <Link href="/settings?tab=entreprise" className={styles.alert} data-expired={days < 0 ? 'true' : 'false'}>
+          <Link href="/settings?tab=legal" className={styles.alert} data-expired={days < 0 ? 'true' : 'false'}>
             {decennaleContent}
           </Link>
         ) : (

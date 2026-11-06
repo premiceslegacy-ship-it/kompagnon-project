@@ -8,7 +8,7 @@ describe('réglages : liste groupée', () => {
   it('montre toutes les entrées à un propriétaire', () => {
     const groups = settingsGroups(all, counts)
     expect(groups.map(g => g.title)).toEqual(['Compte', 'Entreprise', 'Documents et relances', 'Équipe et rôles', 'Abonnement', 'Données'])
-    expect(groups.flatMap(g => g.entries).map(e => e.tab)).toHaveLength(12)
+    expect(groups.flatMap(g => g.entries).map(e => e.tab)).toHaveLength(14)
   })
 
   it('masque ce que les droits ne permettent pas, sans groupe vide', () => {
@@ -16,6 +16,8 @@ describe('réglages : liste groupée', () => {
     expect(groups.map(g => g.title)).toEqual(['Compte', 'Documents et relances', 'Équipe et rôles', 'Données'])
     const tabs = groups.flatMap(g => g.entries.map(e => e.tab))
     expect(tabs).not.toContain('entreprise')
+    expect(tabs).not.toContain('legal')
+    expect(tabs).not.toContain('paiement')
     expect(tabs).not.toContain('devis')
     expect(tabs).not.toContain('roles')
     expect(tabs).not.toContain('abonnement')
