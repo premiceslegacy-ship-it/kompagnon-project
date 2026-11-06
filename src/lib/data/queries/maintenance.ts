@@ -100,6 +100,10 @@ export type MaintenanceContractExpense = {
   category: string
   label: string
   maintenance_intervention_id: string | null
+  vat_rate?: number | null
+  supplier_name?: string | null
+  receipt_storage_path?: string | null
+  notes?: string | null
 }
 
 export type RecurringInvoiceInstance = {
@@ -256,7 +260,7 @@ export async function fetchMaintenanceContractDetail(contractId: string): Promis
   if (contract.chantier_id) {
     const { data: expenseRows } = await supabase
       .from('chantier_expenses')
-      .select('id, expense_date, amount_ht, category, label, maintenance_intervention_id')
+      .select('id, expense_date, amount_ht, category, label, maintenance_intervention_id, vat_rate, supplier_name, receipt_storage_path, notes')
       .eq('chantier_id', contract.chantier_id)
       .order('expense_date', { ascending: false })
 
