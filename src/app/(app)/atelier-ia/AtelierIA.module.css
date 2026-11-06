@@ -1,0 +1,121 @@
+/* @atelier-migrated */
+/* Devis avec Sarah : compléments propres à l'écran (maquette clients.js, devis par l'assistante). */
+.banner {
+  margin: 12px 0 0;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--at-accent) 14%, var(--at-carte));
+  color: var(--at-encre);
+  font: 500 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+}
+
+.lead {
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 400 15px/21px var(--font-inter);
+  letter-spacing: -0.014em;
+}
+
+.voice {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.state {
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 400 15px/20px var(--font-inter);
+  text-align: center;
+}
+
+.drop {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 160px;
+  padding: 24px 16px;
+  border: 1.5px dashed var(--at-trait-fort, var(--at-encre-3));
+  border-radius: var(--at-rayon-groupe-liste);
+  background: var(--at-carte);
+  color: var(--at-encre);
+  font: 400 15px/20px var(--font-inter);
+  text-align: center;
+  cursor: pointer;
+}
+
+.drop b {
+  font-weight: 600;
+}
+
+.drop span {
+  color: var(--at-encre-2);
+  font-size: 13px;
+}
+
+.drop:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.preview {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  list-style: none;
+}
+
+.preview img {
+  max-width: 100%;
+  max-height: 180px;
+  border-radius: 12px;
+  object-fit: contain;
+}
+
+.working {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 16px;
+  color: var(--at-encre-2);
+  font: 400 15px/20px var(--font-inter);
+  text-align: center;
+}
+
+.working b {
+  color: var(--at-encre);
+  font-weight: 600;
+}
+
+.count {
+  margin: 0;
+  color: var(--at-encre);
+  font: 600 17px/22px var(--font-inter);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pagerLabel {
+  min-width: 0;
+  color: var(--at-encre);
+  font: 600 15px/20px var(--font-inter);
+  text-align: center;
+}
+
+.pagerLabel small {
+  display: block;
+  color: var(--at-encre-2);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
