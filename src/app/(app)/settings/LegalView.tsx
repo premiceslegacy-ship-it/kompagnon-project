@@ -23,9 +23,9 @@ export default function LegalView({ q }: { q: SettingsState }) {
 
   return (
     <div className={local.detail}>
-      <div className={styles.stack}>
+      <div className={local.sections}>
         <div>
-          <p className={local.sectionHeading}>Pied de page des PDF</p>
+          <h2 className={local.sectionHeading}>Pied de page des PDF</h2>
           <div className={styles.fields}>
             <Field type="text" label="Forme juridique" placeholder="SAS, SARL, EI…" value={l.forme_juridique} onChange={e => setL({ forme_juridique: e.target.value })} />
             <Field type="text" label="Capital social" placeholder="10 000 €" value={l.capital_social} onChange={e => setL({ capital_social: e.target.value })} />
@@ -60,7 +60,7 @@ export default function LegalView({ q }: { q: SettingsState }) {
         </div>
 
         <div>
-          <p className={local.sectionHeading}>Signature des contrats</p>
+          <h2 className={local.sectionHeading}>Signature des contrats</h2>
           <div className={styles.fields}>
             <Field type="text" label="Signataire" placeholder="Jean Dupont" value={s.signatory_name} onChange={e => setS({ signatory_name: e.target.value })} />
             <Field type="text" label="Fonction" placeholder="Gérant, Président…" value={s.signatory_role} onChange={e => setS({ signatory_role: e.target.value })} />

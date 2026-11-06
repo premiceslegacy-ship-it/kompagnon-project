@@ -25,7 +25,7 @@ export default function PaiementView({ q }: { q: SettingsState }) {
 
   return (
     <div className={local.detail}>
-      <div className={styles.stack}>
+      <div className={local.sections}>
         <ListGroup title="Régime de TVA">
           <ListRow
             title="Assujetti à la TVA"
@@ -54,7 +54,7 @@ export default function PaiementView({ q }: { q: SettingsState }) {
         )}
 
         <div>
-          <p className={local.sectionHeading}>Virement</p>
+          <h2 className={local.sectionHeading}>Virement</h2>
           <div className={`${styles.fields} ${local.mono}`}>
             <Field type="text" label="IBAN" data-org-field="iban" placeholder="FR76 3000 6000 0112 3456 7890 189" value={p.iban} error={errors.iban}
               onChange={e => { setP({ iban: formatIbanInput(e.target.value) }); q.setOrgFieldError('iban') }} />
@@ -66,7 +66,7 @@ export default function PaiementView({ q }: { q: SettingsState }) {
         </div>
 
         <div>
-          <p className={local.sectionHeading}>Conditions</p>
+          <h2 className={local.sectionHeading}>Conditions</h2>
           <div className={styles.fields}>
             <Field type="number" label="Délai de paiement (jours)" data-org-field="payment_terms_days" min={0} max={90} decimals={0} allowEmpty={false}
               value={p.payment_terms_days} error={errors.payment_terms_days}

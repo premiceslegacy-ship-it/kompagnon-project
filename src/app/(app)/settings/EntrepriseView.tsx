@@ -45,7 +45,7 @@ export default function EntrepriseView({ q }: { q: SettingsState }) {
 
   return (
     <div className={local.detail}>
-      <div className={styles.stack}>
+      <div className={local.sections}>
         <LogoRow q={q} />
 
         <div className={styles.fields}>
@@ -53,7 +53,7 @@ export default function EntrepriseView({ q }: { q: SettingsState }) {
             onChange={e => { patch({ name: e.target.value }); q.setOrgFieldError('name') }} />
           <Field type="text" label="SIRET" data-org-field="siret" inputMode="numeric" value={c.siret} error={errors.siret}
             onChange={e => { patch({ siret: formatSiretInput(e.target.value) }); q.setOrgFieldError('siret') }} />
-          <Field type="text" label="TVA intracommunautaire" data-org-field="vat_number" value={c.tva} error={errors.vat_number}
+          <Field type="text" label="TVA intracommunautaire" data-org-field="vat_number" placeholder="FR12 123456789" value={c.tva} error={errors.vat_number}
             disabled={!q.vatConfig.is_vat_subject}
             hint={q.vatConfig.is_vat_subject ? undefined : 'Disponible si vous êtes assujetti à la TVA.'}
             onChange={e => { patch({ tva: formatVatNumberInput(e.target.value) }); q.setOrgFieldError('vat_number') }} />
@@ -65,7 +65,7 @@ export default function EntrepriseView({ q }: { q: SettingsState }) {
         </ListGroup>
 
         <div>
-          <p className={local.sectionHeading}>Coordonnées</p>
+          <h2 className={local.sectionHeading}>Coordonnées</h2>
           <div className={styles.fields}>
             <Field type="text" label="Adresse" placeholder="12 rue de la Paix" value={c.address_line1}
               onChange={e => patch({ address_line1: e.target.value })} />

@@ -90,11 +90,14 @@
 }
 
 .sectionHeading {
-  margin: 0 16px 8px;
+  margin: 0 0 6px;
+  padding-inline: var(--at-espace-16);
   color: var(--at-encre-2);
-  font: 600 13px/18px var(--font-inter);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+  font-family: var(--font-inter);
+  font-size: var(--at-taille-note);
+  font-weight: 600;
+  line-height: var(--at-interligne-note);
+  letter-spacing: var(--at-approche-note);
 }
 
 .signature {
@@ -106,4 +109,16 @@
 .mono input {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  min-width: 0;
+  padding-top: 20px;
+}
+
+.sections > section {
+  margin-block-start: 0;
 }
