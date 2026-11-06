@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { Building2, ChevronLeft, FileText, KeyRound, Link2, Lock, Mail, MessageSquare, Receipt, Shield, ShieldCheck, Star, User, Users, Wallet } from 'lucide-react'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { createClient } from '@/lib/supabase/client'
+import DevisView from './DevisView'
 import EntrepriseView from './EntrepriseView'
 import { LegacyTabContent } from './LegacyTabs'
 import LegalView from './LegalView'
@@ -94,7 +95,8 @@ export default function SettingsClient(props: SettingsProps) {
                   : tab === 'entreprise' ? <EntrepriseView q={q} />
                     : tab === 'legal' ? <LegalView q={q} />
                       : tab === 'paiement' ? <PaiementView q={q} />
-                        : <div className={local.legacy}><LegacyTabContent q={q} /></div>}
+                        : tab === 'devis' ? <DevisView q={q} />
+                          : <div className={local.legacy}><LegacyTabContent q={q} /></div>}
             </div>
           </>
         ) : (
