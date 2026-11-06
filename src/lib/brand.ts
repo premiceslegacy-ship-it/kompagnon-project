@@ -1,12 +1,18 @@
 export const APP_NAME = 'ATELIER'
 export const APP_SIGNATURE = 'ATELIER by Orsayn'
 
+/**
+ * Un seul assistant officiel : Sarah. Les anciennes clés (chloe, marco, lea, valentin) restent
+ * pour les écrans qui les référencent, mais portent toutes le nom, le rôle et le visage de Sarah.
+ */
+const SARAH = { name: 'Sarah', role: 'Secrétaire métier', avatar: '/brand/sarah-avatar.webp' } as const
+
 export const AI_ASSISTANTS = {
-  sarah:    { name: 'Sarah',   role: 'Secrétaire métier',    avatar: '/brand/sarah-avatar.webp' },
-  chloe:    { name: 'Chloé',   role: 'Chiffreuse',           avatar: '/brand/chloe-avatar.webp' },
-  marco:    { name: 'Marco',   role: 'Chef de chantier',     avatar: '/brand/marco-avatar.webp' },
-  valentin: { name: 'Valentin',role: 'Estimateur MO',        avatar: null },
-  lea:      { name: 'Léa',     role: 'Assistante catalogue', avatar: '/brand/lea-avatar.webp' },
+  sarah: SARAH,
+  chloe: SARAH,
+  marco: SARAH,
+  valentin: SARAH,
+  lea: SARAH,
 } as const
 
 export const AI_NAME = AI_ASSISTANTS.sarah.name

@@ -62,6 +62,7 @@ export default async function ChantierDetailPage({
     canCreateInvoice,
     canCreateSituation,
     canCreateSolde,
+    canDeleteChantier,
   ] = await Promise.all([
     getChantierById(params.chantierId),
     getChantierTaches(params.chantierId),
@@ -94,6 +95,7 @@ export default async function ChantierDetailPage({
     hasPermission('invoices.create'),
     hasPermission('invoices.create_situation'),
     hasPermission('invoices.create_solde'),
+    hasPermission('chantiers.delete'),
   ])
 
   // Charger le résumé des situations si le chantier est lié à un devis
@@ -156,6 +158,7 @@ export default async function ChantierDetailPage({
       canCreateInvoice={canCreateInvoice}
       currentUserId={currentUserId}
       initialReserves={reserves}
+      canDeleteChantier={canDeleteChantier}
       permissions={{
         canEditChantier,
         canManageTeam,

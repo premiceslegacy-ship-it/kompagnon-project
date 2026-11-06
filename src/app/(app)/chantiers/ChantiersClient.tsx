@@ -1,744 +1,156 @@
 'use client'
+// @atelier-migrated
 
-import React, { useState, useMemo, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import {
-  HardHat, Plus, X, Search, MapPin, Calendar,
-  MoreVertical, Trash2, CheckCircle, PauseCircle, XCircle, PlayCircle,
-  RefreshCw, Copy, Clock, Users, ChevronLeft, ChevronRight, Wrench,
-} from 'lucide-react'
-import { ActionButton } from '@/components/ui/ActionButton'
-import type { Chantier, ChantierStats } from '@/lib/data/queries/chantiers'
-import type { Client } from '@/lib/data/queries/clients'
-import type { QuoteStub } from '@/lib/data/queries/quotes'
-import { createChantier, updateChantier, deleteChantier } from '@/lib/data/mutations/chantiers'
-import { useCreationIntent } from '@/lib/hooks/use-creation-intent'
+import { ChevronDown, ChevronLeft, ChevronRight, MoreHorizontal, Plus } from 'lucide-react'
+import { Avatar } from '@/components/ui/Avatar'
+import { Button } from '@/components/ui/Button'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { ListGroup, ListRow } from '@/components/ui/ListGroup'
+import { Menu, type MenuItem } from '@/components/ui/Menu'
+import { SearchField } from '@/components/ui/SearchField'
+import { StatusPill } from '@/components/ui/StatusPill'
+import { formatCurrency } from '@/components/shared'
+import { CreateChoiceSheet, NewChantierSheet } from './ChantierSheets'
+import { STATUS_FILTERS, fmtHours, fmtShortDate, recurrenceLabel, statusPill } from './chantiersModel'
+import { useChantiers, type ChantiersProps } from './useChantiers'
+import screen from '@/components/layout/Screen.module.css'
+import styles from '../finances/quote-editor/QuoteEditor.module.css'
+import docs from '../finances/Documents.module.css'
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+const NB = ' '
 
-type Status = Chantier['status']
+export default function ChantiersClient(props: ChantiersProps) {
+  const q = useChantiers(props)
+  const { stats, clients, linkableQuotes, canCreate = false, initialChantiers } = props
+  const { pageData } = q
+  const statusLabel = STATUS_FILTERS.find(o => o.value === q.filterStatus)?.label ?? 'Statut'
 
-type RecurrenceType = 'none' | 'quotidien' | 'plurihebdomadaire' | 'hebdomadaire' | 'mensuel' | 'bimensuel' | 'trimestriel'
+  const menuItems: MenuItem[] = [
+    { label: 'Heures pointées', onSelect: () => q.goTo('/chantiers/heures', 'Ouverture des heures...') },
+    { label: 'Équipes et intervenants', onSelect: () => q.goTo('/chantiers/equipes', 'Ouverture des équipes...') },
+    { label: 'Entretien', onSelect: () => q.goTo('/chantiers/entretien', "Ouverture de l'entretien...") },
+  ]
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+  const summary = `${stats.enCours}${NB}en cours · ${stats.terminesCeMois}${NB}terminé${stats.terminesCeMois > 1 ? 's' : ''} ce mois · ${fmtHours(stats.heuresCeMois)}${NB}pointées`
 
-const STATUS_CONFIG: Record<Status, { label: string; color: string }> = {
-  planifie:  { label: 'Planifié',  color: 'bg-blue-500/15 text-blue-500' },
-  en_cours:  { label: 'En cours',  color: 'bg-green-500/15 text-green-600' },
-  suspendu:  { label: 'Suspendu',  color: 'bg-amber-500/15 text-amber-500' },
-  termine:   { label: 'Terminé',   color: 'bg-secondary/20 text-secondary' },
-  annule:    { label: 'Annulé',    color: 'bg-red-500/15 text-red-500' },
-}
-
-function fmtHours(hours: number): string {
-  const h = Math.floor(hours)
-  const min = Math.round((hours - h) * 60)
-  if (min === 0) return `${h}h`
-  return `${h}h${String(min).padStart(2, '0')}`
-}
-
-const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string }[] = [
-  { value: 'none',              label: 'Ponctuel (pas de récurrence)' },
-  { value: 'quotidien',         label: 'Tous les jours' },
-  { value: 'plurihebdomadaire', label: 'Plusieurs fois par semaine' },
-  { value: 'hebdomadaire',      label: 'Toutes les semaines' },
-  { value: 'mensuel',           label: 'Tous les mois' },
-  { value: 'bimensuel',         label: 'Tous les 2 mois' },
-  { value: 'trimestriel',       label: 'Tous les trimestres' },
-]
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-// ─── Sub-components ──────────────────────────────────────────────────────────
-
-function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
-    <div className="card p-5">
-      <p className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1">{label}</p>
-      <p className="text-2xl font-extrabold text-primary">{value}</p>
-      {sub && <p className="text-xs text-secondary mt-0.5">{sub}</p>}
-    </div>
-  )
-}
-
-function StatusBadge({ status }: { status: Status }) {
-  const cfg = STATUS_CONFIG[status] ?? { label: status, color: 'bg-secondary/20 text-secondary' }
-  const tone = status === 'en_cours'
-    ? 'success'
-    : status === 'planifie'
-    ? 'info'
-    : status === 'suspendu'
-    ? 'amber'
-    : status === 'annule'
-    ? 'danger'
-    : 'muted'
-  return (
-    <span className={`status-pill status-pill-${tone} px-2 py-0.5 text-xs font-semibold`}>
-      {cfg.label}
-    </span>
-  )
-}
-
-function RecurrenceBadge({ recurrence }: { recurrence: RecurrenceType | null | undefined }) {
-  if (!recurrence || recurrence === 'none') return null
-  const label = RECURRENCE_OPTIONS.find(o => o.value === recurrence)?.label ?? recurrence
-  return (
-    <span className="status-pill status-pill-accent px-2 py-0.5 text-xs font-semibold">
-      <RefreshCw className="w-3 h-3" />
-      {label}
-    </span>
-  )
-}
-
-function ActionMenu({ status, onReprendre, onTerminer, onSuspendre, onAnnuler, onDupliquer, onSupprimer, canDelete }: {
-  status: Status
-  onReprendre: () => void
-  onTerminer: () => void
-  onSuspendre: () => void
-  onAnnuler: () => void
-  onDupliquer: () => void
-  onSupprimer: () => void
-  canDelete?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="relative">
-      <button
-        onClick={e => { e.stopPropagation(); setOpen(v => !v) }}
-        title="Actions"
-        aria-label="Actions"
-        className="p-1.5 rounded hover:bg-base transition-colors text-secondary hover:text-primary"
-      >
-        <MoreVertical className="w-4 h-4" />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setOpen(false) }} />
-          <div className="absolute right-0 top-8 z-20 w-48 menu-panel py-1 shadow-lg rounded-lg">
-            {(status === 'suspendu' || status === 'termine' || status === 'annule') && (
-              <button onClick={(e) => { e.stopPropagation(); setOpen(false); onReprendre() }} className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-base flex items-center gap-2">
-                <PlayCircle className="w-4 h-4 text-blue-500" /> Reprendre
-              </button>
-            )}
-            {status !== 'termine' && status !== 'annule' && (
-              <button onClick={(e) => { e.stopPropagation(); setOpen(false); onTerminer() }} className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-base flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-green-500" /> Terminer
-              </button>
-            )}
-            {status !== 'suspendu' && status !== 'termine' && status !== 'annule' && (
-              <button onClick={(e) => { e.stopPropagation(); setOpen(false); onSuspendre() }} className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-base flex items-center gap-2">
-                <PauseCircle className="w-4 h-4 text-amber-500" /> Suspendre
-              </button>
-            )}
-            {status !== 'annule' && status !== 'termine' && (
-              <button onClick={(e) => { e.stopPropagation(); setOpen(false); onAnnuler() }} className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-base flex items-center gap-2">
-                <XCircle className="w-4 h-4 text-secondary" /> Annuler
-              </button>
-            )}
-            <button onClick={(e) => { e.stopPropagation(); setOpen(false); onDupliquer() }} className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-base flex items-center gap-2">
-              <Copy className="w-4 h-4 text-blue-400" /> Dupliquer
-            </button>
-            {canDelete && (
+    <main className={screen.root}>
+      <div className={screen.page}>
+        <header className={screen.header}>
+          <div>
+            <p className={screen.kicker}>{stats.total}{NB}chantier{stats.total > 1 ? 's' : ''}</p>
+            <h1 className={screen.title}>Chantiers</h1>
+          </div>
+          <div className={styles.headerEnd}>
+            <Menu
+              title="Chantiers"
+              items={menuItems}
+              trigger={<button type="button" className={screen.round} aria-label="Plus d'options"><MoreHorizontal size={20} aria-hidden="true" /></button>}
+            />
+            {canCreate && (
               <>
-                <div className="h-px bg-[var(--elevation-border)] my-1" />
-                <button onClick={(e) => { e.stopPropagation(); setOpen(false); onSupprimer() }} className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 flex items-center gap-2">
-                  <Trash2 className="w-4 h-4" /> Supprimer
+                <Button size="md" className={styles.createWide} onClick={() => q.setCreateStep('choice')}>Nouveau chantier</Button>
+                <button type="button" className={styles.createRound} onClick={() => q.setCreateStep('choice')} aria-label="Nouveau chantier">
+                  <Plus size={20} aria-hidden="true" />
                 </button>
               </>
             )}
           </div>
-        </>
-      )}
-    </div>
-  )
-}
+        </header>
 
-function CreateChoiceModal({ onClose, onSelectChantier, onSelectEntretien }: {
-  onClose: () => void
-  onSelectChantier: () => void
-  onSelectEntretien: () => void
-}) {
-  return (
-    <div className="modal-overlay">
-      <div className="modal-panel sm:max-w-2xl">
-        <div className="flex items-center justify-between gap-3 px-6 pt-6 pb-4 border-b border-[var(--elevation-border)]">
-          <div>
-            <h2 className="text-base font-bold text-primary">Créer un suivi</h2>
-            <p className="text-xs text-secondary">Choisissez le bon type de dossier à ouvrir</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-9 h-9 flex items-center justify-center rounded-lg text-secondary hover:text-primary hover:bg-base transition-colors"
-            title="Fermer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        <p className={docs.summary}>{summary}</p>
 
-        <div className="p-6 grid gap-4 sm:grid-cols-2 bg-base/50">
-          <button
-            type="button"
-            onClick={onSelectChantier}
-            className="card p-5 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
-          >
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-4">
-              <HardHat className="w-5 h-5 text-accent" />
+        {initialChantiers.length > 0 && (
+          <>
+            <div className={docs.searchRow}>
+              <SearchField value={q.search} onChange={v => { q.setSearch(v); q.setPage(1) }} label="Rechercher un chantier" placeholder="Chantier, client ou ville" />
             </div>
-            <p className="text-sm font-bold text-primary">Chantier / travaux</p>
-            <p className="text-xs text-secondary mt-1">Travaux avec devis, situations, planning, budget, photos, équipes et rentabilité.</p>
-            <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-accent">
-              Créer un chantier <Plus className="w-4 h-4" />
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onSelectEntretien}
-            className="card p-5 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
-          >
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-4">
-              <Wrench className="w-5 h-5 text-accent" />
-            </div>
-            <p className="text-sm font-bold text-primary">Entretien récurrent</p>
-            <p className="text-xs text-secondary mt-1">Contrat d'entretien avec interventions, équipements et facturation périodique.</p>
-            <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-accent">
-              Ouvrir l'entretien <Wrench className="w-4 h-4" />
-            </span>
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Modal création ───────────────────────────────────────────────────────────
-
-function CreateModal({ clients, linkableQuotes, onClose, onCreated }: {
-  clients: Client[]
-  linkableQuotes: QuoteStub[]
-  onClose: () => void
-  onCreated: (id: string) => void
-}) {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [form, setForm] = useState({
-    title: '', clientId: '', addressLine1: '', postalCode: '', city: '',
-    startDate: '', estimatedEndDate: '', budgetHt: '',
-    contactName: '', contactEmail: '', contactPhone: '',
-    quoteId: '',
-  })
-
-  const set = (field: string, value: string) => setForm(f => ({ ...f, [field]: value }))
-
-  const handleQuoteChange = (quoteId: string) => {
-    const q = linkableQuotes.find(x => x.id === quoteId)
-    if (q) {
-      // Toujours écraser depuis le devis sélectionné pour que changer de devis mette tout à jour
-      setForm(f => ({
-        ...f,
-        quoteId,
-        title: q.title || '',
-        clientId: q.client_id || '',
-        budgetHt: q.total_ht != null ? String(Math.round(q.total_ht)) : '',
-        addressLine1: q.client_address_line1 || '',
-        postalCode: q.client_postal_code || '',
-        city: q.client_city || '',
-        contactName: q.client_contact_name || '',
-        contactEmail: q.client_contact_email || '',
-        contactPhone: q.client_contact_phone || '',
-      }))
-    } else {
-      // Désélection : remettre les champs à vide
-      setForm(f => ({
-        ...f,
-        quoteId: '',
-        title: '',
-        clientId: '',
-        budgetHt: '',
-        addressLine1: '',
-        postalCode: '',
-        city: '',
-        contactName: '',
-        contactEmail: '',
-        contactPhone: '',
-      }))
-    }
-  }
-
-  const handleSubmit = async (e: React.SyntheticEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-    const { chantierId, error: err } = await createChantier({
-      title: form.title,
-      clientId: form.clientId || null,
-      addressLine1: form.addressLine1 || null,
-      postalCode: form.postalCode || null,
-      city: form.city || null,
-      startDate: form.startDate || null,
-      estimatedEndDate: form.estimatedEndDate || null,
-      budgetHt: form.budgetHt ? parseFloat(form.budgetHt) : 0,
-      contactName: form.contactName || null,
-      contactEmail: form.contactEmail || null,
-      contactPhone: form.contactPhone || null,
-      quoteId: form.quoteId || null,
-    })
-    setLoading(false)
-    if (err) return setError(err)
-    onCreated(chantierId!)
-  }
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal-panel sm:max-w-lg">
-        {/* Header modal */}
-        <div className="flex items-center gap-3 px-6 pt-6 pb-4 border-b border-[var(--elevation-border)]">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0">
-            <HardHat className="w-5 h-5 text-accent" />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-primary">Nouveau chantier</h2>
-            <p className="text-xs text-secondary">Remplissez les informations du chantier</p>
-          </div>
-        </div>
-
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5 max-h-[80vh] overflow-y-auto bg-base/50">
-          <div className="card p-4 space-y-4 shadow-sm">
-          {/* Devis lié */}
-          {linkableQuotes.length > 0 && (
-            <div>
-              <label className="block text-xs font-semibold text-secondary mb-1.5">Issu d&apos;un devis <span className="font-normal text-secondary/70">(optionnel, pré-remplit les infos)</span></label>
-              <select
-                className="input w-full"
-                value={form.quoteId}
-                onChange={e => handleQuoteChange(e.target.value)}
-              >
-                <option value="">Nouveau chantier sans devis</option>
-                {linkableQuotes.map(q => (
-                  <option key={q.id} value={q.id}>
-                    {q.number ? `${q.number} · ` : ''}{q.title ?? 'Sans titre'}{q.client_name ? ` (${q.client_name})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Titre */}
-          <div>
-            <label className="block text-xs font-semibold text-secondary mb-1.5">Titre du chantier *</label>
-            <input
-              className="input w-full"
-              placeholder="Ex : Réfection toiture bâtiment A"
-              value={form.title}
-              onChange={e => set('title', e.target.value)}
-              required
-              autoFocus
-            />
-          </div>
-
-          {/* Client */}
-          <div>
-            <label className="block text-xs font-semibold text-secondary mb-1.5">Client</label>
-            <select className="input w-full" value={form.clientId} onChange={e => set('clientId', e.target.value)}>
-              <option value="">Aucun client associé</option>
-              {clients.map(c => (
-                <option key={c.id} value={c.id}>{c.company_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ')}</option>
-              ))}
-            </select>
-          </div>
-          </div>
-
-          <div className="card p-4 space-y-4 shadow-sm">
-            {/* Adresse */}
-          <div className="space-y-2">
-            <label className="block text-xs font-semibold text-secondary">Adresse du chantier</label>
-            <input
-              className="input w-full"
-              placeholder="Rue, numéro..."
-              value={form.addressLine1}
-              onChange={e => set('addressLine1', e.target.value)}
-            />
-            <div className="grid grid-cols-3 gap-2">
-              <input className="input w-full" placeholder="Code postal" value={form.postalCode} onChange={e => set('postalCode', e.target.value)} />
-              <input className="input w-full col-span-2" placeholder="Ville" value={form.city} onChange={e => set('city', e.target.value)} />
-            </div>
-          </div>
-
-          {/* Dates */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-secondary mb-1.5">Date de début</label>
-              <input type="date" className="input w-full" value={form.startDate} onChange={e => set('startDate', e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-secondary mb-1.5">Fin estimée</label>
-              <input type="date" className="input w-full" value={form.estimatedEndDate} onChange={e => set('estimatedEndDate', e.target.value)} />
-            </div>
-          </div>
-
-          {/* Budget */}
-          <div>
-            <label className="block text-xs font-semibold text-secondary mb-1.5">Budget HT (€)</label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              className="input w-full"
-              placeholder="0.00"
-              value={form.budgetHt}
-              onChange={e => set('budgetHt', e.target.value)}
-            />
-          </div>
-          </div>
-
-          <div className="card p-4 space-y-4 shadow-sm">
-            {/* Contact référent */}
-          <div className="space-y-2">
-            <label className="block text-xs font-semibold text-secondary">Personne référente <span className="font-normal">(optionnel)</span></label>
-            <input
-              className="input w-full"
-              placeholder="Nom du contact"
-              value={form.contactName}
-              onChange={e => set('contactName', e.target.value)}
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                className="input w-full"
-                type="email"
-                placeholder="Email"
-                value={form.contactEmail}
-                onChange={e => set('contactEmail', e.target.value)}
-              />
-              <input
-                className="input w-full"
-                type="tel"
-                placeholder="Téléphone"
-                value={form.contactPhone}
-                onChange={e => set('contactPhone', e.target.value)}
+            <div className={docs.chips}>
+              <Menu
+                title="Statut"
+                items={STATUS_FILTERS.map(o => ({ label: o.label, checked: q.filterStatus === o.value, onSelect: () => { q.setFilterStatus(o.value); q.setPage(1) } }))}
+                trigger={
+                  <button type="button" className={docs.chip} data-on={q.filterStatus !== 'tous' ? 'true' : 'false'}>
+                    {statusLabel}
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </button>
+                }
               />
             </div>
-          </div>
+          </>
+        )}
 
-          </div>
-
-          {error && <p className="text-sm text-red-500 font-medium">{error}</p>}
-
-          {/* Actions */}
-          <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="btn-secondary flex-1"
-            >
-              Annuler
-            </button>
-            <ActionButton
-              type="submit"
-              loading={loading}
-              loadingText="Création..."
-              disabled={!form.title.trim()}
-              className="btn-primary flex-1"
-            >
-              Créer le chantier
-            </ActionButton>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-// ─── Main ─────────────────────────────────────────────────────────────────────
-
-export default function ChantiersClient({
-  initialChantiers,
-  stats,
-  clients,
-  linkableQuotes,
-  canCreate = false,
-  canDelete = false,
-}: {
-  initialChantiers: Chantier[]
-  stats: ChantierStats
-  clients: Client[]
-  linkableQuotes: QuoteStub[]
-  canCreate?: boolean
-  canDelete?: boolean
-}) {
-  const router = useRouter()
-  const [chantiers, setChantiers] = useState(initialChantiers)
-  const [search, setSearch] = useState('')
-  const [filterStatus, setFilterStatus] = useState<Status | 'tous'>('tous')
-  const [createStep, setCreateStep] = useState<'choice' | 'form' | null>(null)
-  const openCreateChoice = useCallback(() => setCreateStep(current => current ?? 'choice'), [])
-  useCreationIntent(canCreate, openCreateChoice)
-  const [isNavigating, setIsNavigating] = useState(false)
-  const [navigationLabel, setNavigationLabel] = useState('Ouverture du chantier...')
-  const [page, setPage] = useState(1)
-  const PAGE_SIZE = 10
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase()
-    return chantiers.filter(c => {
-      const matchSearch = !q ||
-        c.title.toLowerCase().includes(q) ||
-        (c.client?.company_name ?? '').toLowerCase().includes(q) ||
-        (c.city ?? '').toLowerCase().includes(q)
-      const matchStatus = filterStatus === 'tous' || c.status === filterStatus
-      return matchSearch && matchStatus
-    })
-  }, [chantiers, search, filterStatus])
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const currentPage = Math.min(page, totalPages)
-  const pageStart = (currentPage - 1) * PAGE_SIZE
-  const paginated = filtered.slice(pageStart, pageStart + PAGE_SIZE)
-
-  const handleStatusChange = async (chantier: Chantier, newStatus: Status) => {
-    setChantiers(prev => prev.map(c => c.id === chantier.id ? { ...c, status: newStatus } : c))
-    await updateChantier(chantier.id, { status: newStatus })
-  }
-
-  const handleDuplicate = async (chantier: Chantier) => {
-    const { chantierId, error } = await createChantier({
-      title: `${chantier.title} (copie)`,
-      clientId: chantier.client?.id ?? null,
-      addressLine1: chantier.address_line1 ?? null,
-      postalCode: chantier.postal_code ?? null,
-      city: chantier.city ?? null,
-      startDate: null,
-      estimatedEndDate: null,
-      budgetHt: chantier.budget_ht ?? 0,
-    })
-    if (!error && chantierId) {
-      router.push(`/chantiers/${chantierId}`)
-    }
-  }
-
-  const handleDelete = async (chantier: Chantier) => {
-    if (!confirm(`Archiver le chantier "${chantier.title}" ?`)) return
-    setChantiers(prev => prev.filter(c => c.id !== chantier.id))
-    await deleteChantier(chantier.id)
-  }
-
-  const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '/'
-  const fmtMoney = (n: number) => n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
-
-  return (
-    <div className="page-container space-y-6">
-      {/* Header */}
-      <div className="card p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0">
-            <HardHat className="w-6 h-6 text-accent" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-extrabold text-primary">Chantiers</h1>
-            <p className="text-sm text-secondary font-medium">Gérez vos projets et suivez leur avancement</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-4 flex-wrap mt-4 md:mt-0">
-          <Link
-            href="/chantiers/planning"
-            className="btn-secondary flex items-center gap-2 px-4 py-2.5 text-sm whitespace-nowrap"
-          >
-            <Calendar className="w-4 h-4" /> Planning global
-          </Link>
-          <Link
-            href="/chantiers/heures"
-            className="btn-secondary flex items-center gap-2 px-4 py-2.5 text-sm whitespace-nowrap"
-          >
-            <Clock className="w-4 h-4" /> Heures pointées
-          </Link>
-          <Link
-            href="/chantiers/equipes"
-            className="btn-secondary flex items-center gap-2 px-4 py-2.5 text-sm whitespace-nowrap"
-          >
-            <Users className="w-4 h-4" /> Équipes & Intervenants
-          </Link>
-          {canCreate && (
-            <button
-              onClick={() => setCreateStep('choice')}
-              className="btn-primary flex items-center gap-2 px-5 py-2.5 whitespace-nowrap"
-            >
-              <Plus className="w-5 h-5" /> Créer un chantier
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* StatCards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Total chantiers" value={stats.total} />
-        <StatCard label="En cours" value={stats.enCours} />
-        <StatCard label="Terminés ce mois" value={stats.terminesCeMois} />
-        <StatCard label="Heures ce mois" value={fmtHours(stats.heuresCeMois)} />
-      </div>
-
-      {/* Barre recherche / filtre */}
-      <div className="card p-4 flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary" />
-          <input
-            className="input pl-9 w-full"
-            placeholder="Rechercher un chantier, client, ville..."
-            value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1) }}
-          />
-        </div>
-        <select
-          className="input w-full sm:w-44"
-          value={filterStatus}
-          onChange={e => { setFilterStatus(e.target.value as Status | 'tous'); setPage(1) }}
-        >
-          <option value="tous">Tous les statuts</option>
-          {Object.entries(STATUS_CONFIG).map(([k, v]) => (
-            <option key={k} value={k}>{v.label}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Table */}
-      {filtered.length === 0 ? (
-        <div className="card p-12 text-center">
-          <HardHat className="w-12 h-12 text-secondary mx-auto mb-3 opacity-40" />
-          <p className="text-secondary font-semibold">Aucun chantier trouvé</p>
-          <p className="text-secondary text-sm mt-1">Créez votre premier chantier ou modifiez les filtres</p>
-        </div>
-      ) : (
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[600px]">
-              <thead>
-                <tr className="border-b border-[var(--elevation-border)] text-xs text-secondary uppercase tracking-wider">
-                  <th className="text-left px-4 py-3 font-semibold">Chantier / Client</th>
-                  <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Adresse</th>
-                  <th className="text-left px-4 py-3 font-semibold">Statut</th>
-                  <th className="text-left px-4 py-3 font-semibold hidden lg:table-cell">Dates</th>
-                  <th className="text-right px-4 py-3 font-semibold hidden lg:table-cell">Budget HT</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--elevation-border)]">
-              {paginated.map((c, i) => (
-                <tr
-                  key={c.id}
-                  className={`hover:bg-base/50 transition-colors cursor-pointer ${i === paginated.length - 1 ? '[&>td:first-child]:rounded-bl-3xl [&>td:last-child]:rounded-br-3xl' : ''}`}
-                  onClick={() => router.push(`/chantiers/${c.id}`)}
-                >
-                  <td className="px-4 py-3">
-                    <p className="font-semibold text-primary truncate max-w-[200px]">{c.title}</p>
-                    {c.client?.company_name && (
-                      <p className="text-xs text-secondary mt-0.5">{c.client.company_name}</p>
-                    )}
-                    {/* Badge récurrence si disponible */}
-                    {(c as any).recurrence && (c as any).recurrence !== 'none' && (
-                      <RecurrenceBadge recurrence={(c as any).recurrence} />
-                    )}
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell">
-                    {c.city ? (
-                      <span className="flex items-center gap-1 text-secondary text-xs">
-                        <MapPin className="w-3 h-3" /> {c.city}
+        <div className={styles.stack} style={{ marginTop: 16 }}>
+          {initialChantiers.length === 0 ? (
+            canCreate ? (
+              <EmptyState title="Aucun chantier pour le moment" description="Créez votre premier chantier pour suivre travaux, équipe et marge." actionLabel="Nouveau chantier" onAction={() => q.setCreateStep('choice')} />
+            ) : (
+              <EmptyState title="Aucun chantier pour le moment" description="Aucun chantier n'a encore été créé." />
+            )
+          ) : q.filtered.length === 0 ? (
+            <EmptyState title="Aucun chantier trouvé" description="Modifiez la recherche ou le statut." actionLabel="Tous les chantiers" onAction={() => { q.setSearch(''); q.setFilterStatus('tous') }} />
+          ) : (
+            <ListGroup description="Budgets hors taxes.">
+              {pageData.items.map(c => {
+                const pill = statusPill(c.status)
+                const rec = recurrenceLabel(c.recurrence)
+                const place = [c.client?.company_name, c.city].filter(Boolean).join(' · ')
+                const dates = c.start_date || c.estimated_end_date ? `${fmtShortDate(c.start_date)} → ${fmtShortDate(c.estimated_end_date)}` : ''
+                return (
+                  <ListRow
+                    key={c.id}
+                    href={`/chantiers/${c.id}`}
+                    leading={<Avatar name={c.client?.company_name ?? c.title} />}
+                    title={c.title}
+                    description={[place, rec, dates].filter(Boolean).join(' · ') || undefined}
+                    trailing={
+                      <span className={styles.trailStack}>
+                        <span className={styles.amount}>{formatCurrency(c.budget_ht)}</span>
+                        <StatusPill status={pill.status}>{pill.label}</StatusPill>
                       </span>
-                    ) : (
-                      <span className="text-secondary text-xs">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={c.status} />
-                  </td>
-                  <td className="px-4 py-3 hidden lg:table-cell">
-                    <div className="flex items-center gap-1 text-xs text-secondary">
-                      <Calendar className="w-3 h-3" />
-                      {fmtDate(c.start_date)} → {fmtDate(c.estimated_end_date)}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-right hidden lg:table-cell">
-                    <span className="font-semibold text-primary">{fmtMoney(c.budget_ht)}</span>
-                  </td>
-                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                    <ActionMenu
-                      status={c.status}
-                      onReprendre={() => handleStatusChange(c, 'en_cours')}
-                      onTerminer={() => handleStatusChange(c, 'termine')}
-                      onSuspendre={() => handleStatusChange(c, 'suspendu')}
-                      onAnnuler={() => handleStatusChange(c, 'annule')}
-                      onDupliquer={() => handleDuplicate(c)}
-                      onSupprimer={() => handleDelete(c)}
-                      canDelete={canDelete}
-                    />
-                  </td>
-                </tr>
-              ))}
-              </tbody>
-            </table>
-          </div>
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--elevation-border)]">
-              <span className="text-xs text-secondary">
-                {pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, filtered.length)} sur {filtered.length}
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  title="Page précédente"
-                >
-                  <ChevronLeft className="w-4 h-4 text-secondary" />
-                </button>
-                <span className="px-2 text-xs font-semibold text-secondary">Page {currentPage} / {totalPages}</span>
-                <button
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
-                  className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  title="Page suivante"
-                >
-                  <ChevronRight className="w-4 h-4 text-secondary" />
-                </button>
-              </div>
+                    }
+                  />
+                )
+              })}
+            </ListGroup>
+          )}
+
+          {pageData.totalPages > 1 && (
+            <div className={docs.pager}>
+              <button type="button" className={screen.round} aria-label="Page précédente" disabled={pageData.currentPage === 1} onClick={() => q.setPage(p => Math.max(1, p - 1))}>
+                <ChevronLeft size={20} aria-hidden="true" />
+              </button>
+              <span className={docs.pagerLabel}>Page {pageData.currentPage} / {pageData.totalPages}</span>
+              <button type="button" className={screen.round} aria-label="Page suivante" disabled={pageData.currentPage === pageData.totalPages} onClick={() => q.setPage(p => Math.min(pageData.totalPages, p + 1))}>
+                <ChevronRight size={20} aria-hidden="true" />
+              </button>
             </div>
           )}
         </div>
-      )}
+      </div>
 
-      {isNavigating && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-base/80 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin" />
-            <p className="text-sm text-secondary">{navigationLabel}</p>
-          </div>
+      {q.isNavigating && (
+        <div className={docs.navigating} role="status">
+          <div className={docs.spinner} aria-hidden="true" />
+          <p>{q.navigationLabel}</p>
         </div>
       )}
 
-      {createStep === 'choice' && (
-        <CreateChoiceModal
-          onClose={() => setCreateStep(null)}
-          onSelectChantier={() => setCreateStep('form')}
-          onSelectEntretien={() => {
-            setCreateStep(null)
-            setNavigationLabel("Ouverture de l'entretien...")
-            setIsNavigating(true)
-            router.push('/chantiers/entretien')
-          }}
+      {q.createStep === 'choice' && (
+        <CreateChoiceSheet
+          onClose={() => q.setCreateStep(null)}
+          onSelectChantier={() => q.setCreateStep('form')}
+          onSelectEntretien={() => { q.setCreateStep(null); q.goTo('/chantiers/entretien', "Ouverture de l'entretien...") }}
         />
       )}
-
-      {createStep === 'form' && (
-        <CreateModal
+      {q.createStep === 'form' && (
+        <NewChantierSheet
           clients={clients}
           linkableQuotes={linkableQuotes}
-          onClose={() => setCreateStep(null)}
-          onCreated={id => {
-            setCreateStep(null)
-            setNavigationLabel('Ouverture du chantier...')
-            setIsNavigating(true)
-            router.push(`/chantiers/${id}`)
-          }}
+          onClose={() => q.setCreateStep(null)}
+          onCreated={id => { q.setCreateStep(null); q.goTo(`/chantiers/${id}`, 'Ouverture du chantier...') }}
         />
       )}
-    </div>
+    </main>
   )
 }
