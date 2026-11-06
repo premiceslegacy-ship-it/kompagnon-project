@@ -7,7 +7,9 @@ import { useRouter } from 'next/navigation'
 import { Building2, ChevronLeft, FileText, KeyRound, Link2, Lock, Mail, MessageSquare, Receipt, Shield, ShieldCheck, Star, User, Users, Wallet } from 'lucide-react'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { createClient } from '@/lib/supabase/client'
+import AbonnementView from './AbonnementView'
 import DevisView from './DevisView'
+import EinvoicingView from './EinvoicingView'
 import EntrepriseView from './EntrepriseView'
 import EquipeView from './EquipeView'
 import FormulaireView from './FormulaireView'
@@ -104,7 +106,9 @@ export default function SettingsClient(props: SettingsProps) {
                           : tab === 'emails' ? <RelancesView q={q} />
                             : tab === 'formulaire' ? <FormulaireView q={q} />
                               : tab === 'integration' ? <IntegrationView q={q} />
-                                : tab === 'equipe' ? <EquipeView q={q} />
+                                : tab === 'abonnement' ? <AbonnementView q={q} />
+                                  : tab === 'facturation' ? <EinvoicingView q={q} />
+                                  : tab === 'equipe' ? <EquipeView q={q} />
                                   : tab === 'roles' ? <RolesView q={q} />
                                     : <div className={local.legacy}><LegacyTabContent q={q} /></div>}
             </div>
