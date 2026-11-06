@@ -611,7 +611,6 @@ export function useSettings({ initialFullName, initialEmail, members, roles, joi
     }
 
     function handleRemove(membershipId: string) {
-        if (!confirm('Retirer ce membre ? Il perdra l\'accès immédiatement.')) return;
         startTransition(async () => {
             await removeMember(membershipId);
         });
