@@ -14,6 +14,7 @@ import { Menu, type MenuItem } from '@/components/ui/Menu'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { formatCurrency } from '@/components/shared'
+import { AI_NAME } from '@/lib/brand'
 import { fmtHours, statusPill, statusTransitions } from '../chantiersModel'
 import { BillSheet, ContactSheet, DetailsSheet, ReportSheet } from './ChantierDetailSheets'
 import ArgentSegment from './ArgentSegment'
@@ -68,7 +69,7 @@ export default function ChantierDetailClient(props: ChantierDetailProps) {
   const menuItems: MenuItem[] = [
     { label: 'Rapport PDF', onSelect: () => setOverlay('report') },
     ...(q.canEditChantier ? [
-      { label: 'Demander à Marco', onSelect: () => q.setShowAIAssistant(true) },
+      { label: `Demander à ${AI_NAME}`, onSelect: () => q.setShowAIAssistant(true) },
       { label: 'Modifier les détails', onSelect: () => setOverlay('details') },
       ...statusTransitions(actions.status).map(t => ({ label: t.label, onSelect: () => actions.changeStatus(t.to) })),
       { label: 'Dupliquer', onSelect: actions.duplicate },
