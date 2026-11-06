@@ -13,6 +13,7 @@ import { Sheet } from '@/components/ui/Sheet'
 import type { Pointage } from '@/lib/data/queries/chantiers'
 import { DateRow } from '../FormRows'
 import { fmtHours } from '../chantiersModel'
+import { reportRange } from '../heures/heuresModel'
 import type { ChantierDetailState } from './useChantierDetail'
 import styles from '../../finances/quote-editor/QuoteEditor.module.css'
 import fiche from './ChantierFiche.module.css'
@@ -175,14 +176,7 @@ function ReportsSheet({ q, onClose }: { q: ChantierDetailState; onClose: () => v
   }, [thisYear, minYear])
 
   const download = (m: ReportMember) => {
-    let from: string
-    let to: string
-    if (selection.length === 4) { from = `${selection}-01-01`; to = `${selection}-12-31` }
-    else {
-      const [y, mo] = selection.split('-').map(Number)
-      from = `${selection}-01`
-      to = new Date(y, mo, 0).toISOString().slice(0, 10)
-    }
+    const { from, to } = reportRange(selection)
     const params = new URLSearchParams({ from, to, download: '1', type: m.idType })
     window.open(`/api/pdf/member/${m.id}?${params.toString()}`, '_blank')
   }
