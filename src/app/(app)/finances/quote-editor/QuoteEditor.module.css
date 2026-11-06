@@ -196,8 +196,9 @@
   display: flex;
 }
 
-.accentRow,
-.accentRow * {
+/* `li` relève la spécificité : sans lui, la couleur du titre de ListRow l'emporte selon l'ordre du CSS. */
+li.accentRow,
+li.accentRow * {
   color: var(--at-accent-texte);
 }
 

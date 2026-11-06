@@ -15,14 +15,14 @@ import ClauseSheet from './ClauseSheet'
 import MetalGridImportSheet from './MetalGridImportSheet'
 import MetalGridSheet from './MetalGridSheet'
 import { clampValidity, clausePreview, clauseToForm, emptyClauseForm, gridDetails, gridPriceLabel, sortClauses, upsertClause, type ClauseForm } from './devisModel'
-import { useAutoReminderDirty } from './useAutoReminderDirty'
+import { useSavedDirty } from './useSavedDirty'
 import type { SettingsState } from './useSettings'
 import screen from '@/components/layout/Screen.module.css'
 import styles from '../finances/quote-editor/QuoteEditor.module.css'
 import local from './Settings.module.css'
 
 export default function DevisView({ q }: { q: SettingsState }) {
-  const dirty = useAutoReminderDirty(q)
+  const dirty = useSavedDirty(q.autoReminder, q.autoReminderSaveStatus)
   const saving = q.autoReminderSaveStatus === 'saving'
   const [clauses, setClauses] = useState<QuoteClauseTemplate[]>(q.initialClauseTemplates)
   const [clauseForm, setClauseForm] = useState<ClauseForm | null>(null)

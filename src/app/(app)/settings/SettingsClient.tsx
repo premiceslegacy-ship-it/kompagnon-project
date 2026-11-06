@@ -9,9 +9,12 @@ import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { createClient } from '@/lib/supabase/client'
 import DevisView from './DevisView'
 import EntrepriseView from './EntrepriseView'
+import FormulaireView from './FormulaireView'
+import IntegrationView from './IntegrationView'
 import { LegacyTabContent } from './LegacyTabs'
 import LegalView from './LegalView'
 import PaiementView from './PaiementView'
+import RelancesView from './RelancesView'
 import ProfilView from './ProfilView'
 import SecuriteView from './SecuriteView'
 import { firstOrgError } from './entrepriseModel'
@@ -96,7 +99,10 @@ export default function SettingsClient(props: SettingsProps) {
                     : tab === 'legal' ? <LegalView q={q} />
                       : tab === 'paiement' ? <PaiementView q={q} />
                         : tab === 'devis' ? <DevisView q={q} />
-                          : <div className={local.legacy}><LegacyTabContent q={q} /></div>}
+                          : tab === 'emails' ? <RelancesView q={q} />
+                            : tab === 'formulaire' ? <FormulaireView q={q} />
+                              : tab === 'integration' ? <IntegrationView q={q} />
+                                : <div className={local.legacy}><LegacyTabContent q={q} /></div>}
             </div>
           </>
         ) : (
