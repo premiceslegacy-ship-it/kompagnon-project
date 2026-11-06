@@ -18,7 +18,8 @@ import { getBusinessActivityById } from '@/lib/catalog-context'
 import { importLaborRates, importMaterials } from '@/lib/data/mutations/catalog'
 import { importSuppliers } from '@/lib/data/mutations/suppliers'
 import type { ImportCatalogState } from '@/lib/data/mutations/catalog'
-import { ImportPrestationsModal, NewPrestationModal } from './LegacyPrestations'
+import ModeleEditor from './ModeleEditor'
+import ModeleImportSheet from './ModeleImportSheet'
 import { ImportSheet, LaborSheet, MaterialSheet, SupplierSheet } from './CatalogSheets'
 import {
   fmtMoney, getLaborImportConfig, getMaterialImportConfig, getSupplierImportConfig, laborMarginPct, visibleSlice, type CatalogTab,
@@ -82,6 +83,23 @@ export default function CatalogClient(props: CatalogProps) {
 
   const importCfg = q.importTab === 'labor' ? getLaborImportConfig(ctx) : q.importTab === 'suppliers' ? getSupplierImportConfig() : getMaterialImportConfig(ctx)
   const importAction = (q.importTab === 'labor' ? importLaborRates : q.importTab === 'suppliers' ? importSuppliers : importMaterials) as unknown as (prev: ImportCatalogState, fd: FormData) => Promise<ImportCatalogState>
+
+  if (q.editor) {
+    return (
+      <>
+        <ModeleEditor
+          key={q.editor.editing?.id ?? 'new-modele'}
+          editing={q.editor.editing}
+          ctx={ctx}
+          materials={q.materials}
+          laborRates={q.laborRates}
+          onSaved={q.handlePrestationSaved}
+          onClose={() => q.setEditor(null)}
+          onArchive={p => { q.setEditor(null); q.setConfirm({ type: 'prestation', id: p.id, label: p.name }) }}
+        />
+      </>
+    )
+  }
 
   return (
     <main className={screen.root}>
@@ -151,7 +169,7 @@ export default function CatalogClient(props: CatalogProps) {
                     title={p.name}
                     description={[p.category, `${n}${NB}ligne${n > 1 ? 's' : ''}`, p.description].filter(Boolean).join(' · ')}
                     trailing={<span className={styles.trailStack}><span className={styles.amount}>{fmtMoney(p.base_price_ht, 0)}</span>{p.is_active ? <StatusPill status="success">{p.base_margin_pct ?? 0}{NB}%</StatusPill> : <StatusPill status="neutral">Inactif</StatusPill>}</span>}
-                    onClick={() => q.setEditingPrestation(p)}
+                    onClick={() => q.setEditor({ editing: p })}
                   />
                 )
               })}
@@ -213,24 +231,14 @@ export default function CatalogClient(props: CatalogProps) {
         <ImportSheet title={importTitle(q.importTab)} config={importCfg} serverAction={importAction} onDone={q.refresh} onClose={() => q.setImportTab(null)} />
       )}
 
-      {/* Éditeur et import des modèles de devis : conservés dans ce lot */}
-      <NewPrestationModal
-        isOpen={q.newPrestationOpen || q.editingPrestation !== null}
-        onClose={() => { q.setNewPrestationOpen(false); q.setEditingPrestation(null) }}
-        editing={q.editingPrestation}
-        categories={q.prestationCategories}
-        materials={q.materials}
-        laborRates={q.laborRates}
-        catalogContext={ctx}
-        onSaved={q.handlePrestationSaved}
-      />
-      <ImportPrestationsModal
-        isOpen={q.importTab === 'prestations'}
-        onClose={() => q.setImportTab(null)}
-        onSuccess={q.refresh}
-        bundleTemplateLabel={ls.bundleTemplate.singular.toLowerCase()}
-        bundleTemplatePluralLabel={ls.bundleTemplate.plural.toLowerCase()}
-      />
+      {q.importTab === 'prestations' && (
+        <ModeleImportSheet
+          label={ls.bundleTemplate.singular.toLowerCase()}
+          plural={ls.bundleTemplate.plural.toLowerCase()}
+          onDone={q.refresh}
+          onClose={() => q.setImportTab(null)}
+        />
+      )}
       {catalogAIEnabled && q.aiOpen && (
         <CatalogAIPanel
           open={q.aiOpen}
