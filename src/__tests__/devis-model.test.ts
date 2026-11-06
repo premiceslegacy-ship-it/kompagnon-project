@@ -44,7 +44,7 @@ describe('devis : grilles de prix', () => {
     const csv = 'Libellé;Métal;Source;Coefficient;Prix fixe;Unité;Nuance;Épaisseur;Format\nAlu 2mm;aluminium;lme;1,35;;kg;5754;2;1000x2000\nAcier S235;acier;fixe;;0.95;kg;S235;;'
     const { valid, errors } = parseGridCsv(csv)
     expect(errors).toEqual([])
-    expect(valid[0]).toMatchObject({ label: 'Alu 2mm', metal_code: 'ALU', source_type: 'lme', grade: '5754', thickness_mm: 2 })
+    expect(valid[0]).toMatchObject({ label: 'Alu 2mm', metal_code: 'ALU', source_type: 'lme', grade: '5754', thickness_mm: 2, coefficient: 1.35 })
     expect(valid[1]).toMatchObject({ metal_code: 'STEEL', source_type: 'manual', manual_price_eur_kg: 0.95 })
   })
 

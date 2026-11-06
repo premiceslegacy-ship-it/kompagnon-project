@@ -151,7 +151,7 @@ export default function MetalGridSheet({ open, grid, materials, suppliers, onClo
 
           <div className={styles.fields}>
             <Field type="text" label="Nuance" placeholder="S235, 304L, 5754" value={grade} onChange={e => setGrade(e.target.value)} />
-            <Field type="number" label="Épaisseur (mm)" min={0} decimals={2} placeholder="2" allowEmpty value={thickness} onChange={setThickness} />
+            <Field type="number" label="Épaisseur" min={0} decimals={2} placeholder="en mm" allowEmpty value={thickness} onChange={setThickness} />
             <Field type="text" label="Format" placeholder="1000×2000, barre 6 m" value={format} onChange={e => setFormat(e.target.value)} />
           </div>
 

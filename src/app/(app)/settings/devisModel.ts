@@ -77,6 +77,11 @@ const METAL_CODE_MAP: Record<string, string> = {
   nickel: 'NI', ni: 'NI', inox: 'NI', stainless: 'NI',
 }
 
+/** Nombre saisi à la française (« 1,35 ») ou à l'anglaise (« 1.35 ») ; undefined si illisible ou nul. */
+function num(value: string | undefined): number | undefined {
+  return parseFloat((value ?? '').replace(',', '.')) || undefined
+}
+
 export function parseGridRows(rows: string[][]): { valid: ImportGridRow[]; errors: string[] } {
   const valid: ImportGridRow[] = []
   const errors: string[] = []
@@ -89,11 +94,11 @@ export function parseGridRows(rows: string[][]): { valid: ImportGridRow[]; error
     if (!metal_code) { errors.push(`Ligne ${line} : métal manquant.`); return }
     const sourceRaw = (row[2] ?? '').trim().toLowerCase()
     const source_type: 'lme' | 'manual' = sourceRaw === 'manuel' || sourceRaw === 'manual' || sourceRaw === 'fixe' ? 'manual' : 'lme'
-    const coefficient = parseFloat(row[3] ?? '') || undefined
-    const manual_price = parseFloat(row[4] ?? '') || undefined
+    const coefficient = num(row[3])
+    const manual_price = num(row[4])
     const unit = row[5]?.trim() || 'kg'
     const grade = row[6]?.trim() || undefined
-    const thickness_mm = parseFloat(row[7] ?? '') || undefined
+    const thickness_mm = num(row[7])
     const format_label = row[8]?.trim() || undefined
     if (source_type === 'manual' && !manual_price) { errors.push(`Ligne ${line} : prix fixe requis pour la source manuelle.`); return }
     if (source_type === 'lme' && metal_code === 'STEEL') { errors.push(`Ligne ${line} : l’acier requiert la source manuelle.`); return }
