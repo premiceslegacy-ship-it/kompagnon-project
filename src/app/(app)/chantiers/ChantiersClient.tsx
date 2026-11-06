@@ -8,7 +8,6 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { Menu, type MenuItem } from '@/components/ui/Menu'
 import { SearchField } from '@/components/ui/SearchField'
-import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { formatCurrency } from '@/components/shared'
 import { CreateChoiceSheet, NewChantierSheet } from './ChantierSheets'
@@ -59,16 +58,7 @@ export default function ChantiersClient(props: ChantiersProps) {
           </div>
         </header>
 
-        <div className={docs.segmentRow}>
-          <SegmentedControl
-            label="Vue des chantiers"
-            fullWidth
-            options={[{ value: 'liste', label: 'Liste' }, { value: 'planning', label: 'Planning' }]}
-            value="liste"
-            onChange={v => { if (v === 'planning') q.goTo('/chantiers/planning', 'Ouverture du planning...') }}
-          />
-          <p className={docs.summary}>{summary}</p>
-        </div>
+        <p className={docs.summary}>{summary}</p>
 
         {initialChantiers.length > 0 && (
           <>
