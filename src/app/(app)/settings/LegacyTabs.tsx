@@ -7,7 +7,6 @@ import Link from 'next/link'
 import { ActionMenu } from '@/components/shared'
 import { Mail, Trash2, Plus, X, Copy, Check, KeyRound, Save, Loader2, Globe, Code2, ExternalLink, Package, Layers, Wrench, ToggleLeft, ToggleRight, RefreshCw, ShieldCheck, ChevronDown, RotateCcw } from 'lucide-react'
 
-import { createClient } from '@/lib/supabase/client'
 import { sendTeamInvite } from '@/lib/data/mutations/team'
 
 import { categoryLabel, permissionLabel } from '@/lib/permissions/labels'
@@ -16,8 +15,6 @@ import { requestAccountDeletion, cancelAccountDeletion } from '@/lib/data/mutati
 
 import ExportComptableModal from '@/components/ExportComptableModal'
 
-import MetalPriceGridsSettings from '@/components/settings/MetalPriceGridsSettings'
-import ClauseTemplatesSettings from '@/components/settings/ClauseTemplatesSettings'
 import SubscriptionTab from '@/components/settings/SubscriptionTab'
 import OpenRouterKeyTab from '@/components/settings/OpenRouterKeyTab'
 import EinvoicingTab from '@/components/settings/EinvoicingTab'
@@ -102,160 +99,8 @@ function PermissionCategoryAccordion({
 }
 
 export function LegacyTabContent({ q }: { q: SettingsState }) {
-    const { members, roles, joinCode, organization, appUrl, catalogMaterials, catalogLaborRates, catalogPrestationTypes, suppliers, catalogContext, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, initialMetalPriceGrids, hasMetalPricing, initialClauseTemplates, organizationModules, stripeLinkPro, stripeLinkExpert, selfService, subscriptionBillingModel, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt, einvoicingConfig, canConfigureEinvoicing, oauthResult, oauthDetail, router, activeTab, isInviteModalOpen, setIsInviteModalOpen, inviteEmail, setInviteEmail, inviteRoleId, setInviteRoleId, inviteStatus, setInviteStatus, inviteError, setInviteError, codeCopied, isPending, emailSaveStatus, emailSettings, setEmailSettings, autoReminder, setAutoReminder, autoReminderSaveStatus, defaultShowSectionSubtotals, subtotalsSaveStatus, autoMemberReports, autoMemberReportsSaveStatus, memories, deletingMemoryId, memoriesPage, setMemoriesPage, memoriesPageCount, memoriesPageItems, handleDeleteMemory, memoryTypeLabel, publicFormSettings, setPublicFormSettings, publicFormSaveStatus, exportSaveStatus, exportFeedback, showExportComptableModal, setShowExportComptableModal, emailSignature, setEmailSignature, cgvText, setCgvText, reminderFirstDelay, setReminderFirstDelay, signatureSaveStatus, tplDraft, setTplDraft, tplSaveStatus, tplResetStatus, expandedTpl, setExpandedTpl, sessions, setSessions, sessionsLoaded, revokeStatus, setRevokeStatus, deletionStep, setDeletionStep, deletionConfirmText, setDeletionConfirmText, deletionStatus, setDeletionStatus, deletionError, setDeletionError, cancelDeletionStatus, setCancelDeletionStatus, isOwner, isAdmin, hasProcessingExport, selectedRoleId, setSelectedRoleId, localPerms, permSaveStatus, handleSavePermissions, togglePerm, formatExportDate, formatFileSize, exportStatusBadge, exportStatusLabel, handleCreateOrganizationExport, togglePublicCatalogItem, handleSaveSignatureAndCGV, handleSaveEmailTemplate, handleResetEmailTemplate, loadSecurityData, handleSavePublicForm, handleSaveAutoReminder, handleSaveDefaultShowSectionSubtotals, handleSaveAutoMemberReports, copyCode, handleRoleChange, handleRemove, handleSaveEmailSettings, profileFields, setProfileFields, profileSaveStatus, passwordFields, setPasswordFields, passwordSaveStatus, passwordError, handleSaveProfile, handleSavePassword } = q
+    const { members, roles, joinCode, organization, appUrl, catalogMaterials, catalogLaborRates, catalogPrestationTypes, catalogContext, organizationExports, emailTemplates, rolesWithPermissions, canInvite, canRemoveMembers, canEditRoles, canEditOrg, organizationModules, stripeLinkPro, stripeLinkExpert, selfService, subscriptionBillingModel, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt, einvoicingConfig, canConfigureEinvoicing, oauthResult, oauthDetail, router, activeTab, isInviteModalOpen, setIsInviteModalOpen, inviteEmail, setInviteEmail, inviteRoleId, setInviteRoleId, inviteStatus, setInviteStatus, inviteError, setInviteError, codeCopied, isPending, emailSaveStatus, emailSettings, setEmailSettings, autoReminder, setAutoReminder, autoReminderSaveStatus, autoMemberReports, autoMemberReportsSaveStatus, memories, deletingMemoryId, memoriesPage, setMemoriesPage, memoriesPageCount, memoriesPageItems, handleDeleteMemory, memoryTypeLabel, publicFormSettings, setPublicFormSettings, publicFormSaveStatus, exportSaveStatus, exportFeedback, showExportComptableModal, setShowExportComptableModal, emailSignature, setEmailSignature, cgvText, setCgvText, reminderFirstDelay, setReminderFirstDelay, signatureSaveStatus, tplDraft, setTplDraft, tplSaveStatus, tplResetStatus, expandedTpl, setExpandedTpl, deletionStep, setDeletionStep, deletionConfirmText, setDeletionConfirmText, deletionStatus, setDeletionStatus, deletionError, setDeletionError, cancelDeletionStatus, setCancelDeletionStatus, isOwner, isAdmin, hasProcessingExport, selectedRoleId, setSelectedRoleId, localPerms, permSaveStatus, handleSavePermissions, togglePerm, formatExportDate, formatFileSize, exportStatusBadge, exportStatusLabel, handleCreateOrganizationExport, togglePublicCatalogItem, handleSaveSignatureAndCGV, handleSaveEmailTemplate, handleResetEmailTemplate, handleSavePublicForm, handleSaveAutoReminder, handleSaveAutoMemberReports, copyCode, handleRoleChange, handleRemove, handleSaveEmailSettings } = q
     const renderContent = () => {
-        if (activeTab === 'profil') {
-            return (
-                <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8">
-                    <div><h2 className="text-2xl font-bold text-primary mb-6">Mon profil</h2>
-                        <div className="flex flex-col md:flex-row gap-8">
-                            <div className="flex-shrink-0">
-                                <div className="w-32 h-32 rounded-2xl bg-accent flex items-center justify-center">
-                                    <span className="text-3xl font-bold text-black">
-                                        {[profileFields.first_name, profileFields.last_name].filter(Boolean).map(n => n[0].toUpperCase()).join('') || profileFields.email?.[0]?.toUpperCase() || '?'}
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Prénom</label><input type="text" value={profileFields.first_name} onChange={e => setProfileFields(f => ({ ...f, first_name: e.target.value }))} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                                <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Nom</label><input type="text" value={profileFields.last_name} onChange={e => setProfileFields(f => ({ ...f, last_name: e.target.value }))} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                                <div className="space-y-2 md:col-span-2"><label className="text-sm font-semibold text-secondary">Email</label><input type="email" value={profileFields.email} onChange={e => setProfileFields(f => ({ ...f, email: e.target.value }))} className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="h-px w-full bg-[var(--elevation-border)]"></div>
-                    <div><h2 className="text-2xl font-bold text-primary mb-6">Sécurité</h2>
-                        {passwordError && (
-                            <p className="mb-4 text-sm text-red-400">{passwordError}</p>
-                        )}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Mot de passe actuel</label><input type="password" value={passwordFields.current} onChange={e => setPasswordFields(f => ({ ...f, current: e.target.value }))} placeholder="••••••••" autoComplete="current-password" className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Nouveau mot de passe</label><input type="password" value={passwordFields.password} onChange={e => setPasswordFields(f => ({ ...f, password: e.target.value }))} placeholder="Minimum 8 caractères" className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                            <div className="space-y-2"><label className="text-sm font-semibold text-secondary">Confirmer le mot de passe</label><input type="password" value={passwordFields.confirm} onChange={e => setPasswordFields(f => ({ ...f, confirm: e.target.value }))} placeholder="••••••••" className="w-full px-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all" /></div>
-                        </div>
-                        <div className="pt-4 flex justify-end">
-                            <button
-                                onClick={handleSavePassword}
-                                disabled={isPending || passwordSaveStatus === 'saving'}
-                                className={`px-6 py-2.5 rounded-full font-bold text-sm flex items-center gap-2 hover:scale-105 transition-all shadow-lg disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 ${
-                                    passwordSaveStatus === 'saved' ? 'bg-green-500 text-white shadow-green-500/20' :
-                                    passwordSaveStatus === 'error' ? 'bg-red-500 text-white shadow-red-500/20' :
-                                    'bg-white/10 text-primary shadow-black/10'
-                                }`}
-                            >
-                                <KeyRound className="w-4 h-4" />
-                                {passwordSaveStatus === 'saving' ? 'Enregistrement...' :
-                                 passwordSaveStatus === 'saved' ? 'Mot de passe mis à jour !' :
-                                 passwordSaveStatus === 'error' ? 'Erreur' :
-                                 'Changer le mot de passe'}
-                            </button>
-                        </div>
-                    </div>
-                    <div className="pt-2 flex justify-end">
-                        <button
-                            onClick={handleSaveProfile}
-                            disabled={isPending || profileSaveStatus === 'saving'}
-                            className={`px-8 py-3 rounded-full font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 ${
-                                profileSaveStatus === 'saved' ? 'bg-green-500 text-white shadow-green-500/20' :
-                                profileSaveStatus === 'error' ? 'bg-red-500 text-white shadow-red-500/20' :
-                                'bg-accent text-black shadow-accent/20'
-                            }`}
-                        >
-                            <Save className="w-4 h-4" />
-                            {profileSaveStatus === 'saving' ? 'Enregistrement...' :
-                             profileSaveStatus === 'saved' ? 'Enregistré !' :
-                             profileSaveStatus === 'error' ? 'Erreur' :
-                             'Mettre à jour le profil'}
-                        </button>
-                    </div>
-                </div>
-            );
-        }
-
-        if (activeTab === 'devis') {
-            if (!canEditOrg) {
-                return (
-                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8">
-                        <p className="text-secondary text-sm">Vous n&apos;avez pas la permission de modifier ces paramètres.</p>
-                    </div>
-                )
-            }
-            return (
-                <div className="space-y-6">
-                    {/* Préférences devis */}
-                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-6">
-                        <div>
-                            <h2 className="text-2xl font-bold text-primary mb-1">Préférences devis</h2>
-                            <p className="text-sm text-secondary">Valeurs par défaut appliquées à la création de chaque nouveau devis.</p>
-                        </div>
-
-                        <div className="space-y-2">
-                            <p className="text-sm font-semibold text-primary">Validité par défaut</p>
-                            <p className="text-xs text-secondary">Pré-rempli à la création de chaque nouveau devis. Modifiable devis par devis dans l&apos;éditeur.</p>
-                            <div className="flex items-center gap-3">
-                                <input
-                                    type="number"
-                                    min={1}
-                                    max={365}
-                                    value={autoReminder.defaultQuoteValidityDays}
-                                    onChange={e => setAutoReminder(a => ({ ...a, defaultQuoteValidityDays: Math.min(365, Math.max(1, Number(e.target.value) || 30)) }))}
-                                    className="w-24 px-4 py-2.5 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all text-center tabular-nums font-bold"
-                                />
-                                <span className="text-sm text-secondary">jours</span>
-                            </div>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-4 pt-2 border-t border-[var(--elevation-border)]">
-                            <div>
-                                <p className="text-sm font-semibold text-primary">Sous-totaux par lot</p>
-                                <p className="text-xs text-secondary">Affiche le montant HT de chaque section en bas de chaque lot sur le PDF. Modifiable devis par devis.</p>
-                                {subtotalsSaveStatus === 'saved' && <p className="text-xs text-green-500 font-medium mt-1">Préférence enregistrée.</p>}
-                                {subtotalsSaveStatus === 'error' && <p className="text-xs text-red-500 font-medium mt-1">Erreur lors de l&apos;enregistrement.</p>}
-                            </div>
-                            <button
-                                type="button"
-                                role="switch"
-                                aria-checked={defaultShowSectionSubtotals}
-                                onClick={() => handleSaveDefaultShowSectionSubtotals(!defaultShowSectionSubtotals)}
-                                disabled={isPending || subtotalsSaveStatus === 'saving'}
-                                className={`relative flex-shrink-0 w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 ${defaultShowSectionSubtotals ? 'bg-accent' : 'bg-[var(--elevation-border)]'}`}
-                            >
-                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${defaultShowSectionSubtotals ? 'translate-x-6' : 'translate-x-0'}`} />
-                            </button>
-                        </div>
-
-                        <div className="flex justify-end pt-2">
-                            <button onClick={handleSaveAutoReminder} disabled={isPending || autoReminderSaveStatus === 'saving'}
-                                className={`px-8 py-3 rounded-full font-bold flex items-center gap-2 hover:scale-105 transition-all shadow-lg disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 ${autoReminderSaveStatus === 'saved' ? 'bg-green-500 text-white shadow-green-500/20' : autoReminderSaveStatus === 'error' ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-accent text-black shadow-accent/20'}`}>
-                                <Save className="w-4 h-4" />
-                                {autoReminderSaveStatus === 'saving' ? 'Enregistrement...' : autoReminderSaveStatus === 'saved' ? 'Enregistré !' : autoReminderSaveStatus === 'error' ? 'Erreur' : 'Enregistrer'}
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Grilles matières métaux */}
-                    {hasMetalPricing && (
-                        <div id="metal-prices" className="rounded-3xl card transition-all duration-300 ease-out p-8">
-                            <h2 className="text-2xl font-bold text-primary mb-2">Prix matières métaux</h2>
-                            <p className="text-sm text-secondary mb-6">
-                                Configurez vos grilles matières avec une source de prix, une matière catalogue et, si utile, un fournisseur. Elles pré-remplissent les lignes matière dans vos devis à partir des cours indicatifs ou d&apos;un prix fixe.
-                            </p>
-                            <MetalPriceGridsSettings
-                                initialGrids={initialMetalPriceGrids}
-                                materials={catalogMaterials}
-                                suppliers={suppliers}
-                            />
-                        </div>
-                    )}
-
-                    {/* Clauses réutilisables */}
-                    <div className="rounded-3xl card transition-all duration-300 ease-out p-8">
-                        <ClauseTemplatesSettings initialClauses={initialClauseTemplates} />
-                    </div>
-                </div>
-            )
-        }
-
         if (activeTab === 'equipe') {
             return (
                 <div className="rounded-3xl card transition-all duration-300 ease-out p-8 space-y-8 relative">
@@ -1584,59 +1429,6 @@ export function LegacyTabContent({ q }: { q: SettingsState }) {
                             <ShieldCheck className="w-4 h-4" />
                             Lire la politique de suppression détaillée
                         </Link>
-                    </div>
-                </div>
-            )
-        }
-
-        if (activeTab === 'securite') {
-            return (
-                <div className="space-y-6">
-                    {/* Sessions actives */}
-                    <div className="rounded-3xl card p-8 space-y-6">
-                        <div>
-                            <h2 className="text-2xl font-bold text-primary mb-1">Sessions actives</h2>
-                            <p className="text-sm text-secondary">Vos connexions en cours. Révoquez une session pour forcer la déconnexion sur un appareil.</p>
-                        </div>
-                        {!sessionsLoaded ? (
-                            <button onClick={loadSecurityData} className="flex items-center gap-2 text-sm text-accent font-semibold hover:underline">
-                                <RefreshCw className="w-4 h-4" />Charger les sessions
-                            </button>
-                        ) : sessions.length === 0 ? (
-                            <button
-                                onClick={async () => {
-                                    const supabase = createClient()
-                                    await supabase.auth.signOut({ scope: 'others' })
-                                }}
-                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-red-500/30 text-red-500 text-sm font-semibold hover:bg-red-500/5 transition-colors"
-                            >
-                                <Trash2 className="w-4 h-4" />Déconnecter toutes les autres sessions
-                            </button>
-                        ) : (
-                            <div className="space-y-3">
-                                {sessions.map(session => (
-                                    <div key={session.id} className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-base dark:bg-white/5 border border-[var(--elevation-border)]">
-                                        <div>
-                                            <p className="font-semibold text-primary text-sm">{session.user_agent ?? 'Appareil inconnu'}</p>
-                                            <p className="text-xs text-secondary">{session.ip ? `IP ${session.ip} · ` : ''}{session.created_at ? new Date(session.created_at).toLocaleString('fr-FR') : ''}</p>
-                                        </div>
-                                        <button
-                                            onClick={async () => {
-                                                setRevokeStatus(s => ({ ...s, [session.id]: 'revoking' }))
-                                                const supabase = createClient()
-                                                await supabase.auth.signOut({ scope: 'others' })
-                                                setRevokeStatus(s => ({ ...s, [session.id]: 'done' }))
-                                                setSessions(ss => ss.filter(s => s.id !== session.id))
-                                            }}
-                                            disabled={revokeStatus[session.id] === 'revoking'}
-                                            className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-600 font-semibold transition-colors disabled:opacity-50"
-                                        >
-                                            <Trash2 className="w-3.5 h-3.5" />{revokeStatus[session.id] === 'done' ? 'Révoquée' : 'Révoquer'}
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
                     </div>
                 </div>
             )
