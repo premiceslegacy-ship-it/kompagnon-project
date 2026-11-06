@@ -48,7 +48,9 @@
     min-height: 100dvh;
   }
 
+  /* Sur ordinateur, rien ne surmonte la page (pas de barre d'outils) : on laisse respirer le haut. */
   .main {
+    padding-top: 32px;
     padding-bottom: 0;
   }
 
