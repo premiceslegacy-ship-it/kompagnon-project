@@ -122,3 +122,45 @@
 .sections > section {
   margin-block-start: 0;
 }
+
+/* Formulaire public et intégration : actions de groupe, extraits de code. */
+.groupAction {
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--at-accent-texte);
+  font: 500 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+  cursor: pointer;
+}
+
+.groupAction:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.code {
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  border-radius: var(--at-rayon-groupe-liste);
+  background: var(--at-carte);
+  color: var(--at-encre);
+  font: 400 12px/18px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+}
+
+.codeBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.codeBlock > p {
+  margin: 0 16px;
+}
