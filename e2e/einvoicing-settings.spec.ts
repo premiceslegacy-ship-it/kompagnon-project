@@ -8,5 +8,5 @@ test('la configuration de facturation électronique reste accessible au proprié
   await page.waitForURL(url => !url.pathname.startsWith('/login'), { timeout: 30_000 })
   await page.goto('/settings?tab=facturation')
 
-  await expect(page.getByRole('heading', { name: 'Facturation électronique', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Facturation électronique', exact: true, level: 1 })).toBeVisible()
 })

@@ -1,0 +1,28 @@
+/* @atelier-migrated */
+/* Réglages : liste groupée et écrans de détail. */
+.tile {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--at-accent);
+  color: var(--at-sur-accent);
+}
+
+.avatarRow {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 4px;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+.legacy {
+  min-width: 0;
+}

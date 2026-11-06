@@ -34,6 +34,8 @@ type TextareaNativeProps = Omit<
 
 export type FieldTextProps = FieldSharedProps & InputNativeProps & {
   type: 'text'
+  /** Nature de la saisie : mot de passe, email, téléphone… (« text » par défaut). */
+  inputType?: 'text' | 'password' | 'email' | 'tel' | 'url'
 }
 
 export type FieldNumberProps = FieldSharedProps & Omit<
@@ -281,6 +283,7 @@ export function Field(props: FieldProps) {
       controlClassName: _controlClassName,
       'aria-describedby': _ariaDescribedBy,
       'aria-invalid': _ariaInvalid,
+      inputType,
       onChange,
       onInput,
       ...nativeProps
@@ -290,7 +293,7 @@ export function Field(props: FieldProps) {
       <input
         {...nativeProps}
         {...controlA11yProps}
-        type="text"
+        type={inputType ?? 'text'}
         onChange={(event) => {
           onChange?.(event)
           setMeasureRevision((revision) => revision + 1)
