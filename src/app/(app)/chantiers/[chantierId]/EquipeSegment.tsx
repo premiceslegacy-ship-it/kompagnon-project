@@ -5,23 +5,14 @@
 
 import HoursSection from './HoursSection'
 import IndividualMembersSection from './IndividualMembersSection'
-import { EquipesTab, WeeklyPlanningView } from './LegacyEquipe'
+import { EquipesTab } from './LegacyEquipe'
+import PlanningSection from './PlanningSection'
 import type { ChantierDetailState } from './useChantierDetail'
 
 export default function EquipeSegment({ q }: { q: ChantierDetailState }) {
   return (
     <>
-      {q.canEditChantier && (
-        <WeeklyPlanningView
-          pointages={q.pointages}
-          plannings={q.plannings}
-          chantier={q.chantier}
-          equipes={q.allEquipes}
-          individualMembers={q.initialIndividualMembers}
-          onAddPlanning={q.handleAddPlanning}
-          onDeletePlanning={q.handleDeletePlanning}
-        />
-      )}
+      {q.canEditChantier && <PlanningSection q={q} />}
       {(q.canPointage || q.canManagePointages) && <HoursSection q={q} />}
       {q.canManageTeam && (
         <>

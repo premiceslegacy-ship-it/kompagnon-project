@@ -15,7 +15,7 @@ import { sendChantierReportEmail } from '@/lib/data/mutations/chantier-report-em
 import { sendChantierPhotosEmail } from '@/lib/data/mutations/chantier-photos-email'
 import { compressImageToJpeg } from '@/lib/images/compress'
 import { todayParis } from '@/lib/utils'
-import { type DeletedPointageInfo } from './RentabiliteTab'
+import { type DeletedPointageInfo } from './useRentabilite'
 
 import type { ChantierReserve } from '@/lib/data/queries/chantiers'
 import type { ChantierProfitability } from '@/lib/data/queries/chantier-profitability'

@@ -163,7 +163,7 @@ export default function ChantierDetailClient(props: ChantierDetailProps) {
             <div className={fiche.body}>
               {q.activeSegment === 'travaux' && <TravauxSegment q={q} />}
               {q.activeSegment === 'equipe' && <EquipeSegment q={q} />}
-              {q.activeSegment === 'argent' && <ArgentSegment q={q} />}
+              {q.activeSegment === 'argent' && <ArgentSegment q={q} onOpenDetails={() => setOverlay('details')} />}
               {q.activeSegment === 'photos' && <PhotosSegment q={q} />}
             </div>
           </div>
