@@ -20,15 +20,19 @@ export async function upsertEmailTemplate(input: {
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Organisation introuvable.' }
 
-  const { error } = await supabase
+  // Pas d'upsert : la table n'a pas de contrainte unique (organisation, modèle). On met à jour la ligne existante, sinon on l'insère.
+  const values = { subject: input.subject.trim(), body_text: input.body_text.trim(), is_active: true }
+  const { data: existing, error: lookupError } = await supabase
     .from('email_templates')
-    .upsert({
-      organization_id: orgId,
-      slug: input.slug,
-      subject: input.subject.trim(),
-      body_text: input.body_text.trim(),
-      is_active: true,
-    }, { onConflict: 'organization_id,slug' })
+    .select('id')
+    .eq('organization_id', orgId)
+    .eq('slug', input.slug)
+    .limit(1)
+  const { error } = lookupError
+    ? { error: lookupError }
+    : existing && existing.length > 0
+      ? await supabase.from('email_templates').update(values).eq('id', existing[0].id)
+      : await supabase.from('email_templates').insert({ organization_id: orgId, slug: input.slug, ...values })
 
   if (error) {
     console.error('[upsertEmailTemplate]', error)

@@ -4,6 +4,7 @@
 
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import CopyButton from './CopyButton'
+import CopyRow from './CopyRow'
 import { iframeSnippet, publicFormUrl, widgetSnippet } from './integrationModel'
 import type { SettingsState } from './useSettings'
 import styles from '../finances/quote-editor/QuoteEditor.module.css'
@@ -26,7 +27,8 @@ export default function IntegrationView({ q }: { q: SettingsState }) {
     <div className={local.detail}>
       <div className={local.sections}>
         <ListGroup title="Lien direct" description="À partager dans votre signature email, sur vos réseaux ou sur votre site.">
-          <ListRow title="Formulaire de demande de devis" description={url} trailing={<CopyButton text={url} />} />
+          <ListRow title="Formulaire de demande de devis" description={url} />
+          <CopyRow text={url} label="Copier le lien" doneLabel="Lien copié" />
           <ListRow title="Ouvrir dans un nouvel onglet" href={url} target="_blank" rel="noopener noreferrer" />
         </ListGroup>
         <Snippet title="Intégration iframe" intro="Collez ce code HTML dans votre site pour afficher le formulaire directement dans la page." code={iframeSnippet(url)} />

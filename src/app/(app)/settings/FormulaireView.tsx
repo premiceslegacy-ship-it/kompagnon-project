@@ -8,7 +8,7 @@ import { Field } from '@/components/ui/Field'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { Menu } from '@/components/ui/Menu'
 import { Switch } from '@/components/ui/Switch'
-import CopyButton from './CopyButton'
+import CopyRow from './CopyRow'
 import { publicFormUrl } from './integrationModel'
 import { clearType, countOfType, isPublicItemSelected, selectAllOfType, selectionSummary, type PublicItemType } from './publicFormModel'
 import { useSavedDirty } from './useSavedDirty'
@@ -68,7 +68,8 @@ export default function FormulaireView({ q }: { q: SettingsState }) {
             description={form.enabled ? 'Activé' : 'Désactivé'}
             trailing={<Switch label="Activer le formulaire public" checked={form.enabled} onChange={enabled => set({ enabled })} />}
           />
-          {form.enabled && <ListRow title="Lien du formulaire" description={url} trailing={<CopyButton text={url} />} />}
+          {form.enabled && <ListRow title="Lien du formulaire" description={url} />}
+          {form.enabled && <CopyRow text={url} label="Copier le lien" doneLabel="Lien copié" />}
           {form.enabled && <ListRow title="Ouvrir dans un nouvel onglet" href={url} target="_blank" rel="noopener noreferrer" />}
         </ListGroup>
 
