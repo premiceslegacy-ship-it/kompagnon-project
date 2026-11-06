@@ -2,19 +2,19 @@
 // @atelier-migrated
 // Réglages : liste groupée à la manière des Réglages iOS, puis un écran de détail par entrée.
 
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { Building2, ChevronLeft, FileText, KeyRound, Link2, Lock, Mail, MessageSquare, Receipt, Shield, ShieldCheck, Star, User, Users, Wallet } from 'lucide-react'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { createClient } from '@/lib/supabase/client'
 import AbonnementView from './AbonnementView'
 import DevisView from './DevisView'
+import DonneesView from './DonneesView'
 import EinvoicingView from './EinvoicingView'
 import EntrepriseView from './EntrepriseView'
 import EquipeView from './EquipeView'
 import FormulaireView from './FormulaireView'
 import IntegrationView from './IntegrationView'
-import { LegacyTabContent } from './LegacyTabs'
 import LegalView from './LegalView'
 import PaiementView from './PaiementView'
 import RelancesView from './RelancesView'
@@ -23,10 +23,22 @@ import ProfilView from './ProfilView'
 import SecuriteView from './SecuriteView'
 import { firstOrgError } from './entrepriseModel'
 import { canOpenTab, fullName, groupTitleOf, isSettingsTab, settingsGroups, type SettingsEntry, type SettingsTab } from './settingsModel'
-import { useSettings, type SettingsProps } from './useSettings'
+import { useSettings, type SettingsProps, type SettingsState } from './useSettings'
 import screen from '@/components/layout/Screen.module.css'
 import styles from '../finances/quote-editor/QuoteEditor.module.css'
 import local from './Settings.module.css'
+
+const VIEWS: Record<SettingsTab, (props: { q: SettingsState }) => ReactNode> = {
+  profil: ProfilView, securite: SecuriteView, entreprise: EntrepriseView, legal: LegalView, paiement: PaiementView,
+  devis: DevisView, emails: RelancesView, formulaire: FormulaireView, integration: IntegrationView,
+  equipe: EquipeView, roles: RolesView, abonnement: AbonnementView, facturation: EinvoicingView, confidentialite: DonneesView,
+}
+
+/** Chaque écran porte ses propres états : il est rendu comme composant, jamais appelé comme fonction. */
+function DetailView({ tab, q }: { tab: SettingsTab; q: SettingsState }) {
+  const View = VIEWS[tab]
+  return <View q={q} />
+}
 
 const ICONS: Record<SettingsEntry['icon'], typeof User> = {
   user: User, lock: Lock, building: Building2, insurance: ShieldCheck, wallet: Wallet, document: FileText, mail: Mail, message: MessageSquare, link: Link2,
@@ -96,22 +108,7 @@ export default function SettingsClient(props: SettingsProps) {
                 <h1 className={screen.title}>{entry.title}</h1>
               </div>
             </header>
-            <div className={local.detail}>
-              {tab === 'profil' ? <ProfilView q={q} />
-                : tab === 'securite' ? <SecuriteView q={q} />
-                  : tab === 'entreprise' ? <EntrepriseView q={q} />
-                    : tab === 'legal' ? <LegalView q={q} />
-                      : tab === 'paiement' ? <PaiementView q={q} />
-                        : tab === 'devis' ? <DevisView q={q} />
-                          : tab === 'emails' ? <RelancesView q={q} />
-                            : tab === 'formulaire' ? <FormulaireView q={q} />
-                              : tab === 'integration' ? <IntegrationView q={q} />
-                                : tab === 'abonnement' ? <AbonnementView q={q} />
-                                  : tab === 'facturation' ? <EinvoicingView q={q} />
-                                  : tab === 'equipe' ? <EquipeView q={q} />
-                                  : tab === 'roles' ? <RolesView q={q} />
-                                    : <div className={local.legacy}><LegacyTabContent q={q} /></div>}
-            </div>
+            <div className={local.detail}><DetailView tab={tab} q={q} /></div>
           </>
         ) : (
           <>

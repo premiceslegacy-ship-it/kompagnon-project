@@ -242,6 +242,7 @@ export function useSettings({ initialFullName, initialEmail, members, roles, joi
     // ─── Mémoire des assistants IA (consultation/purge, chantier 7 point 4) ──
     const [memories, setMemories] = useState(companyMemories);
     const [deletingMemoryId, setDeletingMemoryId] = useState<string | null>(null);
+    const [memoryError, setMemoryError] = useState<string | null>(null);
     const [memoriesPage, setMemoriesPage] = useState(0);
     const MEMORIES_PER_PAGE = 10;
     const memoriesPageCount = Math.max(1, Math.ceil(memories.length / MEMORIES_PER_PAGE));
@@ -249,6 +250,7 @@ export function useSettings({ initialFullName, initialEmail, members, roles, joi
 
     function handleDeleteMemory(memoryId: string) {
         const previous = memories;
+        setMemoryError(null);
         setDeletingMemoryId(memoryId);
         setMemories(prev => {
             const next = prev.filter(m => m.id !== memoryId);
@@ -260,7 +262,7 @@ export function useSettings({ initialFullName, initialEmail, members, roles, joi
             const result = await deactivateCompanyMemory(memoryId);
             if (result.error) {
                 setMemories(previous);
-                alert(result.error);
+                setMemoryError(result.error);
             }
             setDeletingMemoryId(null);
         });
@@ -916,6 +918,7 @@ export function useSettings({ initialFullName, initialEmail, members, roles, joi
     memories,
     setMemories,
     deletingMemoryId,
+    memoryError,
     setDeletingMemoryId,
     memoriesPage,
     setMemoriesPage,
