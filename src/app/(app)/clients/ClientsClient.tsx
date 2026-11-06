@@ -1,1121 +1,168 @@
 'use client'
+// @atelier-migrated
 
-import React, { useState, useTransition, useRef, useCallback } from 'react'
-import { useFormState, useFormStatus } from 'react-dom'
-import { type Client } from '@/lib/data/queries/clients'
-import {
-  createClient, updateClient, deleteClient, importClients,
-  convertToClient, convertToProspect,
-  type CreateClientState, type UpdateClientState, type ImportClientsState,
-} from '@/lib/data/mutations/clients'
-import { formatCurrency, ActionMenu } from '@/components/shared'
-import { getClientDisplayName } from '@/lib/client'
-import { todayParis } from '@/lib/utils'
-import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import {
-  Search, Upload, Download, Users, Euro, Filter,
-  FileText, Eye, Edit2, X, Loader2, CheckCircle2, AlertCircle, Building2, Trash2,
-  Target, ArrowRight, UserCheck, ChevronLeft, ChevronRight, Mail,
-} from 'lucide-react'
-import { ActionButton } from '@/components/ui/ActionButton'
+import { ChevronDown, ChevronLeft, ChevronRight, MoreHorizontal, Plus } from 'lucide-react'
+import { Avatar } from '@/components/ui/Avatar'
+import { Button } from '@/components/ui/Button'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { ListGroup, ListRow } from '@/components/ui/ListGroup'
+import { Menu, type MenuItem } from '@/components/ui/Menu'
+import { SearchField } from '@/components/ui/SearchField'
+import { StatusPill } from '@/components/ui/StatusPill'
+import { formatCurrency } from '@/components/shared'
 import EmailComposerModal from './EmailComposerModal'
-import { useCreationIntent } from '@/lib/hooks/use-creation-intent'
+import { ImportSheet, NewClientSheet, NewLeadSheet } from './ClientSheets'
+import { SORT_OPTIONS, STATUS_FILTERS, clientDisplayName, followupState, isLead, statusPill } from './clientsModel'
+import { useClients, type ClientsProps } from './useClients'
+import screen from '@/components/layout/Screen.module.css'
+import styles from '../finances/quote-editor/QuoteEditor.module.css'
+import docs from '../finances/Documents.module.css'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+const NB = ' '
 
-type Props = {
-  initialClients: Client[]
-  canCreate: boolean
-  canEdit: boolean
-  canDelete: boolean
-  canImport: boolean
-  canEmail: boolean
-  orgEmail: string | null
-  orgName: string
-  orgSignature: string | null
-  hasAI: boolean
-}
+export default function ClientsClient(props: ClientsProps) {
+  const q = useClients(props)
+  const { canCreate, canImport, canEmail, initialClients } = props
+  const { stats, pageData } = q
+  const statusLabel = STATUS_FILTERS.find(o => o.value === q.statusFilter)?.label ?? 'Statut'
+  const sortLabel = SORT_OPTIONS.find(o => o.value === q.sortBy)?.label ?? 'Tri'
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+  const menuItems: MenuItem[] = [
+    ...(canCreate ? [{ label: 'Ajouter un lead', onSelect: () => q.setIsNewLeadOpen(true) }] : []),
+    ...(canEmail ? [{ label: 'Envoyer un email', onSelect: () => q.setIsEmailOpen(true) }] : []),
+    ...(canImport ? [
+      { label: 'Importer des clients', onSelect: () => q.setImportMode('clients') },
+      { label: 'Importer des leads', onSelect: () => q.setImportMode('leads') },
+    ] : []),
+    { label: 'Exporter en CSV', onSelect: q.handleExportCSV },
+  ]
 
-export function clientDisplayName(client: Client): string {
-  return getClientDisplayName(client)
-}
-
-export function statusBadge(status: string | null) {
-  switch (status) {
-    case 'active':
-      return { label: 'Client', cls: 'status-pill status-pill-success' }
-    case 'prospect':
-      return { label: 'Prospect', cls: 'status-pill status-pill-info' }
-    case 'lead_hot':
-      return { label: 'Lead Chaud', cls: 'status-pill status-pill-accent' }
-    case 'lead_cold':
-      return { label: 'Lead Froid', cls: 'status-pill status-pill-muted' }
-    case 'subcontractor':
-      return { label: 'Sous-traitant', cls: 'status-pill status-pill-info' }
-    case 'inactive':
-      return { label: 'Inactif', cls: 'status-pill status-pill-danger' }
-    default:
-      return { label: status ?? '/', cls: 'status-pill status-pill-muted' }
-  }
-}
-
-const LEAD_STATUSES = ['lead_hot', 'lead_cold', 'prospect']
-
-// ─── Suivi relation ───────────────────────────────────────────────────────────
-// Signale les contacts qui méritent une relance : devis en attente de réponse,
-// ou lead/prospect sans aucune interaction depuis 14 jours.
-
-const FOLLOWUP_IDLE_DAYS = 14
-
-type FollowupState =
-  | { kind: 'pending_quotes'; label: string; cls: string }
-  | { kind: 'idle_lead'; label: string; cls: string }
-  | { kind: 'ok'; label: string; cls: string }
-
-export function followupState(client: Client): FollowupState {
-  if ((client.pending_quotes ?? 0) > 0) {
-    return {
-      kind: 'pending_quotes',
-      label: `${client.pending_quotes} devis en attente`,
-      cls: 'text-warning bg-warning/10 border-warning/20',
-    }
-  }
-  if (LEAD_STATUSES.includes(client.status ?? '')) {
-    const reference = client.last_activity_at ?? client.created_at
-    const idleDays = Math.floor((Date.now() - new Date(reference).getTime()) / 86400000)
-    if (idleDays >= FOLLOWUP_IDLE_DAYS) {
-      return {
-        kind: 'idle_lead',
-        label: client.last_activity_at ? `Sans échange depuis ${idleDays} j` : `Jamais contacté (${idleDays} j)`,
-        cls: 'text-danger bg-danger/10 border-danger/20',
-      }
-    }
-  }
-  return { kind: 'ok', label: '—', cls: 'text-secondary' }
-}
-
-export function needsFollowup(client: Client): boolean {
-  return followupState(client).kind !== 'ok'
-}
-
-const SOURCE_OPTIONS = [
-  { value: '', label: 'Non renseignée' },
-  { value: 'bouche_a_oreille', label: 'Bouche à oreille' },
-  { value: 'recommandation', label: 'Recommandation client' },
-  { value: 'site_web', label: 'Site web' },
-  { value: 'reseaux_sociaux', label: 'Réseaux sociaux' },
-  { value: 'formulaire_public', label: 'Formulaire public' },
-  { value: 'appel_entrant', label: 'Appel entrant' },
-  { value: 'salon_evenement', label: 'Salon / Événement' },
-  { value: 'autre', label: 'Autre' },
-]
-
-function sourceLabel(source: string | null): string {
-  if (!source) return '/'
-  return SOURCE_OPTIONS.find(o => o.value === source)?.label ?? source
-}
-
-function parseCSV(text: string): string[][] {
-  const lines = text.trim().split(/\r?\n/)
-  const separator = (lines[0]?.match(/;/g) ?? []).length > (lines[0]?.match(/,/g) ?? []).length ? ';' : ','
-  return lines.map(line => {
-    const result: string[] = []
-    let current = ''
-    let inQuotes = false
-    for (let i = 0; i < line.length; i++) {
-      if (line[i] === '"') { inQuotes = !inQuotes }
-      else if (line[i] === separator && !inQuotes) { result.push(current.trim()); current = '' }
-      else { current += line[i] }
-    }
-    result.push(current.trim())
-    return result
-  })
-}
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const inputCls = 'w-full p-3 rounded-xl bg-base/50 border border-[var(--elevation-border)] text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all'
-
-// ─── SubmitButton ─────────────────────────────────────────────────────────────
-
-function SubmitButton({ label }: { label: string }) {
-  const { pending } = useFormStatus()
-  return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="px-6 py-3 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
-    >
-      {pending ? <><Loader2 className="w-4 h-4 animate-spin" />Enregistrement...</> : label}
-    </button>
-  )
-}
-
-// ─── FilterSelect ─────────────────────────────────────────────────────────────
-
-const FilterSelect = ({
-  value, onChange, options, className = ''
-}: {
-  value: string
-  onChange: (val: string) => void
-  options: { value: string; label: string }[]
-  className?: string
-}) => {
-  const selectedLabel = options.find(o => o.value === value)?.label || value
-  return (
-    <div className="relative inline-block group">
-      <div className={`px-6 py-2.5 rounded-full bg-base border border-[var(--elevation-border)] text-primary text-sm transition-all group-hover:border-accent/30 flex items-center justify-center min-w-[140px] h-[42px] ${className}`}>
-        <span className="font-semibold text-center truncate">{selectedLabel}</span>
-      </div>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none"
-      >
-        {options.map(opt => (
-          <option key={opt.value} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
-    </div>
-  )
-}
-
-// ─── Shared form fields ───────────────────────────────────────────────────────
-
-function ContactFields({ defaultValues }: { defaultValues?: Partial<Client> }) {
-  const [clientType, setClientType] = useState<'company' | 'individual'>(
-    (defaultValues?.type as 'company' | 'individual') ?? 'company'
-  )
-  const isCompany = clientType === 'company'
+  const summary = `${stats.active}${NB}client${stats.active > 1 ? 's' : ''} · ${stats.pipeline}${NB}en prospection${stats.revenue > 0 ? ` · ${formatCurrency(stats.revenue)}${NB}de chiffre d’affaires` : ''}`
 
   return (
-    <div className="space-y-4">
-      {/* Toggle professionnel / particulier */}
-      <div className="flex rounded-xl overflow-hidden border border-[var(--elevation-border)]">
-        {(['company', 'individual'] as const).map(t => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setClientType(t)}
-            className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${clientType === t ? 'bg-accent text-black' : 'text-secondary hover:text-primary'}`}
-          >
-            {t === 'company' ? 'Professionnel' : 'Particulier'}
-          </button>
-        ))}
-      </div>
-      <input type="hidden" name="type" value={clientType} />
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {isCompany && (
-          <div className="md:col-span-2 space-y-2">
-            <label className="text-sm font-semibold text-secondary">Raison sociale *</label>
-            <input name="company_name" type="text" defaultValue={defaultValues?.company_name ?? ''} placeholder="Dupont Bâtiment SARL" className={inputCls} />
-          </div>
-        )}
-        {isCompany ? (
-          <div className="md:col-span-2 space-y-2">
-            <label className="text-sm font-semibold text-secondary">Nom du contact référent</label>
-            <input name="contact_name" type="text" defaultValue={defaultValues?.contact_name ?? ''} placeholder="Marie Dupont" className={inputCls} />
-          </div>
-        ) : (
-          <>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Prénom *</label>
-              <input name="first_name" type="text" defaultValue={defaultValues?.first_name ?? ''} placeholder="Jean" className={inputCls} />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Nom *</label>
-              <input name="last_name" type="text" defaultValue={defaultValues?.last_name ?? ''} placeholder="Dupont" className={inputCls} />
-            </div>
-          </>
-        )}
-        {isCompany && (
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-secondary">SIRET</label>
-            <input name="siret" type="text" defaultValue={defaultValues?.siret ?? ''} placeholder="12345678900012" className={`${inputCls} tabular-nums`} />
-          </div>
-        )}
-        <div className="space-y-2">
-          <label className="text-sm font-semibold text-secondary">Email</label>
-          <input name="email" type="email" defaultValue={defaultValues?.email ?? ''} placeholder={isCompany ? 'contact@entreprise.fr' : 'jean.dupont@gmail.com'} className={inputCls} />
-        </div>
-        <div className="space-y-2">
-          <label className="text-sm font-semibold text-secondary">Téléphone</label>
-          <input name="phone" type="tel" defaultValue={defaultValues?.phone ?? ''} placeholder="06 00 00 00 00" className={`${inputCls} tabular-nums`} />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── NewClientModal ───────────────────────────────────────────────────────────
-
-const initialCreateState: CreateClientState = { error: null, success: false }
-
-function NewClientModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const [state, formAction] = useFormState(createClient, initialCreateState)
-
-  React.useEffect(() => {
-    if (state.success) onClose()
-  }, [state.success, onClose])
-
-  if (!isOpen) return null
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal-panel animate-in fade-in duration-300">
-        <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
-        <h2 className="text-2xl font-bold text-primary mb-2">Nouveau Client</h2>
-        <p className="text-secondary text-sm mb-6">Client ayant déjà travaillé avec vous ou dont le devis a été accepté.</p>
-
-        {state.error && (
-          <div className="mb-5 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-red-500/10 border border-red-500/25">
-            <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
-            <p className="text-xs text-red-400 leading-snug">{state.error}</p>
-          </div>
-        )}
-
-        <form action={formAction} className="space-y-6">
-          <ContactFields />
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-secondary">Catégorie</label>
-            <select name="status" defaultValue="active" className={`${inputCls} appearance-none`}>
-              <option value="active">Client</option>
-              <option value="subcontractor">Sous-traitant</option>
-            </select>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-secondary">Adresse de facturation</label>
-            <input name="address_line1" type="text" placeholder="12 rue de la Paix, 75001 Paris" className={inputCls} />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Conditions de paiement</label>
-              <select name="payment_terms_days" className={`${inputCls} appearance-none`}>
-                <option value="30">30 jours net</option>
-                <option value="45">45 jours fin de mois</option>
-                <option value="60">60 jours net</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Devise</label>
-              <select name="currency" className={`${inputCls} appearance-none`}>
-                <option value="EUR">EUR : Euro (€)</option>
-                <option value="USD">USD : Dollar US ($)</option>
-                <option value="GBP">GBP : Livre sterling (£)</option>
-                <option value="CHF">CHF : Franc suisse</option>
-                <option value="CAD">CAD : Dollar canadien</option>
-                <option value="MAD">MAD : Dirham marocain</option>
-                <option value="DZD">DZD : Dinar algérien</option>
-                <option value="TND">TND : Dinar tunisien</option>
-                <option value="XOF">XOF : Franc CFA</option>
-                <option value="AED">AED : Dirham émirati</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Langue des documents</label>
-              <select name="locale" className={`${inputCls} appearance-none`}>
-                <option value="fr">🇫🇷 Français</option>
-                <option value="en">🇬🇧 English</option>
-              </select>
-            </div>
-          </div>
-          <div className="flex justify-end gap-4 pt-4">
-            <button type="button" onClick={onClose} className="px-6 py-3 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
-            <SubmitButton label="Créer le client" />
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-// ─── NewLeadModal ─────────────────────────────────────────────────────────────
-
-function NewLeadModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const [state, formAction] = useFormState(createClient, initialCreateState)
-  const [leadStatus, setLeadStatus] = useState<'lead_cold' | 'lead_hot'>('lead_cold')
-
-  React.useEffect(() => {
-    if (state.success) onClose()
-  }, [state.success, onClose])
-
-  if (!isOpen) return null
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal-panel animate-in fade-in duration-300">
-        <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
-        <div className="flex items-center gap-3 mb-2">
-          <Target className="w-6 h-6 text-accent" />
-          <h2 className="text-2xl font-bold text-primary">Ajouter un Lead</h2>
-        </div>
-        <p className="text-secondary text-sm mb-6">Contact prospect, pas encore client. Vous pourrez le convertir en client à tout moment.</p>
-
-        {state.error && (
-          <div className="mb-5 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-red-500/10 border border-red-500/25">
-            <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
-            <p className="text-xs text-red-400 leading-snug">{state.error}</p>
-          </div>
-        )}
-
-        <form action={formAction} className="space-y-6">
-          <input type="hidden" name="status" value={leadStatus} />
-
-          {/* Température du lead */}
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-secondary">Qualification</label>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => setLeadStatus('lead_cold')}
-                className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all border ${leadStatus === 'lead_cold' ? 'bg-secondary/10 text-secondary border-secondary/30' : 'border-[var(--elevation-border)] text-secondary hover:border-secondary/30'}`}
-              >
-                Froid, à qualifier
-              </button>
-              <button
-                type="button"
-                onClick={() => setLeadStatus('lead_hot')}
-                className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all border ${leadStatus === 'lead_hot' ? 'bg-accent/10 text-accent border-accent/30' : 'border-[var(--elevation-border)] text-secondary hover:border-accent/30'}`}
-              >
-                Chaud, intéressé
-              </button>
-            </div>
-          </div>
-
-          <ContactFields />
-
-          {/* Source */}
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-secondary">Source du lead</label>
-            <select name="source" className={`${inputCls} appearance-none`}>
-              {SOURCE_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex justify-end gap-4 pt-4">
-            <button type="button" onClick={onClose} className="px-6 py-3 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
-            <SubmitButton label="Ajouter le lead" />
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-// ─── EditClientModal ──────────────────────────────────────────────────────────
-
-const initialUpdateState: UpdateClientState = { error: null, success: false }
-
-function EditClientModal({ client, onClose }: { client: Client; onClose: () => void }) {
-  const [state, formAction] = useFormState(updateClient, initialUpdateState)
-
-  React.useEffect(() => {
-    if (state.success) onClose()
-  }, [state.success, onClose])
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal-panel animate-in fade-in duration-300">
-        <button onClick={onClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
-        <h2 className="text-2xl font-bold text-primary mb-6">Modifier le contact</h2>
-
-        {state.error && (
-          <div className="mb-5 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-red-500/10 border border-red-500/25">
-            <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
-            <p className="text-xs text-red-400 leading-snug">{state.error}</p>
-          </div>
-        )}
-
-        <form action={formAction} className="space-y-6">
-          <input type="hidden" name="client_id" value={client.id} />
-
-          <ContactFields defaultValues={client} />
-
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-secondary">Adresse de facturation</label>
-            <input name="address_line1" type="text" defaultValue={client.address_line1 ?? ''} placeholder="12 rue de la Paix, 75001 Paris" className={inputCls} />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Statut</label>
-              <select name="status" defaultValue={client.status ?? 'active'} className={`${inputCls} appearance-none`}>
-                <option value="lead_cold">Lead Froid</option>
-                <option value="lead_hot">Lead Chaud</option>
-                <option value="prospect">Prospect</option>
-                <option value="active">Client</option>
-                <option value="subcontractor">Sous-traitant</option>
-                <option value="inactive">Inactif</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Source</label>
-              <select name="source" defaultValue={client.source ?? ''} className={`${inputCls} appearance-none`}>
-                {SOURCE_OPTIONS.map(o => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Conditions de paiement</label>
-              <select name="payment_terms_days" defaultValue={String(client.payment_terms_days ?? 30)} className={`${inputCls} appearance-none`}>
-                <option value="30">30 jours net</option>
-                <option value="45">45 jours fin de mois</option>
-                <option value="60">60 jours net</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Devise</label>
-              <select name="currency" defaultValue={(client as { currency?: string }).currency ?? 'EUR'} className={`${inputCls} appearance-none`}>
-                <option value="EUR">EUR : Euro (€)</option>
-                <option value="USD">USD : Dollar US ($)</option>
-                <option value="GBP">GBP : Livre sterling (£)</option>
-                <option value="CHF">CHF : Franc suisse</option>
-                <option value="CAD">CAD : Dollar canadien</option>
-                <option value="MAD">MAD : Dirham marocain</option>
-                <option value="DZD">DZD : Dinar algérien</option>
-                <option value="TND">TND : Dinar tunisien</option>
-                <option value="XOF">XOF : Franc CFA</option>
-                <option value="AED">AED : Dirham émirati</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-secondary">Langue des documents</label>
-              <select name="locale" defaultValue={(client as { locale?: string }).locale ?? 'fr'} className={`${inputCls} appearance-none`}>
-                <option value="fr">🇫🇷 Français</option>
-                <option value="en">🇬🇧 English</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-4 pt-4">
-            <button type="button" onClick={onClose} className="px-6 py-3 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Annuler</button>
-            <SubmitButton label="Enregistrer" />
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-// ─── ImportCSVModal ───────────────────────────────────────────────────────────
-
-const CSV_FIELDS = [
-  { key: 'company_name',        label: 'Entreprise' },
-  { key: 'contact_name',        label: 'Contact référent' },
-  { key: 'first_name',          label: 'Prénom' },
-  { key: 'last_name',           label: 'Nom' },
-  { key: 'email',               label: 'Email' },
-  { key: 'phone',               label: 'Téléphone' },
-  { key: 'address_line1',       label: 'Adresse' },
-  { key: 'postal_code',         label: 'Code postal' },
-  { key: 'city',                label: 'Ville' },
-  { key: 'siret',               label: 'SIRET' },
-  { key: 'siren',               label: 'SIREN' },
-  { key: 'vat_number',          label: 'TVA Intracommunautaire' },
-  { key: 'payment_terms_days',  label: 'Délai paiement (jours)' },
-  { key: 'source',              label: 'Source' },
-  { key: 'status',              label: 'Statut (lead_cold, lead_hot, prospect, active, subcontractor)' },
-  { key: 'notes',               label: 'Notes internes' },
-]
-
-function downloadTemplate(isLeads: boolean) {
-  const headers = 'Entreprise;Contact référent;Prénom;Nom;Email;Téléphone;Adresse;Code Postal;Ville;SIRET;SIREN;TVA Intracommunautaire;Délai Paiement (jours);Source;Statut;Notes'
-  const ex1 = isLeads
-    ? 'Société Martin Nettoyage;Jean Martin;;contact@martin-nettoyage.fr;0612345678;12 rue de la Paix;75001;Paris;;;;30;bouche_a_oreille;lead_hot;Très intéressé, à rappeler semaine prochaine'
-    : 'Société Martin Nettoyage;Jean Martin;;contact@martin-nettoyage.fr;0612345678;12 rue de la Paix;75001;Paris;12345678901234;123456789;FR12123456789;30;;active;Client mensuel'
-  const ex2 = isLeads
-    ? ';;Jean;Dupont;jean.dupont@email.fr;0698765432;5 avenue des Fleurs;;Lyon;;;30;site_web;lead_cold;'
-    : ';;Jean;Dupont;jean.dupont@email.fr;0698765432;5 avenue des Fleurs;;Lyon;;;;30;;active;Particulier'
-  const csv = [headers, ex1, ex2].join('\n')
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = isLeads ? 'template-import-leads-atelier.csv' : 'template-import-clients-atelier.csv'
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-function ImportCSVModal({ isOpen, onClose, isLeads = false }: { isOpen: boolean; onClose: () => void; isLeads?: boolean }) {
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [step, setStep] = useState<1 | 2 | 3>(1)
-  const [headers, setHeaders] = useState<string[]>([])
-  const [dataRows, setDataRows] = useState<string[][]>([])
-  const [mapping, setMapping] = useState<Record<string, string>>({})
-  const [isPending, startTransition] = useTransition()
-  const [result, setResult] = useState<ImportClientsState | null>(null)
-
-  const resetModal = useCallback(() => {
-    setStep(1); setHeaders([]); setDataRows([]); setMapping({}); setResult(null)
-  }, [])
-
-  const handleClose = () => { resetModal(); onClose() }
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string
-      const rows = parseCSV(text)
-      if (rows.length < 2) return
-      const hdrs = rows[0]
-      const data = rows.slice(1).filter(r => r.some(c => c))
-      setHeaders(hdrs)
-      setDataRows(data)
-      const autoMap: Record<string, string> = {}
-      CSV_FIELDS.forEach(({ key }) => {
-        const idx = hdrs.findIndex(h =>
-          h.toLowerCase().replace(/[^a-z]/g, '').includes(key.replace(/_/g, ''))
-          || h.toLowerCase().includes(key.split('_')[0])
-        )
-        if (idx !== -1) autoMap[key] = String(idx)
-      })
-      setMapping(autoMap)
-      setStep(2)
-    }
-    reader.readAsText(file, 'utf-8')
-  }
-
-  const handleImport = () => {
-    const mapped = dataRows.map(row => {
-      const obj: Record<string, string> = {}
-      CSV_FIELDS.forEach(({ key }) => {
-        const colIdx = mapping[key] !== undefined ? parseInt(mapping[key]) : -1
-        obj[key] = colIdx >= 0 ? (row[colIdx] ?? '') : ''
-      })
-      // Forcer lead_cold si import leads et pas de statut explicite
-      if (isLeads && !obj.status) obj.status = 'lead_cold'
-      return obj
-    })
-    const fd = new FormData()
-    fd.set('clients_json', JSON.stringify(mapped))
-    startTransition(async () => {
-      const res = await importClients({ error: null, imported: 0, skipped: 0 }, fd)
-      setResult(res)
-      if (!res.error) { setStep(3); setTimeout(() => handleClose(), 2500) }
-    })
-  }
-
-  if (!isOpen) return null
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal-panel animate-in fade-in duration-300 sm:max-w-3xl">
-        <button onClick={handleClose} className="absolute top-6 right-6 text-secondary hover:text-primary transition-colors"><X className="w-6 h-6" /></button>
-        <h2 className="text-2xl font-bold text-primary mb-1">{isLeads ? 'Importer des leads' : 'Importer des clients'}</h2>
-        <p className="text-sm text-secondary mb-6">
-          {isLeads
-            ? 'Les contacts importés seront créés en statut Lead Froid par défaut (sauf colonne Statut renseignée).'
-            : 'Importez votre liste depuis Excel ou tout autre tableur.'}
-        </p>
-
-        {step === 1 && (
-          <>
-            <div className="mb-6 rounded-2xl bg-base/50 border border-[var(--elevation-border)] p-5 space-y-4">
-              <p className="text-sm font-bold text-primary">Comment faire ? (3 étapes simples)</p>
-              <div className="space-y-3">
-                {[
-                  { n: 1, title: 'Téléchargez le modèle', desc: 'Cliquez sur le bouton ci-dessous.' },
-                  { n: 2, title: 'Remplissez vos contacts', desc: `Ouvrez dans Excel ou Google Sheets. Remplissez une ligne par contact. Entreprise OU Nom est obligatoire.` },
-                  { n: 3, title: 'Importez ici', desc: 'Enregistrez en .csv puis déposez dans la zone ci-dessous.' },
-                ].map(({ n, title, desc }) => (
-                  <div key={n} className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-accent text-black text-xs font-bold flex items-center justify-center">{n}</span>
-                    <div>
-                      <p className="text-sm font-semibold text-primary">{title}</p>
-                      <p className="text-xs text-secondary mt-0.5">{desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => downloadTemplate(isLeads)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-accent text-black text-sm font-bold hover:scale-105 transition-all shadow-md shadow-accent/20"
-              >
-                <Download className="w-4 h-4" />
-                Télécharger le modèle
-              </button>
-            </div>
-            <input ref={fileInputRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleFileChange} />
-            <div
-              className="w-full h-40 border-2 border-dashed border-[var(--elevation-border)] rounded-2xl flex flex-col items-center justify-center gap-3 text-secondary hover:border-accent/50 hover:bg-accent/5 transition-all cursor-pointer"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload className="w-7 h-7 text-primary" />
-              <div className="text-center">
-                <p className="text-base font-bold text-primary">Glissez votre fichier ici</p>
-                <p className="text-sm">ou cliquez pour choisir</p>
-              </div>
-            </div>
-            <p className="mt-3 text-xs text-secondary text-center">Format accepté : .csv (séparateur ; ou ,)</p>
-          </>
-        )}
-
-        {step === 2 && (
-          <div className="space-y-6">
-            <p className="text-sm text-secondary">{dataRows.length} ligne(s) détectée(s). Associez les colonnes de votre fichier.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-72 overflow-y-auto pr-1">
-              {CSV_FIELDS.map(({ key, label }) => (
-                <div key={key} className="space-y-1">
-                  <label className="text-xs font-semibold text-secondary">{label}</label>
-                  <select
-                    value={mapping[key] ?? ''}
-                    onChange={(e) => setMapping(prev => ({ ...prev, [key]: e.target.value }))}
-                    className={`${inputCls} appearance-none text-sm`}
-                  >
-                    <option value="">Ignorer cette colonne</option>
-                    {headers.map((h, i) => <option key={i} value={String(i)}>{h || `Colonne ${i + 1}`}</option>)}
-                  </select>
-                </div>
-              ))}
-            </div>
-            {result?.error && (
-              <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-red-500/10 border border-red-500/25">
-                <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
-                <p className="text-xs text-red-400">{result.error}</p>
-              </div>
-            )}
-            <div className="flex justify-end gap-4 pt-2">
-              <button onClick={() => { setStep(1); setResult(null) }} className="px-6 py-3 rounded-full text-secondary hover:text-primary font-semibold transition-colors">Retour</button>
-              <ActionButton
-                onClick={handleImport}
-                loading={isPending}
-                disabled={!mapping['company_name'] && !mapping['last_name'] && !mapping['first_name']}
-                className="px-6 py-3 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
-              >
-                {`Importer ${dataRows.length} contacts`}
-              </ActionButton>
-            </div>
-          </div>
-        )}
-
-        {step === 3 && result && (
-          <div className="flex flex-col items-center justify-center py-12 gap-4">
-            <CheckCircle2 className="w-16 h-16 text-accent-green" />
-            <p className="text-xl font-bold text-primary">{result.imported} contact(s) importé(s) avec succès</p>
-            {result.skipped > 0 && <p className="text-sm text-secondary">{result.skipped} ligne(s) ignorée(s) (nom manquant).</p>}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─── Empty State ──────────────────────────────────────────────────────────────
-
-function EmptyState({ filtered }: { filtered: boolean }) {
-  return (
-    <tr>
-      <td colSpan={8} className="px-6 py-20 text-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-20 h-20 flex items-center justify-center">
-            {filtered ? <Filter className="w-10 h-10 text-secondary opacity-20" /> : <Building2 className="w-10 h-10 text-secondary opacity-20" />}
-          </div>
+    <main className={screen.root}>
+      <div className={screen.page}>
+        <header className={screen.header}>
           <div>
-            <p className="text-xl font-bold text-primary">
-              {filtered ? 'Aucun contact trouvé' : 'Aucun contact pour le moment'}
-            </p>
-            <p className="text-secondary mt-1">
-              {filtered ? 'Essayez de modifier vos critères de recherche.' : 'Commencez par ajouter un client ou un lead.'}
-            </p>
+            <p className={screen.kicker}>Clients et leads</p>
+            <h1 className={screen.title}>Clients</h1>
           </div>
-        </div>
-      </td>
-    </tr>
-  )
-}
-
-// ─── Main Component ───────────────────────────────────────────────────────────
-
-export default function ClientsClient({ initialClients, canCreate, canEdit, canDelete, canImport, canEmail, orgEmail, orgName, orgSignature, hasAI }: Props) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState('All')
-  const [sortBy, setSortBy] = useState('created_at')
-  const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false)
-
-  const openNewClient = useCallback(() => setIsNewClientModalOpen(true), [])
-  useCreationIntent(canCreate, openNewClient)
-  const [isNewLeadModalOpen, setIsNewLeadModalOpen] = useState(false)
-  const [isImportCSVModalOpen, setIsImportCSVModalOpen] = useState(false)
-  const [importIsLeads, setImportIsLeads] = useState(false)
-  const [editingClient, setEditingClient] = useState<Client | null>(null)
-  const [isPending, startTransition] = useTransition()
-  const [page, setPage] = useState(1)
-  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
-
-  const PAGE_SIZE = 10
-
-  const statusOptions = [
-    { value: 'All',       label: 'Tous' },
-    { value: 'followup',  label: 'À relancer' },
-    { value: 'active',    label: 'Clients' },
-    { value: 'prospect',  label: 'Prospects' },
-    { value: 'lead_hot',  label: 'Leads Chauds' },
-    { value: 'lead_cold', label: 'Leads Froids' },
-    { value: 'subcontractor', label: 'Sous-traitants' },
-    { value: 'inactive',  label: 'Inactifs' },
-  ]
-
-  const sortOptions = [
-    { value: 'created_at',   label: 'Plus récents' },
-    { value: 'name',         label: 'Trier par Nom' },
-    { value: 'revenue_desc', label: 'Trier par CA' },
-  ]
-
-  const allFiltered = initialClients
-    .filter(client => {
-      const name = clientDisplayName(client).toLowerCase()
-      const matchesSearch =
-        name.includes(searchTerm.toLowerCase()) ||
-        (client.email ?? '').toLowerCase().includes(searchTerm.toLowerCase())
-      const matchesStatus = statusFilter === 'All'
-        || (statusFilter === 'followup' ? needsFollowup(client) : client.status === statusFilter)
-      return matchesSearch && matchesStatus
-    })
-    .sort((a, b) => {
-      if (sortBy === 'revenue_desc') return (b.total_revenue ?? 0) - (a.total_revenue ?? 0)
-      if (sortBy === 'name') return clientDisplayName(a).localeCompare(clientDisplayName(b))
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    })
-
-  const totalPages = Math.max(1, Math.ceil(allFiltered.length / PAGE_SIZE))
-  const currentPage = Math.min(page, totalPages)
-  const filteredClients = allFiltered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
-
-  const totalClients   = initialClients.filter(c => c.status === 'active').length
-  const totalPipeline  = initialClients.filter(c => LEAD_STATUSES.includes(c.status ?? '')).length
-  const totalRevenue   = initialClients.filter(c => c.status === 'active').reduce((acc, c) => acc + (c.total_revenue ?? 0), 0)
-  const totalFollowup  = initialClients.filter(needsFollowup).length
-
-  const handleExportCSV = () => {
-    const headers = ['ID', 'Entreprise', 'Prénom', 'Nom', 'Email', 'Téléphone', 'Statut', 'Source', 'CA Total']
-    const csvContent = [
-      headers.join(','),
-      ...allFiltered.map(c => [
-        c.id,
-        `"${c.company_name ?? ''}"`,
-        c.first_name ?? '',
-        c.last_name ?? '',
-        c.email ?? '',
-        c.phone ?? '',
-        c.status ?? '',
-        c.source ?? '',
-        c.total_revenue ?? 0,
-      ].join(',')),
-    ].join('\n')
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `contacts_export_${todayParis()}.csv`
-    link.click()
-  }
-
-  const handleDelete = (clientId: string, clientName: string) => {
-    if (!confirm(`Archiver "${clientName}" ? Il ne sera plus visible dans la liste.`)) return
-    startTransition(async () => {
-      const { error } = await deleteClient(clientId)
-      if (error) alert(error)
-      else router.refresh()
-    })
-  }
-
-  const handleConvertToClient = (clientId: string, clientName: string) => {
-    if (!confirm(`Convertir "${clientName}" en client actif ?`)) return
-    startTransition(async () => {
-      const { error } = await convertToClient(clientId)
-      if (error) alert(error)
-      else router.refresh()
-    })
-  }
-
-  const handleCreateQuote = async (client: Client) => {
-    // Auto-transition lead → prospect au moment de créer un devis
-    if (client.status === 'lead_hot' || client.status === 'lead_cold') {
-      await convertToProspect(client.id)
-    }
-    const params = new URLSearchParams({ client: client.id, returnTo: pathname })
-    router.push(`/finances/quote-editor?${params}`)
-  }
-
-  const openImport = (forLeads: boolean) => {
-    setImportIsLeads(forLeads)
-    setIsImportCSVModalOpen(true)
-  }
-
-  const isFiltered = searchTerm !== '' || statusFilter !== 'All'
-
-  return (
-    <main className="page-container space-y-6 md:space-y-8">
-      <NewClientModal isOpen={isNewClientModalOpen} onClose={() => setIsNewClientModalOpen(false)} />
-      <NewLeadModal isOpen={isNewLeadModalOpen} onClose={() => setIsNewLeadModalOpen(false)} />
-      <ImportCSVModal isOpen={isImportCSVModalOpen} onClose={() => setIsImportCSVModalOpen(false)} isLeads={importIsLeads} />
-      {editingClient && <EditClientModal client={editingClient} onClose={() => setEditingClient(null)} />}
-      {isEmailModalOpen && (
-        <EmailComposerModal
-          isOpen={isEmailModalOpen}
-          onClose={() => setIsEmailModalOpen(false)}
-          allClients={initialClients}
-          orgEmail={orgEmail}
-          orgName={orgName}
-          orgSignature={orgSignature}
-          hasAI={hasAI}
-        />
-      )}
-
-      {/* En-tête */}
-      <div className="flex flex-col gap-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex flex-col gap-2">
-            <h1 className="text-4xl font-bold text-primary">Clients & Leads</h1>
-            <p className="text-secondary text-lg">Gérez votre base de contacts, de la prospection à la fidélisation.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-            {canCreate && (
-              <button onClick={() => setIsNewLeadModalOpen(true)} className="btn-secondary flex-1 md:flex-none px-4 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
-                <Target className="w-4 h-4" />Nouveau Lead
-              </button>
-            )}
-            {canCreate && (
-              <button onClick={() => setIsNewClientModalOpen(true)} className="btn-primary flex-1 md:flex-none px-6 py-2.5 flex items-center justify-center gap-2 text-sm whitespace-nowrap">
-                <UserCheck className="w-4 h-4" />Nouveau Client
-              </button>
-            )}
-            <ActionMenu actions={[
-              ...(canImport ? [
-                { label: 'Importer des clients', icon: <Upload className="w-4 h-4" />, onClick: () => openImport(false) },
-                { label: 'Importer des leads', icon: <Upload className="w-4 h-4" />, onClick: () => openImport(true) },
-              ] : []),
-              { label: 'Exporter', icon: <Download className="w-4 h-4" />, onClick: handleExportCSV },
-              ...(canEmail ? [{ label: 'Envoyer un email', icon: <Mail className="w-4 h-4" />, onClick: () => setIsEmailModalOpen(true) }] : []),
-            ]} />
-          </div>
-        </div>
-
-        {/* Filtres */}
-        <div className="flex flex-col xl:flex-row items-start xl:items-center gap-4 w-full bg-surface dark:bg-white/5 border border-[var(--elevation-border)] p-4 rounded-2xl shadow-sm">
-          <div className="relative flex-1 w-full min-w-[250px] max-w-sm">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-secondary" />
-            <input
-              type="text"
-              placeholder="Rechercher..."
-              value={searchTerm}
-              onChange={(e) => { setSearchTerm(e.target.value); setPage(1) }}
-              className="w-full pl-12 pr-4 py-2.5 rounded-full bg-base border border-[var(--elevation-border)] focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all text-primary text-sm"
+          <div className={styles.headerEnd}>
+            <Menu
+              title="Clients"
+              items={menuItems}
+              trigger={<button type="button" className={screen.round} aria-label="Plus d'options"><MoreHorizontal size={20} aria-hidden="true" /></button>}
             />
+            {canCreate && (
+              <>
+                <Button size="md" className={styles.createWide} onClick={() => q.setIsNewClientOpen(true)}>Nouveau client</Button>
+                <button type="button" className={styles.createRound} onClick={() => q.setIsNewClientOpen(true)} aria-label="Nouveau client">
+                  <Plus size={20} aria-hidden="true" />
+                </button>
+              </>
+            )}
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-3 w-full xl:w-auto xl:ml-auto">
-            <FilterSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1) }} options={statusOptions} />
-            <FilterSelect value={sortBy} onChange={(v) => { setSortBy(v); setPage(1) }} options={sortOptions} />
-          </div>
-        </div>
-      </div>
+        </header>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="rounded-3xl card p-6 flex items-center gap-4">
-          <div className="w-12 h-12 flex items-center justify-center">
-            <Users className="w-6 h-6 text-accent-green" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Clients Actifs</p>
-            <p className="text-2xl font-bold text-primary tabular-nums">{totalClients}</p>
-          </div>
-        </div>
-        <div className="rounded-3xl card p-6 flex items-center gap-4">
-          <div className="w-12 h-12 flex items-center justify-center">
-            <Target className="w-6 h-6 text-accent" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-secondary uppercase tracking-wider">Pipeline</p>
-            <p className="text-2xl font-bold text-primary tabular-nums">{totalPipeline}</p>
-            <p className="text-xs text-secondary">leads + prospects</p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => { setStatusFilter('followup'); setPage(1) }}
-          className={`rounded-3xl card p-6 flex items-center gap-4 text-left transition-all ${totalFollowup > 0 ? 'hover:ring-1 hover:ring-warning/40 cursor-pointer' : 'cursor-default'}`}
-        >
-          <div className="w-12 h-12 flex items-center justify-center">
-            <AlertCircle className="w-6 h-6 text-warning" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-secondary uppercase tracking-wider">À relancer</p>
-            <p className="text-2xl font-bold text-primary tabular-nums">{totalFollowup}</p>
-            <p className="text-xs text-secondary">devis en attente + leads dormants</p>
-          </div>
-        </button>
-        <div className="rounded-3xl card p-6 flex items-center gap-4">
-          <div className="w-12 h-12 flex items-center justify-center">
-            <Euro className="w-6 h-6 text-blue-500" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-secondary uppercase tracking-wider">CA Clients</p>
-            <p className="text-2xl font-bold text-primary tabular-nums">{formatCurrency(totalRevenue)}</p>
-          </div>
-        </div>
-      </div>
+        {initialClients.length > 0 && <p className={docs.summary}>{summary}</p>}
+        {initialClients.length > 0 && (
+          <>
+            <div className={docs.searchRow}>
+              <SearchField value={q.searchTerm} onChange={v => { q.setSearchTerm(v); q.setPage(1) }} label="Rechercher un contact" placeholder="Nom ou email" />
+            </div>
+            <div className={docs.chips}>
+              <Menu
+                title="Statut"
+                items={STATUS_FILTERS.map(o => ({
+                  label: o.value === 'followup' && stats.followup > 0 ? `${o.label} (${stats.followup})` : o.label,
+                  checked: q.statusFilter === o.value,
+                  onSelect: () => { q.setStatusFilter(o.value); q.setPage(1) },
+                }))}
+                trigger={
+                  <button type="button" className={docs.chip} data-on={q.statusFilter !== 'All' ? 'true' : 'false'}>
+                    {statusLabel}
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </button>
+                }
+              />
+              <Menu
+                title="Trier"
+                items={SORT_OPTIONS.map(o => ({ label: o.label, checked: q.sortBy === o.value, onSelect: () => { q.setSortBy(o.value); q.setPage(1) } }))}
+                trigger={
+                  <button type="button" className={docs.chip}>
+                    Trier : {sortLabel}
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </button>
+                }
+              />
+            </div>
+          </>
+        )}
 
-      {/* Table */}
-      <div className="rounded-3xl card overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--elevation-border)]">
-          <span className="text-xs text-secondary">
-            {allFiltered.length} contact{allFiltered.length !== 1 ? 's' : ''}
-            {(searchTerm || statusFilter !== 'All') ? ' trouvé' + (allFiltered.length !== 1 ? 's' : '') : ''}
-          </span>
-          {totalPages > 1 && (
-            <span className="text-xs text-secondary">Page {currentPage} / {totalPages}</span>
+        <div className={styles.stack} style={{ marginTop: 16 }}>
+          {initialClients.length === 0 ? (
+            canCreate ? (
+              <EmptyState title="Aucun contact pour le moment" description="Commencez par ajouter un client ou un lead." actionLabel="Nouveau client" onAction={() => q.setIsNewClientOpen(true)} />
+            ) : (
+              <EmptyState title="Aucun contact pour le moment" description="Aucun client ni lead n'a encore été ajouté." />
+            )
+          ) : q.allFiltered.length === 0 ? (
+            <EmptyState title="Aucun contact trouvé" description="Essayez de modifier vos critères de recherche." actionLabel="Tous les contacts" onAction={() => { q.setSearchTerm(''); q.setStatusFilter('All') }} />
+          ) : (
+            <ListGroup>
+              {pageData.items.map(client => {
+                const pill = statusPill(client.status)
+                const followup = followupState(client)
+                const lead = isLead(client)
+                return (
+                  <ListRow
+                    key={client.id}
+                    href={`/clients/${client.id}`}
+                    leading={<Avatar name={clientDisplayName(client)} />}
+                    title={clientDisplayName(client)}
+                    description={followup.kind !== 'ok'
+                      ? followup.label
+                      : [client.type === 'company' ? 'Professionnel' : 'Particulier', client.email].filter(Boolean).join(' · ')}
+                    trailing={
+                      <span className={styles.trailStack}>
+                        {!lead && <span className={styles.amount}>{formatCurrency(client.total_revenue ?? 0)}</span>}
+                        <StatusPill status={pill.status}>{pill.label}</StatusPill>
+                      </span>
+                    }
+                  />
+                )
+              })}
+            </ListGroup>
+          )}
+
+          {pageData.totalPages > 1 && (
+            <div className={docs.pager}>
+              <button type="button" className={screen.round} aria-label="Page précédente" disabled={pageData.currentPage === 1} onClick={() => q.setPage(p => Math.max(1, p - 1))}>
+                <ChevronLeft size={20} aria-hidden="true" />
+              </button>
+              <span className={docs.pagerLabel}>Page {pageData.currentPage} / {pageData.totalPages}</span>
+              <button type="button" className={screen.round} aria-label="Page suivante" disabled={pageData.currentPage === pageData.totalPages} onClick={() => q.setPage(p => Math.min(pageData.totalPages, p + 1))}>
+                <ChevronRight size={20} aria-hidden="true" />
+              </button>
+            </div>
           )}
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-[var(--elevation-border)] bg-base/30">
-                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Contact</th>
-                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">Email / Tél.</th>
-                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap">Statut</th>
-                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden lg:table-cell">Source</th>
-                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden sm:table-cell">Suivi</th>
-                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap hidden sm:table-cell">CA Total</th>
-                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider whitespace-nowrap hidden lg:table-cell">Paiement</th>
-                <th className="px-4 md:px-6 py-4 text-sm font-bold text-secondary uppercase tracking-wider text-right whitespace-nowrap">Actions</th>
-              </tr>
-            </thead>
-            <tbody className={`divide-y divide-[var(--elevation-border)] ${isPending ? 'opacity-60 pointer-events-none' : ''}`}>
-              {filteredClients.length > 0 ? filteredClients.map((client) => {
-                const badge = statusBadge(client.status)
-                const name = clientDisplayName(client)
-                const isLead = LEAD_STATUSES.includes(client.status ?? '')
-                return (
-                  <tr key={client.id} className="hover:bg-accent/5 transition-colors group">
-                    <td className="px-4 md:px-6 py-4">
-                      <Link href={`/clients/${client.id}`}>
-                        <p className="font-bold text-primary hover:text-accent transition-colors">{name}</p>
-                        {client.company_name && client.contact_name && (
-                          <p className="text-xs text-secondary mt-0.5">
-                            Réf. : <span className="font-medium text-primary">{client.contact_name}</span>
-                          </p>
-                        )}
-                        {client.siret && <p className="text-xs text-secondary tabular-nums">SIRET : {client.siret}</p>}
-                      </Link>
-                    </td>
-                    <td className="px-4 md:px-6 py-4 hidden md:table-cell">
-                      {client.email && <p className="text-sm text-primary">{client.email}</p>}
-                      {client.phone && <p className="text-xs text-secondary tabular-nums">{client.phone}</p>}
-                    </td>
-                    <td className="px-4 md:px-6 py-4">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${badge.cls}`}>
-                        {badge.label}
-                      </span>
-                    </td>
-                    <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
-                      <p className="text-xs text-secondary">{sourceLabel(client.source)}</p>
-                    </td>
-                    <td className="px-4 md:px-6 py-4 hidden sm:table-cell">
-                      {(() => {
-                        const followup = followupState(client)
-                        return followup.kind === 'ok' ? (
-                          <span className="text-xs text-secondary/60">—</span>
-                        ) : (
-                          <span className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-semibold border whitespace-nowrap ${followup.cls}`}>
-                            {followup.label}
-                          </span>
-                        )
-                      })()}
-                    </td>
-                    <td className="px-4 md:px-6 py-4 text-right hidden sm:table-cell">
-                      <p className="text-sm font-bold text-primary tabular-nums">
-                        {isLead ? '/' : formatCurrency(client.total_revenue ?? 0)}
-                      </p>
-                    </td>
-                    <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
-                      <p className="text-sm text-secondary">{client.payment_terms_days ?? 30} j</p>
-                    </td>
-                    <td className="px-4 md:px-6 py-4 text-right">
-                      <ActionMenu actions={[
-                        { label: 'Voir la fiche', icon: <Eye className="w-4 h-4" />, onClick: () => router.push(`/clients/${client.id}`) },
-                        { label: 'Créer un devis', icon: <FileText className="w-4 h-4" />, onClick: () => handleCreateQuote(client) },
-                        ...(isLead && canEdit ? [{
-                          label: 'Convertir en client',
-                          icon: <ArrowRight className="w-4 h-4" />,
-                          onClick: () => handleConvertToClient(client.id, name),
-                        }] : []),
-                        ...(canEdit ? [{ label: 'Éditer', icon: <Edit2 className="w-4 h-4" />, onClick: () => setEditingClient(client) }] : []),
-                        ...(canDelete ? [{ label: 'Supprimer', icon: <Trash2 className="w-4 h-4" />, onClick: () => handleDelete(client.id, name), danger: true }] : []),
-                      ]} />
-                    </td>
-                  </tr>
-                )
-              }) : (
-                <EmptyState filtered={isFiltered} />
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between px-6 py-3 border-t border-[var(--elevation-border)]">
-            <span className="text-xs text-secondary">
-              {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, allFiltered.length)} sur {allFiltered.length}
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                title="Page précédente"
-                aria-label="Page précédente"
-                className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronLeft className="w-4 h-4 text-secondary" />
-              </button>
-              {Array.from({ length: totalPages }, (_, i) => i + 1)
-                .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
-                .reduce<(number | '...')[]>((acc, p, idx, arr) => {
-                  if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push('...')
-                  acc.push(p)
-                  return acc
-                }, [])
-                .map((p, i) =>
-                  p === '...' ? (
-                    <span key={`ellipsis-${i}`} className="px-1 text-xs text-secondary">...</span>
-                  ) : (
-                    <button
-                      key={p}
-                      onClick={() => setPage(p as number)}
-                      className={`min-w-[28px] h-7 rounded-lg text-xs font-bold transition-colors ${
-                        currentPage === p ? 'bg-accent text-black' : 'hover:bg-accent/10 text-secondary'
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  )
-                )
-              }
-              <button
-                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-                title="Page suivante"
-                aria-label="Page suivante"
-                className="p-1.5 rounded-lg hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronRight className="w-4 h-4 text-secondary" />
-              </button>
-            </div>
-          </div>
-        )}
       </div>
+
+      {q.isNewClientOpen && <NewClientSheet onClose={() => q.setIsNewClientOpen(false)} />}
+      {q.isNewLeadOpen && <NewLeadSheet onClose={() => q.setIsNewLeadOpen(false)} />}
+      {q.importMode && <ImportSheet isLeads={q.importMode === 'leads'} onClose={() => q.setImportMode(null)} />}
+      {q.isEmailOpen && (
+        <EmailComposerModal
+          isOpen={q.isEmailOpen}
+          onClose={() => q.setIsEmailOpen(false)}
+          allClients={initialClients}
+          orgEmail={props.orgEmail}
+          orgName={props.orgName}
+          orgSignature={props.orgSignature}
+          hasAI={props.hasAI}
+        />
+      )}
     </main>
   )
 }

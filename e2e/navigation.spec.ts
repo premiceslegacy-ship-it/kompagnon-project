@@ -27,7 +27,9 @@ test('Créer un client deux fois depuis la même page conserve le brouillon ouve
   await requestCreation(page, 'Client', '/clients')
   const company = page.locator('input[name="company_name"]')
   await company.fill('Brouillon client conservé')
-  await requestCreation(page, 'Client', '/clients')
+  // La feuille de création est modale : une seconde demande arrive par la navigation interne (lien, retour).
+  await page.evaluate(() => window.history.pushState(null, '', '/clients?new=1'))
+  await page.waitForURL(url => url.pathname === '/clients' && !url.searchParams.has('new'))
   await expect(company).toHaveValue('Brouillon client conservé')
 })
 

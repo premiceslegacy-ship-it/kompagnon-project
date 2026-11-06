@@ -1,6 +1,8 @@
 // @atelier-migrated
 // Logique pure des contrats : formulaire, filtre, statistiques. Aucun état React ici.
 
+export { PAGE_SIZE, paginate } from '@/lib/pagination'
+
 import type { Chantier } from '@/lib/data/queries/chantiers'
 import type { Client } from '@/lib/data/queries/clients'
 import type { ContractListItem, ContractTemplateOption } from '@/lib/data/queries/contracts'
@@ -31,8 +33,6 @@ export type ContractFormState = {
   customSections: ContractCustomSection[]
   durationText: string
 }
-
-export const PAGE_SIZE = 10
 
 export const CLAUSE_ORDER = Object.keys(CLAUSE_LABELS) as ContractClauseKey[]
 
@@ -190,11 +190,4 @@ export function contractStats(contracts: ContractListItem[]) {
     signed: contracts.filter(contract => contract.status === 'signed').length,
     generated: contracts.filter(contract => contract.pdf_generated_at).length,
   }
-}
-
-export function paginate<T>(items: T[], page: number, size = PAGE_SIZE) {
-  const totalPages = Math.max(1, Math.ceil(items.length / size))
-  const currentPage = Math.min(Math.max(1, page), totalPages)
-  const start = (currentPage - 1) * size
-  return { items: items.slice(start, start + size), totalPages, currentPage, start }
 }
