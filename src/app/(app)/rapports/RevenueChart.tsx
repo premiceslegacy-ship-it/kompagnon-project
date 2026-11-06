@@ -8,7 +8,7 @@ import styles from './Rapports.module.css'
 
 type Props = { series: MonthSeries[]; prevSeries: MonthSeries[] }
 
-const compact = (n: number) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', notation: 'compact', maximumFractionDigits: 0 }).format(n)
+const compact = (n: number) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', notation: 'compact', maximumFractionDigits: 1 }).format(n)
 const full = (n: number) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n)
 
 const SERIES = [
@@ -40,12 +40,12 @@ export default function RevenueChart({ series, prevSeries }: Props) {
       </ul>
       <div role="img" aria-label="Graphique en barres du facturé et de l’encaissé, mois par mois">
         <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barCategoryGap="24%" barGap={2}>
+          <BarChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barCategoryGap="12%" barGap={1}>
             <CartesianGrid strokeDasharray="3 6" stroke="var(--at-trait)" vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--at-encre-2)' }} axisLine={false} tickLine={false} dy={6} />
-            <YAxis tickFormatter={compact} tick={{ fontSize: 11, fill: 'var(--at-encre-2)' }} axisLine={false} tickLine={false} width={56} />
+            <XAxis dataKey="label" tickFormatter={(l: string) => l.slice(0, 1).toUpperCase()} interval={0} tick={{ fontSize: 11, fill: 'var(--at-encre-2)' }} axisLine={false} tickLine={false} dy={6} />
+            <YAxis tickFormatter={compact} tick={{ fontSize: 11, fill: 'var(--at-encre-2)' }} axisLine={false} tickLine={false} width={52} />
             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'var(--at-remplissage)' }} />
-            {SERIES.map(s => <Bar key={s.key} dataKey={s.key} name={s.key} fill={s.color} maxBarSize={22} radius={[4, 4, 0, 0]} />)}
+            {SERIES.map(s => <Bar key={s.key} dataKey={s.key} name={s.key} fill={s.color} maxBarSize={14} radius={[4, 4, 0, 0]} />)}
           </BarChart>
         </ResponsiveContainer>
       </div>

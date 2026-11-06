@@ -2,7 +2,6 @@
 // @atelier-migrated
 // Rapports : les détails Rentabilité, Activité, Entretien, Heures, Clients et chantiers.
 
-import Link from 'next/link'
 import { useState } from 'react'
 import { Avatar } from '@/components/ui/Avatar'
 import { Field } from '@/components/ui/Field'
@@ -195,7 +194,10 @@ export function ClassementsView({ q }: { q: RapportsState }) {
           </ListGroup>
         </div>
       )}
-      <p className={styles.hint} style={{ margin: '0 16px' }}><Link href="/clients">Tous les clients</Link> · <Link href="/chantiers">Tous les chantiers</Link></p>
+      <ListGroup>
+        <ListRow title="Tous les clients" href="/clients" />
+        <ListRow title="Tous les chantiers" href="/chantiers" />
+      </ListGroup>
     </div>
   )
 }
