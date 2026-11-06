@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { AlertDialog } from '@/components/ui/AlertDialog'
 import { Button } from '@/components/ui/Button'
+import { Sheet } from '@/components/ui/Sheet'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { cancelAccountDeletion } from '@/lib/data/mutations/account-deletion'
@@ -25,7 +26,8 @@ export default function DonneesView({ q }: { q: SettingsState }) {
   const [exportKey, setExportKey] = useState(0)
   const [exportOpen, setExportOpen] = useState(false)
   const [closureOpen, setClosureOpen] = useState(false)
-  const [forget, setForget] = useState<string | null>(null)
+  const [memory, setMemory] = useState<(typeof q.memories)[number] | null>(null)
+  const [forget, setForget] = useState(false)
   const exports = q.organizationExports
   const backupBusy = q.isPending || q.hasProcessingExport || q.exportSaveStatus === 'saving'
 
@@ -56,7 +58,7 @@ export default function DonneesView({ q }: { q: SettingsState }) {
                 key={memory.id}
                 title={memory.content}
                 description={`${memoryTypeLabel(memory.type, AI_NAME, memory.metadata)} · ${frDate(memory.created_at)}`}
-                trailing={<Button type="button" variant="secondary" size="sm" disabled={q.deletingMemoryId === memory.id} onClick={() => setForget(memory.id)}>Oublier</Button>}
+                onClick={() => setMemory(memory)}
               />
             ))}
           </ListGroup>
@@ -141,13 +143,25 @@ export default function DonneesView({ q }: { q: SettingsState }) {
         onClose={() => setExportOpen(false)}
       />
       <ClosureSheet q={q} open={closureOpen} onClose={() => setClosureOpen(false)} />
+      <Sheet open={memory !== null} onOpenChange={o => { if (!o) { setMemory(null); setForget(false) } }} title="Souvenir" cancelLabel="Fermer">
+        {memory && (
+          <div className={local.sheetBody}>
+            <ListGroup description={`${memoryTypeLabel(memory.type, AI_NAME, memory.metadata)} · ${frDate(memory.created_at)}`}>
+              <ListRow title={memory.content} />
+            </ListGroup>
+            <ListGroup>
+              <li className={styles.destructiveRow}><button type="button" onClick={() => setForget(true)}>Oublier cet élément</button></li>
+            </ListGroup>
+          </div>
+        )}
+      </Sheet>
       <AlertDialog
-        open={forget !== null}
-        onOpenChange={o => { if (!o) setForget(null) }}
+        open={forget}
+        onOpenChange={setForget}
         title="Oublier cet élément ?"
         description={`${AI_NAME} ne s’en servira plus.`}
         confirmLabel="Oublier"
-        onConfirm={() => { if (forget) q.handleDeleteMemory(forget); setForget(null) }}
+        onConfirm={() => { if (memory) q.handleDeleteMemory(memory.id); setForget(false); setMemory(null) }}
       />
     </div>
   )
