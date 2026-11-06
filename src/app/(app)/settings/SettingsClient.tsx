@@ -34,6 +34,12 @@ const VIEWS: Record<SettingsTab, (props: { q: SettingsState }) => ReactNode> = {
   equipe: EquipeView, roles: RolesView, abonnement: AbonnementView, facturation: EinvoicingView, confidentialite: DonneesView,
 }
 
+/** Chaque écran porte ses propres états : il est rendu comme composant, jamais appelé comme fonction. */
+function DetailView({ tab, q }: { tab: SettingsTab; q: SettingsState }) {
+  const View = VIEWS[tab]
+  return <View q={q} />
+}
+
 const ICONS: Record<SettingsEntry['icon'], typeof User> = {
   user: User, lock: Lock, building: Building2, insurance: ShieldCheck, wallet: Wallet, document: FileText, mail: Mail, message: MessageSquare, link: Link2,
   users: Users, key: KeyRound, star: Star, invoice: Receipt, shield: Shield,
@@ -102,7 +108,7 @@ export default function SettingsClient(props: SettingsProps) {
                 <h1 className={screen.title}>{entry.title}</h1>
               </div>
             </header>
-            <div className={local.detail}>{VIEWS[tab]({ q })}</div>
+            <div className={local.detail}><DetailView tab={tab} q={q} /></div>
           </>
         ) : (
           <>
