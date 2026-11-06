@@ -26,3 +26,84 @@
 .legacy {
   min-width: 0;
 }
+
+/* Entreprise : logo, feuille d'activité, pastilles de retour. */
+.logoThumb {
+  display: block;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--at-remplissage);
+}
+
+.logoEmpty {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--at-remplissage);
+  color: var(--at-encre-2);
+}
+
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  opacity: 0;
+}
+
+.tick {
+  display: inline-grid;
+  place-items: center;
+  color: var(--at-accent-texte);
+}
+
+.sheetBody {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.more {
+  color: var(--at-accent-texte);
+}
+
+.note {
+  margin: 8px 16px 0;
+  font: 500 13px/18px var(--font-inter);
+}
+
+.note[data-tone='danger'] {
+  color: var(--at-danger-texte);
+}
+
+.note[data-tone='warn'] {
+  color: var(--at-accent-texte);
+}
+
+.note[data-tone='ok'] {
+  color: var(--at-encre-2);
+}
+
+.sectionHeading {
+  margin: 0 16px 8px;
+  color: var(--at-encre-2);
+  font: 600 13px/18px var(--font-inter);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.signature {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mono input {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}

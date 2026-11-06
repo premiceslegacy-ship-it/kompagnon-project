@@ -2,15 +2,15 @@
 // Réglages : liste groupée, visibilité selon les droits, état « modifié » des champs.
 
 export type SettingsTab =
-  | 'profil' | 'securite' | 'entreprise' | 'devis' | 'emails' | 'formulaire' | 'integration'
+  | 'profil' | 'securite' | 'entreprise' | 'legal' | 'paiement' | 'devis' | 'emails' | 'formulaire' | 'integration'
   | 'equipe' | 'roles' | 'abonnement' | 'facturation' | 'confidentialite'
 
 export const SETTINGS_TABS: readonly SettingsTab[] = [
-  'profil', 'securite', 'entreprise', 'devis', 'emails', 'formulaire', 'integration',
+  'profil', 'securite', 'entreprise', 'legal', 'paiement', 'devis', 'emails', 'formulaire', 'integration',
   'equipe', 'roles', 'abonnement', 'facturation', 'confidentialite',
 ]
 
-export type SettingsEntry = { tab: SettingsTab; title: string; description: string; icon: 'user' | 'lock' | 'building' | 'document' | 'mail' | 'message' | 'link' | 'users' | 'key' | 'star' | 'invoice' | 'shield' }
+export type SettingsEntry = { tab: SettingsTab; title: string; description: string; icon: 'user' | 'lock' | 'building' | 'insurance' | 'wallet' | 'document' | 'mail' | 'message' | 'link' | 'users' | 'key' | 'star' | 'invoice' | 'shield' }
 export type SettingsGroup = { title: string; entries: SettingsEntry[] }
 
 export type SettingsAccess = {
@@ -35,7 +35,9 @@ export function settingsGroups(access: SettingsAccess, counts: SettingsCounts): 
       { tab: 'securite', title: 'Sécurité', description: 'Sessions actives', icon: 'lock' },
     ] },
     { title: 'Entreprise', entries: access.canEditOrg ? [
-      { tab: 'entreprise', title: 'Entreprise', description: 'Identité, mentions légales, TVA et paiement', icon: 'building' },
+      { tab: 'entreprise', title: 'Identité et coordonnées', description: 'Logo, SIRET, activité, adresse', icon: 'building' },
+      { tab: 'legal', title: 'Mentions légales et assurances', description: 'Décennale, tribunal, signature', icon: 'insurance' },
+      { tab: 'paiement', title: 'TVA et paiement', description: 'Régime, IBAN, pénalités de retard', icon: 'wallet' },
     ] : [] },
     { title: 'Documents et relances', entries: [
       ...(access.canEditOrg ? [{ tab: 'devis' as const, title: 'Devis', description: 'Validité, clauses, prix matières', icon: 'document' as const }] : []),
