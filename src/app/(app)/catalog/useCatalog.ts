@@ -57,8 +57,7 @@ export function useCatalog({
   const [supplierSheet, setSupplierSheet] = useState<{ supplier: Supplier | null } | null>(null)
   const [importTab, setImportTab] = useState<CatalogTab | null>(null)
   const [aiOpen, setAiOpen] = useState(false)
-  const [newPrestationOpen, setNewPrestationOpen] = useState(false)
-  const [editingPrestation, setEditingPrestation] = useState<PrestationType | null>(null)
+  const [editor, setEditor] = useState<{ editing: PrestationType | null } | null>(null)
   const [confirm, setConfirm] = useState<CatalogConfirm | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
@@ -155,7 +154,7 @@ export function useCatalog({
     if (tab === 'materials') setMaterialSheet({ material: null, kind: 'article' })
     else if (tab === 'services') setMaterialSheet({ material: null, kind: 'service' })
     else if (tab === 'labor') setLaborSheet({ item: null })
-    else if (tab === 'prestations') setNewPrestationOpen(true)
+    else if (tab === 'prestations') setEditor({ editing: null })
     else setSupplierSheet({ supplier: null })
   }
 
@@ -165,7 +164,7 @@ export function useCatalog({
     materialCategories, serviceCategories, laborCategories, prestationCategories,
     filteredMaterials, filteredLabor, filteredPrestations, filteredSuppliers, counts,
     materialSheet, setMaterialSheet, laborSheet, setLaborSheet, supplierSheet, setSupplierSheet,
-    importTab, setImportTab, aiOpen, setAiOpen, newPrestationOpen, setNewPrestationOpen, editingPrestation, setEditingPrestation,
+    importTab, setImportTab, aiOpen, setAiOpen, editor, setEditor,
     confirm, setConfirm, actionError, setActionError,
     handleMaterialSaved, handleLaborSaved, handleSupplierSaved, handlePrestationSaved, refresh,
     handleDuplicateMaterial, handleConfirmArchive, openCreate,
