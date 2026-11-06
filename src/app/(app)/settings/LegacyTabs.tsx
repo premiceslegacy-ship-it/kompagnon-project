@@ -10,12 +10,6 @@ import { requestAccountDeletion, cancelAccountDeletion } from '@/lib/data/mutati
 
 import ExportComptableModal from '@/components/ExportComptableModal'
 
-import SubscriptionTab from '@/components/settings/SubscriptionTab'
-import OpenRouterKeyTab from '@/components/settings/OpenRouterKeyTab'
-import EinvoicingTab from '@/components/settings/EinvoicingTab'
-
-import type { OrganizationModules } from '@/lib/organization-modules'
-
 import { LANDING_LEGAL_SNIPPETS, LEGAL_PATHS } from '@/lib/legal'
 
 import type { SettingsState } from './useSettings'
@@ -39,7 +33,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export function LegacyTabContent({ q }: { q: SettingsState }) {
-    const { organization, organizationExports, organizationModules, stripeLinkPro, stripeLinkExpert, selfService, subscriptionBillingModel, subscriptionTier, subscriptionAccessStatus, subscriptionAccessEndsAt, einvoicingConfig, canConfigureEinvoicing, oauthResult, oauthDetail, router, activeTab, isPending, memories, deletingMemoryId, memoriesPage, setMemoriesPage, memoriesPageCount, memoriesPageItems, handleDeleteMemory, memoryTypeLabel, exportSaveStatus, exportFeedback, showExportComptableModal, setShowExportComptableModal, deletionStep, setDeletionStep, deletionConfirmText, setDeletionConfirmText, deletionStatus, setDeletionStatus, deletionError, setDeletionError, cancelDeletionStatus, setCancelDeletionStatus, isOwner, isAdmin, hasProcessingExport, formatExportDate, formatFileSize, exportStatusBadge, exportStatusLabel, handleCreateOrganizationExport } = q
+    const { organization, organizationExports, router, activeTab, isPending, memories, deletingMemoryId, memoriesPage, setMemoriesPage, memoriesPageCount, memoriesPageItems, handleDeleteMemory, memoryTypeLabel, exportSaveStatus, exportFeedback, showExportComptableModal, setShowExportComptableModal, deletionStep, setDeletionStep, deletionConfirmText, setDeletionConfirmText, deletionStatus, setDeletionStatus, deletionError, setDeletionError, cancelDeletionStatus, setCancelDeletionStatus, isOwner, isAdmin, hasProcessingExport, formatExportDate, formatFileSize, exportStatusBadge, exportStatusLabel, handleCreateOrganizationExport } = q
     const renderContent = () => {
         if (activeTab === 'confidentialite') {
             return (
@@ -435,37 +429,6 @@ export function LegacyTabContent({ q }: { q: SettingsState }) {
                             Lire la politique de suppression détaillée
                         </Link>
                     </div>
-                </div>
-            )
-        }
-
-        if (activeTab === 'abonnement') {
-            return (
-                <div className="rounded-3xl card p-8 space-y-8">
-                    <SubscriptionTab
-                        billingModel={subscriptionBillingModel}
-                        modules={organizationModules ?? {} as OrganizationModules}
-                        stripeLinkPro={stripeLinkPro}
-                        stripeLinkExpert={stripeLinkExpert}
-                        selfService={selfService}
-                        currentTierOverride={subscriptionTier}
-                        accessStatus={subscriptionAccessStatus}
-                        accessEndsAt={subscriptionAccessEndsAt}
-                    />
-                    <OpenRouterKeyTab />
-                </div>
-            )
-        }
-
-        if (activeTab === 'facturation' && canConfigureEinvoicing) {
-            return (
-                <div className="rounded-3xl card p-8">
-                    <EinvoicingTab
-                        config={einvoicingConfig}
-                        canConfigure={canConfigureEinvoicing}
-                        oauthResult={oauthResult}
-                        oauthDetail={oauthDetail}
-                    />
                 </div>
             )
         }
