@@ -38,9 +38,11 @@ test('Créer un chantier deux fois conserve le formulaire choisi et sa saisie', 
   await page.goto('/chantiers')
   await requestCreation(page, 'Chantier', '/chantiers')
   await page.getByRole('button', { name: /^Chantier \/ travaux/ }).click()
-  const title = page.getByPlaceholder('Ex : Réfection toiture bâtiment A')
+  const title = page.getByPlaceholder('Réfection toiture bâtiment A')
   await title.fill('Brouillon chantier conservé')
-  await requestCreation(page, 'Chantier', '/chantiers')
+  // La feuille est modale : la seconde demande arrive par la navigation interne.
+  await page.evaluate(() => window.history.pushState(null, '', '/chantiers?new=1'))
+  await page.waitForURL(url => url.pathname === '/chantiers' && !url.searchParams.has('new'))
   await expect(title).toHaveValue('Brouillon chantier conservé')
   await expect(page.getByRole('heading', { name: 'Créer un suivi', exact: true })).toHaveCount(0)
 })
