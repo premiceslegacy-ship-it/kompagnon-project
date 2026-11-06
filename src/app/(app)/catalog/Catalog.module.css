@@ -1,0 +1,43 @@
+/* @atelier-migrated */
+/* Catalogue : compléments propres à l'écran. */
+.sheetBody {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.sheetSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sheetHeading {
+  margin: 0 16px;
+  color: var(--at-encre-2);
+  font: 600 13px/18px var(--font-inter);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.cta {
+  display: flex;
+}
+
+.cta > * {
+  width: 100%;
+}
+
+.hiddenInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  opacity: 0;
+}
+
+.sub {
+  color: var(--at-encre-2);
+  font: 500 13px/18px var(--font-inter);
+}
