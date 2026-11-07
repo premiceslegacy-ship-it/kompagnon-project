@@ -5,7 +5,7 @@ import { Check, CheckCircle2 } from 'lucide-react'
 import { AuthLayout } from '@/components/auth/AuthLayout'
 import { AuthNotice, AuthSubmit, AuthTextSubmit } from '@/components/auth/AuthParts'
 import {
-  PLAN_COPY, PLAN_ORDER, formatSetupAmount, planAction, planBadge, planCtaLabel, planFootnote,
+  PLAN_COPY, PLAN_ORDER, SETUP_COPY, formatEuros, setupComparison, planAction, planBadge, planCtaLabel, planFootnote,
   type ActivationMood, type Tier,
 } from './activationModel'
 import { ActivationCheckoutStatus } from './ActivationCheckoutStatus'
@@ -137,27 +137,41 @@ function PlanCard({ tier, props }: { tier: Tier; props: ActivationViewProps }) {
 }
 
 function SetupCard({ amount, whatsappUrl }: { amount: number; whatsappUrl: string | null }) {
+  const comparison = setupComparison(amount, PLAN_COPY.expert.price)
   return (
-    <section className={styles.setup} aria-label="Mise en place accompagnée">
-      <h3 className={styles.planName}>Mise en place accompagnée</h3>
-      <p className={styles.price}>
-        <b>{formatSetupAmount(amount)}</b>
-        <span>HT, une seule fois</span>
+    <section className={styles.setup} aria-label={SETUP_COPY.name}>
+      <p className={styles.eyebrow}>{SETUP_COPY.name}</p>
+      <h3 className={styles.setupTitle}>{SETUP_COPY.headline}</h3>
+      <p className={styles.audience}>{SETUP_COPY.lead}</p>
+
+      <div className={styles.compare} role="group" aria-label={`Comparaison sur ${comparison.months / 12} ans`}>
+        <div className={styles.compareCol}>
+          <span className={styles.compareLabel}>Expert, {comparison.months / 12} ans</span>
+          <b>{formatEuros(comparison.monthlyTotal)}</b>
+          <span className={styles.compareNote}>{PLAN_COPY.expert.price} € × {comparison.months} mois</span>
+        </div>
+        <div className={styles.compareCol} data-featured="true">
+          <span className={styles.compareLabel}>Mise en place</span>
+          <b>{formatEuros(amount)}</b>
+          <span className={styles.compareNote}>une fois, + votre IA à l’usage</span>
+        </div>
+      </div>
+      <p className={styles.verdict}>
+        Amortie en {comparison.breakEvenMonths} mois face à Expert. Vous restez gagnant tant que votre IA coûte moins de {comparison.maxAiPerMonth} € par mois.
       </p>
-      <p className={styles.audience}>
-        Configuration métier, reprise du catalogue, prise en main guidée et accès prioritaire au support pendant 14 jours. Puis accès sans abonnement mensuel.
-      </p>
+
       <ul className={styles.benefits}>
-        <li><Check size={16} aria-hidden="true" /><span>Nous configurons votre catalogue et vos prix avant votre premier échange avec Samuel.</span></li>
-        <li><Check size={16} aria-hidden="true" /><span>Nous reprenons vos devis en cours, vos clients et votre historique. Rien à ressaisir.</span></li>
-        <li><Check size={16} aria-hidden="true" /><span>Vous prenez la main en direct, avec vos vraies données, sans formation longue.</span></li>
-        <li><Check size={16} aria-hidden="true" /><span>14 jours de support prioritaire après la mise en place.</span></li>
+        {SETUP_COPY.benefits.map((benefit) => (
+          <li key={benefit}>
+            <Check size={16} aria-hidden="true" />
+            <span>{benefit}</span>
+          </li>
+        ))}
       </ul>
-      {whatsappUrl && (
-        <a href={whatsappUrl} target="_blank" rel="noreferrer" className={styles.whatsapp}>
-          Être opérationnel rapidement
-        </a>
-      )}
+      <a href={whatsappUrl ?? 'mailto:contact@orsayn.fr'} target={whatsappUrl ? '_blank' : undefined} rel={whatsappUrl ? 'noreferrer' : undefined} className={styles.whatsapp}>
+        {SETUP_COPY.cta}
+      </a>
+      <p className={styles.planFoot}>{SETUP_COPY.footnote}</p>
     </section>
   )
 }

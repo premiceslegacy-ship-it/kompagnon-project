@@ -8,6 +8,7 @@ import {
   planBadge,
   planCtaLabel,
   planFootnote,
+  setupComparison,
   setupWhatsappUrl,
   PLAN_COPY,
 } from '@/app/activation/activationModel'
@@ -44,6 +45,16 @@ describe('activationModel', () => {
     expect(planCtaLabel('pro', false)).toBe('Reprendre avec Pro')
     expect(planFootnote('pro', true)).toContain('aucune carte')
     expect(planFootnote('expert', true)).toContain('Stripe')
+  })
+
+  it("chiffre l'amortissement de la mise en place face à Expert", () => {
+    const c = setupComparison(3000, 169)
+    expect(c.monthlyTotal).toBe(6084)
+    expect(c.breakEvenMonths).toBe(18)
+    // (6084 - 3000) / 36 = 85,67 : sous 85 € d'IA par mois, la mise en place reste gagnante.
+    expect(c.maxAiPerMonth).toBe(85)
+    expect(setupComparison(3000, 69).breakEvenMonths).toBe(44)
+    expect(setupComparison(3000, 69, 12).maxAiPerMonth).toBe(0)
   })
 
   it('reprend les prix du catalogue', () => {

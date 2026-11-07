@@ -72,37 +72,57 @@ export const PLAN_COPY: Record<Tier, {
   pro: {
     name: 'Pro',
     price: ATELIER_PRICING.pro.amountEur,
-    promise: 'Une assistance IA pour gagner du temps, chaque jour.',
+    promise: 'L’IA qui vous fait gagner du temps, chaque jour.',
     audience: 'Pour l’artisan actif et les petites équipes.',
     benefits: [
-      'Sarah vous aide à retrouver l’information et à avancer sur vos clients, chantiers et planning',
-      'Vous pouvez lui parler à la voix, y compris en direct au téléphone',
-      'Devis préparés par IA à partir d’un texte, d’un plan ou d’une photo',
-      'Facturation électronique au choix dans l’app, à activer séparément lorsqu’elle sera ouverte en production',
+      'Sarah retrouve l’info et vous fait avancer sur clients, chantiers et planning',
+      'Devis préparés depuis un texte, un plan ou une photo',
+      'Parlez-lui à la voix, même en direct au téléphone',
     ],
-    quotas: [
-      '120 échanges avec l’assistante IA / mois',
-      '60 analyses de devis (dont pré-métré sur plan) / mois',
-      '60 minutes de conversation vocale en direct / mois',
-    ],
+    quotas: ['120 échanges par mois', '60 analyses de devis par mois', '60 min de voix en direct par mois'],
   },
   expert: {
     name: 'Expert',
     price: ATELIER_PRICING.expert.amountEur,
-    promise: 'Une assistance IA sans limite pour accompagner votre croissance.',
-    audience: 'Pour les équipes qui veulent piloter sans angle mort.',
+    promise: 'L’IA sans plafond pour votre croissance.',
+    audience: 'Pour les équipes qui s’en servent tous les jours.',
     benefits: [
-      'Devis, relances et analyses par IA sans quota mensuel',
-      'Conversation vocale en direct avec l’assistante : 5x plus de minutes qu’en Pro',
-      'Pensé pour une équipe qui utilise l’IA tous les jours, sans surveiller un compteur',
-      'Facturation électronique au choix dans l’app, à activer séparément lorsqu’elle sera ouverte en production',
+      'Tout Pro, sans compteur à surveiller',
+      'Devis, relances et analyses sans quota',
+      '5 fois plus de voix en direct qu’en Pro',
     ],
-    quotas: [
-      'Échanges et analyses de devis illimités',
-      '300 minutes de conversation vocale en direct / mois',
-      'Extraction catalogue et imports illimités',
-    ],
+    quotas: ['Échanges et analyses illimités', '300 min de voix en direct par mois', 'Imports de catalogue illimités'],
   },
+}
+
+export const SETUP_COPY = {
+  name: 'Mise en place accompagnée',
+  headline: 'Payez une fois. L’IA, vous la payez à l’usage.',
+  lead: 'Plus d’abonnement : vous branchez votre propre compte IA (OpenRouter) et ne payez que ce que vous consommez, sans forfait ni plafond.',
+  benefits: [
+    'Catalogue, prix, devis et clients repris pour vous',
+    'Prise en main guidée, sans formation longue',
+    '14 jours de support prioritaire',
+  ],
+  footnote: 'La consommation IA est facturée par OpenRouter selon votre usage, en plus du prix de la mise en place.',
+  cta: 'Demander la mise en place',
+} as const
+
+export const SETUP_COMPARISON_MONTHS = 36
+
+/**
+ * L'argument d'amortissement : une mise en place payée une fois contre Expert payé
+ * chaque mois. `maxAiPerMonth` est la consommation IA mensuelle sous laquelle la
+ * mise en place reste moins chère qu'Expert sur la période.
+ */
+export function setupComparison(setupAmount: number, monthlyAmount: number, months: number = SETUP_COMPARISON_MONTHS) {
+  const monthlyTotal = monthlyAmount * months
+  return {
+    months,
+    monthlyTotal,
+    breakEvenMonths: Math.ceil(setupAmount / monthlyAmount),
+    maxAiPerMonth: Math.max(0, Math.floor((monthlyTotal - setupAmount) / months)),
+  }
 }
 
 /** La formule mise en avant : Pro pendant l'essai offert, sinon celle déjà choisie. */
@@ -141,6 +161,6 @@ export function setupWhatsappUrl(baseUrl: string | undefined, companyName: strin
   }
 }
 
-export function formatSetupAmount(amount: number): string {
+export function formatEuros(amount: number): string {
   return `${amount.toLocaleString('fr-FR')} €`
 }
