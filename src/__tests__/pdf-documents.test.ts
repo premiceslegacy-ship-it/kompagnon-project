@@ -74,3 +74,96 @@ describe('PDF : facture', () => {
     expect(invoiceStatus('sent', '2026-08-31')).toEqual({ label: 'À payer', detail: expect.stringContaining('avant le') })
   })
 })
+
+// ─── Les autres documents ────────────────────────────────────────────────────
+
+import { renderChantierPdfWithFonts } from '@/lib/pdf/documents/chantier'
+import { renderContractPdfWithFonts } from '@/lib/pdf/documents/contract'
+import { renderDgdPdfWithFonts } from '@/lib/pdf/documents/dgd'
+import { renderMaintenanceInterventionPdfWithFonts } from '@/lib/pdf/documents/maintenance-intervention'
+import { renderMemberHoursReportPdfWithFonts } from '@/lib/pdf/documents/member-hours-report'
+import { renderMonthlyReportPdfWithFonts } from '@/lib/pdf/documents/monthly-report'
+import { renderRapportKpiPdfWithFonts } from '@/lib/pdf/documents/rapport-kpi'
+import { renderTourneePdfWithFonts } from '@/lib/pdf/documents/tournee'
+import {
+  sampleChantier, sampleContract, sampleDgd, sampleIntervention, sampleMemberHours, sampleMonthlyReport, sampleRapportKpi, sampleTournee,
+} from '@/lib/pdf/samples'
+
+describe('PDF : contrat et DGD', () => {
+  it('génère un contrat sur plusieurs pages avec ses signatures', async () => {
+    expect(await pageCount(await renderContractPdfWithFonts(sampleContract, fonts))).toBeGreaterThan(1)
+  })
+
+  it('génère un DGD sur une page, avec ou sans retenue de garantie', async () => {
+    expect(await pageCount(await renderDgdPdfWithFonts(sampleDgd, fonts))).toBe(1)
+    const withoutRetention = { ...sampleDgd, totalRetentionHt: 0, lines: sampleDgd.lines.map(l => ({ ...l, retention_amount: null, retention_pct: null })) }
+    expect(await pageCount(await renderDgdPdfWithFonts(withoutRetention, fonts))).toBe(1)
+  })
+})
+
+describe('PDF : chantier, intervention, tournée', () => {
+  it('génère le rapport de chantier', async () => {
+    expect(await pageCount(await renderChantierPdfWithFonts(sampleChantier, fonts))).toBe(1)
+  })
+
+  it('génère le rapport de chantier sans tâche ni journal', async () => {
+    const empty = { ...sampleChantier, taches: [], notes: [] }
+    expect(await pageCount(await renderChantierPdfWithFonts(empty, fonts))).toBe(1)
+  })
+
+  it('continue le rapport de chantier sur plusieurs pages quand les tâches sont nombreuses', async () => {
+    const taches = Array.from({ length: 70 }, (_, i) => ({ ...sampleChantier.taches[0], id: `t-${i}`, title: `Tâche ${i + 1}` }))
+    expect(await pageCount(await renderChantierPdfWithFonts({ ...sampleChantier, taches }, fonts))).toBeGreaterThan(1)
+  })
+
+  it("génère le rapport d'intervention", async () => {
+    expect(await pageCount(await renderMaintenanceInterventionPdfWithFonts(sampleIntervention, fonts))).toBe(1)
+  })
+
+  it('génère la feuille de route avec ses notes terrain', async () => {
+    expect(await pageCount(await renderTourneePdfWithFonts(sampleTournee, fonts))).toBe(1)
+  })
+
+  it('génère une feuille de route sans point de départ', async () => {
+    const data = { ...sampleTournee, departureAddress: null, departurePostalCode: null, departureCity: null }
+    expect(await pageCount(await renderTourneePdfWithFonts(data, fonts))).toBe(1)
+  })
+})
+
+describe('PDF : rapports', () => {
+  it('génère le rapport mensuel', async () => {
+    expect(await pageCount(await renderMonthlyReportPdfWithFonts(sampleMonthlyReport, fonts))).toBe(1)
+  })
+
+  it('génère le rapport mensuel d’un mois sans activité', async () => {
+    expect(await pageCount(await renderMonthlyReportPdfWithFonts({ ...sampleMonthlyReport, invoices: [], quotes: [] }, fonts))).toBe(1)
+  })
+
+  it("génère le rapport d'heures d'un intervenant, avec ventilation par taux", async () => {
+    expect(await pageCount(await renderMemberHoursReportPdfWithFonts(sampleMemberHours, fonts))).toBe(1)
+  })
+
+  it("génère le rapport d'heures d'un mois sans pointage", async () => {
+    expect(await pageCount(await renderMemberHoursReportPdfWithFonts({ ...sampleMemberHours, pointages: [], totalHours: 0 }, fonts))).toBe(1)
+  })
+
+  it('génère le rapport de pilotage, mensuel puis annuel sans données', async () => {
+    expect(await pageCount(await renderRapportKpiPdfWithFonts(sampleRapportKpi, fonts))).toBeGreaterThanOrEqual(1)
+    const empty = { ...sampleRapportKpi, vue: 'annee' as const, monthlyReport: null, annualReport: null, hoursReport: null, topClients: [], topChantiers: [], objectives: null }
+    expect(await pageCount(await renderRapportKpiPdfWithFonts(empty, fonts))).toBe(1)
+  })
+})
+
+describe('PDF : facture Factur-X', () => {
+  it("garde une page lisible et embarque le XML après la nouvelle mise en page", async () => {
+    const { generateFacturXml } = await import('@/lib/pdf/facturx-xml')
+    const { embedFacturXml } = await import('@/lib/pdf/facturx-embed')
+    const pdf = await renderInvoicePdfWithFonts({ invoice: sampleInvoice, organization: sampleOrganization }, fonts)
+    const xml = generateFacturXml(sampleInvoice as never, sampleOrganization as never)
+    const withXml = await embedFacturXml(pdf, xml, { title: 'Facture' })
+    expect(await pageCount(withXml)).toBe(1)
+    expect(withXml.length).toBeGreaterThan(pdf.length)
+    // Le XML Factur-X est bien présent dans les pièces jointes du PDF.
+    expect(withXml.toString('latin1')).toContain('factur-x.xml')
+  })
+})

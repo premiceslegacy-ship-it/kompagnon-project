@@ -482,3 +482,160 @@ export function installFooter(doc: PdfDoc, legalLines: string[]): void {
     })
   }
 }
+
+// ─── Sections de texte, signatures ───────────────────────────────────────────
+
+/** Titre de section (Geist, petit) souligné d'un filet. */
+export function drawSectionHeading(doc: PdfDoc, title: string, gapTop = 15): void {
+  const F = doc.fonts
+  doc.ensureSpace(gapTop + 8.25 + 30)
+  const base = doc.y - gapTop - 8.25
+  doc.page.drawText(pdfText(title), { x: PAGE.margin, y: base, size: 8.25, font: F.heading, color: COLOR.black })
+  const line = base - 4.5
+  hairline(doc.page, PAGE.margin, PAGE.margin + CONTENT_WIDTH, line)
+  doc.y = line
+}
+
+/** Clause ou paragraphe titré : titre en gras, texte courant, filet. Insécable si possible. */
+export function drawClause(doc: PdfDoc, title: string, text: string): void {
+  const F = doc.fonts
+  const lines = wrapText(pdfText(text), F.regular, K.body, CONTENT_WIDTH)
+  const lh = K.body * 1.45
+  const h = 9 + K.body * 1.3 + 3 + lines.length * lh + 9
+  doc.ensureSpace(Math.min(h, 96))
+  let y = doc.y - 9
+  doc.page.drawText(pdfText(title), { x: PAGE.margin, y: y - K.body, size: K.body, font: F.heading, color: COLOR.black })
+  y -= K.body * 1.3 + 3
+  for (const line of lines) {
+    if (y - lh < doc.bottomLimit) {
+      doc.addPage()
+      y = doc.y
+    }
+    doc.page.drawText(line, { x: PAGE.margin, y: y - K.body - (lh - K.body) / 2, size: K.body, font: F.regular, color: COLOR.body })
+    y -= lh
+  }
+  y -= 9
+  hairline(doc.page, PAGE.margin, PAGE.margin + CONTENT_WIDTH, y)
+  doc.y = y
+}
+
+export type SignatureBox = {
+  title: string
+  name?: string | null
+  role?: string | null
+  date?: string | null
+  image?: PDFImage | null
+}
+
+/** Deux cases de signature côte à côte, posées en bas de page. */
+export function drawSignatureBoxes(doc: PdfDoc, boxes: SignatureBox[], height = 90): void {
+  const F = doc.fonts
+  const gap = 12
+  const w = (CONTENT_WIDTH - gap * (boxes.length - 1)) / boxes.length
+  const top = bottomBlockTop(doc, height, 18)
+  boxes.forEach((box, i) => {
+    const x = PAGE.margin + i * (w + gap)
+    drawOutlineBox(doc, x, top, w, height)
+    doc.page.drawText(pdfText(box.title), { x: x + 13.5, y: top - 10.5 - K.label, size: K.label, font: F.bold, color: COLOR.secondary })
+    let y = top - 10.5 - K.label * 1.4 - 9
+    const small = { size: K.small, font: F.regular, color: COLOR.body }
+    if (box.name) { doc.page.drawText(`Nom : ${pdfText(box.name)}`, { x: x + 13.5, y, ...small }); y -= 10.5 }
+    if (box.role) { doc.page.drawText(`Qualité : ${pdfText(box.role)}`, { x: x + 13.5, y, ...small }); y -= 10.5 }
+    if (box.date) { doc.page.drawText(`Date : ${pdfText(box.date)}`, { x: x + 13.5, y, ...small }) }
+    if (box.image) drawImageContained(doc, box.image, { x: x + 13.5, y: top - height + 6, w: w - 27, h: 32 }, 'center')
+    else doc.page.drawText('Date, signature précédée de « Lu et approuvé »', { x: x + 13.5, y: top - height + 9, size: K.label, font: F.regular, color: COLOR.secondary })
+  })
+  doc.y = top - height
+}
+
+// ─── Avancement, photos ──────────────────────────────────────────────────────
+
+/** Libellé et pourcentage sur une ligne, barre d'avancement dessous. */
+export function drawProgress(doc: PdfDoc, label: string, percent: number, gapTop = 15, rightText?: string): void {
+  const F = doc.fonts
+  doc.ensureSpace(gapTop + 24)
+  const base = doc.y - gapTop - K.body
+  doc.page.drawText(pdfText(label), { x: PAGE.margin, y: base, size: K.body, font: F.regular, color: COLOR.black })
+  drawLineText(doc.page, rightText ?? `${Math.round(percent)} %`, PAGE.margin, base, { font: F.bold, size: K.body, color: COLOR.black, align: 'right', width: CONTENT_WIDTH })
+  const barTop = base - 6
+  drawCard(doc.page, { x: PAGE.margin, top: barTop, w: CONTENT_WIDTH, h: 4.5, r: 2.25, fill: COLOR.divider })
+  const w = Math.max(0, Math.min(100, percent)) / 100 * CONTENT_WIDTH
+  if (w > 0) drawCard(doc.page, { x: PAGE.margin, top: barTop, w: Math.max(w, 4.5), h: 4.5, r: 2.25, fill: COLOR.accent })
+  doc.y = barTop - 4.5
+}
+
+export type KitPhoto = { image: PDFImage | null; title: string; caption?: string | null }
+
+/** Photos sur trois colonnes, légende dessous. */
+export function drawPhotoGrid(doc: PdfDoc, photos: KitPhoto[], gapTop = 9): void {
+  const F = doc.fonts
+  const gap = 9
+  const cols = 3
+  const w = (CONTENT_WIDTH - gap * (cols - 1)) / cols
+  const imgH = 98
+  doc.y -= gapTop
+  for (let i = 0; i < photos.length; i += cols) {
+    const row = photos.slice(i, i + cols)
+    const captions = row.map(p => wrapText(pdfText(p.caption ?? ''), F.regular, K.small, w).filter(Boolean))
+    const rowH = imgH + 4 + Math.max(...captions.map(c => c.length), 1) * K.small * 1.4 + 6 + K.small * 1.4
+    doc.ensureSpace(rowH)
+    const top = doc.y
+    row.forEach((photo, c) => {
+      const x = PAGE.margin + c * (w + gap)
+      drawCard(doc.page, { x, top, w, h: imgH, r: 9, fill: COLOR.surface })
+      if (photo.image) drawImageContained(doc, photo.image, { x: x + 3, y: top - imgH + 3, w: w - 6, h: imgH - 6 }, 'center')
+      let y = top - imgH - 4 - K.small
+      doc.page.drawText(pdfText(photo.title), { x, y, size: K.small, font: F.bold, color: COLOR.black })
+      captions[c].forEach(line => {
+        y -= K.small * 1.4
+        doc.page.drawText(line, { x, y, size: K.small, font: F.regular, color: COLOR.secondary })
+      })
+    })
+    doc.y = top - rowH
+  }
+}
+
+// ─── Chiffres clés ───────────────────────────────────────────────────────────
+
+/** Grand chiffre mis en avant, avec son évolution ou sa précision à côté. */
+export function drawKpiHero(doc: PdfDoc, label: string, value: string, note?: string | null, tone: 'neutral' | 'up' = 'neutral', gapTop = 15): void {
+  const F = doc.fonts
+  const h = 13.5 + K.label * 1.4 + 3 + 25.5 + 13.5
+  doc.ensureSpace(h + gapTop)
+  const top = doc.y - gapTop
+  drawCard(doc.page, { x: PAGE.margin, top, w: CONTENT_WIDTH, h, fill: COLOR.surface })
+  doc.page.drawText(pdfText(label), { x: PAGE.margin + 16.5, y: top - 13.5 - K.label, size: K.label, font: F.bold, color: COLOR.secondary })
+  const base = top - 13.5 - K.label * 1.4 - 3 - 25.5 + 6
+  doc.page.drawText(pdfText(value), { x: PAGE.margin + 16.5, y: base, size: 25.5, font: F.heading, color: COLOR.black })
+  if (note) {
+    const vw = textWidth(F.heading, 25.5, pdfText(value))
+    doc.page.drawText(pdfText(note), { x: PAGE.margin + 16.5 + vw + 10, y: base, size: K.small + 0.7, font: F.regular, color: tone === 'up' ? COLOR.greenText : COLOR.secondary })
+  }
+  doc.y = top - h
+}
+
+export type KpiTile = { label: string; value: string; note?: string | null }
+
+/** Petits chiffres en grille de trois colonnes. */
+export function drawKpiTiles(doc: PdfDoc, tiles: KpiTile[], gapTop = 7.5): void {
+  const F = doc.fonts
+  const gap = 7.5
+  const cols = 3
+  const w = (CONTENT_WIDTH - gap * (cols - 1)) / cols
+  const h = 10.5 + K.label * 1.4 + 3 + 18 + 10.5 + 10
+  doc.y -= gapTop
+  for (let i = 0; i < tiles.length; i += cols) {
+    doc.ensureSpace(h)
+    const top = doc.y
+    tiles.slice(i, i + cols).forEach((t, c) => {
+      const x = PAGE.margin + c * (w + gap)
+      drawCard(doc.page, { x, top, w, h, fill: COLOR.surface })
+      doc.page.drawText(pdfText(t.label), { x: x + 13.5, y: top - 10.5 - K.label, size: K.label, font: F.bold, color: COLOR.secondary })
+      const base = top - 10.5 - K.label * 1.4 - 3 - 15
+      doc.page.drawText(pdfText(t.value), { x: x + 13.5, y: base, size: 15, font: F.heading, color: COLOR.black })
+      if (t.note) doc.page.drawText(pdfText(t.note), { x: x + 13.5, y: base - 12, size: K.small, font: F.regular, color: COLOR.secondary })
+    })
+    doc.y = top - h - 7.5 + 7.5
+    if (i + cols < tiles.length) doc.y -= 7.5
+  }
+}

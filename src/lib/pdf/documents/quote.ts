@@ -186,10 +186,10 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
   if (organization.late_penalty_rate) {
     paragraphs.push({ text: `Pénalités de retard : ${organization.late_penalty_rate} % par an.`, gapBefore: 4.5 })
     if (isClientPro) {
-      paragraphs.push({ text: organization.recovery_indemnity_text ?? "Conformément à l'article L441-10 du Code de commerce, une indemnité forfaitaire de 40 € pour frais de recouvrement est due de plein droit en cas de retard de paiement." })
+      paragraphs.push({ gapBefore: 3, text: organization.recovery_indemnity_text ?? "Conformément à l'article L441-10 du Code de commerce, une indemnité forfaitaire de 40 € pour frais de recouvrement est due de plein droit en cas de retard de paiement." })
     }
   }
-  if (organization.court_competent) paragraphs.push({ text: `En cas de litige : ${organization.court_competent}.` })
+  if (organization.court_competent) paragraphs.push({ text: `En cas de litige : ${organization.court_competent}.`, gapBefore: 3 })
 
   const sigH = hasClientSignature ? 96 : 81
   const blockH = Math.max(paragraphs.length ? measureCard(doc, leftW, 'Conditions', paragraphs) : 0, sigH)

@@ -4,10 +4,15 @@ import type { PdfOrganizationData } from '../document-types'
 import { fmtCapitalSocial, pdfText } from '../pdf-design-system'
 
 /** Lignes légales du pied de page (forme et capital, immatriculation, assurance, certifications). */
-export function legalFooterLines(organization: PdfOrganizationData, isVatSubject: boolean): string[] {
+export type LegalFooterOrganization = Partial<Pick<
+  PdfOrganizationData,
+  'forme_juridique' | 'capital_social' | 'siret' | 'rcs' | 'rcs_ville' | 'vat_number' | 'insurance_info' | 'certifications' | 'decennale_enabled'
+>>
+
+export function legalFooterLines(organization: LegalFooterOrganization, isVatSubject = true): string[] {
   const line1: string[] = []
   if (organization.forme_juridique) line1.push(organization.forme_juridique)
-  const capital = fmtCapitalSocial(organization.capital_social)
+  const capital = fmtCapitalSocial(organization.capital_social ?? null)
   if (capital) line1.push(`Capital social : ${capital}`)
 
   const line2: string[] = []
