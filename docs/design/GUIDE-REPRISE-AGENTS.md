@@ -133,7 +133,7 @@ Avant un commit : `git checkout next-env.d.ts` (le build le modifie). Ne tuer qu
 
 Fait et vérifié (894 tests Vitest, 20 parcours E2E sur 20, 108 pages sans débordement à 390 et 1280 px en clair et sombre, Factur-X valide EN 16931 par schéma et schematron) :
 
-- Phases 1 à 3 : fondations, 25 composants, navigation (TabBar à cinq lieux, barre latérale).
+- Phases 1 à 3 : fondations, 23 composants, navigation (TabBar à cinq lieux, barre latérale).
 - Phase 4 : Aujourd'hui, Documents, éditeur de devis et de facture, Récurrentes, Contrats, Clients, Demandes, Sarah, Chantiers (fiche en quatre segments), Planning, Entretien, Heures, Équipes, Catalogue, Modèles, Réglages (liste groupée), Rapports, connexion et onboarding, pages d'erreur, pages publiques.
 - Phase 5 : les dix PDF.
 - Phase 6 : nettoyage (code mort, 76 règles CSS héritées), documentation, accès réservé, session expirée, bandeau hors ligne.
