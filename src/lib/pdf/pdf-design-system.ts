@@ -99,17 +99,19 @@ export function fmtCapitalSocial(value: string | number | null | undefined): str
 
 export const DS = {
   color: {
-    black:   '#000000',
-    secondary: '#71717A',
+    black:   '#1D1D1F',
+    secondary: '#6E6E73',
     accent:  '#FF9F1C',
-    divider: '#E4E4E7',
-    surface: '#F9FAFB',
+    divider: '#E5E5EA',
+    surface: '#F5F5F7',
     white:   '#FFFFFF',
-    body:    '#52525B',
-    muted:   '#A1A1AA',
+    body:    '#515154',
+    muted:   '#8E8E93',
+    rule:    '#D2D2D7',
+    ruleStrong: '#C7C7CC',
   },
   font: {
-    heading: 'PlusJakartaSans',
+    heading: 'Geist',
     body:    'Inter',
   },
   size: {
@@ -130,6 +132,6 @@ export const DS = {
     lg:  16,
     xl:  24,
     xxl: 36,
-    page: 45,
+    page: 42,
   },
 }
