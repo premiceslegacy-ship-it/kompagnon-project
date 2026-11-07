@@ -17,6 +17,11 @@
   text-wrap: balance;
 }
 
+/* Une note sous un bouton plein : 12 px, comme AuthFine (Auth.module.css) et .planFoot. */
+.hero form .heroNote {
+  margin-top: 12px;
+}
+
 .status {
   display: flex;
   align-items: center;
@@ -168,7 +173,7 @@
 }
 
 .planFoot {
-  margin: 10px 0 0;
+  margin: 12px 0 0;
   color: var(--at-encre-2);
   font: 400 13px/18px var(--font-inter);
   text-align: center;
