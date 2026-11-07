@@ -148,21 +148,6 @@ function SetupCard({ amount, whatsappUrl }: { amount: number; whatsappUrl: strin
         <span>HT, une seule fois</span>
       </p>
 
-      <ul className={styles.facts} aria-label="L’essentiel">
-        <li>
-          <b>0 €</b>
-          <span>d’abonnement</span>
-        </li>
-        <li>
-          <b>1 fois</b>
-          <span>à payer</span>
-        </li>
-        <li>
-          <b>{comparison.breakEvenMonths} mois</b>
-          <span>pour amortir</span>
-        </li>
-      </ul>
-
       <div className={styles.savings}>
         <p className={styles.savingsTitle}>
           Jusqu’à <b>{formatEuros(comparison.savings)}</b> d’économie <span className={styles.nowrap}>sur {years} ans</span>
@@ -180,7 +165,7 @@ function SetupCard({ amount, whatsappUrl }: { amount: number; whatsappUrl: strin
           </div>
         </div>
         <p className={styles.savingsNote}>
-          Face à Expert à {PLAN_COPY.expert.price} € par mois. Vous restez gagnant tant que votre IA coûte moins de {comparison.maxAiPerMonth} € par mois.
+          Face à Expert ({PLAN_COPY.expert.price} € par mois). Amorti en {comparison.breakEvenMonths} mois.
         </p>
       </div>
 
