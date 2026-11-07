@@ -151,7 +151,7 @@ Fait et vérifié (897 tests Vitest, 20 parcours E2E sur 20, 108 pages sans déb
 
 Hors périmètre ou conservé volontairement : le cockpit `/orsayn` (et ses jetons et classes), `Topbar` / branche Sarah héritée / `BottomNav` (cockpit seulement), `AssistantField` (conservé, non utilisé), `ErrorState` (conservé).
 
-À faire, dans cet ordre : **la refonte du cockpit** (plan validé à discuter : `docs/design/plan-refonte-cockpit.md`, le propriétaire le trouve incompréhensible et pas « applesque ») puis **la landing page** (dépôt `atelierbyorsayn`, plan séparé). Elle reprend les jetons `--at-*` et les composants ; les boutons 3D et le double liseré sont abandonnés au profit du style plat.
+À faire, dans cet ordre : **la refonte du cockpit** (plan à valider avec le propriétaire : `docs/design/plan-refonte-cockpit.md`, le propriétaire le trouve incompréhensible et pas « applesque ») puis **la landing page** (dépôt `atelierbyorsayn`, plan séparé). Elle reprend les jetons `--at-*` et les composants ; les boutons 3D et le double liseré sont abandonnés au profit du style plat.
 
 ## 10. Mise en production (à lire avant tout push sur `main`)
 
