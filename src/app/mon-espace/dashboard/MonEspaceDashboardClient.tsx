@@ -1,8 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Calendar, Clock, FileDown, LogOut, Plus, Loader2, Check, X, Mail, MapPin, Navigation, Timer, LogIn, AlertTriangle, PlayCircle, ChevronDown, ChevronUp, CalendarDays, Target, Wrench, Camera, ImagePlus, UserX, Bell, BellOff } from 'lucide-react'
 import type { IndividualMember, MemberPointage, MemberPlanning, MemberTask } from '@/lib/data/queries/members'
 import type { MemberGoalWithProgress } from '@/lib/data/queries/member-goals'
 import {
@@ -16,6 +15,16 @@ import {
 import { declareMyAbsenceFromSpace, type ConflictingSlot } from '@/lib/data/mutations/absences'
 import { useMemberPushNotifications } from '@/lib/hooks/use-member-push-notifications'
 import { compressImageToJpeg } from '@/lib/images/compress'
+import { Button } from '@/components/ui/Button'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { Field } from '@/components/ui/Field'
+import { Hud } from '@/components/ui/Hud'
+import { ListGroup, ListRow } from '@/components/ui/ListGroup'
+import { Menu, type MenuItem } from '@/components/ui/Menu'
+import { Sheet } from '@/components/ui/Sheet'
+import { StatTile } from '@/components/ui/StatTile'
+import { StatusPill } from '@/components/ui/StatusPill'
+import { PublicError, PublicPage } from '@/components/public/PublicPage'
 
 const MAX_MEMBER_PHOTO_SIZE = 10 * 1024 * 1024 // 10 Mo
 
@@ -56,69 +65,41 @@ function getPlanningHours(planning: MemberPlanning): number | null {
   return hours > 0 ? Math.round(hours * 10) / 10 : null
 }
 
-const dayNames = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam']
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
 
-function PointageAccordionMembre({
-  pointagesByDay,
-  sortedDates,
-}: {
-  pointagesByDay: Record<string, MemberPointage[]>
-  sortedDates: string[]
-}) {
-  const [open, setOpen] = useState<Set<string>>(new Set())
-  const toggle = (d: string) =>
-    setOpen(prev => { const s = new Set(prev); s.has(d) ? s.delete(d) : s.add(d); return s })
+function longDay(iso: string): string {
+  return capitalize(new Date(`${iso}T00:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))
+}
 
-  const totalHours = sortedDates.reduce(
-    (sum, d) => sum + pointagesByDay[d].reduce((s, p) => s + p.hours, 0), 0,
-  )
+function shortDay(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' })
+}
 
-  return (
-    <div className="card overflow-hidden divide-y divide-[var(--elevation-border)]">
-      {sortedDates.map(date => {
-        const rows = pointagesByDay[date]
-        const dayTotal = rows.reduce((s, p) => s + p.hours, 0)
-        const isOpen = open.has(date)
-        const d = new Date(date + 'T00:00:00')
-        return (
-          <div key={date}>
-            <button
-              onClick={() => toggle(date)}
-              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--elevation-1)] transition-colors text-left"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-primary">
-                  {dayNames[d.getDay()]} {fmtDate(date)}
-                </p>
-                <p className="text-xs text-secondary">{rows.length} pointage{rows.length > 1 ? 's' : ''}</p>
-              </div>
-              <p className="font-extrabold text-primary text-sm flex-shrink-0">{fmtHours(dayTotal)}</p>
-              {isOpen
-                ? <ChevronUp className="w-4 h-4 text-secondary flex-shrink-0" />
-                : <ChevronDown className="w-4 h-4 text-secondary flex-shrink-0" />}
-            </button>
-            {isOpen && (
-              <div className="border-t border-[var(--elevation-border)] bg-[var(--elevation-1)]/40 divide-y divide-[var(--elevation-border)]">
-                {rows.map(p => (
-                  <div key={p.id} className="flex items-center gap-3 px-5 py-2.5">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-primary truncate">{p.chantier_title}</p>
-                      {p.description && <p className="text-xs text-secondary truncate">{p.description}</p>}
-                    </div>
-                    <p className="text-sm font-semibold text-primary flex-shrink-0 tabular-nums">{fmtHours(p.hours)}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )
-      })}
-      <div className="flex items-center justify-between px-4 py-3 bg-[var(--elevation-1)]/60">
-        <p className="text-xs font-semibold text-secondary uppercase tracking-wider">Total du mois</p>
-        <p className="font-extrabold text-primary">{fmtHours(totalHours)}</p>
-      </div>
-    </div>
-  )
+function planningAddress(p: MemberPlanning): string {
+  return [p.chantier_address_line1, p.chantier_postal_code, p.chantier_city].filter(Boolean).join(', ')
+}
+
+function mapsUrlFor(address: string): string | null {
+  return address ? `https://maps.google.com/maps?q=${encodeURIComponent(address)}` : null
+}
+
+function timeRange(p: MemberPlanning): string {
+  if (!p.start_time) return 'Heure libre'
+  return p.end_time ? `${p.start_time.slice(0, 5)} – ${p.end_time.slice(0, 5)}` : p.start_time.slice(0, 5)
+}
+
+function goalLabel(goal: MemberGoalWithProgress): string {
+  if (goal.label) return goal.label
+  if (goal.metric === 'heures_terrain') return 'Heures terrain'
+  if (goal.metric === 'taches_completees') return 'Tâches complétées'
+  if (goal.metric === 'chantiers_traites') return 'Chantiers traités'
+  return 'Objectif'
+}
+
+function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count} ${count > 1 ? pluralForm : singular}`
 }
 
 export default function MonEspaceDashboardClient({
@@ -165,6 +146,7 @@ export default function MonEspaceDashboardClient({
 }) {
   const router = useRouter()
   const fullName = [member.prenom, member.name].filter(Boolean).join(' ') || member.name
+  const [hud, setHud] = useState<string | null>(null)
 
   const { requestSubscription } = useMemberPushNotifications()
   const [pushState, setPushState] = useState<'idle' | 'requesting' | 'granted' | 'denied' | 'unsupported'>(() => {
@@ -182,8 +164,9 @@ export default function MonEspaceDashboardClient({
   const [tasks, setTasks] = useState(initialTasks)
   const [taskLoadingId, setTaskLoadingId] = useState<string | null>(null)
   const [taskError, setTaskError] = useState<string | null>(null)
+  const [openTask, setOpenTask] = useState<MemberTask | null>(null)
 
-  // Formulaire pointage
+  // Pointage
   const [showPoint, setShowPoint] = useState(false)
   const today = getLocalDateStr(new Date())
   const [pChantier, setPChantier] = useState(chantiers[0]?.id ?? '')
@@ -197,9 +180,10 @@ export default function MonEspaceDashboardClient({
   const [quickSavingId, setQuickSavingId] = useState<string | null>(null)
   const [quickError, setQuickError] = useState<string | null>(null)
   const [slotSavingId, setSlotSavingId] = useState<string | null>(null)
-  const [logoutLoading, setLogoutLoading] = useState(false)
+  const [openSlot, setOpenSlot] = useState<MemberPlanning | null>(null)
+  const [, setLogoutLoading] = useState(false)
 
-  // Déclaration d'absence
+  // Absence
   const [showAbsence, setShowAbsence] = useState(false)
   const [absenceStart, setAbsenceStart] = useState(today)
   const [absenceEnd, setAbsenceEnd] = useState(today)
@@ -226,6 +210,12 @@ export default function MonEspaceDashboardClient({
     router.refresh()
   }
 
+  const openAbsenceForm = (date = today) => {
+    setAbsenceStart(date)
+    setAbsenceEnd(date)
+    setShowAbsence(true)
+  }
+
   const closeAbsenceForm = () => {
     setShowAbsence(false)
     setAbsenceReason('')
@@ -237,7 +227,7 @@ export default function MonEspaceDashboardClient({
     setPError(null)
     const h = parseFloat(pHours.replace(',', '.'))
     if (!pChantier) { setPError('Choisissez un chantier.'); return }
-    if (isNaN(h) || h <= 0 || h > 24) { setPError('Heures invalides (entre 0 et 24).'); return }
+    if (isNaN(h) || h <= 0 || h > 24) { setPError('Indiquez un nombre d’heures entre 0 et 24.'); return }
     setPSaving(true)
     const { error } = await pointMyHoursFromSpace({
       chantierId: pChantier,
@@ -250,21 +240,28 @@ export default function MonEspaceDashboardClient({
     if (error) { setPError(error); return }
     setShowPoint(false)
     setPHours(''); setPDesc(''); setPStart('')
+    setHud(`${fmtHours(h)} pointées`)
     router.refresh()
   }
 
-  // Formulaire photo
+  // Photo
   const [showPhotoForm, setShowPhotoForm] = useState(false)
   const [phChantier, setPhChantier] = useState(chantiers[0]?.id ?? '')
   const [phFile, setPhFile] = useState<File | null>(null)
   const [phCaption, setPhCaption] = useState('')
   const [phSaving, setPhSaving] = useState(false)
   const [phError, setPhError] = useState<string | null>(null)
-  const [phSuccess, setPhSuccess] = useState<string | null>(null)
+  const photoInputRef = useRef<HTMLInputElement>(null)
+
+  const closePhotoForm = () => {
+    setShowPhotoForm(false)
+    setPhFile(null)
+    setPhCaption('')
+    setPhError(null)
+  }
 
   const handleUploadPhoto = async () => {
     setPhError(null)
-    setPhSuccess(null)
     if (!phChantier) { setPhError('Choisissez un chantier.'); return }
     if (!phFile) { setPhError('Choisissez ou prenez une photo.'); return }
     if (phFile.size > MAX_MEMBER_PHOTO_SIZE) { setPhError('Photo trop volumineuse (10 Mo maximum).'); return }
@@ -287,16 +284,15 @@ export default function MonEspaceDashboardClient({
     setPhSaving(false)
     if (error) { setPhError(error); return }
 
-    setPhSuccess('Photo envoyée !')
-    setPhFile(null)
-    setPhCaption('')
+    closePhotoForm()
+    setHud('Photo envoyée au chantier')
     router.refresh()
   }
 
   const handleRouteArrival = (planningId: string) => {
     setQuickError(null)
     setArrivals(prev => ({ ...prev, [planningId]: new Date().toISOString() }))
-    // Persistance + notification managers en arrière-plan : ne bloque pas l'UI locale.
+    // Persistance et notification des responsables en arrière-plan : ne bloque pas l'affichage.
     setPlanningArrivedAtFromSpace(planningId).then(({ error }) => {
       if (error) setQuickError(`Arrivée non synchronisée : ${error}`)
     })
@@ -329,6 +325,7 @@ export default function MonEspaceDashboardClient({
       delete next[planning.id]
       return next
     })
+    setHud(`${fmtHours(hours)} pointées`)
     router.refresh()
   }
 
@@ -356,22 +353,26 @@ export default function MonEspaceDashboardClient({
       setQuickError(error)
       return
     }
+    setOpenSlot(null)
+    setHud(`${fmtHours(plannedHours)} pointées`)
     router.refresh()
   }
 
-  // Rapport mensuel
+  // Rapport d'heures
+  const [showReport, setShowReport] = useState(false)
   const [reportFrom, setReportFrom] = useState(monthStart)
   const [reportTo, setReportTo]     = useState(monthEnd)
   const [reportSending, setReportSending] = useState(false)
-  const [reportMsg, setReportMsg]   = useState<string | null>(null)
+  const [reportError, setReportError] = useState<string | null>(null)
 
   const handleSendReport = async () => {
-    setReportMsg(null)
+    setReportError(null)
     setReportSending(true)
     const { error } = await sendMyHoursReportFromSpace(reportFrom, reportTo)
     setReportSending(false)
-    if (error) { setReportMsg(`Erreur : ${error}`); return }
-    setReportMsg('Rapport envoyé à ' + (member.email ?? 'votre adresse'))
+    if (error) { setReportError(error); return }
+    setShowReport(false)
+    setHud(`Rapport envoyé à ${member.email ?? 'votre adresse'}`)
   }
 
   const handleLogout = async () => {
@@ -382,6 +383,7 @@ export default function MonEspaceDashboardClient({
 
   const handleTaskStatus = async (task: MemberTask, status: 'en_cours' | 'termine') => {
     setTaskError(null)
+    setOpenTask(null)
     setTaskLoadingId(`${task.id}:${status}`)
     if (status === 'termine') {
       setTasks(prev => prev.filter(t => t.id !== task.id))
@@ -398,7 +400,7 @@ export default function MonEspaceDashboardClient({
     router.refresh()
   }
 
-  // Plannings groupés par jour
+  // Créneaux groupés par jour
   const planningsByDay = plannings.reduce<Record<string, MemberPlanning[]>>((acc, p) => {
     if (!acc[p.planned_date]) acc[p.planned_date] = []
     acc[p.planned_date].push(p)
@@ -417,648 +419,348 @@ export default function MonEspaceDashboardClient({
   }, {})
   const sortedPointageDates = Object.keys(pointagesByDay).sort().reverse()
 
+  const menuItems: MenuItem[] = [
+    ...(pushState === 'idle' || pushState === 'requesting'
+      ? [{ label: 'Activer les notifications de planning', onSelect: () => { void handleEnablePush() }, disabled: pushState === 'requesting' }]
+      : pushState === 'denied'
+        ? [{ label: 'Notifications bloquées dans le navigateur', onSelect: () => {}, disabled: true }]
+        : []),
+    { label: 'Synchroniser mon agenda', onSelect: () => { window.open(icalUrl, '_blank', 'noopener,noreferrer') } },
+    ...(member.email ? [{ label: 'Recevoir mon rapport d’heures', onSelect: () => setShowReport(true) }] : []),
+    { label: 'Se déconnecter', onSelect: () => { void handleLogout() } },
+  ]
+
+  const openSlotHours = openSlot ? getPlanningHours(openSlot) : null
+  const openSlotAddress = openSlot ? planningAddress(openSlot) : ''
+  const openSlotMaps = mapsUrlFor(openSlotAddress)
+
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-      {/* Header */}
-      <header className="flex items-center justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-wider font-semibold text-secondary">{organizationName}</p>
-          <h1 className="text-xl font-bold text-primary">Bonjour {member.prenom ?? fullName}</h1>
-        </div>
-        <div className="flex items-center gap-1">
-          {pushState !== 'unsupported' && pushState !== 'granted' && (
-            <button
-              onClick={handleEnablePush}
-              disabled={pushState === 'requesting' || pushState === 'denied'}
-              className="text-secondary hover:text-primary p-2 rounded-lg hover:bg-[var(--elevation-1)] transition-colors disabled:opacity-60"
-              title={pushState === 'denied' ? 'Notifications bloquées dans le navigateur' : 'Activer les notifications de planning'}
-            >
-              {pushState === 'requesting'
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : pushState === 'denied'
-                  ? <BellOff className="w-4 h-4" />
-                  : <Bell className="w-4 h-4" />}
-            </button>
-          )}
-          <button
-            onClick={handleLogout}
-            disabled={logoutLoading}
-            className="text-secondary hover:text-primary p-2 rounded-lg hover:bg-[var(--elevation-1)] transition-colors disabled:opacity-60"
-            title="Se déconnecter"
-          >
-            {logoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
-          </button>
+    <PublicPage wide>
+      <header className="relative flex flex-col items-center gap-[2px] px-[72px] pb-[18px] pt-espace-48 text-center">
+        <p className="m-0 text-titre-2 font-atelier-bold [overflow-wrap:anywhere]">{organizationName}</p>
+        <h1 className="m-0 mt-[10px] text-sous-titre font-atelier-medium text-encre-2">Bonjour {member.prenom ?? fullName}</h1>
+        <div className="absolute right-0 top-espace-8">
+          <Menu title="Mon espace" items={menuItems} trigger={<Button variant="text" aria-label="Plus d’options">Plus</Button>} />
         </div>
       </header>
 
-      {/* Bandeau résumé du mois */}
-      <div className="card p-4">
-        <p className="text-xs text-secondary uppercase tracking-wider font-semibold">Mois en cours</p>
-        <p className="text-3xl font-bold text-primary mt-1">{fmtHours(totalHours)}</p>
-        <p className="text-xs text-secondary mt-0.5">{pointages.length} pointage{pointages.length !== 1 ? 's' : ''} enregistré{pointages.length !== 1 ? 's' : ''}</p>
-      </div>
-
-      {/* CTA pointer */}
-      {!showPoint && (
-        <button
-          onClick={() => setShowPoint(true)}
-          className="btn-primary w-full flex items-center justify-center gap-2"
-          disabled={chantiers.length === 0}
-        >
-          <Plus className="w-4 h-4" /> Pointer mes heures
-        </button>
-      )}
-
-      {showPoint && (
-        <div className="card p-4 border-accent/30 bg-accent/5 space-y-3">
-          <p className="text-sm font-bold text-primary">Nouveau pointage</p>
-          <select className="input w-full" value={pChantier} onChange={e => setPChantier(e.target.value)}>
-            <option value="">Choisir un chantier</option>
-            {chantiers.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
-          </select>
-          <div className="grid grid-cols-3 gap-2">
-            <div>
-              <label className="text-[10px] text-secondary uppercase font-semibold">Date</label>
-              <input type="date" className="input w-full" value={pDate} onChange={e => setPDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="text-[10px] text-secondary uppercase font-semibold">Heure début</label>
-              <input type="time" className="input w-full" value={pStartTime} onChange={e => setPStart(e.target.value)} />
-            </div>
-            <div>
-              <label className="text-[10px] text-secondary uppercase font-semibold">Heures *</label>
-              <input
-                type="text"
-                inputMode="decimal"
-                className="input w-full"
-                placeholder="ex : 7.5"
-                value={pHours}
-                onChange={e => setPHours(e.target.value)}
-              />
-            </div>
-          </div>
-          <textarea
-            className="input w-full min-h-[60px]"
-            placeholder="Description (facultatif)"
-            value={pDescription}
-            onChange={e => setPDesc(e.target.value)}
-          />
-          {pError && <p className="text-xs text-red-500">{pError}</p>}
-          <div className="flex gap-2 justify-end">
-            <button onClick={() => setShowPoint(false)} className="btn-secondary text-sm flex items-center gap-1.5">
-              <X className="w-3.5 h-3.5" /> Annuler
-            </button>
-            <button onClick={handlePoint} disabled={pSaving} className="btn-primary text-sm flex items-center gap-1.5">
-              {pSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-              {pSaving ? 'Enregistrement…' : 'Pointer'}
-            </button>
-          </div>
+      <section className="rounded-carte bg-carte pb-[18px]" aria-label="Mois en cours">
+        <StatTile
+          label="Mois en cours"
+          value={fmtHours(totalHours)}
+          detail={`${plural(pointages.length, 'pointage')} ${pointages.length > 1 ? 'enregistrés' : 'enregistré'}`}
+        />
+        <div className="flex gap-[10px] px-[18px]">
+          <Button className="flex-[1.2]" onClick={() => setShowPoint(true)} disabled={chantiers.length === 0}>Nouveau pointage</Button>
+          <Button className="flex-1" variant="secondary" onClick={() => setShowPhotoForm(true)} disabled={chantiers.length === 0}>Photo</Button>
         </div>
-      )}
-
-      {/* CTA photo */}
-      {!showPhotoForm && (
-        <button
-          onClick={() => setShowPhotoForm(true)}
-          className="btn-secondary w-full flex items-center justify-center gap-2"
-          disabled={chantiers.length === 0}
-        >
-          <Camera className="w-4 h-4" /> Ajouter une photo
-        </button>
-      )}
-
-      {showPhotoForm && (
-        <div className="card p-4 border-accent/30 bg-accent/5 space-y-3">
-          <p className="text-sm font-bold text-primary">Nouvelle photo</p>
-          <select className="input w-full" value={phChantier} onChange={e => setPhChantier(e.target.value)}>
-            <option value="">Choisir un chantier</option>
-            {chantiers.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
-          </select>
-          <label className="flex items-center justify-center gap-2 border border-dashed border-[var(--elevation-border)] rounded-lg py-6 cursor-pointer hover:bg-[var(--elevation-1)] transition-colors">
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={e => setPhFile(e.target.files?.[0] ?? null)}
-            />
-            <ImagePlus className="w-5 h-5 text-secondary" />
-            <span className="text-sm text-secondary">
-              {phFile ? phFile.name : 'Prendre ou choisir une photo'}
-            </span>
-          </label>
-          <textarea
-            className="input w-full min-h-[60px]"
-            placeholder="Légende (facultatif)"
-            value={phCaption}
-            onChange={e => setPhCaption(e.target.value)}
-          />
-          {phError && <p className="text-xs text-red-500">{phError}</p>}
-          {phSuccess && <p className="text-xs text-green-600">{phSuccess}</p>}
-          <div className="flex gap-2 justify-end">
-            <button
-              onClick={() => { setShowPhotoForm(false); setPhFile(null); setPhCaption(''); setPhError(null) }}
-              className="btn-secondary text-sm flex items-center gap-1.5"
-            >
-              <X className="w-3.5 h-3.5" /> Annuler
-            </button>
-            <button onClick={handleUploadPhoto} disabled={phSaving} className="btn-primary text-sm flex items-center gap-1.5">
-              {phSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-              {phSaving ? 'Envoi…' : 'Envoyer'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Ma tournée du jour */}
-      {todayRoute.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-bold text-primary flex items-center gap-2">
-            <Navigation className="w-4 h-4 text-accent" /> Ma tournée du jour
-          </h2>
-          <div className="card p-3 space-y-2">
-            <div className="flex items-center justify-between gap-3 border-b border-[var(--elevation-border)] pb-2">
-              <div>
-                <p className="text-xs uppercase tracking-wider font-semibold text-secondary">{fmtDate(today)}</p>
-                <p className="text-sm font-bold text-primary">{todayRoute.length} passage{todayRoute.length > 1 ? 's' : ''} prévu{todayRoute.length > 1 ? 's' : ''}</p>
-              </div>
-              <span className="text-xs font-semibold text-secondary">
-                {todayRoute[0]?.label}
-              </span>
-            </div>
-
-            {quickError && <p className="text-xs text-red-500">{quickError}</p>}
-
-            {todayRoute.map((planning, index) => {
-              const address = [planning.chantier_address_line1, planning.chantier_postal_code, planning.chantier_city].filter(Boolean).join(', ')
-              const mapsUrl = address ? `https://maps.google.com/maps?q=${encodeURIComponent(address)}` : null
-              const arrivedAtIso = arrivals[planning.id]
-              const arrivedAt = arrivedAtIso ? new Date(arrivedAtIso) : null
-
-              return (
-                <div key={planning.id} className="rounded-xl border border-[var(--elevation-border)] bg-base/50 p-3 dark:bg-white/[0.03]">
-                  {index > 0 && planning.travel_from_prev_min != null && (
-                    <div className="mb-2 flex items-center gap-1.5 text-xs text-secondary">
-                      <Navigation className="w-3 h-3" />
-                      Environ {fmtMin(planning.travel_from_prev_min)} depuis le passage précédent
-                    </div>
-                  )}
-                  <div className="flex gap-3">
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-black">
-                      {index + 1}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-primary">{planning.chantier_title}</p>
-                      {address && (
-                        <p className="mt-0.5 flex items-start gap-1 text-xs text-secondary">
-                          <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
-                          <span>{address}</span>
-                        </p>
-                      )}
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-secondary">
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {planning.start_time ?? 'Heure libre'}{planning.end_time ? ` - ${planning.end_time}` : ''}
-                        </span>
-                        {planning.duration_min != null && (
-                          <span className="flex items-center gap-1">
-                            <Timer className="h-3 w-3" />
-                            {fmtMin(planning.duration_min)}
-                          </span>
-                        )}
-                      </div>
-                      {planning.notes && (
-                        <p className="mt-2 rounded-lg bg-surface p-2 text-xs text-secondary dark:bg-white/[0.04]">
-                          {planning.notes}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--elevation-border)] pt-3">
-                    {mapsUrl && (
-                      <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs">
-                        <Navigation className="h-3.5 w-3.5" />
-                        Itinéraire
-                      </a>
-                    )}
-                    {!arrivedAt ? (
-                      <button onClick={() => handleRouteArrival(planning.id)} className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs">
-                        <LogIn className="h-3.5 w-3.5" />
-                        Arrivée
-                      </button>
-                    ) : (
-                      <>
-                        <span className="text-xs text-secondary">
-                          Sur site depuis {arrivedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                        <button
-                          onClick={() => handleRouteDeparture(planning)}
-                          disabled={quickSavingId === planning.id}
-                          className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs"
-                        >
-                          {quickSavingId === planning.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                          Départ et pointer
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* Mes tâches */}
-      <section className="space-y-2">
-        <h2 className="text-sm font-bold text-primary flex items-center gap-2">
-          <Check className="w-4 h-4 text-accent" /> Mes tâches
-        </h2>
-        {taskError && <p className="text-xs text-red-500">{taskError}</p>}
-        {tasks.length === 0 ? (
-          <div className="card p-4 text-sm text-secondary text-center">
-            Aucune tâche assignée.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {tasks.map(task => (
-              <div key={task.id} className={`card p-3 ${task.is_overdue ? 'border-red-500/25 bg-red-500/5' : ''}`}>
-                <div className="flex items-start gap-3">
-                  {task.is_overdue ? (
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-                  ) : (
-                    <Clock className="mt-0.5 h-4 w-4 shrink-0 text-secondary" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-primary">{task.title}</p>
-                    <p className="text-xs text-secondary">{task.chantier_title}</p>
-                    {task.due_date && (
-                      <p className={`mt-1 text-xs ${task.is_overdue ? 'text-red-500 font-semibold' : 'text-secondary'}`}>
-                        Échéance {fmtDate(task.due_date)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-[var(--elevation-border)] pt-3">
-                  {task.status === 'a_faire' && (
-                    <button
-                      onClick={() => handleTaskStatus(task, 'en_cours')}
-                      disabled={!!taskLoadingId}
-                      className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs"
-                    >
-                      {taskLoadingId === `${task.id}:en_cours` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5" />}
-                      Démarrer
-                    </button>
-                  )}
-                  <button
-                    onClick={() => handleTaskStatus(task, 'termine')}
-                    disabled={!!taskLoadingId}
-                    className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs"
-                  >
-                    {taskLoadingId === `${task.id}:termine` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                    Terminer
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </section>
+
+      {todayRoute.length > 0 && (
+        <ListGroup title={`Aujourd'hui, ${plural(todayRoute.length, 'passage')}`}>
+          {todayRoute.map((planning, index) => {
+            const address = planningAddress(planning)
+            const mapsUrl = mapsUrlFor(address)
+            const arrivedAtIso = arrivals[planning.id]
+            const arrivedAt = arrivedAtIso ? new Date(arrivedAtIso) : null
+            const details = [
+              planning.chantier_title,
+              address,
+              timeRange(planning),
+              planning.duration_min != null ? fmtMin(planning.duration_min) : null,
+              index > 0 && planning.travel_from_prev_min != null ? `environ ${fmtMin(planning.travel_from_prev_min)} depuis le passage précédent` : null,
+              arrivedAt ? `sur site depuis ${arrivedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : null,
+              planning.notes,
+            ].filter(Boolean).join(' · ')
+            const action = arrivedAt ? (
+              <Button size="sm" variant="secondary" loading={quickSavingId === planning.id} onClick={() => handleRouteDeparture(planning)}>
+                Départ et pointer
+              </Button>
+            ) : (
+              <Button size="sm" variant="secondary" onClick={() => handleRouteArrival(planning.id)}>Arrivée</Button>
+            )
+            return mapsUrl ? (
+              <ListRow key={planning.id} title={`${index + 1}. ${planning.label || planning.chantier_title}`} description={details} href={mapsUrl} target="_blank" rel="noopener noreferrer" trailing={action} />
+            ) : (
+              <ListRow key={planning.id} title={`${index + 1}. ${planning.label || planning.chantier_title}`} description={details} trailing={action} />
+            )
+          })}
+        </ListGroup>
+      )}
+      <PublicError>{quickError}</PublicError>
+
+      <ListGroup title="Mes tâches">
+        {tasks.length === 0 ? (
+          <ListRow title="Aucune tâche assignée" />
+        ) : tasks.map(task => (
+          <ListRow
+            key={task.id}
+            title={task.title}
+            description={[
+              task.chantier_title,
+              task.due_date ? `échéance ${fmtDate(task.due_date)}${task.is_overdue ? ', en retard' : ''}` : null,
+              task.status === 'en_cours' ? 'en cours' : null,
+            ].filter(Boolean).join(' · ')}
+            onClick={() => setOpenTask(task)}
+            trailing={task.status === 'a_faire' ? (
+              <Button size="sm" variant="secondary" loading={taskLoadingId === `${task.id}:en_cours`} disabled={!!taskLoadingId} onClick={() => handleTaskStatus(task, 'en_cours')}>Démarrer</Button>
+            ) : (
+              <Button size="sm" variant="secondary" loading={taskLoadingId === `${task.id}:termine`} disabled={!!taskLoadingId} onClick={() => handleTaskStatus(task, 'termine')}>Terminer</Button>
+            )}
+          />
+        ))}
+      </ListGroup>
+      <PublicError>{taskError}</PublicError>
 
       {upcomingAbsences.length > 0 && (
-        <section className="space-y-2">
+        <ListGroup title="Mes absences">
           {upcomingAbsences.map(a => (
-            <div key={a.id} className="card p-3.5 flex items-start gap-2.5 border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10">
-              <UserX className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-sm text-amber-900 dark:text-amber-200">
-                <span className="font-bold">
-                  {a.start_date === a.end_date ? `Absent(e) le ${fmtDate(a.start_date)}` : `Absent(e) du ${fmtDate(a.start_date)} au ${fmtDate(a.end_date)}`}
-                </span>
-                {a.reason ? ` (${a.reason})` : ''}
-              </p>
-            </div>
+            <ListRow
+              key={a.id}
+              title={a.start_date === a.end_date ? `Absence le ${fmtDate(a.start_date)}` : `Absence du ${fmtDate(a.start_date)} au ${fmtDate(a.end_date)}`}
+              description={a.reason ?? undefined}
+            />
           ))}
-        </section>
+        </ListGroup>
       )}
 
-      {/* Créneaux à venir */}
-      <section className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-bold text-primary flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-accent" /> Mes créneaux planifiés
-          </h2>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowAbsence(v => !v)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--elevation-border)] text-xs font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-colors"
-            >
-              <UserX className="w-3.5 h-3.5" /> Je suis absent(e)
-            </button>
-            <a
-              href={icalUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--elevation-border)] text-xs font-semibold text-secondary hover:text-primary hover:border-accent/40 transition-colors"
-              title="Synchroniser avec Apple Calendar, Google Calendar ou votre agenda"
-            >
-              <CalendarDays className="w-3.5 h-3.5" /> Sync agenda
-            </a>
-          </div>
-        </div>
-        {showAbsence && (
-          <div className="card p-4 space-y-3">
-            {absenceConflicts === null ? (
-              <>
-                <p className="text-sm font-semibold text-primary">Déclarer une absence</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <label className="text-xs text-secondary space-y-1">
-                    <span>Du</span>
-                    <input
-                      type="date"
-                      value={absenceStart}
-                      onChange={e => setAbsenceStart(e.target.value)}
-                      className="w-full rounded-lg border border-[var(--elevation-border)] px-2.5 py-1.5 text-sm bg-transparent"
-                    />
-                  </label>
-                  <label className="text-xs text-secondary space-y-1">
-                    <span>Au</span>
-                    <input
-                      type="date"
-                      value={absenceEnd}
-                      onChange={e => setAbsenceEnd(e.target.value)}
-                      className="w-full rounded-lg border border-[var(--elevation-border)] px-2.5 py-1.5 text-sm bg-transparent"
-                    />
-                  </label>
-                </div>
-                <label className="text-xs text-secondary space-y-1 block">
-                  <span>Motif (optionnel)</span>
-                  <textarea
-                    value={absenceReason}
-                    onChange={e => setAbsenceReason(e.target.value)}
-                    rows={2}
-                    className="w-full rounded-lg border border-[var(--elevation-border)] px-2.5 py-1.5 text-sm bg-transparent"
-                    placeholder="Maladie, congé, imprévu..."
-                  />
-                </label>
-                {absenceError && <p className="text-xs text-red-500">{absenceError}</p>}
-                <div className="flex items-center gap-2">
-                  <button onClick={closeAbsenceForm} className="btn-secondary px-3 py-1.5 text-xs">Annuler</button>
-                  <button
-                    onClick={handleDeclareAbsence}
-                    disabled={absenceSaving}
-                    className="btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
-                  >
-                    {absenceSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                    Déclarer l'absence
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">Absence enregistrée.</p>
-                {absenceConflicts.length > 0 ? (
-                  <div className="space-y-1.5">
-                    <p className="text-xs text-secondary">
-                      {absenceConflicts.length} créneau{absenceConflicts.length > 1 ? 'x' : ''} déjà planifié{absenceConflicts.length > 1 ? 's' : ''} sur cette période. Prévenez votre responsable, il reste{absenceConflicts.length > 1 ? 'nt' : ''} à traiter :
-                    </p>
-                    <ul className="text-xs text-secondary space-y-0.5">
-                      {absenceConflicts.map(slot => (
-                        <li key={slot.id}>
-                          {fmtDate(slot.planned_date)} - {slot.chantier_title}{slot.start_time ? ` (${slot.start_time.slice(0, 5)})` : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : (
-                  <p className="text-xs text-secondary">Aucun créneau existant sur cette période.</p>
-                )}
-                <button onClick={closeAbsenceForm} className="btn-secondary px-3 py-1.5 text-xs">Fermer</button>
-              </>
-            )}
-          </div>
-        )}
-        {quickError && <p className="text-xs text-red-500">{quickError}</p>}
-        {sortedPlanningDates.length === 0 ? (
-          <div className="card p-4 text-sm text-secondary text-center">
-            Aucun créneau à venir dans les 3 prochaines semaines.
-          </div>
-        ) : (
-          <div className="card divide-y divide-[var(--elevation-border)] overflow-hidden">
-            {sortedPlanningDates.map(date => {
-              const d = new Date(date + 'T00:00:00')
-              const isDateToday = date === today
-              const slots = planningsByDay[date]
-              return (
-                <div key={date} className={`px-4 py-3 ${isDateToday ? 'bg-accent/5' : ''}`}>
-                  <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${isDateToday ? 'text-accent' : 'text-secondary'}`}>
-                    {isDateToday ? "Aujourd'hui" : `${dayNames[d.getDay()]} ${fmtDate(date)}`}
-                  </p>
-                  <div className="space-y-1.5">
-                    {slots.map(p => {
-                      const address = [p.chantier_address_line1, p.chantier_postal_code, p.chantier_city].filter(Boolean).join(', ')
-                      const mapsUrl = address ? `https://maps.google.com/maps?q=${encodeURIComponent(address)}` : null
-                      const plannedHours = getPlanningHours(p)
-                      const canPointSlot = Boolean(plannedHours && !p.pointage_id)
-                      return (
-                        <div key={p.id} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-                          {/* Heure */}
-                          <div className="w-full shrink-0 sm:w-14 sm:text-right">
-                            {p.start_time ? (
-                              <span className="text-xs font-semibold text-primary tabular-nums">
-                                {p.start_time.slice(0, 5)}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-secondary italic">Libre</span>
-                            )}
-                          </div>
-                          {/* Séparateur */}
-                          <div className="hidden w-px h-8 bg-[var(--elevation-border)] shrink-0 sm:block" />
-                          {/* Infos */}
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-primary truncate">{p.chantier_title}</p>
-                            {address && (
-                              <p className="flex items-center gap-1 text-xs text-secondary truncate">
-                                <MapPin className="h-2.5 w-2.5 shrink-0" />
-                                <span className="truncate">{address}</span>
-                              </p>
-                            )}
-                            {p.notes && (
-                              <p className="text-xs text-secondary/70 truncate italic">{p.notes}</p>
-                            )}
-                          </div>
-                          {/* Durée + itinéraire */}
-                          <div className="shrink-0 flex flex-wrap items-center justify-end gap-2">
-                            {p.start_time && p.end_time && (() => {
-                              const [sh, sm2] = p.start_time.split(':').map(Number)
-                              const [eh, em] = p.end_time.split(':').map(Number)
-                              const dur = (eh + em / 60) - (sh + sm2 / 60)
-                              return dur > 0 ? (
-                                <span className="text-xs font-semibold text-primary tabular-nums">
-                                  {fmtHours(dur)}
-                                </span>
-                              ) : null
-                            })()}
-                            {!p.end_time && p.start_time && (
-                              <span className="text-xs text-secondary tabular-nums">
-                                {p.start_time.slice(0, 5)}
-                              </span>
-                            )}
-                            {mapsUrl && (
-                              <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
-                                className="p-1.5 rounded-lg text-accent hover:bg-accent/10 transition-colors"
-                                title="Itinéraire">
-                                <Navigation className="h-3.5 w-3.5" />
-                              </a>
-                            )}
-                            {p.pointage_id ? (
-                              <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                                <Check className="h-3.5 w-3.5" />
-                                Pointé
-                              </span>
-                            ) : canPointSlot ? (
-                              <>
-                                <button
-                                  onClick={() => handlePointPlannedSlot(p)}
-                                  disabled={slotSavingId === p.id}
-                                  className="btn-primary inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs"
-                                >
-                                  {slotSavingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clock className="h-3.5 w-3.5" />}
-                                  Pointer
-                                </button>
-                                <button
-                                  onClick={() => { setAbsenceStart(p.planned_date); setAbsenceEnd(p.planned_date); setShowAbsence(true) }}
-                                  className="p-1.5 rounded-lg text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                                  title="Je suis absent(e) sur ce créneau"
-                                >
-                                  <UserX className="h-3.5 w-3.5" />
-                                </button>
-                              </>
-                            ) : null}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* Objectifs du mois */}
-      {memberGoals.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-bold text-primary flex items-center gap-2">
-            <Target className="w-4 h-4 text-accent" /> Mes objectifs du mois
-          </h2>
-          <div className="card divide-y divide-[var(--elevation-border)] overflow-hidden">
-            {memberGoals.map(goal => (
-              <div key={goal.id} className="px-4 py-3 space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-primary">
-                    {goal.label ?? (goal.metric === 'heures_terrain' ? 'Heures terrain' : goal.metric === 'taches_completees' ? 'Tâches complétées' : goal.metric === 'chantiers_traites' ? 'Chantiers traités' : 'Objectif')}
-                  </p>
-                  <p className="text-sm font-semibold text-primary tabular-nums shrink-0">
-                    {goal.current}{goal.unit ?? ''} / {goal.target}{goal.unit ?? ''}
-                  </p>
-                </div>
-                <div className="h-2 rounded-full bg-black/8 dark:bg-white/10 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-accent transition-all"
-                    style={{ width: `${goal.percent}%` }}
-                  />
-                </div>
-                <p className="text-xs text-secondary text-right">{goal.percent}%</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Interventions d'entretien à venir */}
-      {upcomingInterventions.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-bold text-primary flex items-center gap-2">
-            <Wrench className="w-4 h-4 text-accent" /> Mes interventions d&apos;entretien
-          </h2>
-          <div className="card divide-y divide-[var(--elevation-border)] overflow-hidden">
-            {upcomingInterventions.map(iv => {
-              const dateLabel = new Date(iv.date_intervention + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'long' })
-              const isToday = iv.date_intervention === new Date().toISOString().slice(0, 10)
-              return (
-                <div key={iv.id} className="px-4 py-3 flex items-center gap-3">
-                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${iv.statut === 'réalisée' ? 'bg-green-500' : 'bg-blue-500'}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-primary truncate">
-                      {iv.contract?.title ?? 'Entretien'}
-                    </p>
-                    <p className="text-xs text-secondary">
-                      {isToday ? "Aujourd'hui" : dateLabel}
-                      {iv.start_time ? ` · ${iv.start_time.slice(0, 5)}` : ''}
-                      {iv.duration_hours ? ` · ${iv.duration_hours}h` : ''}
-                    </p>
-                  </div>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold flex-shrink-0 ${
-                    iv.statut === 'réalisée' ? 'bg-green-500/15 text-green-600 dark:text-green-400' :
-                    iv.statut === 'planifiée' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' :
-                    'bg-secondary/20 text-secondary'
-                  }`}>
-                    {iv.statut === 'planifiée' ? 'Planifiée' : iv.statut === 'réalisée' ? 'Réalisée' : 'Annulée'}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* Pointages du mois — accordéon par jour */}
-      <section className="space-y-2">
-        <h2 className="text-sm font-bold text-primary flex items-center gap-2">
-          <Clock className="w-4 h-4 text-accent" /> Mes heures du mois
-        </h2>
-        {sortedPointageDates.length === 0 ? (
-          <div className="card p-4 text-sm text-secondary text-center">
-            Aucune heure pointée ce mois-ci.
-          </div>
-        ) : (
-          <PointageAccordionMembre
-            pointagesByDay={pointagesByDay}
-            sortedDates={sortedPointageDates}
+      <ListGroup title="Mon planning" description="Les 3 prochaines semaines.">
+        {sortedPlanningDates.length === 0 && <ListRow title="Aucun créneau à venir" />}
+        {sortedPlanningDates.flatMap(date => planningsByDay[date].map((p, index) => (
+          <ListRow
+            key={p.id}
+            leading={<span className="inline-block w-12 text-sous-titre font-atelier-medium text-encre-2 tabular-nums">{index === 0 ? (date === today ? 'Auj.' : shortDay(date)) : ''}</span>}
+            title={p.label || p.chantier_title}
+            description={[p.label ? p.chantier_title : null, timeRange(p), planningAddress(p), p.notes].filter(Boolean).join(' · ')}
+            onClick={() => setOpenSlot(p)}
+            trailing={p.pointage_id ? <StatusPill status="success">Pointé</StatusPill> : <StatusPill status="neutral">Prévu</StatusPill>}
           />
-        )}
-      </section>
+        )))}
+        <ListRow title="Déclarer une absence" onClick={() => openAbsenceForm()} />
+      </ListGroup>
 
-      {/* Rapport par mail */}
-      {member.email && (
-        <section className="card p-4 space-y-3">
-          <h2 className="text-sm font-bold text-primary flex items-center gap-2">
-            <FileDown className="w-4 h-4 text-accent" /> Recevoir mon rapport (PDF)
-          </h2>
-          <p className="text-xs text-secondary">
-            Choisissez la période et nous vous enverrons le récapitulatif par email à <strong>{member.email}</strong>.
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            <input type="date" className="input" value={reportFrom} onChange={e => setReportFrom(e.target.value)} />
-            <input type="date" className="input" value={reportTo}   onChange={e => setReportTo(e.target.value)} />
-          </div>
-          <button
-            onClick={handleSendReport}
-            disabled={reportSending}
-            className="btn-primary w-full flex items-center justify-center gap-2"
-          >
-            {reportSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-            {reportSending ? 'Envoi…' : "M'envoyer le rapport"}
-          </button>
-          {reportMsg && (
-            <p className={`text-xs ${reportMsg.startsWith('Erreur') ? 'text-red-500' : 'text-emerald-500'}`}>
-              {reportMsg}
-            </p>
-          )}
-        </section>
+      {memberGoals.length > 0 && (
+        <ListGroup title="Mes objectifs du mois">
+          {memberGoals.map(goal => (
+            <ListRow
+              key={goal.id}
+              title={goalLabel(goal)}
+              description={`${goal.percent} % atteint`}
+              trailing={<span className="whitespace-nowrap text-sous-titre text-encre tabular-nums">{goal.current}{goal.unit ?? ''} / {goal.target}{goal.unit ?? ''}</span>}
+            />
+          ))}
+        </ListGroup>
       )}
-    </div>
+
+      {upcomingInterventions.length > 0 && (
+        <ListGroup title="Mes interventions d’entretien">
+          {upcomingInterventions.map(iv => (
+            <ListRow
+              key={iv.id}
+              title={iv.contract?.title ?? 'Entretien'}
+              description={[
+                iv.date_intervention === today ? 'Aujourd’hui' : longDay(iv.date_intervention),
+                iv.start_time ? iv.start_time.slice(0, 5) : null,
+                iv.duration_hours ? `${iv.duration_hours}h` : null,
+              ].filter(Boolean).join(' · ')}
+              trailing={
+                <StatusPill status={iv.statut === 'réalisée' ? 'success' : iv.statut === 'planifiée' ? 'wait' : 'neutral'}>
+                  {iv.statut === 'planifiée' ? 'Planifiée' : iv.statut === 'réalisée' ? 'Réalisée' : 'Annulée'}
+                </StatusPill>
+              }
+            />
+          ))}
+        </ListGroup>
+      )}
+
+      {sortedPointageDates.length === 0 ? (
+        <EmptyState title="Aucune heure pointée ce mois-ci" description="Vos pointages du mois apparaîtront ici." />
+      ) : sortedPointageDates.map(date => {
+        const rows = pointagesByDay[date]
+        const dayTotal = rows.reduce((s, p) => s + p.hours, 0)
+        return (
+          <ListGroup key={date} title={`${longDay(date)} · ${fmtHours(dayTotal)}`}>
+            {rows.map(p => (
+              <ListRow
+                key={p.id}
+                title={p.chantier_title}
+                description={p.description ?? undefined}
+                trailing={<span className="whitespace-nowrap text-sous-titre text-encre tabular-nums">{fmtHours(p.hours)}</span>}
+              />
+            ))}
+          </ListGroup>
+        )
+      })}
+
+      <Sheet
+        open={showPoint}
+        onOpenChange={(open) => { setShowPoint(open); if (!open) setPError(null) }}
+        title="Nouveau pointage"
+        confirmLabel="Pointer"
+        onConfirm={handlePoint}
+        confirmLoading={pSaving}
+      >
+        <ListGroup>
+          <li className="border-b border-trait">
+            <Field type="select" label="Chantier" value={pChantier} onChange={e => setPChantier(e.currentTarget.value)}>
+              <option value="">Choisir un chantier</option>
+              {chantiers.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+            </Field>
+          </li>
+          <li className="border-b border-trait">
+            <Field type="date" label="Date" value={pDate} onChange={e => setPDate(e.currentTarget.value)} />
+          </li>
+          <li className="border-b border-trait">
+            <Field type="time" label="Heure de début" value={pStartTime} onChange={e => setPStart(e.currentTarget.value)} />
+          </li>
+          <li className="border-b border-trait">
+            <Field type="text" label="Heures" inputMode="decimal" placeholder="7,5" value={pHours} onChange={e => setPHours(e.currentTarget.value)} required />
+          </li>
+          <li>
+            <Field type="textarea" label="Description" placeholder="Facultatif" rows={2} value={pDescription} onChange={e => setPDesc(e.currentTarget.value)} />
+          </li>
+        </ListGroup>
+        <PublicError>{pError}</PublicError>
+      </Sheet>
+
+      <Sheet
+        open={showPhotoForm}
+        onOpenChange={(open) => { if (!open) closePhotoForm(); else setShowPhotoForm(true) }}
+        title="Nouvelle photo"
+        confirmLabel="Envoyer"
+        onConfirm={handleUploadPhoto}
+        confirmLoading={phSaving}
+      >
+        <ListGroup>
+          <li className="border-b border-trait">
+            <Field type="select" label="Chantier" value={phChantier} onChange={e => setPhChantier(e.currentTarget.value)}>
+              <option value="">Choisir un chantier</option>
+              {chantiers.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+            </Field>
+          </li>
+          <li className="border-b border-trait">
+            <Field type="textarea" label="Légende" placeholder="Facultatif" rows={2} value={phCaption} onChange={e => setPhCaption(e.currentTarget.value)} />
+          </li>
+          <ListRow
+            title={phFile ? phFile.name : 'Prendre ou choisir une photo'}
+            description={phFile ? 'Appuyez pour changer de photo' : undefined}
+            onClick={() => photoInputRef.current?.click()}
+          />
+        </ListGroup>
+        <input
+          ref={photoInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={e => setPhFile(e.target.files?.[0] ?? null)}
+        />
+        <PublicError>{phError}</PublicError>
+      </Sheet>
+
+      <Sheet
+        open={showAbsence}
+        onOpenChange={(open) => { if (!open) closeAbsenceForm() }}
+        title={absenceConflicts === null ? 'Déclarer une absence' : 'Absence enregistrée'}
+        confirmLabel={absenceConflicts === null ? 'Déclarer' : 'OK'}
+        onConfirm={absenceConflicts === null ? handleDeclareAbsence : closeAbsenceForm}
+        confirmLoading={absenceSaving}
+      >
+        {absenceConflicts === null ? (
+          <>
+            <ListGroup>
+              <li className="border-b border-trait">
+                <Field type="date" label="Du" value={absenceStart} onChange={e => setAbsenceStart(e.currentTarget.value)} />
+              </li>
+              <li className="border-b border-trait">
+                <Field type="date" label="Au" value={absenceEnd} onChange={e => setAbsenceEnd(e.currentTarget.value)} />
+              </li>
+              <li>
+                <Field type="textarea" label="Motif" placeholder="Maladie, congé, imprévu… (facultatif)" rows={2} value={absenceReason} onChange={e => setAbsenceReason(e.currentTarget.value)} />
+              </li>
+            </ListGroup>
+            <PublicError>{absenceError}</PublicError>
+          </>
+        ) : absenceConflicts.length > 0 ? (
+          <ListGroup
+            title={`${plural(absenceConflicts.length, 'créneau déjà planifié', 'créneaux déjà planifiés')} sur cette période`}
+            description="Prévenez votre responsable : ces créneaux restent à traiter."
+          >
+            {absenceConflicts.map(slot => (
+              <ListRow key={slot.id} title={slot.chantier_title} description={`${fmtDate(slot.planned_date)}${slot.start_time ? ` · ${slot.start_time.slice(0, 5)}` : ''}`} />
+            ))}
+          </ListGroup>
+        ) : (
+          <p className="mx-espace-16 text-sous-titre text-encre-2">Aucun créneau existant sur cette période.</p>
+        )}
+      </Sheet>
+
+      <Sheet
+        open={showReport}
+        onOpenChange={(open) => { setShowReport(open); if (!open) setReportError(null) }}
+        title="Recevoir mon rapport d’heures"
+        description={member.email ? `Le récapitulatif PDF est envoyé à ${member.email}.` : undefined}
+        confirmLabel="Envoyer"
+        onConfirm={handleSendReport}
+        confirmLoading={reportSending}
+      >
+        <ListGroup>
+          <li className="border-b border-trait">
+            <Field type="date" label="Du" value={reportFrom} onChange={e => setReportFrom(e.currentTarget.value)} />
+          </li>
+          <li>
+            <Field type="date" label="Au" value={reportTo} onChange={e => setReportTo(e.currentTarget.value)} />
+          </li>
+        </ListGroup>
+        <PublicError>{reportError}</PublicError>
+      </Sheet>
+
+      <Sheet open={openSlot !== null} onOpenChange={(open) => { if (!open) setOpenSlot(null) }} title={openSlot ? (openSlot.label || openSlot.chantier_title) : 'Créneau'}>
+        {openSlot && (
+          <>
+            <ListGroup>
+              <ListRow title={openSlot.chantier_title} description={[longDay(openSlot.planned_date), timeRange(openSlot), openSlotAddress, openSlot.notes].filter(Boolean).join(' · ')} />
+              {openSlotMaps && <ListRow title="Itinéraire" description="Ouvre la carte dans un nouvel onglet" href={openSlotMaps} target="_blank" rel="noopener noreferrer" />}
+            </ListGroup>
+            <ListGroup>
+              {openSlot.pointage_id ? (
+                <ListRow title="Créneau déjà pointé" trailing={<StatusPill status="success">Pointé</StatusPill>} />
+              ) : openSlotHours ? (
+                <ListRow
+                  title={slotSavingId === openSlot.id ? 'Pointage en cours…' : `Pointer ${fmtHours(openSlotHours)}`}
+                  description="Crée le pointage depuis ce créneau"
+                  disabled={slotSavingId === openSlot.id}
+                  onClick={() => handlePointPlannedSlot(openSlot)}
+                />
+              ) : null}
+              <ListRow
+                title="Je suis absent ce jour-là"
+                onClick={() => { const date = openSlot.planned_date; setOpenSlot(null); openAbsenceForm(date) }}
+              />
+            </ListGroup>
+            <PublicError>{quickError}</PublicError>
+          </>
+        )}
+      </Sheet>
+
+      <Sheet open={openTask !== null} onOpenChange={(open) => { if (!open) setOpenTask(null) }} title={openTask?.title ?? 'Tâche'}>
+        {openTask && (
+          <ListGroup>
+            <ListRow
+              title={openTask.chantier_title}
+              description={openTask.due_date ? `Échéance ${fmtDate(openTask.due_date)}${openTask.is_overdue ? ', en retard' : ''}` : undefined}
+            />
+            {openTask.status === 'a_faire' && (
+              <ListRow title="Démarrer la tâche" onClick={() => handleTaskStatus(openTask, 'en_cours')} />
+            )}
+            <ListRow title="Terminer la tâche" onClick={() => handleTaskStatus(openTask, 'termine')} />
+          </ListGroup>
+        )}
+      </Sheet>
+
+      <Hud open={hud !== null} onOpenChange={(open) => { if (!open) setHud(null) }} message={hud ?? ''} />
+    </PublicPage>
   )
 }
