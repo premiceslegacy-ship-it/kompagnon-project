@@ -159,9 +159,9 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
   if (invoices.length > 0) {
     drawSectionHeading(doc, 'Détail des factures', 18)
     const gap = 7.5
-    const fixed = 50 + 54 + 56 + 46 + 56 + 58
+    const fixed = 68 + 54 + 56 + 46 + 56 + 58
     const cols: KitColumn[] = [
-      { width: 50, header: 'N°' },
+      { width: 68, header: 'N°' },
       { width: CONTENT_WIDTH - fixed - gap * 6, header: 'Client' },
       { width: 54, header: 'Date' },
       { width: 56, header: 'HT' },
@@ -187,10 +187,10 @@ export async function renderMonthlyReportPdfWithFonts(data: MonthlyReportData, f
   if (quotes.length > 0) {
     drawSectionHeading(doc, 'Détail des devis', 18)
     const gap = 7.5
-    const fixed = 50 + 54 + 62 + 56
+    const fixed = 68 + 54 + 62 + 56
     const remaining = CONTENT_WIDTH - fixed - gap * 5
     const cols: KitColumn[] = [
-      { width: 50, header: 'N°' },
+      { width: 68, header: 'N°' },
       { width: remaining * 0.56, header: 'Titre' },
       { width: remaining * 0.44, header: 'Client' },
       { width: 54, header: 'Date' },

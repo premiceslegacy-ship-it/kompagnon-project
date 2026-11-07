@@ -108,7 +108,7 @@ export function InviteSheet({ q, open, onClose }: { q: SettingsState; open: bool
             <div className={styles.fields}>
               <Field type="text" inputType="email" label="Email" placeholder="email@entreprise.fr" autoComplete="off" value={q.inviteEmail} onChange={e => q.setInviteEmail(e.target.value)} />
               <Field type="select" label="Rôle" value={q.inviteRoleId} onChange={e => q.setInviteRoleId(e.target.value)}>
-                {q.roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                {q.roles.filter(r => r.slug !== 'owner').map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
               </Field>
             </div>
             <p className={styles.hint}>La personne reçoit un email avec un lien d’accès, valable 7 jours.</p>

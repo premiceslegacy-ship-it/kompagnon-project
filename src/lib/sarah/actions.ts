@@ -832,7 +832,7 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
 
     case 'brief_chloe':
       await saveAIBriefFromSarah(orgId, 'chloe', p)
-      return { message: "Le brief a été transmis à Chloé. Aucun devis n'a encore été créé : Chloé va reprendre le contexte dans l'éditeur.", deepLink: proposal.deep_link ?? '/finances/quote-editor' }
+      return { message: "Brief enregistré. Aucun devis n'a encore été créé : je reprends le contexte dans l'éditeur.", deepLink: proposal.deep_link ?? '/finances/quote-editor' }
 
     case 'brief_nora':
       await saveAIBriefFromSarah(orgId, 'planning', p)
@@ -840,12 +840,12 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
 
     case 'brief_marco':
       await saveAIBriefFromSarah(orgId, 'marco', p)
-      return { message: "Le contexte a été transmis à Marco.", deepLink: proposal.deep_link }
+      return { message: "Contexte enregistré pour le chantier.", deepLink: proposal.deep_link }
 
     case 'draft_quote': {
       if (p.requires_chloe === true || p.requiresChloe === true) {
         await saveAIBriefFromSarah(orgId, 'chloe', p)
-        return { message: "Ce devis demande l'œil de Chloé. Je lui transmets le brief et j'ouvre l'éditeur.", deepLink: '/finances/quote-editor' }
+        return { message: "Ce devis demande un peu de travail. J'enregistre le brief et j'ouvre l'éditeur.", deepLink: '/finances/quote-editor' }
       }
       const result = await createSarahQuoteDraft(orgId, p)
       return {

@@ -1,0 +1,53 @@
+/* @atelier-migrated */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon {
+  flex: none;
+  color: var(--at-encre-3);
+}
+
+.body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.link:hover {
+  color: var(--at-accent-texte);
+}
+
+.link:focus-visible,
+.copy:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.text {
+  overflow-wrap: anywhere;
+}
+
+.copy {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--at-encre-2);
+  font: 500 13px/18px var(--font-inter);
+  cursor: pointer;
+}
+
+.copy:hover {
+  color: var(--at-accent-texte);
+}

@@ -8,8 +8,6 @@ export type Fonts = {
   bold: PDFFont
   /** Geist Bold. */
   heading: PDFFont
-  /** Ancien nom de `heading` (les deux étaient deux graisses de Plus Jakarta Sans). */
-  headingXBold: PDFFont
   /** Geist Medium. */
   medium: PDFFont
 }
@@ -42,7 +40,7 @@ export class PdfDoc {
       doc.embedFont(fontBytes.headingBold, { subset: true }),
       doc.embedFont(fontBytes.headingMedium, { subset: true }),
     ])
-    return new PdfDoc(doc, { regular, bold, heading, headingXBold: heading, medium })
+    return new PdfDoc(doc, { regular, bold, heading, medium })
   }
 
   addPage(): PDFPage {

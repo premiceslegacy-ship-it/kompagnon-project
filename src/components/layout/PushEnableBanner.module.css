@@ -1,0 +1,43 @@
+/* @atelier-migrated */
+.banner {
+  position: fixed;
+  z-index: 50;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  width: calc(100% - 32px);
+  max-width: 448px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 12px 16px;
+  transform: translateX(-50%);
+  border-radius: var(--at-rayon-carte);
+  background: var(--at-carte);
+  box-shadow: var(--at-ombre-hud), 0 0 0 0.5px var(--at-trait);
+}
+
+.copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.title {
+  margin: 0;
+  color: var(--at-encre);
+  font: 600 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+}
+
+.text {
+  margin: 2px 0 0;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+}
+
+.actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}

@@ -5,7 +5,7 @@
 
 import HoursSection from './HoursSection'
 import IndividualMembersSection from './IndividualMembersSection'
-import { EquipesTab } from './LegacyEquipe'
+import { EquipesTab } from './ChantierEquipes'
 import PlanningSection from './PlanningSection'
 import type { ChantierDetailState } from './useChantierDetail'
 

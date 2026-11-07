@@ -271,7 +271,7 @@ function parseSettings(formData: FormData): PlanMeasurementSettings {
 }
 
 function buildSystemPrompt(context: { sector: string; activityLabels: string[]; verticalPackLabel?: string | null }): string {
-  return `Tu es Chloé, spécialiste de la lecture factuelle de plans pour artisans du bâtiment.
+  return `Tu es Sarah, spécialiste de la lecture factuelle de plans pour artisans du bâtiment.
 
 Entreprise : ${context.sector || 'BTP'}${context.activityLabels.length ? ` — activités : ${context.activityLabels.join(', ')}` : ''}${context.verticalPackLabel ? ` — pack métier : ${context.verticalPackLabel}` : ''}.
 

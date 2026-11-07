@@ -1,0 +1,6 @@
+/* @atelier-migrated */
+.shell {
+  min-height: 100vh;
+  background: var(--at-fond);
+  color: var(--at-encre);
+}

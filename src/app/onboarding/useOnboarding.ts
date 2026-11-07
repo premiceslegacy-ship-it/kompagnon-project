@@ -35,7 +35,9 @@ export type OnboardingInput = {
   selfService: boolean
 }
 
-export function useOnboarding({ firstName, initialEmail, roles, joinCode, selfService }: OnboardingInput) {
+export function useOnboarding({ firstName, initialEmail, roles: allRoles, joinCode, selfService }: OnboardingInput) {
+  // Le rôle dirigeant ne s'attribue jamais par invitation (refusé par la base).
+  const roles = allRoles.filter(role => role.slug !== 'owner')
   const searchParams = useSearchParams()
   const errorKey = searchParams.get('error')
   const errorMsg = errorKey ? ONBOARDING_ERRORS[errorKey] ?? null : null
@@ -58,7 +60,7 @@ export function useOnboarding({ firstName, initialEmail, roles, joinCode, selfSe
   const [einvoicingWantsEmission, setEinvoicingWantsEmission] = useState(false)
   const [showReceptionInfo, setShowReceptionInfo] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<OrganizationFieldErrors>({})
-  const defaultRoleId = roles[0]?.id ?? ''
+  const defaultRoleId = roles.find(role => role.slug === 'collaborateur')?.id ?? roles[0]?.id ?? ''
   const [invites, setInvites] = useState<InviteRow[]>([{ email: '', roleId: defaultRoleId }])
 
   // Collaborateur

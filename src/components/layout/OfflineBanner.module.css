@@ -1,0 +1,18 @@
+/* @atelier-migrated */
+.banner {
+  position: fixed;
+  z-index: 60;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  box-sizing: border-box;
+  max-width: calc(100% - 32px);
+  padding: 10px 16px;
+  transform: translateX(-50%);
+  border-radius: var(--at-rayon-pilule);
+  background: var(--at-carte);
+  color: var(--at-encre);
+  box-shadow: var(--at-ombre-hud), 0 0 0 0.5px var(--at-trait);
+  font: 500 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+  text-align: center;
+}

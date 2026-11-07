@@ -12,6 +12,7 @@ import { usePathname } from 'next/navigation'
 import { NavigationCommands, NavigationCommandsProvider } from './NavigationCommands'
 import { NavigationAccessProvider, useNavigationAccess } from './NavigationAccess'
 import { RouteShortcuts } from './RouteShortcuts'
+import { OfflineBanner } from './OfflineBanner'
 import { Sidebar } from './Sidebar'
 import { TabBar } from './TabBar'
 import styles from './AppShell.module.css'
@@ -141,6 +142,7 @@ export function AppShell({
     >
       <NavigationCommandsProvider>
         <>
+          <OfflineBanner />
           <div className={styles.application}>
             {/* Sur Aujourd'hui, le rappel est une ligne de la page (TodayHeader). */}
             {decennaleExpiringDays !== null && pathname !== '/dashboard' && (

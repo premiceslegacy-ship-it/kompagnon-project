@@ -1,0 +1,145 @@
+/* @atelier-migrated */
+/* Conversation avec l'assistante dans une feuille : bulles, suggestions, saisie. */
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bubble {
+  max-width: 88%;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 18px;
+  font: 400 15px/21px var(--font-inter);
+  letter-spacing: -0.014em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.assistant {
+  align-self: flex-start;
+  background: var(--at-remplissage);
+  color: var(--at-encre);
+  border-bottom-left-radius: 6px;
+}
+
+.user {
+  align-self: flex-end;
+  background: var(--at-accent);
+  color: var(--at-sur-accent);
+  border-bottom-right-radius: 6px;
+}
+
+.tools {
+  display: block;
+  margin-top: 6px;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+}
+
+.status,
+.error,
+.banner {
+  margin: 0;
+  font: 400 13px/18px var(--font-inter);
+}
+
+.status,
+.banner {
+  color: var(--at-encre-2);
+}
+
+.error {
+  color: var(--at-danger-texte);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--at-rayon-pilule);
+  background: var(--at-remplissage);
+  color: var(--at-encre);
+  font: 500 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+  cursor: pointer;
+}
+
+.chip:focus-visible,
+.send:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.composer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--at-rayon-groupe-liste);
+  background: var(--at-carte);
+  box-shadow: 0 0 0 0.5px var(--at-trait);
+}
+
+.composer textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 160px;
+  padding: 10px 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: none;
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-inter);
+  letter-spacing: -0.022em;
+}
+
+.composer textarea::placeholder {
+  color: var(--at-encre-3);
+}
+
+.send {
+  flex: none;
+  box-sizing: border-box;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--at-rayon-pilule);
+  background: var(--at-accent);
+  color: var(--at-sur-accent);
+  font: 600 15px/20px var(--font-inter);
+  cursor: pointer;
+}
+
+.send:disabled {
+  background: var(--at-remplissage);
+  color: var(--at-encre-3);
+  cursor: default;
+}
+
+.fine {
+  margin: 0;
+  color: var(--at-encre-3);
+  font: 400 13px/18px var(--font-inter);
+  text-align: center;
+}

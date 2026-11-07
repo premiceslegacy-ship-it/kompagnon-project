@@ -1,9 +1,14 @@
 'use client'
+// @atelier-migrated
 
 import React, { useState, useRef, useTransition } from 'react'
-import { X, Upload, Download, CheckCircle2, AlertCircle, Loader2, FileText, Sparkles } from 'lucide-react'
 import { importInvoices, importQuotes, type ImportDocumentRow, type ImportDocumentsResult } from '@/lib/data/mutations/import-documents'
 import AICreditsErrorModal from '@/components/shared/AICreditsErrorModal'
+import { Button } from '@/components/ui/Button'
+import { ListGroup, ListRow } from '@/components/ui/ListGroup'
+import { SegmentedControl } from '@/components/ui/SegmentedControl'
+import { Sheet } from '@/components/ui/Sheet'
+import styles from './quote-editor/QuoteEditor.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -120,7 +125,7 @@ function rowsToDocumentRows(headers: string[], rows: string[][], type: DocType):
     })
 }
 
-// ─── Modal ────────────────────────────────────────────────────────────────────
+// ─── Feuille ──────────────────────────────────────────────────────────────────
 
 type Props = {
   isOpen: boolean
@@ -128,6 +133,9 @@ type Props = {
   defaultType?: DocType
 }
 
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n > 1 ? many : one}`
+
+/** Import de factures ou de devis depuis un tableur ou un PDF lu par l'assistante. */
 export default function ImportDocumentsModal({ isOpen, onClose, defaultType = 'invoices' }: Props) {
   const [docType, setDocType] = useState<DocType>(defaultType)
   const [step, setStep] = useState<1 | 2 | 3>(1)
@@ -211,232 +219,94 @@ export default function ImportDocumentsModal({ isOpen, onClose, defaultType = 'i
   const validRows = pdfRows
     ? pdfRows.length
     : preview ? preview.rows.filter(r => r.some(c => c.trim())).length : 0
+  const previewRows: ImportDocumentRow[] = pdfRows
+    ? pdfRows
+    : preview ? rowsToDocumentRows(preview.headers, preview.rows, docType) : []
+  const label = docType === 'invoices' ? 'factures' : 'devis'
 
   return (
-    <div className="modal-overlay">
+    <>
       {aiCreditsError && <AICreditsErrorModal onClose={() => setAiCreditsError(false)} />}
-      <div className="modal-panel animate-in fade-in duration-200">
-        <button onClick={handleClose} className="absolute top-6 right-6 text-secondary hover:text-primary"><X className="w-6 h-6" /></button>
-
-        <div className="flex items-center gap-3 mb-6">
-          <FileText className="w-6 h-6 text-accent" />
-          <h2 className="text-2xl font-bold text-primary">Importer des {docType === 'invoices' ? 'factures' : 'devis'}</h2>
-        </div>
-
-        {/* Toggle devis / factures */}
-        {step === 1 && (
-          <div className="flex rounded-xl overflow-hidden border border-[var(--elevation-border)] mb-6">
-            {(['invoices', 'quotes'] as DocType[]).map(t => (
-              <button key={t} type="button" onClick={() => setDocType(t)}
-                className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${docType === t ? 'bg-accent text-black' : 'text-secondary hover:text-primary'}`}>
-                {t === 'invoices' ? 'Factures' : 'Devis'}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* ── Step 1 : upload ── */}
-        {step === 1 && (
-          <div className="space-y-5">
-            <div
-              className="rounded-2xl border-2 border-dashed border-[var(--elevation-border)] p-8 text-center space-y-3 transition-colors"
-              onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-accent', 'bg-accent/5') }}
-              onDragLeave={e => { e.currentTarget.classList.remove('border-accent', 'bg-accent/5') }}
-              onDrop={async e => {
-                e.preventDefault()
-                e.currentTarget.classList.remove('border-accent', 'bg-accent/5')
-                const file = e.dataTransfer.files[0]
-                if (!file) return
-                if (fileRef.current) {
-                  const dt = new DataTransfer()
-                  dt.items.add(file)
-                  fileRef.current.files = dt.files
-                  fileRef.current.dispatchEvent(new Event('change', { bubbles: true }))
-                }
-              }}
-            >
-              {aiLoading ? (
-                <>
-                  <Sparkles className="w-8 h-8 text-accent mx-auto animate-pulse" />
-                  <div>
-                    <p className="font-semibold text-primary text-sm">L&apos;IA analyse votre PDF…</p>
-                    <p className="text-xs text-secondary mt-1">Extraction des données en cours, cela prend quelques secondes.</p>
-                  </div>
-                  <Loader2 className="w-5 h-5 text-accent mx-auto animate-spin" />
-                </>
-              ) : (
-                <>
-                  <Upload className="w-8 h-8 text-secondary mx-auto opacity-40" />
-                  <div>
-                    <p className="font-semibold text-primary text-sm">CSV, Excel ou PDF</p>
-                    <p className="text-xs text-secondary mt-1">
-                      PDF : l&apos;IA extrait automatiquement les données. CSV/Excel : plusieurs lignes par document = multi-lignes.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => fileRef.current?.click()}
-                    className="px-6 py-2.5 rounded-full bg-accent text-black font-bold text-sm hover:scale-105 transition-all shadow-lg shadow-accent/20"
-                  >
-                    Choisir un fichier
-                  </button>
-                </>
-              )}
-              <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.pdf" className="hidden" onChange={handleFile} disabled={aiLoading} />
-            </div>
-
-            {parseError && (
-              <div className="flex items-start gap-2 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/25 text-xs text-red-400">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                {parseError}
+      <Sheet
+        open
+        onOpenChange={open => { if (!open && !isPending) handleClose() }}
+        title={`Importer des ${label}`}
+        description={step === 1 ? 'Reprenez vos documents existants depuis un tableur ou un PDF.' : undefined}
+        cancelLabel={step === 3 ? 'Fermer' : step === 2 ? 'Retour' : 'Annuler'}
+        onCancel={step === 2 ? () => { setStep(1); setPdfRows(null); setPreview(null) } : undefined}
+        onConfirm={step === 2 ? handleImport : undefined}
+        confirmLabel={`Importer ${plural(validRows, 'ligne')}`}
+        confirmLoading={isPending}
+      >
+        <div className={styles.detail}>
+          {step === 1 && (
+            <>
+              <SegmentedControl
+                fullWidth
+                label="Type de document"
+                value={docType}
+                options={[{ value: 'invoices', label: 'Factures' }, { value: 'quotes', label: 'Devis' }]}
+                onChange={v => setDocType(v as DocType)}
+              />
+              {parseError && <p className={`${styles.hint} ${styles.warn}`} role="alert" style={{ marginTop: 0 }}>{parseError}</p>}
+              {aiLoading && <p className={styles.hint} role="status" style={{ marginTop: 0 }}>L’assistante lit votre PDF. Cela prend quelques secondes.</p>}
+              <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.pdf" hidden onChange={handleFile} disabled={aiLoading} aria-label="Fichier à importer" />
+              <div className={styles.inline}>
+                <Button variant="primary" size="md" onClick={() => fileRef.current?.click()} loading={aiLoading} loadingText="Lecture…">
+                  Choisir un fichier
+                </Button>
+                <Button variant="secondary" size="md" onClick={() => downloadTemplate(docType)}>
+                  Télécharger le modèle (.csv)
+                </Button>
               </div>
-            )}
+              <ListGroup title="Format attendu" description="CSV, Excel ou PDF. Plusieurs lignes avec le même numéro forment un seul document.">
+                <ListRow title="Dates" description="JJ/MM/AAAA ou AAAA-MM-JJ" />
+                <ListRow title="Statut" description={docType === 'invoices' ? 'payee, envoyee, brouillon' : 'accepte, refuse, envoye, brouillon'} />
+                {docType === 'invoices' && <ListRow title="Récurrence" description="recurrente : oui ou non. frequence : mensuelle, trimestrielle, hebdomadaire, annuelle" />}
+                <ListRow title="Type de client" description="client_type : professionnel ou particulier" />
+              </ListGroup>
+            </>
+          )}
 
-            <div className="flex items-center justify-between text-sm">
-              <p className="text-secondary">Pas encore de fichier ? Téléchargez le modèle :</p>
-              <button
-                type="button"
-                onClick={() => downloadTemplate(docType)}
-                className="flex items-center gap-1.5 text-accent hover:text-accent/80 font-semibold text-xs"
-              >
-                <Download className="w-3.5 h-3.5" />
-                Modèle {docType === 'invoices' ? 'factures' : 'devis'} (.csv)
-              </button>
-            </div>
-
-            {/* Aide format */}
-            <div className="rounded-xl bg-base/50 border border-[var(--elevation-border)] p-4 text-xs text-secondary space-y-1.5">
-              <p className="font-bold text-primary text-xs mb-1">Format attendu</p>
-              <p><strong>Dates</strong> : JJ/MM/AAAA ou AAAA-MM-JJ</p>
-              <p><strong>Statut {docType === 'invoices' ? 'facture' : 'devis'}</strong> : {docType === 'invoices' ? 'payee, envoyee, brouillon' : 'accepte, refuse, envoye, brouillon'}</p>
-              {docType === 'invoices' && <p><strong>Récurrente</strong> : oui / non - <strong>Fréquence</strong> : mensuelle, trimestrielle, hebdomadaire, annuelle</p>}
-              <p><strong>client_type</strong> : professionnel / particulier</p>
-              <p><strong>Multi-lignes</strong> : même numéro de {docType === 'invoices' ? 'facture' : 'devis'} sur plusieurs lignes = un seul document avec plusieurs lignes</p>
-            </div>
-          </div>
-        )}
-
-        {/* ── Step 2 : preview ── */}
-        {step === 2 && (
-          <div className="space-y-5">
-            <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-accent/10 border border-accent/20 text-sm">
-              {pdfRows ? <Sparkles className="w-4 h-4 text-accent shrink-0" /> : <CheckCircle2 className="w-4 h-4 text-accent shrink-0" />}
-              <p className="text-primary">
-                {pdfRows
-                  ? <><strong>{validRows} ligne{validRows > 1 ? 's' : ''}</strong> extraite{validRows > 1 ? 's' : ''} par l&apos;IA depuis le PDF</>
-                  : <><strong>{validRows} ligne{validRows > 1 ? 's' : ''}</strong> détectée{validRows > 1 ? 's' : ''} dans le fichier</>
-                }
+          {step === 2 && (
+            <>
+              <p className={styles.hint} style={{ marginTop: 0 }}>
+                {pdfRows ? `${plural(validRows, 'ligne')} lue${validRows > 1 ? 's' : ''} dans le PDF.` : `${plural(validRows, 'ligne')} détectée${validRows > 1 ? 's' : ''} dans le fichier.`}
+                {' '}Les clients absents de votre base seront créés. Chaque document importé nourrit aussi la mémoire de l’entreprise pour l’assistante.
               </p>
-            </div>
+              <ListGroup title="Aperçu" description={previewRows.length > 5 ? `… et ${plural(previewRows.length - 5, 'ligne')} de plus` : undefined}>
+                {previewRows.slice(0, 5).map((row, i) => (
+                  <ListRow
+                    key={i}
+                    title={row.client_nom || 'Client à renseigner'}
+                    description={[row.designation, row.quantite ? `× ${row.quantite}` : null, row.tva ? `TVA ${row.tva} %` : null, row.statut].filter(Boolean).join(' · ')}
+                    trailing={<span className={styles.fieldValue}>{row.prix_unitaire_ht} €</span>}
+                  />
+                ))}
+              </ListGroup>
+            </>
+          )}
 
-            {pdfRows ? (
-              <div className="rounded-xl border border-[var(--elevation-border)] overflow-hidden">
-                <div className="overflow-x-auto max-h-48">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-base/30 border-b border-[var(--elevation-border)]">
-                        {['Client', 'Date', 'Désignation', 'Qté', 'Prix HT', 'TVA', 'Statut'].map(h => (
-                          <th key={h} className="px-3 py-2 text-left text-secondary font-bold uppercase tracking-wider whitespace-nowrap">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[var(--elevation-border)]">
-                      {pdfRows.slice(0, 5).map((row, i) => (
-                        <tr key={i} className="hover:bg-accent/5">
-                          <td className="px-3 py-2 text-primary whitespace-nowrap max-w-[120px] truncate">{row.client_nom}</td>
-                          <td className="px-3 py-2 text-primary whitespace-nowrap">{row.date_emission}</td>
-                          <td className="px-3 py-2 text-primary whitespace-nowrap max-w-[150px] truncate">{row.designation}</td>
-                          <td className="px-3 py-2 text-primary whitespace-nowrap">{row.quantite}</td>
-                          <td className="px-3 py-2 text-primary whitespace-nowrap">{row.prix_unitaire_ht} €</td>
-                          <td className="px-3 py-2 text-primary whitespace-nowrap">{row.tva}%</td>
-                          <td className="px-3 py-2 text-primary whitespace-nowrap">{row.statut}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {pdfRows.length > 5 && (
-                  <p className="text-xs text-secondary px-3 py-2 border-t border-[var(--elevation-border)]">… et {pdfRows.length - 5} ligne{pdfRows.length - 5 > 1 ? 's' : ''} de plus</p>
-                )}
-              </div>
-            ) : preview ? (
-              <div className="rounded-xl border border-[var(--elevation-border)] overflow-hidden">
-                <div className="overflow-x-auto max-h-48">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-base/30 border-b border-[var(--elevation-border)]">
-                        {preview.headers.map(h => <th key={h} className="px-3 py-2 text-left text-secondary font-bold uppercase tracking-wider whitespace-nowrap">{h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[var(--elevation-border)]">
-                      {preview.rows.slice(0, 5).map((row, i) => (
-                        <tr key={i} className="hover:bg-accent/5">
-                          {preview.headers.map((_, j) => (
-                            <td key={j} className="px-3 py-2 text-primary whitespace-nowrap max-w-[120px] truncate">{row[j] || ''}</td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {preview.rows.length > 5 && (
-                  <p className="text-xs text-secondary px-3 py-2 border-t border-[var(--elevation-border)]">… et {preview.rows.length - 5} ligne{preview.rows.length - 5 > 1 ? 's' : ''} de plus</p>
-                )}
-              </div>
-            ) : null}
-
-            <p className="text-xs text-secondary">
-              Les clients non trouvés dans votre base seront créés automatiquement. Chaque document importé alimentera aussi la mémoire d&apos;entreprise pour l&apos;IA.
-            </p>
-
-            <div className="flex gap-3">
-              <button type="button" onClick={() => { setStep(1); setPdfRows(null); setPreview(null) }} className="flex-1 py-3 rounded-full border border-[var(--elevation-border)] text-secondary font-semibold hover:text-primary transition-colors">
-                Retour
-              </button>
-              <button type="button" onClick={handleImport} disabled={isPending}
-                className="flex-1 py-3 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60 disabled:hover:scale-100 flex items-center justify-center gap-2">
-                {isPending ? <><Loader2 className="w-4 h-4 animate-spin" />Import en cours...</> : `Importer ${validRows} ligne${validRows > 1 ? 's' : ''}`}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ── Step 3 : result ── */}
-        {step === 3 && result && (
-          <div className="space-y-5">
-            {result.error ? (
-              <div className="flex items-start gap-2 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/25 text-sm text-red-400">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                {result.error}
-              </div>
+          {step === 3 && result && (
+            result.error ? (
+              <p className={`${styles.hint} ${styles.warn}`} role="alert" style={{ marginTop: 0 }}>{result.error}</p>
             ) : (
-              <div className="flex items-start gap-3 px-4 py-4 rounded-xl bg-accent/10 border border-accent/20">
-                <CheckCircle2 className="w-5 h-5 text-accent shrink-0 mt-0.5" />
-                <div className="text-sm space-y-1">
-                  <p className="font-bold text-primary">{result.imported} {docType === 'invoices' ? 'facture' : 'devis'}{result.imported > 1 ? 's' : ''} importé{result.imported > 1 ? 'es' : 'e'} avec succès</p>
-                  {result.clients_created > 0 && <p className="text-secondary">{result.clients_created} nouveau{result.clients_created > 1 ? 'x' : ''} client{result.clients_created > 1 ? 's' : ''} créé{result.clients_created > 1 ? 's' : ''}</p>}
-                  {result.memory_entries > 0 && <p className="text-secondary">{result.memory_entries} entrée{result.memory_entries > 1 ? 's' : ''} ajoutée{result.memory_entries > 1 ? 's' : ''} à la mémoire d&apos;entreprise</p>}
-                  {result.skipped > 0 && <p className="text-secondary">{result.skipped} document{result.skipped > 1 ? 's' : ''} ignoré{result.skipped > 1 ? 's' : ''}</p>}
-                  {result.skipped_reasons && result.skipped_reasons.length > 0 && (
-                    <ul className="mt-2 space-y-1 max-h-28 overflow-y-auto text-left">
-                      {result.skipped_reasons.map((r, i) => (
-                        <li key={i} className="text-xs text-amber-500 flex items-start gap-1.5">
-                          <span className="shrink-0 mt-0.5">⚠</span>{r}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <button type="button" onClick={handleClose}
-              className="w-full py-3 rounded-full bg-accent text-black font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20">
-              Terminé
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
+              <>
+                <ListGroup title={`${plural(result.imported, 'document')} importé${result.imported > 1 ? 's' : ''}`}>
+                  {result.clients_created > 0 && <ListRow title={`${plural(result.clients_created, 'nouveau client', 'nouveaux clients')} créé${result.clients_created > 1 ? 's' : ''}`} />}
+                  {result.memory_entries > 0 && <ListRow title={`${plural(result.memory_entries, 'entrée')} ajoutée${result.memory_entries > 1 ? 's' : ''} à la mémoire de l’entreprise`} />}
+                  {result.skipped > 0 && <ListRow title={`${plural(result.skipped, 'document')} ignoré${result.skipped > 1 ? 's' : ''}`} />}
+                </ListGroup>
+                {result.skipped_reasons && result.skipped_reasons.length > 0 && (
+                  <ListGroup title="Pourquoi certains documents sont ignorés">
+                    {result.skipped_reasons.map((r, i) => <ListRow key={i} title={r} />)}
+                  </ListGroup>
+                )}
+              </>
+            )
+          )}
+        </div>
+      </Sheet>
+    </>
   )
 }
