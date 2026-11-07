@@ -196,8 +196,8 @@ export default function SupplierPriceRequestsPanel({
             </Field>
             <Field type="date" label="Offre valable jusqu’au" value={form.valid_until} onChange={e => setForm(f => ({ ...f, valid_until: e.target.value }))} />
             <Field type="number" label="Prix unitaire HT reçu" hint="À remplir quand le fournisseur répond." min={0} decimals={2} allowEmpty value={form.unit_price_ht} onChange={value => setForm(f => ({ ...f, unit_price_ht: value }))} />
-            <Field type="textarea" label="Spécifications" rows={3} placeholder="Épaisseur, finition, délai de livraison…" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
           </div>
+          <Field type="textarea" label="Spécifications" rows={3} placeholder="Épaisseur, finition, délai de livraison…" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
 
           {editingId && (() => {
             const req = requests.find(r => r.id === editingId)
