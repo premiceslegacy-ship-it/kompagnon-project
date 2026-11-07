@@ -44,7 +44,7 @@ Décisions déjà prises, à appliquer sans les rediscuter :
 - Cibles de 44 px, contraste vérifié, mouvement réduit respecté.
 - Vouvoiement ; boutons à verbe (« Envoyer le devis ») ; pas de « Oups », pas de point d'exclamation, pas de tiret cadratin ; espaces insécables avant `: ; ? ! %` et `€`.
 - **Le serveur ne bouge pas** : pas de changement aux `page.tsx` serveur, `src/lib/data/**`, `src/app/api/**`, `supabase/`, ni aux permissions et modules. Exception : une fonction explicitement nommée par le plan, dans une PR à part avec son test (déjà faits : quota de Sarah, nouveau lien de signature).
-- **Le cockpit `/orsayn` est intouchable** : ses fichiers, ses jetons `--cockpit-*`, ses anciennes classes (`.card`, `.input`, `.btn-pill`, `.cockpit-*`, `--bg-base`…), General Sans, son thème clair.
+- **Le cockpit `/orsayn` est intouchable jusqu'au démarrage de son plan (`docs/design/plan-refonte-cockpit.md`)** : ses fichiers, ses jetons `--cockpit-*`, ses anciennes classes (`.card`, `.input`, `.btn-pill`, `.cockpit-*`, `--bg-base`…), General Sans, son thème clair.
 - Les droits et modules restent : chaque bloc garde sa clé de permission et son module ; le vocabulaire suit le profil d'activité (`btp`, `industry`, `cleaning`).
 
 ## 4. Patterns : quel composant pour quel besoin
@@ -151,7 +151,7 @@ Fait et vérifié (897 tests Vitest, 20 parcours E2E sur 20, 108 pages sans déb
 
 Hors périmètre ou conservé volontairement : le cockpit `/orsayn` (et ses jetons et classes), `Topbar` / branche Sarah héritée / `BottomNav` (cockpit seulement), `AssistantField` (conservé, non utilisé), `ErrorState` (conservé).
 
-À faire : **la landing page** (dépôt `atelierbyorsayn`, plan séparé). Elle reprend les jetons `--at-*` et les composants ; les boutons 3D et le double liseré sont abandonnés au profit du style plat.
+À faire, dans cet ordre : **la refonte du cockpit** (plan à valider avec le propriétaire : `docs/design/plan-refonte-cockpit.md`, le propriétaire le trouve incompréhensible et pas « applesque ») puis **la landing page** (dépôt `atelierbyorsayn`, plan séparé). Elle reprend les jetons `--at-*` et les composants ; les boutons 3D et le double liseré sont abandonnés au profit du style plat.
 
 ## 10. Mise en production (à lire avant tout push sur `main`)
 
