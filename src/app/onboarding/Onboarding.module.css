@@ -1,0 +1,53 @@
+/* @atelier-migrated */
+.tick {
+  display: inline-flex;
+  color: var(--at-accent-texte);
+}
+
+.lead {
+  display: inline-flex;
+  color: var(--at-accent-texte);
+}
+
+.chevron {
+  color: var(--at-encre-3);
+}
+
+.more {
+  color: var(--at-accent-texte);
+}
+
+.code {
+  font-family: var(--font-geist);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+
+.removeRow {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 16px 8px;
+}
+
+.copyRow,
+.copyRow * {
+  color: var(--at-accent-texte);
+}
+
+.inviteStack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skip {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.centerRow {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
