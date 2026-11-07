@@ -131,7 +131,7 @@ Avant un commit : `git checkout next-env.d.ts` (le build le modifie). Ne tuer qu
 
 ## 9. État au 7 novembre 2026
 
-Fait et vérifié (894 tests Vitest, 20 parcours E2E sur 20, 108 pages sans débordement à 390 et 1280 px en clair et sombre, Factur-X valide EN 16931 par schéma et schematron) :
+Fait et vérifié (897 tests Vitest, 20 parcours E2E sur 20, 108 pages sans débordement à 390 et 1280 px en clair et sombre, Factur-X valide EN 16931 par schéma et schematron) :
 
 - Phases 1 à 3 : fondations, 23 composants, navigation (TabBar à cinq lieux, barre latérale).
 - Phase 4 : Aujourd'hui, Documents, éditeur de devis et de facture, Récurrentes, Contrats, Clients, Demandes, Sarah, Chantiers (fiche en quatre segments), Planning, Entretien, Heures, Équipes, Catalogue, Modèles, Réglages (liste groupée), Rapports, connexion et onboarding, pages d'erreur, pages publiques.
@@ -151,28 +151,42 @@ Hors périmètre ou conservé volontairement : le cockpit `/orsayn` (et ses jeto
 - La CI contrôle types, lint, tests, audit des dépendances de production, scan de secrets sur tout l'historique et SBOM ; les E2E ne font pas partie de la CI.
 - Procédure détaillée du déploiement mutualisé : `DEPLOIEMENT_CLIENT.md`.
 
-## 11. Ce qui n'est pas vérifié
+## 11. Ce qui est vérifié et ce qui ne l'est pas
 
-Classé par ce qu'il faut pour le vérifier. Mettre à jour cette liste à chaque vérification.
+Mettre à jour cette liste à chaque vérification.
 
-**A. Réalisable en local (base locale + boîte mail de test) :**
-- Réglages : enregistrement réel de toutes les valeurs « Entreprise » (seule la ville l'a été) ; FEC téléchargé avec succès ; génération réelle d'une sauvegarde ; retrait effectif d'un membre ; invitation d'équipe (réglages et onboarding) et soumission de `/invite/setup` ; liens catalogue / fournisseur d'une grille de matières.
-- Relances : envoi par le cron ; rendu du formulaire public côté prospect.
-- Rapports : bloc Entretien (pas de contrat sur le compte d'essai), heures par personne (aucune heure), valeurs sur plusieurs mois ; contenu du PDF de rapport.
-- PDF d'une vraie facture et du rapport mensuel (émettre la facture par l'app pour obtenir son `issuance_snapshot`).
-- Entretien : upload de photo et envoi du rapport.
-- Feuilles ouvertes à 390 px (seules celles à 1280 px ont été capturées) ; Argent / Équipe / Photos en sombre.
-- Nouveau lien intervenant : envoi réel.
+**Vérifié (revue globale puis recette locale du 7 novembre 2026) :**
+- Factur-X (schéma XSD et schematron), logo et photos réels, devis de dix pages, PDF de données réelles (devis, chantier, DGD, rapport annuel).
+- **Facture émise par l'app** (donc avec son `issuance_snapshot`) : PDF complet. **Rapport mensuel** : PDF correct (une colonne trop étroite a été corrigée).
+- Inscription avec un vrai code reçu par email ; onboarding complet avec invitation d'équipe (email capturé, ligne en base).
+- Réglages : valeurs d'Entreprise, Paiement, Légal et Devis enregistrées puis relues (puis restaurées) ; invitation d'un collaborateur (email capturé) ; retrait d'un membre (sa ligne passe à `is_active = false`).
+- Archive d'un compte neuf : générée en arrière-plan, état `ready`.
+- Rapports avec heures pointées et contrat d'entretien : synthèse, détail Heures par personne, Entretien, Activité, Rentabilité, Clients et chantiers, PDF de la période.
+- Formulaire public côté prospect (390 px clair, 1280 px sombre) et soumission réelle (la demande arrive en base).
+- Upload d'une photo de chantier (fichier stocké, ligne en base).
+- Feuilles à 390 px et 1280 px sombre : Équipe, Argent, Photos, Travaux, Mentions, Prix fournisseur (sans débordement).
+- 897 tests Vitest, 20 parcours E2E sur 20, 108 pages sans débordement.
 
-**B. Demande un compte ou une clé externe :**
+**Défauts trouvés pendant la recette (corrigés) :**
+- Enregistrement des certifications : la colonne est un `text[]`, l'écran envoyait une chaîne, et tout l'écran Légal échouait. Présent depuis la v1. Conversion dans `src/lib/data/certifications.ts`.
+- Invitation d'équipe (Réglages et onboarding) : le rôle par défaut était « Propriétaire », refusé par la base. Le rôle Propriétaire n'est plus proposé, Collaborateur est le défaut. Présent depuis la v1.
+- Numéro de facture coupé dans le rapport mensuel ; champ Spécifications collé au groupe de champs dans la feuille Prix fournisseur.
+
+**Pas vérifié, demande un compte ou une clé externe :**
 - Stripe : portail, résiliation, paiement et régularisation d'un setup, état « achat setup suspendu » (pas de clés d'essai).
 - Super PDP : connexion.
-- Assistante Sarah : appels IA et enregistrement d'une clé OpenRouter client (le compte d'essai n'est pas en « clé du client »).
-- Envoi réel d'emails (Resend) ; bouton flottant sur un site tiers.
+- Assistante Sarah : appels IA ; enregistrement d'une clé OpenRouter client ; feuille « Demander à Sarah » du catalogue (module IA désactivé sur le compte d'essai).
+- Envoi réel d'emails par le fournisseur (en local, une boîte de capture remplace Resend) ; bouton flottant du formulaire sur un site tiers.
 - PDF/A strict : veraPDF (nécessite Java), non installé.
 - Fermeture réelle d'un compte (non lancée volontairement).
 
-**Vérifié pendant la review globale :** Factur-X (schéma + schematron), logo et photos réels, devis de dix pages, PDF de données réelles (devis, chantier, DGD, rapport annuel), inscription avec un vrai code reçu par email, rendu de `global-error` et de l'accès réservé.
+**Pas vérifié, code serveur que la refonte n'a pas touché :**
+- Envoi des relances par le cron (la configuration est vérifiée, pas l'envoi : il faut un `CRON_SECRET` et la clé de l'assistante).
+- Page d'invitation reçue (`/invite/accept`) : en local, le lien de l'email redirige vers le port 3000 faute de configuration d'URL autorisée.
+
+**À connaître :** la génération d'archive et l'export FEC sur les données de démonstration échouent avec « Aucune autorité historique vérifiée » : ces documents ont été insérés sans passer par l'app, donc sans `issuance_snapshot` ni autorité de publication. Un compte neuf, dont les documents sont émis par l'app, n'a pas ce problème. À vérifier sur un compte de production ancien avant de promettre l'archive ou le FEC à ses propriétaires.
+
+**Pièges de test :** le champ « Ne pas remplir ce champ » du formulaire public est un piège à robots (le remplir fait croire à un succès sans rien enregistrer) ; l'archive se télécharge depuis « Dernières sauvegardes », pas au clic.
 
 ## 12. Avant d'ouvrir une PR (checklist)
 

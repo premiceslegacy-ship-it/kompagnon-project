@@ -125,7 +125,7 @@ Exceptions assumées, car ce sont des données et non du style : les couleurs d�
 
 ## 7. Qualité
 
-- `npm run check` : typecheck, lint (règle des couleurs comprise), 891 tests.
+- `npm run check` : typecheck, lint (règle des couleurs comprise), 897 tests.
 - `npm run test:e2e` (Playwright, Supabase local) : navigation par rôle, six parcours quotidiens, facturation électronique, transport de l’authentification sans JavaScript.
 - `scripts/render-pdf-samples.mts` : rend les dix PDF sur des jeux d’exemple (`.scratch/pdf/`).
 - Mesure d’épure par écran : boutons pleins (1), onglets (5 au plus), couleurs codées en dur (0).
