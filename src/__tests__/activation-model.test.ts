@@ -51,6 +51,8 @@ describe('activationModel', () => {
     const c = setupComparison(3000, 169)
     expect(c.monthlyTotal).toBe(6084)
     expect(c.breakEvenMonths).toBe(18)
+    expect(c.savings).toBe(3084)
+    expect(c.setupShare).toBe(49)
     // (6084 - 3000) / 36 = 85,67 : sous 85 € d'IA par mois, la mise en place reste gagnante.
     expect(c.maxAiPerMonth).toBe(85)
     expect(setupComparison(3000, 69).breakEvenMonths).toBe(44)

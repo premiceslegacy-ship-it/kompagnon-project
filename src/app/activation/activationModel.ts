@@ -97,14 +97,14 @@ export const PLAN_COPY: Record<Tier, {
 
 export const SETUP_COPY = {
   name: 'Mise en place accompagnée',
-  headline: 'Payez une fois. L’IA, vous la payez à l’usage.',
-  lead: 'Plus d’abonnement : vous branchez votre propre compte IA (OpenRouter) et ne payez que ce que vous consommez, sans forfait ni plafond.',
+  headline: 'Zéro abonnement. Un seul paiement.',
+  perk: 'Ensuite, votre IA ne vous coûte que ce que vous utilisez : pas de forfait, pas de plafond.',
   benefits: [
     'Catalogue, prix, devis et clients repris pour vous',
     'Prise en main guidée, sans formation longue',
     '14 jours de support prioritaire',
   ],
-  footnote: 'La consommation IA est facturée par OpenRouter selon votre usage, en plus du prix de la mise en place.',
+  footnote: 'La consommation IA se règle directement auprès du fournisseur d’IA, selon votre usage, en plus de la mise en place.',
   cta: 'Demander la mise en place',
 } as const
 
@@ -120,6 +120,9 @@ export function setupComparison(setupAmount: number, monthlyAmount: number, mont
   return {
     months,
     monthlyTotal,
+    savings: Math.max(0, monthlyTotal - setupAmount),
+    /** Part de la mise en place dans le coût d'Expert sur la période, en pourcentage (pour une barre). */
+    setupShare: Math.min(100, Math.round((setupAmount / monthlyTotal) * 100)),
     breakEvenMonths: Math.ceil(setupAmount / monthlyAmount),
     maxAiPerMonth: Math.max(0, Math.floor((monthlyTotal - setupAmount) / months)),
   }

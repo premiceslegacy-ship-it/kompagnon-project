@@ -138,28 +138,53 @@ function PlanCard({ tier, props }: { tier: Tier; props: ActivationViewProps }) {
 
 function SetupCard({ amount, whatsappUrl }: { amount: number; whatsappUrl: string | null }) {
   const comparison = setupComparison(amount, PLAN_COPY.expert.price)
+  const years = comparison.months / 12
   return (
     <section className={styles.setup} aria-label={SETUP_COPY.name}>
       <p className={styles.eyebrow}>{SETUP_COPY.name}</p>
       <h3 className={styles.setupTitle}>{SETUP_COPY.headline}</h3>
-      <p className={styles.audience}>{SETUP_COPY.lead}</p>
-
-      <div className={styles.compare} role="group" aria-label={`Comparaison sur ${comparison.months / 12} ans`}>
-        <div className={styles.compareCol}>
-          <span className={styles.compareLabel}>Expert, {comparison.months / 12} ans</span>
-          <b>{formatEuros(comparison.monthlyTotal)}</b>
-          <span className={styles.compareNote}>{PLAN_COPY.expert.price} € × {comparison.months} mois</span>
-        </div>
-        <div className={styles.compareCol} data-featured="true">
-          <span className={styles.compareLabel}>Mise en place</span>
-          <b>{formatEuros(amount)}</b>
-          <span className={styles.compareNote}>une fois, + votre IA à l’usage</span>
-        </div>
-      </div>
-      <p className={styles.verdict}>
-        Amortie en {comparison.breakEvenMonths} mois face à Expert. Vous restez gagnant tant que votre IA coûte moins de {comparison.maxAiPerMonth} € par mois.
+      <p className={styles.price}>
+        <b>{formatEuros(amount)}</b>
+        <span>HT, une seule fois</span>
       </p>
 
+      <ul className={styles.facts} aria-label="L’essentiel">
+        <li>
+          <b>0 €</b>
+          <span>d’abonnement</span>
+        </li>
+        <li>
+          <b>1 fois</b>
+          <span>à payer</span>
+        </li>
+        <li>
+          <b>{comparison.breakEvenMonths} mois</b>
+          <span>pour amortir</span>
+        </li>
+      </ul>
+
+      <div className={styles.savings}>
+        <p className={styles.savingsTitle}>
+          Jusqu’à <b>{formatEuros(comparison.savings)}</b> d’économie <span className={styles.nowrap}>sur {years} ans</span>
+        </p>
+        <div className={styles.bars} role="img" aria-label={`Sur ${years} ans : Expert ${formatEuros(comparison.monthlyTotal)}, mise en place ${formatEuros(amount)}`}>
+          <div className={styles.barRow}>
+            <span className={styles.barLabel}>Expert</span>
+            <span className={styles.bar} style={{ width: '100%' }} />
+            <b>{formatEuros(comparison.monthlyTotal)}</b>
+          </div>
+          <div className={styles.barRow}>
+            <span className={styles.barLabel}>Mise en place</span>
+            <span className={styles.bar} data-featured="true" style={{ width: `${comparison.setupShare}%` }} />
+            <b>{formatEuros(amount)}</b>
+          </div>
+        </div>
+        <p className={styles.savingsNote}>
+          Face à Expert à {PLAN_COPY.expert.price} € par mois. Vous restez gagnant tant que votre IA coûte moins de {comparison.maxAiPerMonth} € par mois.
+        </p>
+      </div>
+
+      <p className={styles.perk}>{SETUP_COPY.perk}</p>
       <ul className={styles.benefits}>
         {SETUP_COPY.benefits.map((benefit) => (
           <li key={benefit}>

@@ -225,45 +225,103 @@
   line-height: 22px;
 }
 
-.compare {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 20px;
+.setup .price {
+  margin-top: 8px;
 }
 
-.compareCol {
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.facts li {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
-  padding: 14px;
+  padding: 12px;
   border-radius: 14px;
   background: var(--at-fond);
 }
 
-.compareCol[data-featured='true'] {
-  box-shadow: 0 0 0 2px var(--at-accent);
-}
-
-.compareCol b {
+.facts b {
   color: var(--at-encre);
-  font: 700 24px/30px var(--font-geist);
+  font: 700 20px/26px var(--font-geist);
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
-.compareLabel {
-  color: var(--at-encre-2);
-  font: 500 13px/18px var(--font-inter);
-}
-
-.compareNote {
+.facts span {
   color: var(--at-encre-2);
   font: 400 13px/18px var(--font-inter);
 }
 
-.verdict {
+.savings {
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--at-accent) 14%, var(--at-fond));
+}
+
+.savingsTitle {
+  margin: 0;
+  color: var(--at-encre);
+  font: 500 17px/22px var(--font-inter);
+  letter-spacing: -0.02em;
+}
+
+.savingsTitle b {
+  font: 700 22px/28px var(--font-geist);
+  font-variant-numeric: tabular-nums;
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.barRow {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: var(--at-encre);
+  font: 500 13px/18px var(--font-inter);
+}
+
+.barRow b {
+  min-width: 64px;
+  font: 700 15px/20px var(--font-geist);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* La barre occupe sa colonne : sa largeur en pourcentage est celle de la colonne. */
+.bar {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--at-encre-3);
+}
+
+.bar[data-featured='true'] {
+  background: var(--at-accent);
+}
+
+.savingsNote {
   margin: 12px 0 0;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+}
+
+.perk {
+  margin: 20px 0 0;
   color: var(--at-encre);
   font: 600 15px/20px var(--font-inter);
   letter-spacing: -0.014em;
@@ -272,4 +330,8 @@
 
 .setup .benefits {
   margin-bottom: 20px;
+}
+
+.nowrap {
+  white-space: nowrap;
 }
