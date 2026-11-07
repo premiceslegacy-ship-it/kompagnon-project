@@ -99,7 +99,7 @@ async function publishQuote(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Envoyer le devis', exact: true }).click()
   const heading = page.getByRole('heading', { name: 'Envoyer le devis' })
   await expect(heading).toBeVisible({ timeout: 30_000 })
-  await page.locator('.card').filter({ has: heading }).getByRole('button', { name: 'Envoyer', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Envoyer le devis' }).getByRole('button', { name: 'Envoyer', exact: true }).click()
   await page.waitForURL(/\/finances(?:$|\?)/, { timeout: 30_000 })
 }
 
