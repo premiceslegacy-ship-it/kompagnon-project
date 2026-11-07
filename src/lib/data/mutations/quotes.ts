@@ -713,6 +713,15 @@ export async function sendQuote(quoteId: string, options?: { attachContractIds?:
   if (!quote) return { error: 'Devis introuvable ou non disponible pour un nouvel envoi.' }
   const signUrl = `${appUrl.replace(/\/$/, '')}/sign/${signatureToken}`
 
+  // Un lien neuf vient d'être émis : la demande de nouveau lien du client est traitée.
+  const { error: resolveError } = await supabase
+    .from('signature_link_requests')
+    .update({ resolved_at: new Date().toISOString() })
+    .eq('quote_id', quoteId)
+    .eq('organization_id', orgId)
+    .is('resolved_at', null)
+  if (resolveError) console.error('[sendQuote] signature link request resolve error:', resolveError)
+
   await syncQuoteMemoryEntry(supabase, orgId, quoteId)
   void syncQuoteLearningEntry(supabase, orgId, quoteId)
 

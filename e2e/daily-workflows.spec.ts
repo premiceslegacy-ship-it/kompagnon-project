@@ -169,7 +169,7 @@ async function signQuoteAsRecipient(page: Page, tenant: QualificationTenant, lin
   const ownerViewport = page.viewportSize()
   await openSignatureAsRecipient(page, link)
   await expect(page.getByText('Montant TTC', { exact: true })).toBeVisible()
-  await expect(page.getByText(tenant.clientName, { exact: true })).toBeVisible()
+  await expect(page.getByText(new RegExp(`^Pour ${escapeRegex(tenant.clientName)}( ·|$)`))).toBeVisible()
   await expect(page.getByText(euroPattern(EXPECTED_TOTAL_TTC)).first()).toBeVisible()
   await page.getByPlaceholder('Prénom et nom').fill('Camille Qualification')
   const canvas = page.locator('canvas').first()
@@ -189,8 +189,7 @@ async function signQuoteAsRecipient(page: Page, tenant: QualificationTenant, lin
   await page.mouse.move(bounds.x + bounds.width * 0.6, bounds.y + bounds.height * 0.62, { steps: 5 })
   await page.mouse.move(bounds.x + bounds.width * 0.8, bounds.y + bounds.height * 0.4, { steps: 5 })
   await page.mouse.up()
-  await page.getByRole('checkbox').check()
-  await page.getByRole('button', { name: /J'accepte ce devis/ }).click()
+  await page.getByRole('button', { name: 'Signer le devis' }).click()
   await expect(page.getByRole('heading', { name: /devis accepté/i })).toBeVisible()
   await expect(page.getByText(euroPattern(EXPECTED_TOTAL_TTC))).toBeVisible()
   if (ownerViewport) await page.setViewportSize(ownerViewport)
@@ -324,7 +323,7 @@ test.describe('Parcours métier Atelier : qualification locale isolée', () => {
     expect(emailHasPdfAttachment(email)).toBe(true)
     expect(signatureLinkIsLocal(signLink, qualification.baseUrl)).toBe(true)
     await openSignatureAsRecipient(page, signLink)
-    await expect(page.getByText(qualification.clientName, { exact: true })).toBeVisible()
+    await expect(page.getByText(new RegExp(`^Pour ${escapeRegex(qualification.clientName)}( ·|$)`))).toBeVisible()
     await expect(page.getByText(euroPattern(EXPECTED_TOTAL_TTC))).toBeVisible()
     await expect(page.getByPlaceholder('Prénom et nom')).toBeVisible()
   })
@@ -410,6 +409,73 @@ test.describe('Parcours métier Atelier : qualification locale isolée', () => {
     expect(emails.filter((email) => emailRecipients(email).includes(qualification.clientEmail))).toHaveLength(2)
   })
 
+  test('demander un nouveau lien de signature expiré et le recevoir après accord de l’artisan', async ({ page, qualification }) => {
+    // Deux envois, une demande et deux connexions : ce parcours dépasse la limite par défaut de 90 s.
+    test.setTimeout(240_000)
+    const title = `Devis lien expiré qualification ${qualification.orgId.slice(0, 8)}`
+    await signInAsOwner(page, qualification)
+    await createQuoteInUi(page, qualification, title)
+    await waitForPersistedDraft(qualification, title)
+    const { quote, signLink } = await waitForPublishedQuote(page, qualification, title)
+
+    const { error: expireError } = await qualification.admin
+      .from('quotes')
+      .update({ signature_token_expires_at: new Date(Date.now() - 60_000).toISOString() })
+      .eq('id', quote.id)
+      .eq('organization_id', qualification.orgId)
+    if (expireError) throw new Error('Could not expire the local qualification signature link.')
+
+    const ownerViewport = page.viewportSize()
+    await openSignatureAsRecipient(page, signLink)
+    await expect(page.getByRole('heading', { name: 'Ce lien n\'est plus valide' })).toBeVisible({ timeout: 30_000 })
+    await page.getByRole('button', { name: 'Demander un nouveau lien' }).click()
+    await expect(page.getByRole('heading', { name: 'Demande envoyée' })).toBeVisible({ timeout: 30_000 })
+
+    const openRequest = async () => {
+      const { data, error } = await qualification.admin
+        .from('signature_link_requests')
+        .select('id, resolved_at')
+        .eq('quote_id', quote.id)
+        .eq('organization_id', qualification.orgId)
+      if (error) throw new Error('Could not read the local signature link request.')
+      return data ?? []
+    }
+    expect(await openRequest()).toEqual([expect.objectContaining({ resolved_at: null })])
+    // L'artisan est prévenu à son adresse d'envoi, sinon à son email de contact (même règle que l'acceptation).
+    const { data: orgAddresses } = await qualification.admin
+      .from('organizations')
+      .select('email, email_from_address')
+      .eq('id', qualification.orgId)
+      .single()
+    const proEmail = orgAddresses?.email_from_address || orgAddresses?.email
+    expect(proEmail).toBeTruthy()
+    const afterRequest = await waitForEmailCount(2)
+    expect(afterRequest.filter((email) => emailRecipients(email).includes(proEmail!))).toHaveLength(1)
+    const { data: unchanged } = await qualification.admin.from('quotes').select('signature_token, status').eq('id', quote.id).single()
+    expect(unchanged?.status).toBe('sent')
+    expect(signLink.endsWith(`/sign/${unchanged?.signature_token}`)).toBe(true)
+
+    // Deuxième demande : pas de second message à l'artisan.
+    await navigateToSignatureLink(page, signLink)
+    await expect(page.getByRole('heading', { name: 'Demande déjà transmise' })).toBeVisible({ timeout: 30_000 })
+
+    if (ownerViewport) await page.setViewportSize(ownerViewport)
+    await signInAsOwner(page, qualification)
+    await page.goto(`/finances/quote-editor?id=${quote.id}&returnTo=%2Ffinances`)
+    await page.waitForLoadState('networkidle')
+    await publishQuote(page)
+    await expect.poll(async () => (await openRequest()).every((request) => request.resolved_at !== null), { timeout: 30_000 }).toBe(true)
+
+    const emails = await waitForEmailCount(3)
+    const resent = [...emails].reverse().find((email) => emailRecipients(email).includes(qualification.clientEmail))
+    const newLink = resent ? extractSignatureLink(resent, qualification.baseUrl) : null
+    expect(newLink).toBeTruthy()
+    expect(newLink).not.toBe(signLink)
+    await openSignatureAsRecipient(page, newLink!)
+    await expect(page.getByText('Montant TTC', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Signer le devis' })).toBeVisible()
+  })
+
   test('pointer des heures depuis le magic link intervenant à usage unique', async ({ page, qualification }) => {
     const member = await qualification.createMemberAccess()
     const link = new URL('/api/auth/member-verify', qualification.baseUrl)
@@ -422,7 +488,7 @@ test.describe('Parcours métier Atelier : qualification locale isolée', () => {
     }
     expect(new URL(page.url()).pathname).toBe('/mon-espace/dashboard')
     await expect(page.getByRole('heading', { name: 'Bonjour Alex' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Pointer mes heures' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Nouveau pointage' })).toBeVisible()
 
     const { data: consumedToken, error: tokenReadError } = await qualification.admin
       .from('member_space_tokens')
@@ -432,13 +498,13 @@ test.describe('Parcours métier Atelier : qualification locale isolée', () => {
     if (tokenReadError || !consumedToken) throw new Error('Could not verify local member token consumption.')
     expect(Boolean(consumedToken.last_used_at)).toBe(true)
 
-    await page.getByRole('button', { name: 'Pointer mes heures' }).click()
-    const form = page.getByText('Nouveau pointage').locator('..')
+    await page.getByRole('button', { name: 'Nouveau pointage' }).click()
+    const form = page.getByRole('dialog', { name: 'Nouveau pointage' })
     await expect(form).toBeVisible()
-    await form.locator('select').selectOption(member.chantierId)
-    await form.locator('input[type="date"]').fill(member.date)
-    await form.getByPlaceholder('ex : 7.5').fill('3.5')
-    await form.getByPlaceholder('Description (facultatif)').fill('Pointage de qualification')
+    await form.getByLabel('Chantier').selectOption(member.chantierId)
+    await form.getByLabel('Date').fill(member.date)
+    await form.getByLabel('Heures').fill('3,5')
+    await form.getByLabel('Description').fill('Pointage de qualification')
     await form.getByRole('button', { name: 'Pointer', exact: true }).click()
     await expect(form).toBeHidden()
 
@@ -455,10 +521,10 @@ test.describe('Parcours métier Atelier : qualification locale isolée', () => {
     expect(Number(pointage.hours)).toBe(3.5)
     expect(pointage.description).toBe('Pointage de qualification')
 
-    await expect(page.getByRole('button').filter({ hasText: '3h30' }).last()).toBeVisible()
-    await page.getByRole('button').filter({ hasText: '3h30' }).last().click()
-    await expect(page.getByText(member.chantierTitle, { exact: true })).toBeVisible()
-    await expect(page.getByText('Pointage de qualification', { exact: true })).toBeVisible()
+    const main = page.getByRole('main')
+    await expect(main.getByText('3h30', { exact: true }).last()).toBeVisible()
+    await expect(main.getByText(member.chantierTitle, { exact: true }).last()).toBeVisible()
+    await expect(main.getByText('Pointage de qualification', { exact: true })).toBeVisible()
   })
 
 })
