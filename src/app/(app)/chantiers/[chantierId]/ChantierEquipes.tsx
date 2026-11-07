@@ -57,7 +57,7 @@ export function EquipesTab({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [newEquipeName, setNewEquipeName] = useState('')
-  const [newEquipeColor, setNewEquipeColor] = useState('#6366f1')
+  const [newEquipeColor, setNewEquipeColor] = useState<string>(EQUIPE_COLORS[0])
   const [createLoading, setCreateLoading] = useState(false)
   const [memberForms, setMemberForms] = useState<Record<string, { name: string; role: string; taux: string; profileId: string | null }>>({})
   const [editingMembreTaux, setEditingMembreTaux] = useState<Record<string, string>>({})
@@ -70,7 +70,6 @@ export function EquipesTab({
   const [teamSuggestions, setTeamSuggestions] = useState<TeamSuggestion[]>([])
   const [suggestTeamsLoading, setSuggestTeamsLoading] = useState(false)
   const [showTeamSuggestions, setShowTeamSuggestions] = useState(false)
-  const SUGGEST_COLORS = ['#6366f1', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6', '#f97316']
 
   const handleSuggestTeams = async () => {
     if (!linkedQuoteId) return
@@ -85,7 +84,7 @@ export function EquipesTab({
       unit: item.unit,
       rate: item.rate,
       name: item.designation,
-      color: SUGGEST_COLORS[i % SUGGEST_COLORS.length],
+      color: EQUIPE_COLORS[i % EQUIPE_COLORS.length],
       created: false,
     })))
     setShowTeamSuggestions(true)
@@ -124,7 +123,7 @@ export function EquipesTab({
       }
       setAllEquipes(prev => [...prev, newE])
       setNewEquipeName('')
-      setNewEquipeColor('#6366f1')
+      setNewEquipeColor(EQUIPE_COLORS[0])
       setShowCreate(false)
     }
   }

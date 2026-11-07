@@ -1,0 +1,28 @@
+/* @atelier-migrated */
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 16px;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+  letter-spacing: -0.008em;
+  text-decoration: none;
+}
+
+.link:hover {
+  color: var(--at-encre);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

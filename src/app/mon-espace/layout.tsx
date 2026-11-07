@@ -1,9 +1,6 @@
-import React from 'react'
+import type { ReactNode } from 'react'
+import styles from './layout.module.css'
 
-export default function MonEspaceLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen bg-base text-primary">
-      {children}
-    </div>
-  )
+export default function MonEspaceLayout({ children }: { children: ReactNode }) {
+  return <div className={styles.shell}>{children}</div>
 }

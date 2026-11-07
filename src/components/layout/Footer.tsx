@@ -1,21 +1,20 @@
 'use client'
+// @atelier-migrated
 
+import { usePathname } from 'next/navigation'
 import { APP_SIGNATURE } from '@/lib/brand'
 import { LegalLinks } from '@/components/legal/LegalLinks'
-import { usePathname } from 'next/navigation'
+import styles from './Footer.module.css'
 
-export const Footer = ({ orgName }: { orgName: string | null }) => {
-    const pathname = usePathname()
-    const isEditorWorkspace = pathname?.startsWith('/finances/quote-editor')
-    const isAIQuoteWorkspace = pathname?.startsWith('/atelier-ia')
-    const isCockpit = pathname?.startsWith('/orsayn')
+/** Pied de page discret : signature du logiciel et liens légaux. Absent des éditeurs plein écran. */
+export const Footer = ({ orgName: _orgName }: { orgName: string | null }) => {
+  const pathname = usePathname()
+  if (pathname?.startsWith('/finances/quote-editor') || pathname?.startsWith('/atelier-ia')) return null
 
-    if (isEditorWorkspace || isAIQuoteWorkspace) return null
-
-    return (
-    <footer className={`shrink-0 p-8 border-t border-[var(--elevation-border)] text-center relative z-0 ${isCockpit ? 'cockpit-footer' : 'bg-base/80 backdrop-blur'}`}>
-        <p className="text-secondary text-xs font-medium tracking-widest uppercase">{orgName ?? APP_SIGNATURE} · Logiciel métier</p>
-        <LegalLinks className="mt-3" />
+  return (
+    <footer className={`${styles.footer}${pathname?.startsWith('/orsayn') ? ' cockpit-footer' : ''}`}>
+      <p className={styles.signature}>{APP_SIGNATURE}</p>
+      <LegalLinks />
     </footer>
-    )
+  )
 }
