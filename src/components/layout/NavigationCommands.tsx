@@ -627,6 +627,12 @@ function NotificationPanel({ select }: { select: NavigationMenuSelect }) {
         '/finances',
         icon(MailWarning, 'accent'),
       )}
+      {(data.signatureLinkRequests ?? 0) > 0 && row(
+        `${data.signatureLinkRequests} nouveau${(data.signatureLinkRequests ?? 0) > 1 ? 'x' : ''} lien${(data.signatureLinkRequests ?? 0) > 1 ? 's' : ''} de signature demandé${(data.signatureLinkRequests ?? 0) > 1 ? 's' : ''}`,
+        'Renvoyez le devis pour envoyer un lien neuf',
+        '/finances',
+        icon(MailWarning, 'accent'),
+      )}
       {(data.recentAutoReminders ?? 0) > 0 && row(
         `${data.recentAutoReminders} relance${(data.recentAutoReminders ?? 0) > 1 ? 's' : ''} auto envoyée${(data.recentAutoReminders ?? 0) > 1 ? 's' : ''}`,
         'Factures ou devis relancés automatiquement',

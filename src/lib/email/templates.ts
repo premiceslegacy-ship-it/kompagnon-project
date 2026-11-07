@@ -785,3 +785,52 @@ ${spaceUrl ? renderCTA('Voir mon espace →', spaceUrl) : ''}
 
   return { subject, html }
 }
+
+// ─── Notification pro : le client demande un nouveau lien de signature ──────
+
+export function buildSignatureLinkRequestedEmail({
+  orgName,
+  logoUrl,
+  clientName,
+  quoteNumber,
+  quoteTitle,
+  quoteEditorUrl,
+}: {
+  orgName: string
+  logoUrl?: string | null
+  clientName: string
+  quoteNumber: string | null
+  quoteTitle: string | null
+  quoteEditorUrl: string
+}): { subject: string; html: string } {
+  const numText = quoteNumber ? ` ${quoteNumber}` : ''
+  const subject = `${clientName} demande un nouveau lien pour signer le devis${numText}`
+
+  const infoRows = [
+    { label: 'Client', value: escHtml(clientName) },
+    { label: 'Devis', value: `${escHtml(quoteNumber ?? '-')}${quoteTitle ? ' · ' + escHtml(quoteTitle) : ''}` },
+  ]
+
+  const body = `
+<h1 style="${H1}">
+  Un client souhaite signer votre devis
+</h1>
+<p style="${BODY_P}">
+  Le lien de signature reçu par votre client a expiré. Il demande un nouveau lien.
+  Rien ne part sans votre accord : vérifiez le devis, puis renvoyez-le pour qu'il reçoive un lien neuf.
+</p>
+${renderInfoBox(infoRows)}
+${renderCTA(`Ouvrir le devis dans ${APP_NAME}`, quoteEditorUrl)}
+<p style="${SMALL_P}">
+  Si le devis doit changer avant d'être signé, modifiez-le puis renvoyez-le : le client recevra la nouvelle version.
+</p>`
+
+  const html = renderEmailShell({
+    title: subject,
+    headerName: orgName,
+    headerLogoUrl: logoUrl,
+    bodyHtml: body,
+  })
+
+  return { subject, html }
+}

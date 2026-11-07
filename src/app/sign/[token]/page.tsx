@@ -4,6 +4,7 @@ import { isPublicQuoteDocumentState, isSignatureTokenFresh } from '@/lib/securit
 import { quoteDocumentPayloadFromSnapshot } from '@/lib/pdf/server'
 import type { Metadata } from 'next'
 import SignClient from './SignClient'
+import SignatureLinkExpired from './SignatureLinkExpired'
 
 export const metadata: Metadata = {
   title: 'Signature de devis',
@@ -24,8 +25,33 @@ export default async function SignPage({ params: paramsPromise }: { params: Prom
   // Un lien mal recopié n'est pas un identifiant valide (22P02) : même réponse qu'un lien inconnu.
   if (error?.code === '22P02') notFound()
   if (error) throw error
-  if (!quote || !isPublicQuoteDocumentState(quote.status, quote.is_archived)
-    || !isSignatureTokenFresh(quote.signature_token_expires_at)) notFound()
+  if (!quote || !isPublicQuoteDocumentState(quote.status, quote.is_archived)) notFound()
+
+  if (!isSignatureTokenFresh(quote.signature_token_expires_at)) {
+    // Lien expiré d'un devis encore ouvert : le client peut demander un nouveau lien.
+    // Rien n'est prolongé ici ; seul un nouvel envoi par l'artisan émet un lien neuf.
+    if (quote.signed_at || (quote.status !== 'sent' && quote.status !== 'viewed')) notFound()
+    let expiredPayload
+    try {
+      expiredPayload = quoteDocumentPayloadFromSnapshot(quote, quote.organization_id)
+    } catch {
+      notFound()
+    }
+    const { count: openRequests } = await admin.from('signature_link_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('quote_id', quote.id)
+      .is('resolved_at', null)
+    const { organization: expiredOrg, quoteRecord: expiredQuote } = expiredPayload
+    return (
+      <SignatureLinkExpired
+        token={token}
+        orgName={expiredOrg.name}
+        orgAddress={[expiredOrg.address_line1, `${expiredOrg.postal_code ?? ''} ${expiredOrg.city ?? ''}`.trim()].filter(Boolean).join(', ') || null}
+        quoteNumber={expiredQuote.number}
+        alreadyRequested={(openRequests ?? 0) > 0}
+      />
+    )
+  }
 
   let payload
   try {
