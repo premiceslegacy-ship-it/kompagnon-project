@@ -51,4 +51,19 @@ describe('Field', () => {
       expect(onChange).not.toHaveBeenCalled()
     }
   })
+
+  it('garde le contrôle natif des dates, heures, emails et téléphones', () => {
+    render(
+      <>
+        <Field type="date" label="Date" defaultValue="2026-11-05" />
+        <Field type="time" label="Heure de début" defaultValue="08:30" />
+        <Field type="email" label="Email" defaultValue="jean@exemple.fr" />
+        <Field type="tel" label="Téléphone" defaultValue="06 12 34 56 78" />
+      </>,
+    )
+    expect((screen.getByLabelText('Date') as HTMLInputElement).type).toBe('date')
+    expect((screen.getByLabelText('Heure de début') as HTMLInputElement).type).toBe('time')
+    expect((screen.getByLabelText('Email') as HTMLInputElement).type).toBe('email')
+    expect((screen.getByLabelText('Téléphone') as HTMLInputElement).type).toBe('tel')
+  })
 })

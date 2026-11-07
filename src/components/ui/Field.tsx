@@ -32,10 +32,13 @@ type TextareaNativeProps = Omit<
   'id' | 'className' | 'disabled' | 'aria-describedby' | 'aria-invalid'
 >
 
+/** Champs saisis au clavier ; `date` et `time` gardent le sélecteur natif du système. */
+export type FieldTextType = 'text' | 'email' | 'tel' | 'date' | 'time'
+
 export type FieldTextProps = FieldSharedProps & InputNativeProps & {
-  type: 'text'
-  /** Nature de la saisie : mot de passe, email, téléphone… (« text » par défaut). */
-  inputType?: 'text' | 'password' | 'email' | 'tel' | 'url' | 'date'
+  type: FieldTextType
+  /** Nature de la saisie quand `type` ne suffit pas : mot de passe, adresse web… */
+  inputType?: 'text' | 'password' | 'email' | 'tel' | 'url' | 'date' | 'time'
 }
 
 export type FieldNumberProps = FieldSharedProps & Omit<
@@ -174,10 +177,8 @@ export function Field(props: FieldProps) {
     }
   }, [measureStacking, type])
 
-  const displayedValue = props.type === 'number' || props.type === 'text' || props.type === 'select'
-    ? props.value
-    : undefined
-  const displayedPlaceholder = props.type === 'number' || props.type === 'text'
+  const displayedValue = props.type !== 'textarea' ? props.value : undefined
+  const displayedPlaceholder = props.type !== 'textarea' && props.type !== 'select'
     ? props.placeholder
     : undefined
   const selectedChildren = props.type === 'select' ? props.children : undefined
@@ -270,9 +271,9 @@ export function Field(props: FieldProps) {
     )
   }
 
-  if (props.type === 'text') {
+  if (props.type === 'text' || props.type === 'email' || props.type === 'tel' || props.type === 'date' || props.type === 'time') {
     const {
-      type: _type,
+      type: fieldType,
       label: _label,
       hint: _hint,
       error: _error,
@@ -293,7 +294,7 @@ export function Field(props: FieldProps) {
       <input
         {...nativeProps}
         {...controlA11yProps}
-        type={inputType ?? 'text'}
+        type={inputType ?? fieldType}
         onChange={(event) => {
           onChange?.(event)
           setMeasureRevision((revision) => revision + 1)
@@ -337,6 +338,8 @@ export function Field(props: FieldProps) {
     )
   }
 
+  // Seul le type textarea atteint ce point : les autres types ont déjà rendu leur champ.
+  const textareaProps = props as FieldTextareaProps
   const {
     type: _type,
     label: _label,
@@ -351,7 +354,7 @@ export function Field(props: FieldProps) {
     'aria-invalid': _ariaInvalid,
     onInput,
     ...nativeProps
-  } = props
+  } = textareaProps
 
   return renderField(
     <textarea
