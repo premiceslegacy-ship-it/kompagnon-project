@@ -1,10 +1,11 @@
 'use client'
+// @atelier-migrated
 
-import { useEffect, useState, type MouseEvent } from 'react'
-import { RefreshCw, AlertTriangle, ChevronRight, Settings, Loader2, TrendingUp, TrendingDown } from 'lucide-react'
-import Link from 'next/link'
-import { METAL_LABELS, LME_METAL_CODES, type CachedMetalPrice, type MetalCode, type MetalPriceTrend } from '@/lib/metal-prices'
+import { useEffect, useState } from 'react'
+import { METAL_LABELS, LME_METAL_CODES, type CachedMetalPrice, type MetalPriceTrend } from '@/lib/metal-prices'
 import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids'
+import { ListGroup, ListRow } from '@/components/ui/ListGroup'
+import styles from './Panels.module.css'
 
 type Props = {
   grids: MetalPriceGrid[]
@@ -13,39 +14,34 @@ type Props = {
 
 type ApiResponse = { prices?: CachedMetalPrice[]; trends?: MetalPriceTrend[]; error?: string }
 
-// Seuil au-delà duquel la variation est mise en avant visuellement (hausse comme baisse).
+// Seuil au-delà duquel la variation est mise en avant (hausse comme baisse).
 const TREND_ALERT_THRESHOLD_PERCENT = 2
 
-function fmtEurKg(n: number): string {
-  return new Intl.NumberFormat('fr-FR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n) + ' €/kg'
+const nf = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const fmtEurKg = (n: number) => `${nf.format(n)} €/kg`
+const fmtProposed = (n: number, unit: string) => `${nf.format(n)} €/${unit}`
+
+function updatedLabel(fetchedAt: string | undefined): string | null {
+  if (!fetchedAt) return null
+  const d = new Date(fetchedAt)
+  const time = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  if (d.toDateString() === new Date().toDateString()) return `Mis à jour aujourd’hui à ${time}`
+  return `Mis à jour le ${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} à ${time}`
 }
 
-function fmtProposed(n: number, unit: string): string {
-  return new Intl.NumberFormat('fr-FR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n) + ' €/' + unit
-}
-
+/** Cours des métaux du jour et grilles fournisseur pour insérer une ligne de devis. */
 export default function MetalPriceBanner({ grids, onGridSelect }: Props) {
   const lmeGrids = grids.filter(g => g.source_type !== 'manual')
   const manualGrids = grids.filter(g => g.source_type === 'manual')
-  const hasGrids = grids.length > 0 && onGridSelect
-  const settingsHref = '/settings?tab=devis#metal-prices'
+  const hasGrids = grids.length > 0 && Boolean(onGridSelect)
 
   const [prices, setPrices] = useState<CachedMetalPrice[] | null>(null)
   const [trends, setTrends] = useState<MetalPriceTrend[]>([])
-  const [error, setError] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [settingsLinkPending, setSettingsLinkPending] = useState(false)
 
   async function load() {
     setLoading(true)
-    setError(false)
     setErrorMessage(null)
     try {
       const res = await fetch('/api/metal-prices')
@@ -54,7 +50,6 @@ export default function MetalPriceBanner({ grids, onGridSelect }: Props) {
       setPrices(data.prices ?? [])
       setTrends(data.trends ?? [])
     } catch (err) {
-      setError(true)
       setErrorMessage(err instanceof Error ? err.message : 'Cours temporairement indisponibles.')
     } finally {
       setLoading(false)
@@ -63,180 +58,91 @@ export default function MetalPriceBanner({ grids, onGridSelect }: Props) {
 
   useEffect(() => { load() }, [])
 
-  function handleConfigureClick(event: MouseEvent<HTMLAnchorElement>) {
-    if (
-      event.defaultPrevented ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey ||
-      event.currentTarget.target === '_blank'
-    ) {
-      return
-    }
-    setSettingsLinkPending(true)
-  }
-
   const safePrices = prices ?? []
   const priceMap = Object.fromEntries(safePrices.map(p => [p.metal_code, p]))
   const trendMap = Object.fromEntries(trends.map(t => [t.metal_code, t]))
   const isDemoPrices = safePrices.some(p => p.source === 'atelier_demo_market_data')
-
-  const fetchedAt = safePrices[0]?.fetched_at
-  let timeLabel: string | null = null
-  if (fetchedAt) {
-    const d = new Date(fetchedAt)
-    const now = new Date()
-    const isToday = d.toDateString() === now.toDateString()
-    if (isToday) {
-      timeLabel = 'Mis à jour aujourd\'hui à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-    } else {
-      timeLabel = 'Mis à jour le ' + d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-        + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-    }
-  }
+  const timeLabel = !loading && !errorMessage ? updatedLabel(safePrices[0]?.fetched_at) : null
 
   return (
-    <div className="rounded-2xl border border-[var(--elevation-border)] bg-[var(--elevation-1)]/40 overflow-hidden">
-
-      {/* En-tête */}
-      <div className="px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">
-          {isDemoPrices ? 'Cours indicatifs Atelier' : 'Cours LME, référence indicative'}
-        </span>
-        {timeLabel && !loading && !error && (
-          <span className="text-xs text-secondary">{timeLabel}</span>
-        )}
-      </div>
-
-      {/* Cours LME */}
-      <div className="px-4 sm:px-5 pb-4">
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-secondary">
-            <RefreshCw size={12} className="animate-spin flex-shrink-0 text-accent" />
-            <span>Chargement des cours...</span>
-          </div>
-        ) : error ? (
-          <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
-            <AlertTriangle size={12} className="flex-shrink-0" />
-            <span>{errorMessage ?? 'Cours temporairement indisponibles.'}</span>
-          </div>
-        ) : (
-          <div className="flex flex-wrap gap-x-6 gap-y-2">
-            {LME_METAL_CODES.map((code) => {
-              const p = priceMap[code]
-              const trend = trendMap[code]
-              const isAlert = trend && Math.abs(trend.changePercent) >= TREND_ALERT_THRESHOLD_PERCENT
-              return (
-                <div key={code} className="flex items-baseline gap-1.5">
-                  <span className="text-sm text-secondary">{METAL_LABELS[code]}</span>
-                  <span className="text-sm font-bold tabular-nums text-primary">
+    <div className={styles.stack}>
+      {loading ? (
+        <p className={styles.note} role="status">Chargement des cours…</p>
+      ) : errorMessage ? (
+        <p className={`${styles.note} ${styles.noteWarn}`} role="alert">{errorMessage}</p>
+      ) : (
+        <ListGroup
+          title={isDemoPrices ? 'Cours indicatifs Atelier' : 'Cours des métaux'}
+          description={timeLabel ?? undefined}
+        >
+          {LME_METAL_CODES.map(code => {
+            const p = priceMap[code]
+            const trend = trendMap[code]
+            const isAlert = Boolean(trend) && Math.abs(trend.changePercent) >= TREND_ALERT_THRESHOLD_PERCENT
+            const trendClass = trend && isAlert ? (trend.changePercent >= 0 ? styles.trendUp : styles.trendDown) : ''
+            return (
+              <ListRow
+                key={code}
+                title={METAL_LABELS[code]}
+                trailing={
+                  <span className={styles.value}>
                     {p ? fmtEurKg(p.price_eur_kg) : '—'}
+                    {trend && (
+                      <span
+                        className={`${styles.trend} ${trendClass}`}
+                        title={`Cours du ${new Date(trend.previousDate).toLocaleDateString('fr-FR')} : ${fmtEurKg(trend.previousPriceEurKg)}`}
+                      >
+                        {trend.changePercent >= 0 ? '+' : ''}{trend.changePercent} %
+                      </span>
+                    )}
                   </span>
-                  {trend && (
-                    <span
-                      className={`inline-flex items-center gap-0.5 text-xs font-semibold tabular-nums ${
-                        trend.changePercent >= 0
-                          ? isAlert ? 'text-red-600 dark:text-red-400' : 'text-secondary'
-                          : isAlert ? 'text-emerald-600 dark:text-emerald-400' : 'text-secondary'
-                      }`}
-                      title={`Cours du ${new Date(trend.previousDate).toLocaleDateString('fr-FR')} : ${fmtEurKg(trend.previousPriceEurKg)}`}
-                    >
-                      {trend.changePercent >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
-                      {trend.changePercent >= 0 ? '+' : ''}{trend.changePercent}%
-                    </span>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
+                }
+              />
+            )
+          })}
+        </ListGroup>
+      )}
 
-      {/* Grilles ou invitation à en créer */}
-      <div className="border-t border-[var(--elevation-border)] px-4 sm:px-5 py-3.5">
-        {hasGrids ? (
-          <>
-            <p className="text-xs text-secondary mb-2.5 font-medium">
-              Insérer une ligne depuis une grille fournisseur :
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {lmeGrids.map((grid) => {
-                const courseData = priceMap[grid.metal_code]
-                if (!courseData) return null
-                const proposed = courseData.price_eur_kg * grid.coefficient
-                return (
-                  <button
-                    key={grid.id}
-                    type="button"
-                    onClick={() => onGridSelect!(grid, courseData.price_eur_kg)}
-                    className="group flex items-center gap-2 pl-3 pr-2.5 py-2 rounded-xl border border-[var(--elevation-border)] bg-surface dark:bg-white/[0.03] hover:border-accent/50 hover:bg-accent/5 transition-all text-left"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-primary group-hover:text-accent transition-colors truncate">
-                        {grid.label}
-                      </p>
-                      <p className="text-xs text-secondary tabular-nums">
-                        {fmtProposed(proposed, grid.unit)}
-                      </p>
-                    </div>
-                    <ChevronRight size={13} className="text-secondary group-hover:text-accent transition-colors flex-shrink-0" />
-                  </button>
-                )
-              })}
-              {manualGrids.map((grid) => {
-                const manualPrice = grid.manual_price_eur_kg ?? 0
-                return (
-                  <button
-                    key={grid.id}
-                    type="button"
-                    onClick={() => onGridSelect!(grid, manualPrice)}
-                    className="group flex items-center gap-2 pl-3 pr-2.5 py-2 rounded-xl border border-[var(--elevation-border)] bg-surface dark:bg-white/[0.03] hover:border-accent/50 hover:bg-accent/5 transition-all text-left"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        <p className="text-sm font-medium text-primary group-hover:text-accent transition-colors truncate">
-                          {grid.label}
-                        </p>
-                        <span className="text-[9px] font-bold uppercase tracking-wide text-secondary border border-[var(--elevation-border)] rounded px-1 py-px flex-shrink-0">
-                          Prix fixe
-                        </span>
-                      </div>
-                      <p className="text-xs text-secondary tabular-nums">
-                        {fmtProposed(manualPrice, grid.unit)}
-                      </p>
-                    </div>
-                    <ChevronRight size={13} className="text-secondary group-hover:text-accent transition-colors flex-shrink-0" />
-                  </button>
-                )
-              })}
-            </div>
-            <p className="mt-2.5 text-[11px] text-secondary leading-relaxed">
-              Prix indicatif = cours LME × coefficient fournisseur (ou prix fixe pour l'acier). Renseignez longueur et largeur sur la ligne pour un calcul au poids réel si la grille a une épaisseur définie. À valider selon coupe et délai de livraison.
-            </p>
-          </>
-        ) : (
-          <div className="flex items-center justify-between gap-4">
-            <p className="text-xs text-secondary">
-              Configurez vos grilles matières pour pré-remplir vos lignes de devis en un clic.
-            </p>
-            <Link
-              href={settingsHref}
-              onClick={handleConfigureClick}
-              aria-busy={settingsLinkPending || undefined}
-              aria-disabled={settingsLinkPending || undefined}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[var(--elevation-border)] text-xs font-semibold transition-colors ${
-                settingsLinkPending
-                  ? 'text-primary border-accent/50 bg-accent/10 cursor-wait'
-                  : 'text-secondary hover:text-primary hover:border-accent/40'
-              }`}
-            >
-              {settingsLinkPending ? <Loader2 size={12} className="animate-spin" /> : <Settings size={12} />}
-              {settingsLinkPending ? 'Ouverture...' : 'Configurer'}
-            </Link>
-          </div>
-        )}
-      </div>
+      {hasGrids ? (
+        <ListGroup
+          title="Insérer une ligne depuis une grille fournisseur"
+          description="Prix indicatif = cours du jour × coefficient fournisseur (ou prix fixe). Renseignez longueur et largeur sur la ligne pour un calcul au poids réel si la grille a une épaisseur. À valider selon la coupe et le délai de livraison."
+        >
+          {lmeGrids.map(grid => {
+            const course = priceMap[grid.metal_code]
+            if (!course) return null
+            return (
+              <ListRow
+                key={grid.id}
+                title={grid.label}
+                description={fmtProposed(course.price_eur_kg * grid.coefficient, grid.unit)}
+                onClick={() => onGridSelect!(grid, course.price_eur_kg)}
+                trailing={<span className={styles.chevron} aria-hidden="true">›</span>}
+              />
+            )
+          })}
+          {manualGrids.map(grid => {
+            const manualPrice = grid.manual_price_eur_kg ?? 0
+            return (
+              <ListRow
+                key={grid.id}
+                title={grid.label}
+                description={`${fmtProposed(manualPrice, grid.unit)} · prix fixe`}
+                onClick={() => onGridSelect!(grid, manualPrice)}
+                trailing={<span className={styles.chevron} aria-hidden="true">›</span>}
+              />
+            )
+          })}
+        </ListGroup>
+      ) : (
+        <ListGroup description="Configurez vos grilles matières pour pré-remplir vos lignes de devis en un clic.">
+          <ListRow
+            title="Configurer les grilles matières"
+            href="/settings?tab=devis#metal-prices"
+            trailing={<span className={styles.chevron} aria-hidden="true">›</span>}
+          />
+        </ListGroup>
+      )}
     </div>
   )
 }

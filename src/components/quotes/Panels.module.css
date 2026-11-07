@@ -1,0 +1,120 @@
+/* @atelier-migrated */
+/* Panneaux du devis : cours des métaux, prix enregistrés, checklist, mentions légales. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.note {
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+}
+
+.noteWarn {
+  color: var(--at-danger-texte);
+}
+
+.value {
+  color: var(--at-encre);
+  font: 500 15px/20px var(--font-inter);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.trend {
+  margin-left: 8px;
+  color: var(--at-encre-2);
+  font: 500 13px/18px var(--font-inter);
+  font-variant-numeric: tabular-nums;
+}
+
+.trendUp {
+  color: var(--at-danger-texte);
+}
+
+.trendDown {
+  color: var(--at-hausse);
+}
+
+.chevron {
+  color: var(--at-encre-3);
+  font: 400 17px/22px var(--font-inter);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: var(--at-rayon-pilule);
+  background: var(--at-remplissage);
+  color: var(--at-encre-2);
+  font: 500 13px/18px var(--font-inter);
+  white-space: nowrap;
+}
+
+.pillWarn {
+  background: var(--at-danger-texte-remplissage);
+  color: var(--at-danger-texte);
+}
+
+.pillGood {
+  color: var(--at-hausse);
+}
+
+.addRow {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.addRow > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.categoryTitle {
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 600 13px/18px var(--font-inter);
+}
+
+.struck {
+  color: var(--at-encre-3);
+  text-decoration: line-through;
+}
+
+.rowRemove {
+  box-sizing: border-box;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: var(--at-danger-texte);
+  font: 400 15px/20px var(--font-inter);
+  cursor: pointer;
+}
+
+.rowRemove:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: -2px;
+}
+
+.fieldGroup {
+  overflow: hidden;
+  border-radius: var(--at-rayon-groupe-liste);
+  background: var(--at-carte);
+}
+
+.fieldGroup > * + * {
+  border-top: 0.5px solid var(--at-trait);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

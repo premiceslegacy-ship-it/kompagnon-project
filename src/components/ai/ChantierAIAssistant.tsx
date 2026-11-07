@@ -1,14 +1,11 @@
 'use client'
+// @atelier-migrated
 
-import React, { useState, useRef, useEffect } from 'react'
-import { Send, Loader2, X, Sparkles, ChevronDown, CheckCircle2 } from 'lucide-react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { cleanMarkdown } from '@/lib/utils'
-import { AI_ASSISTANTS } from '@/lib/brand'
-import { AssistantAvatar } from './AssistantAvatar'
-
-const MARCO = AI_ASSISTANTS.marco
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { AI_NAME } from '@/lib/brand'
+import { Sheet } from '@/components/ui/Sheet'
+import styles from './AssistantChat.module.css'
 
 type Message = {
   id: string
@@ -24,14 +21,20 @@ type Props = {
   onPlanningCreated?: () => void
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+const QUICK = [
+  'On en est où sur la rentabilité ?',
+  'Pointe 4 h pour moi aujourd’hui',
+  'Quelles tâches sont en cours ?',
+  'Combien reste-t-il sur le budget ?',
+]
 
+/** Conversation avec l'assistante sur un chantier : tâches, pointages, budget. */
 export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose, onPlanningCreated }: Props) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
       role: 'assistant',
-      content: `Salut ! C'est Marco, je suis sur le chantier **${chantierTitle}**.\n\nJe suis au courant de tout : tâches, pointages, rentabilité, budget. Tu veux pointer des heures, ajouter une note, voir où on en est ? Je suis là.\n\nDis-moi ce qu'il te faut.`,
+      content: `Bonjour, je suis ${AI_NAME}. Je connais le chantier ${chantierTitle} : tâches, pointages, rentabilité, budget.\n\nVoulez-vous pointer des heures, ajouter une note ou faire le point ?`,
     },
   ])
   const [input, setInput] = useState('')
@@ -49,17 +52,15 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
     inputRef.current?.focus()
   }, [])
 
-  // Brief Sarah→Marco : si Sarah a préparé un contexte sur ce chantier, l'injecter comme premier message
+  // Si l'assistante a préparé un contexte sur ce chantier, il devient le premier message.
   useEffect(() => {
     fetch('/api/sarah/briefs?target=marco')
       .then(r => r.json())
       .then(({ brief }: { brief: { id: string; payload: { description?: string; chantier_id?: string; chantier_title?: string } } | null }) => {
         if (!brief?.payload?.description?.trim()) return
-        // Vérifier que le brief concerne bien ce chantier (si chantier_id précisé)
         if (brief.payload.chantier_id && brief.payload.chantier_id !== chantierId) return
-        const desc = brief.payload.description.trim()
-        setBriefBanner(`Brief transmis par Sarah.`)
-        setInput(desc)
+        setBriefBanner('Un message préparé par l’assistante a été ajouté ci-dessous.')
+        setInput(brief.payload.description.trim())
         fetch('/api/sarah/briefs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -87,7 +88,6 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
     setLoading(true)
     setError(null)
 
-    // Construire l'historique pour l'API (sans le message de bienvenue)
     const history = [...messages, userMsg]
       .filter(m => m.id !== 'welcome')
       .map(m => ({ role: m.role, content: m.content }))
@@ -98,162 +98,81 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chantierId, messages: history }),
       })
-
       const data = await res.json()
-
       if (!res.ok) {
-        setError(data.error ?? 'Erreur inconnue')
+        setError(data.error ?? 'Une erreur est survenue.')
         return
       }
-
-      const assistantMsg: Message = {
+      setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: 'assistant',
         content: data.reply,
         toolsExecuted: data.toolsExecuted ?? null,
-      }
-      setMessages(prev => [...prev, assistantMsg])
+      }])
       if (data.planningCreated) onPlanningCreated?.()
     } catch {
-      setError('Impossible de contacter l\'IA. Vérifiez votre connexion.')
+      setError('Impossible de joindre l’assistante. Vérifiez votre connexion.')
     } finally {
       setLoading(false)
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
     }
   }
 
-  // Suggestions rapides
-  const QUICK = [
-    'On en est où sur la rentabilité ?',
-    'Pointe 4h pour moi aujourd\'hui',
-    'Quelles tâches sont en cours ?',
-    'Il reste combien sur le budget ?',
-  ]
-
   return (
-    <div className="fixed inset-0 z-[9995] flex">
-      {/* Backdrop */}
-      <div className="flex-1 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+    <Sheet
+      open
+      onOpenChange={open => { if (!open) onClose() }}
+      title={AI_NAME}
+      description={chantierTitle}
+      cancelLabel="Fermer"
+    >
+      <div className={styles.chat}>
+        {briefBanner && <p className={styles.banner} role="status">{briefBanner}</p>}
 
-      {/* Panel */}
-      <div className="w-full max-w-md bg-surface border-l border-[var(--elevation-border)] flex flex-col shadow-2xl dark:bg-[#0d0d0d]">
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--elevation-border)]">
-          <div className="flex items-center gap-3">
-            <AssistantAvatar assistant="marco" size={32} />
-            <div>
-              <p className="text-sm font-semibold text-primary">{MARCO.name} <span className="font-normal text-secondary">, {MARCO.role}</span></p>
-              <p className="text-xs text-secondary truncate max-w-[200px]">{chantierTitle}</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[var(--elevation-border)] text-secondary transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Brief banner */}
-        {briefBanner && (
-          <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 px-3 py-2 text-xs text-[var(--accent)]">
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-            <span>{briefBanner}</span>
-          </div>
-        )}
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        <div className={styles.messages} aria-live="polite">
           {messages.map(msg => (
-            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              {msg.role === 'assistant' && (
-                <AssistantAvatar assistant="marco" size={24} className="mr-2 mt-0.5" />
-              )}
-              <div className={`max-w-[82%] ${msg.role === 'user'
-                ? 'bg-accent text-white rounded-2xl rounded-tr-sm px-3.5 py-2.5'
-                : 'bg-[var(--elevation-border)] text-primary rounded-2xl rounded-tl-sm px-3.5 py-2.5'
-              }`}>
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.role === 'assistant' ? cleanMarkdown(msg.content) : msg.content}</p>
-                {msg.toolsExecuted && (
-                  <div className="mt-2 pt-2 border-t border-white/10">
-                    <p className="text-xs opacity-70 flex items-center gap-1">
-                      <Sparkles className="w-3 h-3" />
-                      {msg.toolsExecuted}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
+            <p key={msg.id} className={`${styles.bubble} ${msg.role === 'user' ? styles.user : styles.assistant}`}>
+              {msg.role === 'assistant' ? cleanMarkdown(msg.content) : msg.content}
+              {msg.toolsExecuted && <span className={styles.tools}>{msg.toolsExecuted}</span>}
+            </p>
           ))}
-
-          {loading && (
-            <div className="flex justify-start">
-              <AssistantAvatar assistant="marco" size={24} className="mr-2 mt-0.5" />
-              <div className="bg-[var(--elevation-border)] rounded-2xl rounded-tl-sm px-3.5 py-3">
-                <Loader2 className="w-4 h-4 animate-spin text-accent" />
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-3.5 py-2.5 text-sm text-red-500">
-              {error}
-            </div>
-          )}
-
+          {loading && <p className={styles.status} role="status">{AI_NAME} réfléchit…</p>}
+          {error && <p className={styles.error} role="alert">{error}</p>}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Quick suggestions (visible si peu de messages) */}
         {messages.length <= 2 && !loading && (
-          <div className="px-4 pb-2">
-            <p className="text-xs text-secondary mb-2 flex items-center gap-1">
-              <ChevronDown className="w-3 h-3" /> Suggestions rapides
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {QUICK.map(q => (
-                <button
-                  key={q}
-                  onClick={() => { setInput(q); inputRef.current?.focus() }}
-                  className="text-xs px-2.5 py-1 rounded-full border border-[var(--elevation-border)] text-secondary hover:text-primary hover:border-accent/50 transition-colors"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
+          <div className={styles.chips}>
+            {QUICK.map(q => (
+              <button key={q} type="button" className={styles.chip} onClick={() => { setInput(q); inputRef.current?.focus() }}>
+                {q}
+              </button>
+            ))}
           </div>
         )}
 
-        {/* Input */}
-        <div className="px-4 py-3 border-t border-[var(--elevation-border)]">
-          <div className="flex items-end gap-2 bg-[var(--elevation-border)] rounded-2xl px-3.5 py-2.5">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Poser une question ou donner une instruction…"
-              rows={3}
-              className="flex-1 min-h-[4.5rem] max-h-40 bg-transparent text-sm text-primary placeholder:text-secondary resize-none outline-none leading-relaxed overflow-y-auto"
-            />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || loading}
-              className="w-7 h-7 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
-            >
-              <Send className="w-3.5 h-3.5 text-white" />
-            </button>
-          </div>
-          <p className="text-[10px] text-secondary/60 text-center mt-1.5">Entrée pour envoyer · Maj+Entrée pour saut de ligne</p>
+        <div className={styles.composer}>
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Posez une question ou donnez une instruction"
+            aria-label="Message"
+            rows={2}
+          />
+          <button type="button" className={styles.send} onClick={handleSend} disabled={!input.trim() || loading}>
+            Envoyer
+          </button>
         </div>
+        <p className={styles.fine}>Entrée pour envoyer · Maj + Entrée pour un saut de ligne</p>
       </div>
-    </div>
+    </Sheet>
   )
 }

@@ -1,14 +1,18 @@
 'use client'
+// @atelier-migrated
 
 import { useState } from 'react'
 import type { CatalogLaborRate } from '@/lib/data/queries/catalog'
 import type { LaborEstimateItem } from '@/app/api/ai/estimate-labor/route'
 import { createLaborRateQuick } from '@/lib/data/mutations/catalog'
-import { X, Sparkles, Loader2, Plus, Save, Car, CheckCircle2, Search, Trash2 } from 'lucide-react'
 import { getInternalResourceUnitCost } from '@/lib/catalog-ui'
-import { AI_ASSISTANTS } from '@/lib/brand'
-
-const VALENTIN = AI_ASSISTANTS.valentin
+import { AI_NAME } from '@/lib/brand'
+import { Button } from '@/components/ui/Button'
+import { Field } from '@/components/ui/Field'
+import { CheckRow, ListGroup, ListRow } from '@/components/ui/ListGroup'
+import { SearchField } from '@/components/ui/SearchField'
+import { Sheet } from '@/components/ui/Sheet'
+import styles from '@/app/(app)/finances/quote-editor/QuoteEditor.module.css'
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n)
@@ -217,300 +221,160 @@ export default function LaborEstimatePanel({ laborRates, quoteTitle, onInsert, o
 
   const profiles = getAllProfiles()
   const hasContent = profiles.length > 0 || transportCost > 0
+  const totalEstimate = estimates ? estimates.reduce((sum, e) => sum + e.quantity * e.unit_price, 0) : 0
 
   return (
-    <div className="fixed inset-0 z-[9995] flex justify-end">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-[440px] bg-surface dark:bg-[#111] dark:border-l dark:border-[var(--elevation-border)] mt-16 h-[calc(100%-4rem)] overflow-hidden flex flex-col shadow-2xl">
-
-        {/* Header */}
-        <div className="border-b border-[var(--elevation-border)] px-6 py-5 flex items-center justify-between flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center flex-shrink-0 text-white text-sm font-bold">
-              V
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-primary">{VALENTIN.name} <span className="font-normal text-secondary text-sm">, {VALENTIN.role}</span></h2>
-              <p className="text-xs text-secondary">Estimation main-d&apos;oeuvre</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 text-secondary hover:text-primary rounded-full hover:bg-base transition-colors">
-            <X className="w-5 h-5" />
-          </button>
+    <Sheet
+      open
+      onOpenChange={open => { if (!open) onClose() }}
+      title={`${AI_NAME}, main-d’œuvre`}
+      description="Estimation des heures à partir des ressources internes du catalogue."
+      cancelLabel="Fermer"
+      onConfirm={handleInsert}
+      confirmLabel="Insérer dans le devis"
+      confirmDisabled={!hasContent}
+    >
+      <div className={styles.detail}>
+        <div className={styles.fields}>
+          <Field
+            type="textarea"
+            label="Description du chantier"
+            hint={`${AI_NAME} estime les heures d’après les travaux décrits.`}
+            rows={3}
+            value={description}
+            onChange={e => { setDescription(e.target.value); setEstimates(null) }}
+          />
         </div>
 
-        {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {laborRates.length === 0 ? (
+          <p className={styles.hint} style={{ marginTop: 0 }}>
+            Aucune ressource interne dans le catalogue. Ajoutez un profil libre ci-dessous.
+          </p>
+        ) : (
+          <>
+            <SearchField label="Rechercher une ressource" placeholder="Rechercher" value={search} onChange={setSearch} />
+            <ListGroup title="Ressources internes">
+              {filtered.map(lr => (
+                <CheckRow
+                  key={lr.id}
+                  title={lr.designation}
+                  description={`${fmt(getInternalResourceUnitCost(lr))} / ${lr.unit ?? 'h'}`}
+                  checked={selectedIds.has(lr.id)}
+                  onCheckedChange={checked => {
+                    setSelectedIds(prev => {
+                      const next = new Set(prev)
+                      if (checked) next.add(lr.id)
+                      else next.delete(lr.id)
+                      return next
+                    })
+                    setEstimates(null)
+                  }}
+                />
+              ))}
+            </ListGroup>
+          </>
+        )}
 
-          {/* Description */}
-          <div>
-            <label className="text-sm font-semibold text-secondary block mb-2">Description du chantier</label>
-            <textarea
-              value={description}
-              onChange={e => { setDescription(e.target.value); setEstimates(null) }}
-              rows={3}
-              placeholder="Décrivez les travaux pour que Valentin estime les heures..."
-              className="w-full p-3 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 resize-none"
-            />
+        {customProfiles.length > 0 && (
+          <ListGroup title="Profils libres">
+            {customProfiles.map(cp => (
+              <ListRow
+                key={cp._id}
+                title={cp.designation}
+                description={`${fmt(cp.rate)} / ${cp.unit}${cp.savedId ? ' · enregistré au catalogue' : ''}`}
+                trailing={
+                  <span className={styles.inline}>
+                    {!cp.savedId && (
+                      <Button variant="text" size="sm" onClick={() => handleSaveToCatalog(cp._id)} loading={savingId === cp._id}>
+                        Au catalogue
+                      </Button>
+                    )}
+                    <Button variant="text" size="sm" onClick={() => { setCustomProfiles(prev => prev.filter(p => p._id !== cp._id)); setEstimates(null) }}>
+                      Retirer
+                    </Button>
+                  </span>
+                }
+              />
+            ))}
+          </ListGroup>
+        )}
+
+        {showCustomForm ? (
+          <>
+            <div className={styles.fields}>
+              <Field type="text" label="Désignation" placeholder="Charpentier" value={customDesignation} onChange={e => setCustomDesignation(e.target.value)} />
+              <Field type="text" inputMode="decimal" label="Taux (€)" value={customRate} onChange={e => setCustomRate(e.target.value)} />
+              <Field type="select" label="Unité" value={customUnit} onChange={e => setCustomUnit(e.target.value)}>
+                <option value="h">h</option>
+                <option value="j">j</option>
+                <option value="sem">sem</option>
+                <option value="u">u</option>
+                <option value="forfait">forfait</option>
+              </Field>
+            </div>
+            <div className={styles.inline}>
+              <Button variant="secondary" size="md" onClick={handleAddCustom} disabled={!customDesignation.trim() || !customRate}>Ajouter ce profil</Button>
+              <Button variant="text" size="md" onClick={() => { setShowCustomForm(false); setCustomDesignation(''); setCustomRate('') }}>Annuler</Button>
+            </div>
+          </>
+        ) : (
+          <div className={styles.inline}>
+            <Button variant="secondary" size="md" onClick={() => setShowCustomForm(true)}>Ajouter un profil libre</Button>
           </div>
+        )}
 
-          {/* Catalog selection */}
-          <div>
-            <h3 className="text-sm font-semibold text-secondary mb-3">Ressources internes</h3>
-            {laborRates.length === 0 ? (
-              <p className="text-sm text-secondary py-4 text-center bg-base/50 rounded-xl">
-                Aucune ressource interne dans le catalogue :{' '}
-                <button onClick={() => setShowCustomForm(true)} className="text-accent hover:underline">ajouter un profil libre</button>
-              </p>
-            ) : (
-              <>
-                <div className="relative mb-2">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-secondary" />
-                  <input
-                    type="text"
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    placeholder="Rechercher..."
-                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
-                  />
-                </div>
-                <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
-                  {filtered.map(lr => (
-                    <label key={lr.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-base/60 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(lr.id)}
-                        onChange={e => {
-                          setSelectedIds(prev => {
-                            const s = new Set(prev)
-                            e.target.checked ? s.add(lr.id) : s.delete(lr.id)
-                            return s
-                          })
-                          setEstimates(null)
-                        }}
-                        className="w-4 h-4 rounded"
-                      />
-                      <span className="flex-1 text-sm text-primary truncate">{lr.designation}</span>
-                      <span className="text-xs text-secondary tabular-nums flex-shrink-0">
-                        {fmt(getInternalResourceUnitCost(lr))}/{lr.unit ?? 'h'}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+        <div className={styles.inline}>
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={handleEstimate}
+            loading={aiLoading}
+            loadingText={`${AI_NAME} calcule…`}
+            disabled={profiles.length === 0 || !description.trim()}
+          >
+            {`Demander à ${AI_NAME}`}
+          </Button>
+        </div>
+        {aiError && <p className={`${styles.hint} ${styles.warn}`} role="alert" style={{ marginTop: 0 }}>{aiError}</p>}
 
-          {/* Custom profiles list */}
-          {customProfiles.length > 0 && (
-            <div className="space-y-1.5">
-              {customProfiles.map(cp => (
-                <div key={cp._id} className="flex items-center gap-2 p-3 rounded-xl bg-violet-500/5 border border-violet-500/20">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-primary truncate">{cp.designation}</p>
-                    <p className="text-xs text-secondary tabular-nums">{fmt(cp.rate)}/{cp.unit}</p>
-                  </div>
-                  {cp.savedId ? (
-                    <span className="text-xs text-emerald-500 flex items-center gap-1 flex-shrink-0">
-                      <CheckCircle2 className="w-3 h-3" />Enregistré
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => handleSaveToCatalog(cp._id)}
-                      disabled={savingId === cp._id}
-                      className="text-xs text-violet-500 hover:text-violet-600 flex items-center gap-1 flex-shrink-0 disabled:opacity-50"
-                    >
-                      {savingId === cp._id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                      Catalogue
-                    </button>
-                  )}
-                  <button
-                    onClick={() => { setCustomProfiles(prev => prev.filter(p => p._id !== cp._id)); setEstimates(null) }}
-                    className="p-1 text-secondary hover:text-red-500 flex-shrink-0"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+        {estimates && (
+          <>
+            <p className={styles.hint} style={{ marginTop: 0 }}>Estimation de {AI_NAME} : ajustez les quantités si besoin.</p>
+            <div className={styles.fields}>
+              {estimates.map((est, i) => (
+                <Field
+                  key={i}
+                  type="number"
+                  label={est.designation}
+                  hint={`${est.unit} · ${fmt(est.quantity * est.unit_price)}`}
+                  min={0}
+                  decimals={1}
+                  allowEmpty={false}
+                  value={est.quantity}
+                  onChange={v => setEstimates(prev => prev?.map((r, j) => (j === i ? { ...r, quantity: v ?? 0 } : r)) ?? null)}
+                />
               ))}
             </div>
-          )}
+            <ListGroup>
+              <ListRow title="Total main-d’œuvre" trailing={<span className={styles.fieldValue}>{fmt(totalEstimate)}</span>} />
+            </ListGroup>
+          </>
+        )}
 
-          {/* Add custom profile form */}
-          {showCustomForm ? (
-            <div className="rounded-xl border border-[var(--elevation-border)] p-4 space-y-3 bg-base/50">
-              <p className="text-sm font-semibold text-primary">Profil libre</p>
-              <input
-                type="text"
-                value={customDesignation}
-                onChange={e => setCustomDesignation(e.target.value)}
-                placeholder="Désignation (ex: Charpentier)"
-                className="w-full p-2.5 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
-              />
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  value={customRate}
-                  onChange={e => setCustomRate(e.target.value)}
-                  placeholder="Taux (€)"
-                  min={0}
-                  className="flex-1 p-2.5 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
-                />
-                <select
-                  value={customUnit}
-                  onChange={e => setCustomUnit(e.target.value)}
-                  className="w-24 p-2.5 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none"
-                >
-                  <option value="h">h</option>
-                  <option value="j">j</option>
-                  <option value="sem">sem</option>
-                  <option value="u">u</option>
-                  <option value="forfait">forfait</option>
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleAddCustom}
-                  disabled={!customDesignation.trim() || !customRate}
-                  className="flex-1 py-2 rounded-xl bg-accent text-black text-sm font-semibold disabled:opacity-50"
-                >
-                  Ajouter
-                </button>
-                <button
-                  onClick={() => { setShowCustomForm(false); setCustomDesignation(''); setCustomRate('') }}
-                  className="px-4 py-2 rounded-xl text-secondary hover:text-primary text-sm"
-                >
-                  Annuler
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowCustomForm(true)}
-              className="flex items-center gap-2 text-sm text-secondary hover:text-accent transition-colors"
-            >
-              <Plus className="w-4 h-4" />Ajouter un profil libre
-            </button>
-          )}
-
-          {/* AI Estimate button */}
-          <button
-            onClick={handleEstimate}
-            disabled={aiLoading || profiles.length === 0 || !description.trim()}
-            className="w-full py-3 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-600 text-white font-semibold flex items-center justify-center gap-2 hover:from-violet-600 hover:to-indigo-700 transition-all shadow-lg shadow-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {aiLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-            {aiLoading ? 'Valentin calcule...' : 'Demander à Valentin'}
-          </button>
-
-          {aiError && <p className="text-sm text-red-400 text-center">{aiError}</p>}
-
-          {/* AI Results */}
-          {estimates && (
-            <div className="rounded-2xl border border-[var(--elevation-border)] overflow-hidden">
-              <div className="px-4 py-3 bg-base/50 border-b border-[var(--elevation-border)] flex items-center gap-2">
-                <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-                <span className="text-sm font-semibold text-primary">Estimation de Valentin, ajustez si besoin</span>
-              </div>
-              <div className="divide-y divide-[var(--elevation-border)]">
-                {estimates.map((est, i) => (
-                  <div key={i} className="flex items-center gap-3 px-4 py-3">
-                    <span className="flex-1 text-sm text-primary truncate">{est.designation}</span>
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      <input
-                        type="number"
-                        value={est.quantity}
-                        min={0}
-                        step={0.5}
-                        onChange={e => setEstimates(prev =>
-                          prev?.map((r, j) => j === i ? { ...r, quantity: Number(e.target.value) } : r) ?? null
-                        )}
-                        className="w-16 p-1.5 rounded-lg border border-[var(--elevation-border)] bg-base text-primary text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-accent/50"
-                      />
-                      <span className="text-xs text-secondary w-8">{est.unit}</span>
-                    </div>
-                    <span className="text-sm font-semibold text-primary tabular-nums w-20 text-right flex-shrink-0">
-                      {fmt(est.quantity * est.unit_price)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <div className="px-4 py-3 bg-base/50 border-t border-[var(--elevation-border)] flex justify-between">
-                <span className="text-sm font-semibold text-secondary">Total MO</span>
-                <span className="text-sm font-bold text-primary tabular-nums">
-                  {fmt(estimates.reduce((s, e) => s + e.quantity * e.unit_price, 0))}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Transport */}
-          <div className="rounded-2xl border border-[var(--elevation-border)] overflow-hidden">
-            <div className="px-4 py-3 bg-base/50 border-b border-[var(--elevation-border)] flex items-center gap-2">
-              <Car className="w-4 h-4 text-secondary" />
-              <span className="text-sm font-semibold text-primary">Transport (optionnel)</span>
-            </div>
-            <div className="p-4 space-y-3">
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="text-xs text-secondary block mb-1">Distance (km)</label>
-                  <input
-                    type="number"
-                    value={transportKm}
-                    onChange={e => setTransportKm(e.target.value)}
-                    placeholder="0"
-                    min={0}
-                    className="w-full p-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-secondary block mb-1">L/100 km</label>
-                  <input
-                    type="number"
-                    value={transportL100}
-                    onChange={e => setTransportL100(e.target.value)}
-                    placeholder="8"
-                    min={0}
-                    step={0.1}
-                    className="w-full p-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-secondary block mb-1">Prix/L (€)</label>
-                  <input
-                    type="number"
-                    value={transportFuelPrice}
-                    onChange={e => setTransportFuelPrice(e.target.value)}
-                    placeholder="1.80"
-                    min={0}
-                    step={0.01}
-                    className="w-full p-2 rounded-xl bg-base border border-[var(--elevation-border)] text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 tabular-nums"
-                  />
-                </div>
-              </div>
-              {transportCost > 0 && (
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-secondary">Coût calculé</span>
-                  <span className="text-sm font-bold text-primary tabular-nums">{fmt(transportCost)}</span>
-                </div>
-              )}
-            </div>
+        <div className={styles.detail}>
+          <p className={styles.hint} style={{ marginTop: 0 }}><strong>Transport</strong> (facultatif)</p>
+          <div className={styles.fields}>
+            <Field type="text" inputMode="decimal" label="Distance (km)" value={transportKm} onChange={e => setTransportKm(e.target.value)} />
+            <Field type="text" inputMode="decimal" label="Consommation (L / 100 km)" placeholder="8" value={transportL100} onChange={e => setTransportL100(e.target.value)} />
+            <Field type="text" inputMode="decimal" label="Prix du litre (€)" placeholder="1,80" value={transportFuelPrice} onChange={e => setTransportFuelPrice(e.target.value)} />
           </div>
-
+          {transportCost > 0 && (
+            <ListGroup>
+              <ListRow title="Coût du transport" trailing={<span className={styles.fieldValue}>{fmt(transportCost)}</span>} />
+            </ListGroup>
+          )}
         </div>
-
-        {/* Footer CTA */}
-        <div className="border-t border-[var(--elevation-border)] p-5 flex-shrink-0">
-          <button
-            onClick={handleInsert}
-            disabled={!hasContent}
-            className="w-full py-3 rounded-2xl bg-accent text-black font-bold flex items-center justify-center gap-2 hover:scale-[1.01] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-          >
-            <Plus className="w-4 h-4" />
-            Insérer dans le devis
-          </button>
-        </div>
-
       </div>
-    </div>
+    </Sheet>
   )
 }

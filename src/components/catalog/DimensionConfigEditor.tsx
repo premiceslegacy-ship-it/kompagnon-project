@@ -1,7 +1,7 @@
 'use client'
+// @atelier-migrated
 
-import React, { useMemo, useState } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import type {
   DimensionAxisKey,
   DimensionDisplayUnit,
@@ -9,6 +9,10 @@ import type {
   DimensionPricingMode,
 } from '@/lib/catalog-pricing'
 import type { DimensionEditorLabels } from '@/lib/catalog-ui'
+import { Button } from '@/components/ui/Button'
+import { Field } from '@/components/ui/Field'
+import { CheckRow, ListGroup } from '@/components/ui/ListGroup'
+import styles from '@/app/(app)/finances/quote-editor/QuoteEditor.module.css'
 
 export type EditableDimensionSchemaState = Record<DimensionAxisKey, {
   enabled: boolean
@@ -111,150 +115,87 @@ export default function DimensionConfigEditor({
   }
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-secondary">{labels.schemaHelp}</p>
+    <div className={styles.detail}>
+      <p className={styles.hint} style={{ marginTop: 0 }}>{labels.schemaHelp}</p>
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        {visibleAxes.map((axis) => {
-          const axisState = schema[axis]
-          const requiredByMode = AXIS_MODE_REQUIRED[axis].includes(mode)
-          return (
-            <div key={axis} className="rounded-xl border border-[var(--elevation-border)] bg-base p-3 dark:bg-white/5">
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div>
-                  <p className="text-sm font-semibold text-primary">{axisState.label || axis}</p>
-                  <p className="text-xs text-secondary">{requiredByMode ? 'Utilise dans le calcul.' : 'Optionnel.'}</p>
-                </div>
-                <label className="flex items-center gap-2 text-xs font-semibold text-secondary">
-                  <input
-                    type="checkbox"
-                    checked={requiredByMode ? true : axisState.enabled}
-                    disabled={requiredByMode}
-                    onChange={e => patchAxis(axis, { enabled: e.target.checked })}
-                    className="accent-[var(--accent)]"
-                  />
-                  Actif
-                </label>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <input
-                  type="text"
-                  value={axisState.label}
-                  onChange={e => patchAxis(axis, { label: e.target.value })}
-                  placeholder="Libellé"
-                  className="w-full px-3 py-2 rounded-lg bg-base dark:bg-white/5 border border-[var(--elevation-border)] text-primary text-sm outline-none focus:border-accent"
-                />
-                <select
-                  value={axisState.unit}
-                  onChange={e => patchAxis(axis, { unit: e.target.value as DimensionDisplayUnit })}
-                  className="w-full px-3 py-2 rounded-lg bg-base dark:bg-white/5 dark:[color-scheme:dark] border border-[var(--elevation-border)] text-primary text-sm outline-none focus:border-accent appearance-none"
-                >
+      {visibleAxes.map((axis) => {
+        const axisState = schema[axis]
+        const requiredByMode = AXIS_MODE_REQUIRED[axis].includes(mode)
+        return (
+          <ListGroup
+            key={axis}
+            title={axisState.label || axis}
+            description={requiredByMode ? 'Utilisé dans le calcul.' : 'Facultatif.'}
+          >
+            <CheckRow
+              title="Actif"
+              checked={requiredByMode ? true : axisState.enabled}
+              disabled={requiredByMode}
+              onCheckedChange={enabled => patchAxis(axis, { enabled })}
+            />
+            <li style={{ listStyle: 'none' }}>
+              <div className={styles.fields}>
+                <Field type="text" label="Libellé" value={axisState.label} onChange={e => patchAxis(axis, { label: e.target.value })} />
+                <Field type="select" label="Unité" value={axisState.unit} onChange={e => patchAxis(axis, { unit: e.target.value as DimensionDisplayUnit })}>
                   <option value="m">m</option>
                   <option value="cm">cm</option>
                   <option value="mm">mm</option>
-                </select>
-                <select
-                  value={axisState.role}
-                  onChange={e => patchAxis(axis, { role: e.target.value as DimensionFieldRole })}
-                  className="w-full px-3 py-2 rounded-lg bg-base dark:bg-white/5 dark:[color-scheme:dark] border border-[var(--elevation-border)] text-primary text-sm outline-none focus:border-accent appearance-none"
-                >
+                </Field>
+                <Field type="select" label="Rôle" value={axisState.role} onChange={e => patchAxis(axis, { role: e.target.value as DimensionFieldRole })}>
                   {Object.entries(ROLE_LABELS).map(([value, label]) => (
                     <option key={value} value={value}>{label}</option>
                   ))}
-                </select>
+                </Field>
               </div>
-            </div>
-          )
-        })}
-      </div>
+            </li>
+          </ListGroup>
+        )
+      })}
 
-      <div className="rounded-xl border border-[var(--elevation-border)] bg-base p-4 space-y-3 dark:bg-white/5">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-primary">Variantes de prix <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-secondary/10 text-secondary">Avancé</span></p>
-            <p className="text-xs text-secondary">{labels.variantExampleHelp}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowVariants((prev) => !prev)}
-              className="px-3 py-2 rounded-lg text-xs font-semibold border border-[var(--elevation-border)] text-primary hover:border-accent hover:text-accent transition-colors"
-            >
-              {showVariants ? 'Masquer' : 'Afficher'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShowVariants(true)
-                addVariant()
-              }}
-              className="px-3 py-2 rounded-lg text-xs font-bold bg-accent text-black flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Ajouter
-            </button>
-          </div>
+      <div className={styles.detail}>
+        <p className={styles.hint} style={{ marginTop: 0 }}>
+          <strong>Variantes de prix</strong> (avancé). {labels.variantExampleHelp}
+        </p>
+        <div className={styles.inline}>
+          <Button variant="secondary" size="md" onClick={() => setShowVariants(prev => !prev)}>
+            {showVariants ? 'Masquer les variantes' : 'Afficher les variantes'}
+          </Button>
+          <Button variant="secondary" size="md" onClick={() => { setShowVariants(true); addVariant() }}>
+            Ajouter une variante
+          </Button>
         </div>
 
         {!showVariants ? (
-          <p className="text-xs text-secondary">{labels.variantMaskedHelp}</p>
+          <p className={styles.hint} style={{ marginTop: 0 }}>{labels.variantMaskedHelp}</p>
         ) : variants.length === 0 ? (
-          <p className="text-xs text-secondary">Aucune variante. Le prix de base sera utilise.</p>
+          <p className={styles.hint} style={{ marginTop: 0 }}>Aucune variante. Le prix de base sera utilisé.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wider text-secondary">
-                  <th className="py-2 pr-3">Libellé</th>
-                  {enabledAxes.map((axis) => (
-                    <th key={axis} className="py-2 pr-3">{schema[axis].label} ({schema[axis].unit})</th>
-                  ))}
-                  <th className="py-2 pr-3">Achat HT</th>
-                  <th className="py-2 pr-3">Vente HT</th>
-                  <th className="py-2 pr-3">Ref.</th>
-                  <th className="py-2 pr-3">Défaut</th>
-                  <th className="py-2" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--elevation-border)]">
-                {variants.map((variant) => (
-                  <tr key={variant.id}>
-                    <td className="py-2 pr-3">
-                      <input value={variant.label} onChange={e => patchVariant(variant.id, { label: e.target.value })} className="w-full px-2 py-1.5 rounded-lg bg-base dark:bg-white/5 border border-[var(--elevation-border)] text-primary text-sm outline-none focus:border-accent" />
-                    </td>
-                    {enabledAxes.map((axis) => (
-                      <td key={axis} className="py-2 pr-3">
-                        <input
-                          type="number"
-                          step="0.001"
-                          value={variant[axis]}
-                          onChange={e => patchVariant(variant.id, { [axis]: e.target.value } as Partial<EditableVariantState>)}
-                          className="w-24 px-2 py-1.5 rounded-lg bg-base dark:bg-white/5 border border-[var(--elevation-border)] text-primary text-sm outline-none focus:border-accent"
-                        />
-                      </td>
-                    ))}
-                    <td className="py-2 pr-3">
-                      <input type="number" step="0.01" value={variant.purchase_price} onChange={e => patchVariant(variant.id, { purchase_price: e.target.value })} className="w-24 px-2 py-1.5 rounded-lg bg-base dark:bg-white/5 border border-[var(--elevation-border)] text-primary text-sm outline-none focus:border-accent" />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <input type="number" step="0.01" value={variant.sale_price} onChange={e => patchVariant(variant.id, { sale_price: e.target.value })} className="w-24 px-2 py-1.5 rounded-lg bg-base dark:bg-white/5 border border-[var(--elevation-border)] text-primary text-sm outline-none focus:border-accent" />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <input value={variant.reference_suffix} onChange={e => patchVariant(variant.id, { reference_suffix: e.target.value })} className="w-24 px-2 py-1.5 rounded-lg bg-base dark:bg-white/5 border border-[var(--elevation-border)] text-primary text-sm outline-none focus:border-accent" />
-                    </td>
-                    <td className="py-2 pr-3 text-center">
-                      <input type="radio" checked={variant.is_default} onChange={() => patchVariant(variant.id, { is_default: true })} className="accent-[var(--accent)]" />
-                    </td>
-                    <td className="py-2 text-right">
-                      <button type="button" onClick={() => removeVariant(variant.id)} className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
+          variants.map((variant, index) => (
+            <div key={variant.id} className={styles.detail}>
+              <div className={styles.fields}>
+                <Field type="text" label={`Variante ${index + 1}`} placeholder="Libellé" value={variant.label} onChange={e => patchVariant(variant.id, { label: e.target.value })} />
+                {enabledAxes.map((axis) => (
+                  <Field
+                    key={axis}
+                    type="text"
+                    inputMode="decimal"
+                    label={`${schema[axis].label} (${schema[axis].unit})`}
+                    value={variant[axis]}
+                    onChange={e => patchVariant(variant.id, { [axis]: e.target.value } as Partial<EditableVariantState>)}
+                  />
                 ))}
-              </tbody>
-            </table>
-          </div>
+                <Field type="text" inputMode="decimal" label="Achat HT" value={variant.purchase_price} onChange={e => patchVariant(variant.id, { purchase_price: e.target.value })} />
+                <Field type="text" inputMode="decimal" label="Vente HT" value={variant.sale_price} onChange={e => patchVariant(variant.id, { sale_price: e.target.value })} />
+                <Field type="text" label="Référence" value={variant.reference_suffix} onChange={e => patchVariant(variant.id, { reference_suffix: e.target.value })} />
+              </div>
+              <ListGroup>
+                <CheckRow title="Variante par défaut" checked={variant.is_default} onCheckedChange={() => patchVariant(variant.id, { is_default: true })} />
+              </ListGroup>
+              <div className={styles.inline}>
+                <Button variant="destructive" size="md" onClick={() => removeVariant(variant.id)}>Supprimer cette variante</Button>
+              </div>
+            </div>
+          ))
         )}
       </div>
     </div>
