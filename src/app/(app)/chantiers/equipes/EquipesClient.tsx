@@ -41,7 +41,7 @@ export default function EquipesClient(props: EquipesProps) {
           {canManageTeam && (
             <div className={styles.headerEnd}>
               <Menu title="Équipes" items={[{ label: 'Nouvel intervenant', onSelect: q.openNewSolo }]} trigger={<button type="button" className={screen.round} aria-label="Plus d'options"><MoreHorizontal size={20} aria-hidden="true" /></button>} />
-              <Button size="md" onClick={q.openCreateEquipe}>Nouvelle équipe</Button>
+              {(equipes.length > 0 || soloMembers.length > 0) && <Button size="md" onClick={q.openCreateEquipe}>Nouvelle équipe</Button>}
             </div>
           )}
         </header>

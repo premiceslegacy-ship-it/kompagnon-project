@@ -5,7 +5,7 @@
  * (atelier-lp-code/app/components/AtelierIcons.tsx), adaptées theme-aware.
  */
 
-const ACCENT = 'rgb(var(--accent-primary))'
+const ACCENT = 'var(--at-accent, rgb(var(--accent-primary)))'
 
 export type AtelierIconProps = { className?: string }
 

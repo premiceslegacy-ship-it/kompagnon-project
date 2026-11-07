@@ -1,7 +1,9 @@
 'use client'
+// @atelier-migrated
 
 import { useEffect, useState } from 'react'
-import { Bell, X } from 'lucide-react'
+import { Button } from '@/components/ui/Button'
+import styles from './PushEnableBanner.module.css'
 
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
 // Re-proposer après 14 jours si l'utilisateur a fermé la bannière sans choisir.
@@ -72,25 +74,14 @@ export function PushEnableBanner() {
   if (!visible) return null
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md">
-      <div className="flex items-center gap-3 rounded-2xl border border-[var(--elevation-border)] bg-surface/95 backdrop-blur px-4 py-3 shadow-xl">
-        <div className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center">
-          <Bell className="w-5 h-5 text-accent" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold text-primary">Restez informé en temps réel</p>
-          <p className="text-xs text-secondary">Nouvelles demandes de devis, signatures, paiements : recevez les alertes sur cet appareil.</p>
-        </div>
-        <button
-          onClick={enable}
-          disabled={busy}
-          className="shrink-0 px-3 py-2 rounded-xl bg-accent text-white text-xs font-bold hover:opacity-90 transition-opacity disabled:opacity-50"
-        >
-          {busy ? '...' : 'Activer'}
-        </button>
-        <button onClick={dismiss} aria-label="Fermer" className="shrink-0 p-1 text-secondary hover:text-primary transition-colors">
-          <X className="w-4 h-4" />
-        </button>
+    <div className={styles.banner} role="region" aria-label="Notifications">
+      <div className={styles.copy}>
+        <p className={styles.title}>Restez informé en temps réel</p>
+        <p className={styles.text}>Demandes de devis, signatures, paiements : recevez les alertes sur cet appareil.</p>
+      </div>
+      <div className={styles.actions}>
+        <Button variant="text" size="sm" onClick={dismiss}>Plus tard</Button>
+        <Button variant="secondary" size="sm" onClick={enable} loading={busy}>Activer</Button>
       </div>
     </div>
   )

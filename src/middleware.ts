@@ -144,6 +144,9 @@ async function updateSession(request: NextRequest, requestHeaders: Headers) {
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
+    // Un cookie de session déjà présent veut dire que la session a expiré : la page de connexion l'explique.
+    const hadSession = request.cookies.getAll().some(c => /^sb-.+-auth-token/.test(c.name))
+    url.search = hadSession ? '?session=expired' : ''
     return NextResponse.redirect(url)
   }
 

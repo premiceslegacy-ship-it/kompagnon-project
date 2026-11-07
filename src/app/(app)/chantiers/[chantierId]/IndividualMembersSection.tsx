@@ -1,7 +1,7 @@
 'use client'
+// @atelier-migrated
 
-import React, { useState, useTransition } from 'react'
-import { Plus, X, Loader2, Mail, UserPlus, Send, Trash2, Pencil, Check } from 'lucide-react'
+import { useState, useTransition } from 'react'
 import type { IndividualMember } from '@/lib/data/queries/members'
 import type { TeamMember } from '@/lib/data/queries/team'
 import {
@@ -14,9 +14,19 @@ import {
 } from '@/lib/data/mutations/members'
 import { updateMemberLaborRate } from '@/lib/data/mutations/team'
 import type { OrgRole } from '@/lib/data/queries/roles'
+import { AlertDialog } from '@/components/ui/AlertDialog'
+import { Button } from '@/components/ui/Button'
+import { Field } from '@/components/ui/Field'
+import { CheckRow, ListGroup, ListRow } from '@/components/ui/ListGroup'
+import { Hud } from '@/components/ui/Hud'
+import { SegmentedControl } from '@/components/ui/SegmentedControl'
+import { Sheet } from '@/components/ui/Sheet'
+import { StatusPill } from '@/components/ui/StatusPill'
+import styles from '../../finances/quote-editor/QuoteEditor.module.css'
 
 type Mode = 'existing' | 'phantom' | 'new'
 
+/** Membres rattachés au chantier sans équipe : comptes de l'application ou intervenants externes. */
 export default function IndividualMembersSection({
   chantierId,
   initialMembers,
@@ -60,6 +70,9 @@ export default function IndividualMembersSection({
   const [editTaux, setEditTaux] = useState('')
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+  const [hudMessage, setHudMessage] = useState<string | null>(null)
+  const [lastDetached, setLastDetached] = useState<IndividualMember | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const reset = () => {
     setMode('new'); setLinkedMembershipIds(new Set()); setSelectedPhantomIds(new Set()); setPrenom(''); setName('')
@@ -229,371 +242,220 @@ export default function IndividualMembersSection({
 
   const handleSendInvite = async (memberId: string) => {
     const { error: err } = await sendMemberSpaceInvite(memberId)
-    if (err) alert(err)
-    else alert('Lien envoyé.')
+    if (err) setEditError(err)
+    else setHudMessage('Lien d’accès envoyé.')
   }
 
   const handleDetach = async (memberId: string) => {
-    if (!confirm("Retirer ce membre du chantier ? (Il restera dans l'organisation)")) return
     setDetachingIds(prev => new Set(prev).add(memberId))
     startTransition(async () => {
       const prev = members
       setMembers(p => p.filter(m => m.id !== memberId))
       const { error: err } = await detachMemberFromChantier(memberId, chantierId)
       setDetachingIds(current => { const next = new Set(current); next.delete(memberId); return next })
-      if (err) { alert(err); setMembers(prev) }
+      if (err) { setEditError(err); setMembers(prev) }
+      else { setLastDetached(prev.find(m => m.id === memberId) ?? null); setHudMessage('Membre retiré du chantier.') }
     })
   }
 
   const handleDelete = async (memberId: string) => {
-    if (!confirm("Supprimer définitivement ce membre de l'organisation ?")) return
     setDeletingIds(prev => new Set(prev).add(memberId))
     startTransition(async () => {
       const prev = members
       setMembers(p => p.filter(m => m.id !== memberId))
       const { error: err } = await deleteIndividualMember(memberId)
       setDeletingIds(current => { const next = new Set(current); next.delete(memberId); return next })
-      if (err) { alert(err); setMembers(prev) }
+      if (err) { setEditError(err); setMembers(prev) }
     })
   }
 
   const orgMembersAvailable = orgMembers.filter(om =>
     !members.some(m => m.profile_id === om.user_id)
   )
-
-  const RoleSelect = ({
-    value,
-    onChange,
-    className = 'input w-full text-sm',
-  }: {
-    value: string
-    onChange: (value: string) => void
-    className?: string
-  }) => {
-    if (orgRoles.length === 0) {
-      return (
-        <input
-          className={className}
-          placeholder="Rôle"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-        />
-      )
-    }
-    const hasCustomValue = value && !orgRoles.some(role => role.name === value)
-    return (
-      <select className={className} value={value} onChange={e => onChange(e.target.value)}>
-        <option value="">Sans rôle</option>
-        {hasCustomValue && <option value={value}>{value}</option>}
-        {orgRoles.map(role => (
-          <option key={role.id} value={role.name}>{role.name}</option>
-        ))}
-      </select>
-    )
-  }
-
   const phantomMembersAvailable = orgPhantomMembers.filter(pm =>
     !members.some(m => m.id === pm.id)
   )
 
+  const roleField = (value: string, onChange: (value: string) => void) => orgRoles.length === 0 ? (
+    <Field type="text" label="Rôle" value={value} onChange={e => onChange(e.target.value)} />
+  ) : (
+    <Field type="select" label="Rôle" value={value} onChange={e => onChange(e.target.value)}>
+      <option value="">Sans rôle</option>
+      {value && !orgRoles.some(role => role.name === value) && <option value={value}>{value}</option>}
+      {orgRoles.map(role => <option key={role.id} value={role.name}>{role.name}</option>)}
+    </Field>
+  )
+
+  const editing = editingId ? members.find(m => m.id === editingId) ?? null : null
+  const memberName = (m: IndividualMember) => [m.prenom, m.name].filter(Boolean).join(' ') || m.name
+  const memberSummary = (m: IndividualMember) =>
+    [m.role_label, m.email, canEditRates && m.taux_horaire != null ? `${m.taux_horaire} €/h` : null].filter(Boolean).join(' · ') || undefined
+
+  const modeOptions = [
+    { value: 'new', label: 'Nouvel externe' },
+    ...(phantomMembersAvailable.length > 0 ? [{ value: 'phantom', label: `Externes (${phantomMembersAvailable.length})` }] : []),
+    ...(orgMembersAvailable.length > 0 ? [{ value: 'existing', label: 'Comptes' }] : []),
+  ]
+
   return (
-    <section className="space-y-3">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-bold text-primary flex items-center gap-2">
-            <UserPlus className="w-4 h-4 text-accent" /> Membres individuels
-          </h3>
-          <p className="text-xs text-secondary mt-0.5">
-            Personnes assignées sans équipe. Idéal pour intervenants ponctuels ou petites entreprises.
-          </p>
-        </div>
-        <button onClick={() => { setShowCreate(true); reset() }} className="btn-primary text-sm flex items-center gap-2 whitespace-nowrap shrink-0 self-start sm:self-auto">
-          <Plus className="w-4 h-4" /> Ajouter un membre
-        </button>
-      </div>
+    <section className={styles.detail}>
+      <ListGroup
+        title="Membres individuels"
+        description="Personnes ajoutées sans équipe : intervenants ponctuels ou petites entreprises."
+        action={<Button variant="secondary" size="sm" onClick={() => { setShowCreate(true); reset() }}>Ajouter</Button>}
+      >
+        {members.length === 0 && <ListRow title="Aucun membre individuel sur ce chantier" />}
+        {members.map(m => {
+          const isMe = Boolean(currentUserId && m.profile_id === currentUserId)
+          return (
+            <ListRow
+              key={m.id}
+              title={memberName(m)}
+              description={memberSummary(m)}
+              onClick={() => startEdit(m)}
+              trailing={
+                <StatusPill status={m.profile_id ? 'success' : 'neutral'}>
+                  {isMe ? 'Moi' : m.profile_id ? 'Compte' : 'Externe'}
+                </StatusPill>
+              }
+            />
+          )
+        })}
+      </ListGroup>
 
       {showCreate && (
-        <div className="card p-4 border border-accent/30 bg-accent/5 space-y-4">
-          {/* Tabs */}
-          <div className="flex gap-1 p-1 rounded-xl bg-[var(--elevation-1)] w-fit flex-wrap">
-            <button
-              onClick={() => setMode('new')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                mode === 'new' ? 'bg-accent text-white' : 'text-secondary hover:text-primary'
-              }`}
-            >
-              Nouvel externe
-            </button>
-            <button
-              onClick={() => setMode('phantom')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                mode === 'phantom' ? 'bg-accent text-white' : 'text-secondary hover:text-primary'
-              }`}
-              disabled={phantomMembersAvailable.length === 0}
-              title={phantomMembersAvailable.length === 0 ? 'Aucun membre fantôme disponible' : ''}
-            >
-              Intervenants externes {phantomMembersAvailable.length > 0 && `(${phantomMembersAvailable.length})`}
-            </button>
-            <button
-              onClick={() => setMode('existing')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                mode === 'existing' ? 'bg-accent text-white' : 'text-secondary hover:text-primary'
-              }`}
-              disabled={orgMembersAvailable.length === 0}
-              title={orgMembersAvailable.length === 0 ? "Aucun compte org disponible" : ''}
-            >
-              Comptes app
-            </button>
-          </div>
+        <Sheet
+          open
+          onOpenChange={open => { if (!open && !saving) { setShowCreate(false); reset() } }}
+          title="Ajouter un membre"
+          onConfirm={handleCreate}
+          confirmLabel="Ajouter au chantier"
+          confirmLoading={saving}
+        >
+          <div className={styles.detail}>
+            {modeOptions.length > 1 && (
+              <SegmentedControl fullWidth label="Type de membre" value={mode} options={modeOptions} onChange={v => setMode(v as Mode)} />
+            )}
+            {error && <p className={`${styles.hint} ${styles.warn}`} role="alert" style={{ marginTop: 0 }}>{error}</p>}
 
-          {mode === 'phantom' ? (
-            <div>
-              <label className="text-xs font-semibold text-secondary block mb-1.5">
-                Intervenants externes déjà créés dans l&apos;organisation
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {phantomMembersAvailable.map(pm => {
-                  const fullName = [pm.prenom, pm.name].filter(Boolean).join(' ')
-                  const selected = selectedPhantomIds.has(pm.id)
-                  return (
-                    <button
-                      key={pm.id}
-                      type="button"
-                      onClick={() => togglePhantomMember(pm.id)}
-                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-                        selected ? 'border-accent bg-accent text-white' : 'border-[var(--elevation-border)] text-secondary hover:border-accent/40 hover:text-primary'
-                      }`}
-                    >
-                      {selected && <Check className="h-3 w-3" />}
-                      {fullName}{pm.role_label ? ` · ${pm.role_label}` : ''}{canEditRates && pm.taux_horaire != null ? ` · ${pm.taux_horaire}€/h` : ''}
-                    </button>
-                  )
-                })}
-              </div>
-              <p className="text-xs text-secondary mt-1.5">
-                Ces membres seront rattachés à ce chantier sans être recréés.
-              </p>
-            </div>
-          ) : mode === 'existing' ? (
-            <div>
-              <label className="text-xs font-semibold text-secondary block mb-1.5">
-                Comptes application de l&apos;organisation
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {orgMembersAvailable.map(om => {
-                  const selected = linkedMembershipIds.has(om.membership_id)
-                  const isMe = currentUserId === om.user_id
-                  return (
-                    <button
-                      key={om.membership_id}
-                      type="button"
-                      onClick={() => toggleLinkedMembership(om.membership_id)}
-                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-                        selected ? 'border-accent bg-accent text-white' : 'border-[var(--elevation-border)] text-secondary hover:border-accent/40 hover:text-primary'
-                      }`}
-                    >
-                      {selected && <Check className="h-3 w-3" />}
-                      {isMe ? 'Moi' : (om.full_name ?? om.email)}{om.role_name ? ` · ${om.role_name}` : ''}
-                    </button>
-                  )
-                })}
-              </div>
-              <p className="text-xs text-secondary mt-1.5">
-                Le taux horaire défini sur le compte sera utilisé. Pas besoin d&apos;envoi de lien (compte existant).
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  className="input w-full text-sm"
-                  placeholder="Prénom"
-                  value={prenom}
-                  onChange={e => setPrenom(e.target.value)}
-                />
-                <input
-                  className="input w-full text-sm"
-                  placeholder="Nom *"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  required
-                />
-              </div>
-              <input
-                className="input w-full text-sm"
-                type="email"
-                placeholder="Email (facultatif - permet d'envoyer le rapport et le lien d'accès)"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-              />
-              <div className="grid grid-cols-2 gap-2">
-                <RoleSelect value={roleLabel} onChange={setRoleLabel} />
-                {canEditRates && (
-                  <input
-                    className="input w-full text-sm"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="Taux horaire (€/h)"
-                    value={tauxHoraire}
-                    onChange={e => setTauxHoraire(e.target.value)}
+            {mode === 'phantom' && (
+              <ListGroup title="Intervenants externes de l’organisation" description="Ils seront rattachés à ce chantier sans être recréés.">
+                {phantomMembersAvailable.map(pm => (
+                  <CheckRow
+                    key={pm.id}
+                    title={[pm.prenom, pm.name].filter(Boolean).join(' ')}
+                    description={[pm.role_label, canEditRates && pm.taux_horaire != null ? `${pm.taux_horaire} €/h` : null].filter(Boolean).join(' · ') || undefined}
+                    checked={selectedPhantomIds.has(pm.id)}
+                    onCheckedChange={() => togglePhantomMember(pm.id)}
                   />
+                ))}
+              </ListGroup>
+            )}
+
+            {mode === 'existing' && (
+              <ListGroup title="Comptes de l’application" description="Le taux horaire du compte est repris. Pas de lien d’accès à envoyer : le compte existe déjà.">
+                {orgMembersAvailable.map(om => (
+                  <CheckRow
+                    key={om.membership_id}
+                    title={currentUserId === om.user_id ? 'Moi' : (om.full_name ?? om.email)}
+                    description={om.role_name ?? undefined}
+                    checked={linkedMembershipIds.has(om.membership_id)}
+                    onCheckedChange={() => toggleLinkedMembership(om.membership_id)}
+                  />
+                ))}
+              </ListGroup>
+            )}
+
+            {mode === 'new' && (
+              <>
+                <div className={styles.fields}>
+                  <Field type="text" label="Prénom" value={prenom} onChange={e => setPrenom(e.target.value)} />
+                  <Field type="text" label="Nom" value={name} onChange={e => setName(e.target.value)} required />
+                  <Field type="email" label="Email" hint="Facultatif : permet d’envoyer le rapport et le lien d’accès." value={email} onChange={e => setEmail(e.target.value)} />
+                  {roleField(roleLabel, setRoleLabel)}
+                  {canEditRates && <Field type="text" inputMode="decimal" label="Taux horaire (€/h)" value={tauxHoraire} onChange={e => setTauxHoraire(e.target.value)} />}
+                </div>
+                {email.trim() && (
+                  <ListGroup>
+                    <CheckRow title="Envoyer le lien d’accès à son espace personnel" description="Par email, à l’adresse saisie." checked={sendInvite} onCheckedChange={setSendInvite} />
+                  </ListGroup>
                 )}
-              </div>
-              {email.trim() && (
-                <label className="flex items-center gap-2 cursor-pointer text-sm text-secondary">
-                  <input type="checkbox" checked={sendInvite} onChange={e => setSendInvite(e.target.checked)} className="accent-[var(--accent)]" />
-                  Envoyer le lien d&apos;accès à son espace personnel par email
-                </label>
+              </>
+            )}
+          </div>
+        </Sheet>
+      )}
+
+      {editing && (
+        <Sheet
+          open
+          onOpenChange={open => { if (!open && !editSaving) cancelEdit() }}
+          title={memberName(editing)}
+          description={memberSummary(editing)}
+          onConfirm={() => handleSaveEdit(editing.id)}
+          confirmLabel="Enregistrer"
+          confirmLoading={editSaving}
+        >
+          <div className={styles.detail}>
+            {editError && <p className={`${styles.hint} ${styles.warn}`} role="alert" style={{ marginTop: 0 }}>{editError}</p>}
+            <div className={styles.fields}>
+              <Field type="text" label="Prénom" value={editPrenom} onChange={e => setEditPrenom(e.target.value)} />
+              <Field type="text" label="Nom" value={editName} onChange={e => setEditName(e.target.value)} />
+              <Field type="email" label="Email" value={editEmail} onChange={e => setEditEmail(e.target.value)} />
+              {roleField(editRole, setEditRole)}
+              {canEditRates && (
+                <Field
+                  type="text"
+                  inputMode="decimal"
+                  label="Taux horaire (€/h)"
+                  hint={editing.profile_id ? 'Modifie le taux du compte lié.' : undefined}
+                  value={editTaux}
+                  onChange={e => setEditTaux(e.target.value)}
+                />
               )}
             </div>
-          )}
-
-          {error && <p className="text-xs text-red-500">{error}</p>}
-
-          <div className="flex gap-2 justify-end">
-            <button onClick={() => { setShowCreate(false); reset() }} className="btn-secondary text-sm">Annuler</button>
-            <button onClick={handleCreate} disabled={saving} className="btn-primary text-sm flex items-center gap-1.5">
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-              {saving ? 'Création…' : 'Ajouter au chantier'}
-            </button>
+            <div className={styles.inline}>
+              {editing.email && !editing.profile_id && (
+                <Button variant="secondary" size="md" onClick={() => handleSendInvite(editing.id)}>Renvoyer le lien d’accès</Button>
+              )}
+              <Button
+                variant="secondary"
+                size="md"
+                loading={detachingIds.has(editing.id)}
+                onClick={() => { cancelEdit(); handleDetach(editing.id) }}
+              >
+                Retirer du chantier
+              </Button>
+              <Button variant="destructive" size="md" onClick={() => setConfirmDeleteId(editing.id)}>Supprimer le membre</Button>
+            </div>
           </div>
-        </div>
+        </Sheet>
       )}
 
-      {members.length === 0 && !showCreate && (
-        <div className="card p-6 text-center text-secondary text-sm">
-          <UserPlus className="w-8 h-8 mx-auto opacity-30 mb-2" />
-          Aucun membre individuel sur ce chantier.
-        </div>
-      )}
+      <AlertDialog
+        open={confirmDeleteId !== null}
+        onOpenChange={open => { if (!open) setConfirmDeleteId(null) }}
+        title="Supprimer ce membre ?"
+        description="Il sera supprimé définitivement de l’organisation. Cette action est irréversible."
+        confirmLabel="Supprimer"
+        onConfirm={() => {
+          const id = confirmDeleteId
+          setConfirmDeleteId(null)
+          if (id) { cancelEdit(); handleDelete(id) }
+        }}
+      />
 
-      {members.length > 0 && (
-        <div className="space-y-2">
-          {members.map(m => {
-            const fullName = [m.prenom, m.name].filter(Boolean).join(' ') || m.name
-            const isEditing = editingId === m.id
-            const isMe = Boolean(currentUserId && m.profile_id === currentUserId)
-            const detaching = detachingIds.has(m.id)
-            const deleting = deletingIds.has(m.id)
-
-            if (isEditing) {
-              return (
-                <div key={m.id} className="card p-4 border border-accent/30 bg-accent/5 space-y-3">
-                  <p className="text-xs font-semibold text-secondary uppercase tracking-wide">Modifier le membre</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      className="input w-full text-sm"
-                      placeholder="Prénom"
-                      value={editPrenom}
-                      onChange={e => setEditPrenom(e.target.value)}
-                      autoFocus
-                    />
-                    <input
-                      className="input w-full text-sm"
-                      placeholder="Nom *"
-                      value={editName}
-                      onChange={e => setEditName(e.target.value)}
-                    />
-                  </div>
-                  <input
-                    className="input w-full text-sm"
-                    type="email"
-                    placeholder="Email"
-                    value={editEmail}
-                    onChange={e => setEditEmail(e.target.value)}
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <RoleSelect value={editRole} onChange={setEditRole} />
-                    {canEditRates && (
-                      <div>
-                        <input
-                          className="input w-full text-sm"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          placeholder="Taux horaire (€/h)"
-                          value={editTaux}
-                          onChange={e => setEditTaux(e.target.value)}
-                        />
-                        {m.profile_id && (
-                          <p className="text-[10px] text-secondary mt-1">Modifie le taux du compte lié</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {editError && <p className="text-xs text-red-500">{editError}</p>}
-                  <div className="flex gap-2 justify-end">
-                    <button onClick={cancelEdit} className="btn-secondary text-sm">Annuler</button>
-                    <button onClick={() => handleSaveEdit(m.id)} disabled={editSaving} className="btn-primary text-sm flex items-center gap-1.5">
-                      {editSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                      {editSaving ? 'Enregistrement…' : 'Enregistrer'}
-                    </button>
-                  </div>
-                </div>
-              )
-            }
-
-            return (
-              <div key={m.id} className="card p-3 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-accent/15 text-accent flex items-center justify-center font-bold flex-shrink-0">
-                  {fullName[0]?.toUpperCase() ?? '?'}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-primary truncate flex items-center gap-2">
-                    {fullName}
-                    {isMe && (
-                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent/15 text-accent">Moi</span>
-                    )}
-                    {m.profile_id ? (
-                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500">Compte application</span>
-                    ) : (
-                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500">Externe</span>
-                    )}
-                  </p>
-                  <p className="text-xs text-secondary truncate">
-                    {m.role_label ?? '—'}
-                    {m.email && <> · <Mail className="inline w-3 h-3" /> {m.email}</>}
-                    {canEditRates && m.taux_horaire != null && <> · {m.taux_horaire}€/h</>}
-                  </p>
-                </div>
-                {m.email && !m.profile_id && (
-                  <button
-                    onClick={() => handleSendInvite(m.id)}
-                    className="text-xs text-accent hover:text-accent/80 flex items-center gap-1 px-2 py-1 rounded hover:bg-accent/10 transition-colors flex-shrink-0"
-                    title="Renvoyer le lien d'accès à son espace"
-                  >
-                    <Send className="w-3 h-3" /> Lien d&apos;accès
-                  </button>
-                )}
-                <button
-                  onClick={() => startEdit(m)}
-                  className="p-1.5 rounded text-secondary hover:text-primary hover:bg-[var(--elevation-1)] transition-colors flex-shrink-0"
-                  title="Modifier ce membre"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => handleDetach(m.id)}
-                  disabled={detaching || deleting}
-                  className="p-1.5 rounded text-secondary hover:text-amber-500 hover:bg-amber-500/10 transition-colors flex-shrink-0 disabled:opacity-50"
-                  title="Retirer du chantier"
-                >
-                  {detaching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
-                </button>
-                <button
-                  onClick={() => handleDelete(m.id)}
-                  disabled={detaching || deleting}
-                  className="p-1.5 rounded text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors flex-shrink-0 disabled:opacity-50"
-                  title="Supprimer définitivement"
-                >
-                  {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            )
-          })}
-        </div>
-      )}
+      <Hud
+        open={hudMessage !== null}
+        onOpenChange={open => { if (!open) { setHudMessage(null); setLastDetached(null) } }}
+        message={hudMessage ?? ''}
+        onUndo={lastDetached ? () => {
+          const back = lastDetached
+          setLastDetached(null)
+          setHudMessage(null)
+          void attachMemberToChantier(back.id, chantierId).then(() => setMembers(prev => [back, ...prev]))
+        } : undefined}
+      />
     </section>
   )
 }

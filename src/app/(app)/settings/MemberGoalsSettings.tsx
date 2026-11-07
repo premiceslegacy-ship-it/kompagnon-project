@@ -1,16 +1,18 @@
 'use client'
+// @atelier-migrated
 
-import React, { useState, useTransition, useCallback, useEffect } from 'react'
+import { useState, useTransition, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Target, Plus, Trash2, Loader2, Users, Check } from 'lucide-react'
-import { ActionButton } from '@/components/ui/ActionButton'
+import { Button } from '@/components/ui/Button'
+import { Field } from '@/components/ui/Field'
+import { ListGroup, ListRow } from '@/components/ui/ListGroup'
+import { Sheet } from '@/components/ui/Sheet'
+import styles from '../finances/quote-editor/QuoteEditor.module.css'
 import { upsertMemberGoal, bulkUpsertMemberGoals, deleteMemberGoal, fetchMemberGoalsByMonth } from '@/lib/data/mutations/member-goals'
 import type { BulkTarget, GoalDisplayRow } from '@/lib/data/mutations/member-goals'
 import type { IndividualMember } from '@/lib/data/queries/members'
 import type { TeamMember } from '@/lib/data/queries/team'
 import type { MemberGoal } from '@/lib/data/queries/member-goals'
-
-const fieldCls = "w-full rounded-lg border border-black/12 dark:border-white/18 bg-white dark:bg-white/[0.06] px-3 py-2 text-sm text-primary placeholder:text-secondary/60 focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/60 transition-colors"
 
 const METRICS = [
   { value: 'heures_terrain', label: 'Heures terrain', unit: 'h' },
@@ -26,32 +28,6 @@ const MONTHS = [
 
 type GoalDisplay = GoalDisplayRow
 
-
-function GoalRowSkeleton() {
-  return (
-    <div className="flex items-center gap-4 p-3 rounded-2xl border border-black/10 dark:border-white/15 bg-black/[0.02] dark:bg-white/[0.03] animate-pulse">
-      <div className="flex-1 space-y-2">
-        <div className="h-3.5 w-32 rounded bg-black/10 dark:bg-white/10" />
-        <div className="h-3 w-48 rounded bg-black/6 dark:bg-white/6" />
-      </div>
-      <div className="h-6 w-6 rounded-lg bg-black/8 dark:bg-white/8" />
-    </div>
-  )
-}
-
-/** Wrapper visuel pour chaque groupe du formulaire */
-function FormSection({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-black/10 dark:border-white/15 overflow-hidden">
-      <div className="px-3 py-1.5 border-b border-black/8 dark:border-white/10 bg-black/[0.03] dark:bg-white/[0.04]">
-        <span className="text-[11px] font-semibold text-secondary uppercase tracking-wider">{label}</span>
-      </div>
-      <div className="p-3 space-y-2">
-        {children}
-      </div>
-    </div>
-  )
-}
 
 type SelectedMember =
   | { kind: 'intervenant'; id: string; label: string }
@@ -133,7 +109,7 @@ export default function MemberGoalsSettings({ intervenants, orgMembers, initialG
   const [bulkAll, setBulkAll] = useState(false)
   const [metric, setMetric] = useState('heures_terrain')
   const [label, setLabel] = useState('Heures terrain')
-  const [targetVal, setTargetVal] = useState('')
+  const [targetVal, setTargetVal] = useState<number | null>(null)
   const [unit, setUnit] = useState('h')
   const [note, setNote] = useState('')
   const [formMonth, setFormMonth] = useState(now.getMonth() + 1)
@@ -168,8 +144,8 @@ export default function MemberGoalsSettings({ intervenants, orgMembers, initialG
   }
 
   function handleSubmit() {
-    const t = parseFloat(targetVal)
-    if (!targetVal || isNaN(t) || t <= 0) {
+    const t = targetVal ?? 0
+    if (t <= 0) {
       setError('La valeur cible doit être un nombre positif.')
       return
     }
@@ -209,7 +185,7 @@ export default function MemberGoalsSettings({ intervenants, orgMembers, initialG
       if (res.error) { setError(res.error); return }
 
       setShowForm(false)
-      setTargetVal('')
+      setTargetVal(null)
       setNote('')
       // Cale le filtre sur la période de l'objectif créé et recharge depuis le serveur
       setFilterMonth(formMonth)
@@ -230,277 +206,130 @@ export default function MemberGoalsSettings({ intervenants, orgMembers, initialG
     })
   }
 
+  const grouped = Object.values(
+    goals.reduce<Record<string, GoalDisplay[]>>((acc, g) => {
+      const key = g.member_id ?? g.membership_id ?? 'unknown'
+      if (!acc[key]) acc[key] = []
+      acc[key].push(g)
+      return acc
+    }, {}),
+  )
+
   return (
-    <div className="space-y-5">
-      {/* En-tête */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h3 className="text-xl font-bold text-primary flex items-center gap-2">
-            <Target className="w-5 h-5 text-accent" />
-            Objectifs membres
-          </h3>
-          <p className="text-sm text-secondary mt-1">
-            Fixez des objectifs mensuels par membre (heures terrain, tâches, chantiers).
-          </p>
-        </div>
-        {hasAnyMember && (
-          <button
-            onClick={() => { setShowForm(v => !v); setError(null) }}
-            className="self-start sm:self-auto flex items-center gap-2 px-4 py-2 rounded-xl bg-accent text-black font-semibold text-sm hover:opacity-90 transition-opacity"
-          >
-            <Plus className="w-4 h-4" />
-            {showForm ? 'Fermer' : 'Ajouter'}
-          </button>
-        )}
-      </div>
+    <div className={styles.detail}>
+      <p className={styles.hint} style={{ marginTop: 0 }}>
+        Fixez des objectifs mensuels par membre : heures terrain, tâches, chantiers.
+      </p>
 
-      {!hasAnyMember && (
-        <div className="rounded-xl border border-dashed border-black/10 dark:border-white/15 px-4 py-6 text-center text-sm text-secondary">
-          Aucun membre dans l&apos;organisation. Ajoutez des intervenants ou invitez des membres pour leur fixer des objectifs.
-        </div>
-      )}
-
-      {/* Formulaire */}
-      {showForm && (
-        <div className="rounded-2xl border border-black/12 dark:border-white/18 bg-black/[0.015] dark:bg-white/[0.02] p-4 space-y-3">
-          <h4 className="font-semibold text-primary text-sm mb-1">Nouvel objectif</h4>
-
-          {/* Membre cible */}
-          <FormSection label="Membre cible">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <button
-                type="button"
-                onClick={() => setBulkAll(v => !v)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-all ${
-                  bulkAll
-                    ? 'bg-accent/10 border-accent/40 text-accent'
-                    : 'border-black/10 dark:border-white/15 text-secondary hover:text-primary'
-                }`}
-              >
-                {bulkAll ? <Check className="w-4 h-4" /> : <Users className="w-4 h-4" />}
-                Tous les membres
-              </button>
-              {!bulkAll && (
-                <select
-                  value={selectedValue()}
-                  onChange={e => handleSelectChange(e.target.value)}
-                  className="{fieldCls}"
-                >
-                  <option value="">-- Choisir un membre --</option>
-                  {filteredIntervenants.length > 0 && (
-                    <optgroup label="Intervenants terrain">
-                      {filteredIntervenants.map(m => (
-                        <option key={m.id} value={m.id}>
-                          {[m.prenom, m.name].filter(Boolean).join(' ')}{m.role_label ? ` · ${m.role_label}` : ''}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {pureOrgMembers.length > 0 && (
-                    <optgroup label="Membres de l'organisation">
-                      {pureOrgMembers.map(m => (
-                        <option key={m.user_id} value={`org:${m.membership_id}`}>
-                          {m.full_name ?? m.email} · {m.role_name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              )}
-            </div>
-          </FormSection>
-
-          {/* Période */}
-          <FormSection label="Période">
-            <div className="flex gap-2">
-              <select
-                value={formMonth}
-                onChange={e => setFormMonth(Number(e.target.value))}
-                className="{fieldCls}"
-              >
-                {MONTHS.map((m, i) => (
-                  <option key={i + 1} value={i + 1}>{m}</option>
-                ))}
-              </select>
-              <select
-                value={formYear}
-                onChange={e => setFormYear(Number(e.target.value))}
-                className="{fieldCls}"
-              >
-                {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
-          </FormSection>
-
-          {/* Métrique */}
-          <FormSection label="Type d'objectif">
-            <select
-              value={metric}
-              onChange={e => handleMetricChange(e.target.value)}
-              className={fieldCls}
-            >
-              {METRICS.map(m => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-            <input
-              type="text"
-              placeholder="Libellé affiché au membre (optionnel)"
-              value={label}
-              onChange={e => setLabel(e.target.value)}
-              className={fieldCls}
-            />
-          </FormSection>
-
-          {/* Valeur cible */}
-          <FormSection label="Valeur cible">
-            <div className="flex gap-2">
-              <input
-                type="number"
-                min="0"
-                step="0.5"
-                placeholder="Ex : 140"
-                value={targetVal}
-                onChange={e => setTargetVal(e.target.value)}
-                className="{fieldCls}"
-              />
-              <input
-                type="text"
-                placeholder="Unité (ex : h)"
-                value={unit}
-                onChange={e => setUnit(e.target.value)}
-                className={`${fieldCls} !w-24`}
-              />
-            </div>
-          </FormSection>
-
-          {/* Note */}
-          <FormSection label="Note interne (admin uniquement)">
-            <input
-              type="text"
-              placeholder="Ex : objectif ajusté suite entretien"
-              value={note}
-              onChange={e => setNote(e.target.value)}
-              className={fieldCls}
-            />
-          </FormSection>
-
-          {error && <p className="text-sm text-red-500">{error}</p>}
-
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center pt-1">
-            <ActionButton
-              onClick={handleSubmit}
-              loading={isPending}
-              className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-accent text-black font-semibold text-sm hover:opacity-90 transition-opacity disabled:opacity-60"
-            >
-              <Target className="w-4 h-4" />
-              {bulkAll ? 'Appliquer à tous' : 'Enregistrer'}
-            </ActionButton>
-            <button
-              type="button"
-              onClick={() => { setShowForm(false); setError(null) }}
-              disabled={isPending}
-              className="px-4 py-2 rounded-xl text-secondary hover:text-primary text-sm font-medium transition-colors disabled:opacity-40"
-            >
-              Annuler
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Filtre mois / année */}
-      <div className="rounded-xl border border-black/10 dark:border-white/15 bg-black/[0.02] dark:bg-white/[0.03] px-4 py-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <span className="text-xs font-semibold text-secondary uppercase tracking-wider mr-1">Période affichée</span>
-          <div className="flex gap-2">
-            <select
-              value={filterMonth}
-              onChange={e => handleFilterMonth(Number(e.target.value))}
-              className={`${fieldCls} !py-1.5`}
-            >
-              {MONTHS.map((m, i) => (
-                <option key={i + 1} value={i + 1}>{m}</option>
-              ))}
-            </select>
-            <select
-              value={filterYear}
-              onChange={e => handleFilterYear(Number(e.target.value))}
-              className={`${fieldCls} !py-1.5`}
-            >
-              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Liste groupée par membre */}
-      {loadingGoals ? (
-        <div className="space-y-3">
-          <GoalRowSkeleton />
-          <GoalRowSkeleton />
-          <GoalRowSkeleton />
-        </div>
-      ) : goals.length === 0 ? (
-        <div className="flex flex-col items-center py-8 gap-2 text-center rounded-2xl border border-dashed border-black/10 dark:border-white/15">
-          <Target className="w-8 h-8 text-secondary opacity-20" />
-          <p className="text-sm text-secondary">
-            Aucun objectif pour {MONTHS[filterMonth - 1]} {filterYear}.
-          </p>
+      {hasAnyMember ? (
+        <div className={styles.inline}>
+          <Button variant="secondary" size="md" onClick={() => { setShowForm(true); setError(null) }}>Ajouter un objectif</Button>
         </div>
       ) : (
-        <div className="space-y-3">
-          {Object.entries(
-            goals.reduce<Record<string, GoalDisplay[]>>((acc, g) => {
-              const key = g.member_id ?? g.membership_id ?? 'unknown'
-              if (!acc[key]) acc[key] = []
-              acc[key].push(g)
-              return acc
-            }, {})
-          ).map(([, memberGoals]) => {
-            const first = memberGoals[0]
-            return (
-              <div key={first.member_id ?? first.membership_id} className="rounded-2xl border border-black/10 dark:border-white/15 overflow-hidden">
-                {/* Header membre */}
-                <div className="flex items-center gap-2 px-3 py-2 bg-black/[0.03] dark:bg-white/[0.04] border-b border-black/8 dark:border-white/10">
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm font-semibold text-primary">{first.display_name || '—'}</span>
-                    {first.display_sub && (
-                      <span className="ml-2 text-xs text-secondary">{first.display_sub}</span>
-                    )}
-                  </div>
-                  <span className="text-xs text-secondary tabular-nums">{memberGoals.length} objectif{memberGoals.length > 1 ? 's' : ''}</span>
-                </div>
-                {/* Lignes objectifs */}
-                <div className="divide-y divide-black/6 dark:divide-white/8">
-                  {memberGoals.map(g => {
-                    const metricLabel = METRICS.find(m => m.value === g.metric)?.label ?? g.metric
-                    return (
-                      <div key={g.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm text-primary">{g.label ?? metricLabel}</p>
-                          <p className="text-xs text-secondary">
-                            Objectif : <span className="font-semibold">{g.target}{g.unit ?? ''}</span>
-                            {g.note && <span className="ml-2 italic opacity-70">{g.note}</span>}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => handleDelete(g.id)}
-                          disabled={deleting === g.id}
-                          className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-40"
-                        >
-                          {deleting === g.id
-                            ? <Loader2 className="w-4 h-4 animate-spin" />
-                            : <Trash2 className="w-4 h-4" />
-                          }
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          })}
-        </div>
+        <p className={styles.hint} style={{ marginTop: 0 }}>
+          Aucun membre dans l’organisation. Ajoutez des intervenants ou invitez des membres pour leur fixer des objectifs.
+        </p>
+      )}
+
+      <div className={styles.fields}>
+        <Field type="select" label="Mois affiché" value={String(filterMonth)} onChange={e => handleFilterMonth(Number(e.target.value))}>
+          {MONTHS.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+        </Field>
+        <Field type="select" label="Année" value={String(filterYear)} onChange={e => handleFilterYear(Number(e.target.value))}>
+          {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+        </Field>
+      </div>
+
+      {error && !showForm && <p className={`${styles.hint} ${styles.warn}`} role="alert" style={{ marginTop: 0 }}>{error}</p>}
+
+      {loadingGoals ? (
+        <p className={styles.hint} role="status" style={{ marginTop: 0 }}>Chargement des objectifs…</p>
+      ) : goals.length === 0 ? (
+        <p className={styles.hint} style={{ marginTop: 0 }}>Aucun objectif pour {MONTHS[filterMonth - 1]} {filterYear}.</p>
+      ) : (
+        grouped.map(memberGoals => {
+          const first = memberGoals[0]
+          return (
+            <ListGroup
+              key={first.member_id ?? first.membership_id}
+              title={first.display_name || '—'}
+              description={first.display_sub || undefined}
+            >
+              {memberGoals.map(g => {
+                const metricLabel = METRICS.find(m => m.value === g.metric)?.label ?? g.metric
+                return (
+                  <ListRow
+                    key={g.id}
+                    title={g.label ?? metricLabel}
+                    description={`Objectif : ${g.target}${g.unit ?? ''}${g.note ? ` · ${g.note}` : ''}`}
+                    trailing={
+                      <Button variant="destructive" size="sm" onClick={() => handleDelete(g.id)} loading={deleting === g.id}>
+                        Supprimer
+                      </Button>
+                    }
+                  />
+                )
+              })}
+            </ListGroup>
+          )
+        })
+      )}
+
+      {showForm && (
+        <Sheet
+          open
+          onOpenChange={open => { if (!open && !isPending) { setShowForm(false); setError(null) } }}
+          title="Nouvel objectif"
+          onConfirm={handleSubmit}
+          confirmLabel={bulkAll ? 'Appliquer à tous' : 'Enregistrer'}
+          confirmLoading={isPending}
+        >
+          <div className={styles.detail}>
+            {error && <p className={`${styles.hint} ${styles.warn}`} role="alert" style={{ marginTop: 0 }}>{error}</p>}
+            <div className={styles.fields}>
+              <Field type="select" label="Pour" value={bulkAll ? '__all__' : selectedValue()} onChange={e => {
+                if (e.target.value === '__all__') setBulkAll(true)
+                else { setBulkAll(false); handleSelectChange(e.target.value) }
+              }}>
+                <option value="__all__">Tous les membres</option>
+                <option value="">Choisir un membre</option>
+                {filteredIntervenants.length > 0 && (
+                  <optgroup label="Intervenants terrain">
+                    {filteredIntervenants.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {[m.prenom, m.name].filter(Boolean).join(' ')}{m.role_label ? ` · ${m.role_label}` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {pureOrgMembers.length > 0 && (
+                  <optgroup label="Membres de l’organisation">
+                    {pureOrgMembers.map(m => (
+                      <option key={m.user_id} value={`org:${m.membership_id}`}>
+                        {m.full_name ?? m.email} · {m.role_name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </Field>
+              <Field type="select" label="Mois" value={String(formMonth)} onChange={e => setFormMonth(Number(e.target.value))}>
+                {MONTHS.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+              </Field>
+              <Field type="select" label="Année" value={String(formYear)} onChange={e => setFormYear(Number(e.target.value))}>
+                {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+              </Field>
+            </div>
+            <div className={styles.fields}>
+              <Field type="select" label="Type d’objectif" value={metric} onChange={e => handleMetricChange(e.target.value)}>
+                {METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </Field>
+              <Field type="text" label="Libellé" hint="Affiché au membre. Facultatif." value={label} onChange={e => setLabel(e.target.value)} />
+              <Field type="number" label="Valeur cible" min={0} decimals={1} allowEmpty value={targetVal} onChange={setTargetVal} />
+              <Field type="text" label="Unité" placeholder="h" value={unit} onChange={e => setUnit(e.target.value)} />
+              <Field type="text" label="Note interne" hint="Visible des administrateurs seulement." placeholder="Objectif ajusté après entretien" value={note} onChange={e => setNote(e.target.value)} />
+            </div>
+          </div>
+        </Sheet>
       )}
     </div>
   )

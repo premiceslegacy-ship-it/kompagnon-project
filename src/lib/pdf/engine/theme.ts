@@ -31,7 +31,6 @@ export const COLOR = {
   gray: hexToRgb('#888888'),
 }
 
-export const SIZE = DS.size
 export const SPACE = DS.space
 
 export const PAGE = {
@@ -45,12 +44,3 @@ export const PAGE = {
 export const CONTENT_WIDTH = PAGE.width - PAGE.margin * 2
 
 // Colonnes de tableau devis/facture (mêmes largeurs que pdf-design-system.ts)
-export const COL = {
-  qty: 35,
-  unit: 30,
-  pu: 65,
-  vat: 40,
-  total: 72,
-}
-export const COL_DESC_WIDTH = (withVat: boolean) =>
-  CONTENT_WIDTH - COL.qty - COL.unit - COL.pu - COL.total - (withVat ? COL.vat : 0)

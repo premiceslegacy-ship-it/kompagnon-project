@@ -1,0 +1,110 @@
+/* @atelier-migrated */
+/* Situations de travaux : avancement facturé, liste et création. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progressHead,
+.progressFoot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+}
+
+.progressHead strong {
+  color: var(--at-encre);
+  font-weight: 600;
+}
+
+.bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--at-rayon-pilule);
+  background: var(--at-remplissage);
+}
+
+.barFill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--at-accent);
+  transition: width var(--at-duree-deplacement, 0.3s) var(--at-courbe-deplacement, ease);
+}
+
+.value {
+  color: var(--at-encre);
+  font: 500 15px/20px var(--font-inter);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.valueMuted {
+  display: block;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+  text-align: right;
+}
+
+.done {
+  margin: 0;
+  color: var(--at-hausse);
+  font: 600 15px/20px var(--font-inter);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.note {
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+}
+
+.warn {
+  color: var(--at-danger-texte);
+}
+
+.slider {
+  width: 100%;
+  min-height: 44px;
+  accent-color: var(--at-accent);
+}
+
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sliderValue {
+  flex: none;
+  min-width: 56px;
+  color: var(--at-encre);
+  font: 600 22px/28px var(--font-geist);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.fields {
+  overflow: hidden;
+  border-radius: var(--at-rayon-groupe-liste);
+  background: var(--at-carte);
+}
+
+.fields > * + * {
+  border-top: 0.5px solid var(--at-trait);
+}

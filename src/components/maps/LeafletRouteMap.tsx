@@ -10,14 +10,14 @@ const FALLBACK_CENTER: [number, number] = [46.6, 2.4] // Centre France
 const FALLBACK_ZOOM = 5
 
 function numberedIcon(order: number, isDeparture: boolean): L.DivIcon {
-  const bg = isDeparture ? '#22C55E' : 'rgb(var(--accent-primary))'
+  const bg = isDeparture ? 'var(--at-hausse)' : 'var(--at-accent)'
   return L.divIcon({
     className: 'kompagnon-map-marker-numbered',
     html: `<div style="
       width:28px;height:28px;border-radius:50%;background:${bg};
       display:flex;align-items:center;justify-content:center;
-      color:white;font-weight:700;font-size:13px;font-family:'Inter',sans-serif;
-      box-shadow:0 2px 6px rgba(0,0,0,0.35);border:2px solid white;
+      color:var(--at-sur-accent);font-weight:700;font-size:13px;font-family:'Inter',sans-serif;
+      box-shadow:0 2px 6px color-mix(in srgb, var(--at-encre) 35%, transparent);border:2px solid var(--at-carte);
     ">${isDeparture ? '' : order}</div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
@@ -73,7 +73,7 @@ export default function LeafletRouteMap({ points, departure }: LeafletRouteMapPr
       />
       <FitToPoints points={allPointsForBounds} />
       {polylinePositions.length > 1 && (
-        <Polyline positions={polylinePositions} pathOptions={{ color: 'rgb(var(--accent-primary))', weight: 3, dashArray: '6 6' }} />
+        <Polyline positions={polylinePositions} pathOptions={{ color: 'var(--at-accent)', weight: 3, dashArray: '6 6' }} />
       )}
       {departure && (
         <Marker position={[departure.lat, departure.lng]} icon={numberedIcon(0, true)} />

@@ -70,34 +70,6 @@ export function buildDateFromParts(year: string, month: string, day: string) {
   return `${y}-${String(m).padStart(2, '0')}-${String(Math.min(d, lastDay)).padStart(2, '0')}`
 }
 
-export const CAL_START_H = 5
-export const CAL_END_H = 23
-export const CAL_HOURS = CAL_END_H - CAL_START_H  // 18
-export const ROW_H = 52  // px per hour
-export const TOTAL_H = CAL_HOURS * ROW_H  // 884px
-
-export const USER_COLORS = [
-  { bg: 'bg-indigo-500/20', border: 'border-indigo-400/50', text: 'text-indigo-600 dark:text-indigo-300' },
-  { bg: 'bg-blue-500/20',   border: 'border-blue-400/50',   text: 'text-blue-600 dark:text-blue-300' },
-  { bg: 'bg-emerald-500/20',border: 'border-emerald-400/50',text: 'text-emerald-600 dark:text-emerald-300' },
-  { bg: 'bg-amber-500/20',  border: 'border-amber-400/50',  text: 'text-amber-600 dark:text-amber-300' },
-  { bg: 'bg-purple-500/20', border: 'border-purple-400/50', text: 'text-purple-600 dark:text-purple-300' },
-  { bg: 'bg-rose-500/20',   border: 'border-rose-400/50',   text: 'text-rose-600 dark:text-rose-300' },
-  { bg: 'bg-teal-500/20',   border: 'border-teal-400/50',   text: 'text-teal-600 dark:text-teal-300' },
-  { bg: 'bg-orange-500/20', border: 'border-orange-400/50', text: 'text-orange-600 dark:text-orange-300' },
-]
-
-export function getUserColorIdx(userId: string | null | undefined): number {
-  if (!userId) return 0
-  let hash = 0
-  for (const ch of userId) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffffffff
-  return Math.abs(hash) % USER_COLORS.length
-}
-
-export function getPointageKey(p: { user_id: string | null | undefined; member_id?: string | null }): string {
-  return p.user_id ?? `member_${p.member_id ?? 'unknown'}`
-}
-
 export function getMonday(date: Date): Date {
   const d = new Date(date)
   const day = d.getDay()

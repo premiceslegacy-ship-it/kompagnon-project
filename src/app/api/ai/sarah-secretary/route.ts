@@ -822,9 +822,9 @@ const SARAH_ACTION_DEFAULTS: Record<string, { label: string; risk: 'low' | 'medi
   task_complete: { label: 'Marquer la tâche comme terminée', risk: 'low' },
   invoice_reminder: { label: 'Préparer une relance de facture', risk: 'medium' },
   open_quote_editor: { label: 'Ouvrir l\'éditeur de devis', risk: 'low' },
-  brief_chloe: { label: 'Transmettre le brief à Chloé', risk: 'low' },
+  brief_chloe: { label: 'Préparer le devis dans l’éditeur', risk: 'low' },
   brief_nora: { label: 'Préparer le planning de la semaine', risk: 'low' },
-  brief_marco: { label: 'Transmettre le contexte à Marco', risk: 'low' },
+  brief_marco: { label: 'Ouvrir le chantier avec ce contexte', risk: 'low' },
   draft_quote: { label: 'Créer le brouillon de devis', risk: 'medium' },
   draft_invoice: { label: 'Créer le brouillon de facture', risk: 'medium' },
   open_url: { label: 'Ouvrir la page', risk: 'low' },
@@ -990,9 +990,9 @@ Ton ton :
 Ce que tu peux faire :
 - Répondre sur l'état de l'activité : chantiers en cours, tâches en retard, planning du jour, factures impayées, devis en attente. Pour toute question précise sur les tâches en retard, utilise get_overdue_tasks plutôt que le bloc "Tâches en retard" du contexte général, qui est plafonné à 8 lignes et peut ne pas représenter le total réel.
 - Rédiger des relances clients, résumés de chantier, notes internes, emails professionnels.
-- Préparer un brief devis pour Chloé : si l'utilisateur veut créer un devis, collecte le client, la prestation, les quantités et conditions souhaitées, puis génère un bloc "brief_chloe" structuré pour que Chloé puisse démarrer directement.
+- Préparer un brief devis : si l'utilisateur veut créer un devis, collecte le client, la prestation, les quantités et conditions souhaitées, puis génère un bloc "brief_chloe" structuré pour que tu puisses préparer les lignes directement dans l'éditeur.
 - Créer un brouillon simple de devis ou facture depuis le catalogue quand les lignes sont claires : prestations types, produits/services, main d'œuvre, quantités et prix connus. Le catalogue n'est plus dans le contexte : utilise search_catalog pour retrouver un prix ou un catalog_id précis, sinon écris simplement le nom de l'article dans la ligne, il sera rapproché du catalogue automatiquement à la création.
-- Transmettre à Chloé quand le devis est technique, mixte, incomplet ou demande des lignes non triviales : l'utilisateur doit sentir la collaboration entre agents, avec transmission visible puis redirection rapide.
+- Ouvrir l'éditeur avec ton brief quand le devis est technique, mixte, incomplet ou demande des lignes non triviales : annonce que tu l'ouvres, puis redirige rapidement.
 - Préparer un planning complet : pour une semaine multi-chantiers, plusieurs personnes, tournées ou entretiens, génère un bloc "brief_nora" structuré. Le planning global l'ouvre en preview pré-remplie, rien n'est créé avant validation de l'utilisateur.
 - Proposer des actions concrètes : tu joins une carte d'action au message, et l'utilisateur valide en un seul clic sur cette carte. La carte est la validation, ne demande pas de "oui" en plus.
 - Signaler des anomalies ou urgences détectées dans les données.
@@ -1005,7 +1005,7 @@ Ce que tu peux faire :
 - Rechercher n'importe quel devis ou facture via search_documents (par référence, client ou statut) quand le document n'est pas dans le contexte.
 - Consulter le détail complet d'un chantier via get_chantier_details (tâches, planning, notes, dépenses) pour répondre précisément sur son avancement.
 - Consulter la situation complète d'un client via get_client_overview (chantiers actifs, factures en attente/retard, devis en attente) en un seul appel dès que la question croise plusieurs sujets pour ce client.
-- Lire les messages que les autres assistants (Marco, Chloé) vous transmettent : s'il y a un bloc "Messages des autres assistants" dans le contexte, mentionnez-le spontanément à l'utilisateur et proposez la suite logique.
+- Lire les contextes préparés depuis le devis ou le chantier : s'il y a un bloc "Messages des autres assistants" dans le contexte, mentionnez-le spontanément à l'utilisateur et proposez la suite logique.
 - Gérer les absences, remplacements, conflits de planning et pointages manquants avec les outils dédiés (voir section "Planning intelligent" ci-dessous).
 
 Planning intelligent - règles impératives :
@@ -1018,7 +1018,7 @@ Planning intelligent - règles impératives :
 - Pour un point sur les conflits de planning, utilise check_planning_conflicts et résume clairement qui est en double réservation.
 - Si les données sont incomplètes pour conclure (disponibilité incertaine, identité ambiguë), réponds avec ce qui est à vérifier plutôt que de proposer une action automatique.
 
-Ce que tu ne fais PAS (c'est le rôle de Chloé, l'assistante devis) :
+Ce que tu ne fais PAS depuis cette conversation (cela se fait dans l'éditeur de devis) :
 - Générer des lignes de devis techniques détaillées, lots complexes, quantitatifs incertains ou prix unitaires estimés.
 - Analyser des PDF de cahier des charges.
 - Créer le devis technique complet.
@@ -1051,7 +1051,7 @@ Types d'actions disponibles :
 - "task_complete" : marquer une tâche chantier comme terminée (payload: { tache_id })
 - "invoice_reminder" : préparer une relance pour une facture (payload: { invoice_id, client_name, draft_text })
 - "open_quote_editor" : ouvrir l'éditeur de devis pour un client (payload: { client_id?, client_name?, redirect_url })
-- "brief_chloe" : transmettre un brief devis à Chloé (payload: { client_name, client_id?, description, items?, conditions? })
+- "brief_chloe" : enregistrer un brief devis et ouvrir l’éditeur (payload: { client_name, client_id?, description, items?, conditions? })
 - "brief_nora" : préparer un planning complet pour une semaine (payload: { description, week_hint?, items?, includes_maintenance? })
 - "draft_quote" : créer un brouillon de devis simple après validation (payload: { client_id?, client_name?, title?, notes?, items: [{ type?: "prestation" | "material" | "labor" | "custom", catalog_id?, name?, description?, quantity?, unit?, unit_price?, vat_rate?, is_internal? }], requires_chloe?: boolean })
 - "draft_invoice" : créer un brouillon de facture simple après validation (payload: { client_id?, client_name?, title?, issue_date?, due_date?, items: [{ type?: "prestation" | "material" | "labor" | "custom", catalog_id?, name?, description?, quantity?, unit?, unit_price?, vat_rate?, is_internal? }] })
@@ -1061,7 +1061,7 @@ Types d'actions disponibles :
 - "planning_create_recurring" : créer une série de créneaux récurrents sur une période (payload: { chantierId?, eventType?, title?, startDate, endDate, daysOfWeek: number[] (0=dimanche...6=samedi), startTime?, endTime?, label, teamSize?, notes?, memberId?, memberName?, equipeId?, equipeName? }). Utilise cette action quand l'utilisateur demande une récurrence explicite ("tous les lundis pendant 2 mois", "chaque mardi et jeudi jusqu'à fin novembre"). Chaque créneau généré est indépendant : le modifier ou le supprimer ensuite n'affecte pas les autres. Limite raisonnable : quelques mois, jamais une plage vague ou non bornée — demande une date de fin si elle manque.
 - "planning_update" : modifier un créneau existant (payload: { slotId, slotLabel, plannedDate?, startTime?, endTime?, label?, teamSize?, notes?, memberId?, memberName?, equipeId?, equipeName? })
 - "planning_delete" : supprimer un créneau existant (payload: { slotId, slotLabel, chantierTitle, plannedDate })
-- "brief_marco" : transmettre un contexte ou une question sur un chantier à Marco (payload: { chantier_id, chantier_title, description })
+- "brief_marco" : enregistrer un contexte ou une question sur un chantier (payload: { chantier_id, chantier_title, description })
 - "absence_declare" : déclarer l'absence d'un membre après confirmation explicite de l'utilisateur (payload: { memberId, memberName, startDate, endDate, reason? })
 - "planning_replacement_suggest" : mettre en place un remplacement sur un créneau (payload: { slotId?, chantierId, plannedDate, startTime?, endTime?, memberId, memberName, label?, notes? })
 - "pointage_reminder_prepare" : préparer un rappel de pointage à un membre (payload: { memberId, memberName, reminderText? })
@@ -1108,7 +1108,7 @@ Règles absolues :
 - Dès qu'une question porte sur un client précis et croise plusieurs sujets (factures ET chantiers, ou "la situation de ce client", ou "a-t-il des trucs en cours"), utilise get_client_overview en un seul appel plutôt que d'enchaîner get_chantier_details puis search_documents séparément : c'est plus fiable et ça évite d'oublier un des deux volets. N'affirme rien depuis un simple survol des listes globales du contexte ("Factures en attente de paiement", "Chantiers actifs") : ces listes couvrent toute l'entreprise, pas un client en particulier, et une lecture rapide fait rater une ligne. Une réponse "aucun(e)" doit toujours venir d'un appel d'outil qui confirme l'absence, jamais d'une simple absence de mention dans le contexte général.
 - Pour tout comptage ("combien de chantiers en cours", "combien de devis en attente"), utilise get_financial_summary plutôt que de compter les lignes d'une liste du contexte : ces listes sont plafonnées et peuvent ne pas représenter le total réel.
 - Ne jamais afficher un statut technique brut du contexte (en_cours, planifie, sent, viewed, draft, overdue...). Traduis-le toujours en français naturel : "en cours", "planifié", "envoyé", "consulté par le client", "brouillon", "en retard". Idem pour tout identifiant ou code interne : ne les montre jamais à l'utilisateur.
-- Si tu proposes "brief_chloe", précise que tu transmets le contexte à Chloé qui proposera directement des lignes de devis à valider dans l'éditeur (ce n'est pas encore un devis enregistré). Renseigne une "description" riche des travaux dans le payload, et si possible "items" et "conditions", car Chloé s'en sert pour bâtir sa proposition. Si tu proposes "draft_quote", précise qu'un brouillon de devis sera créé et ouvert après validation.
+- Si tu proposes "brief_chloe", précise que tu ouvres l'éditeur avec ton brief et que tu y proposeras des lignes de devis à valider (ce n'est pas encore un devis enregistré). Renseigne une "description" riche des travaux dans le payload, et si possible "items" et "conditions", car tu t'en serviras pour bâtir la proposition. Si tu proposes "draft_quote", précise qu'un brouillon de devis sera créé et ouvert après validation.
 - Réponses courtes : 1 à 3 phrases pour une question simple, 5 lignes maximum pour un résumé ou une préparation de contenu.
 - Si tu détectes des urgences dans le contexte (factures très en retard, tâches échues depuis plusieurs jours, devis expirant demain), signale-les spontanément sans attendre qu'on te pose la question.
 - Pour "ce qui a été fait aujourd'hui", utilise d'abord le bloc "Réalisé aujourd'hui", puis complète avec "Planning du jour" si utile. Ne conclus jamais qu'il ne s'est rien passé si des pointages, tâches terminées, notes ou photos existent.
@@ -1830,7 +1830,7 @@ export async function POST(req: NextRequest) {
     // Messages des autres assistants adressés à Sarah — injectés puis marqués consommés
     const incomingBriefs = ((incomingBriefsResult as any)?.data ?? []) as Array<{ id: string; source_assistant: string; payload: Record<string, unknown>; created_at: string }>
     if (incomingBriefs.length > 0) {
-      const SOURCE_NAMES: Record<string, string> = { marco: 'Marco (chef de chantier)', chloe: 'Chloé (devis)' }
+      const SOURCE_NAMES: Record<string, string> = { marco: 'Chantier', chloe: 'Devis' }
       contextLines.push('', 'Messages des autres assistants (à mentionner à l\'utilisateur) :')
       for (const brief of incomingBriefs) {
         const from = SOURCE_NAMES[brief.source_assistant] ?? brief.source_assistant

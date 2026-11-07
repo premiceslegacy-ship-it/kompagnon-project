@@ -51,10 +51,7 @@ export default function PlanningGlobalClient(props: PlanningProps) {
     { label: 'Heures pointées', onSelect: () => q.router.push('/chantiers/heures') },
   ]
 
-  const empty = (title: string, description: string, onAction: () => void) =>
-    q.canManage && q.chantiers.length > 0
-      ? <EmptyState title={title} description={description} actionLabel="Planifier un créneau" onAction={onAction} />
-      : <EmptyState title={title} description={description} />
+  const empty = (title: string, description: string) => <EmptyState title={title} description={description} />
 
   const row = (p: GlobalPlanning) => (
     <ListRow
@@ -69,7 +66,7 @@ export default function PlanningGlobalClient(props: PlanningProps) {
 
   const dayBody = (ds: string) => {
     const xs = byDayWeek(ds)
-    return xs.length ? <ListGroup>{xs.map(row)}</ListGroup> : empty('Aucun créneau ce jour', 'Planifiez les passages de vos équipes.', () => q.openNewSlotModal(q.selectedDate))
+    return xs.length ? <ListGroup>{xs.map(row)}</ListGroup> : empty('Aucun créneau ce jour', 'Planifiez les passages de vos équipes.')
   }
 
   const strip = (
@@ -212,7 +209,7 @@ export default function PlanningGlobalClient(props: PlanningProps) {
           )}
 
           {view === 'liste' && (weekSlots.length === 0 ? (
-            empty('Aucun créneau cette semaine', 'Planifiez les passages de vos équipes sur vos chantiers.', () => q.openNewSlotModal())
+            empty('Aucun créneau cette semaine', 'Planifiez les passages de vos équipes sur vos chantiers.')
           ) : (
             <div className={styles.stack}>
               {weekDays.filter(d => byDayWeek(getLocalDateStr(d)).length > 0).map(d => (

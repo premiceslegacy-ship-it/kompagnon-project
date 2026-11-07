@@ -95,17 +95,3 @@ export function drawText(doc: PdfDoc, text: string, style: TextStyle, x = PAGE.m
     doc.y -= lh - style.size
   }
 }
-
-/** Dessine une ligne label ... valeur (ex: "Total HT ... 1 200 €") sur la largeur donnée. */
-export function drawKeyValueRow(
-  doc: PdfDoc,
-  label: string,
-  value: string,
-  opts: { x: number; width: number; labelStyle: TextStyle; valueStyle: TextStyle; rowHeight: number },
-): void {
-  doc.ensureSpace(opts.rowHeight)
-  const baselineY = doc.y - opts.rowHeight + (opts.rowHeight - opts.labelStyle.size) / 2
-  drawLine(doc, label, opts.x, baselineY, { ...opts.labelStyle, align: 'left', maxWidth: opts.width })
-  drawLine(doc, value, opts.x, baselineY, { ...opts.valueStyle, align: 'right', maxWidth: opts.width })
-  doc.y -= opts.rowHeight
-}
