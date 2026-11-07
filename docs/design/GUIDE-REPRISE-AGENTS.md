@@ -115,6 +115,17 @@ E2E_NEXT_SERVER_MODE=start npx playwright test e2e/navigation.spec.ts e2e/daily-
 npx tsx scripts/render-pdf-samples.mts          # les dix PDF d'exemple dans .scratch/pdf/
 ```
 
+Validation PDF/A (veraPDF, sans installer Java : image Docker officielle de 134 Mo) :
+
+```bash
+docker pull ghcr.io/verapdf/cli:latest
+mkdir -p /tmp/vera && cp ma-facture.pdf /tmp/vera/
+docker run --rm -v /tmp/vera:/data ghcr.io/verapdf/cli:latest --format text /data/ma-facture.pdf
+# PASS /data/ma-facture.pdf 3b  → conforme PDF/A-3b ; FAIL → ajouter --format text -v pour le détail des règles
+```
+
+Seules les **factures Factur-X** déclarent PDF/A-3 : les autres PDF (devis, rapports) ne sont pas censés passer (veraPDF les évalue en 1b faute de métadonnées PDF/A, résultat attendu). Pour obtenir une facture avec son `issuance_snapshot`, l'émettre par l'app (« Valider et envoyer »), puis appeler `/api/pdf/invoice/<id>` connecté.
+
 Avant un commit : `git checkout next-env.d.ts` (le build le modifie). Ne tuer que des PID explicites.
 
 ## 8. Pièges déjà rencontrés
@@ -156,7 +167,7 @@ Hors périmètre ou conservé volontairement : le cockpit `/orsayn` (et ses jeto
 Mettre à jour cette liste à chaque vérification.
 
 **Vérifié (revue globale puis recette locale du 7 novembre 2026) :**
-- Factur-X (schéma XSD et schematron), logo et photos réels, devis de dix pages, PDF de données réelles (devis, chantier, DGD, rapport annuel).
+- Factur-X (schéma XSD et schematron) **et PDF/A-3b par veraPDF 1.31** (facture émise par l'app : `PASS 3b`), logo et photos réels, devis de dix pages, PDF de données réelles (devis, chantier, DGD, rapport annuel).
 - **Facture émise par l'app** (donc avec son `issuance_snapshot`) : PDF complet. **Rapport mensuel** : PDF correct (une colonne trop étroite a été corrigée).
 - Inscription avec un vrai code reçu par email ; onboarding complet avec invitation d'équipe (email capturé, ligne en base).
 - Réglages : valeurs d'Entreprise, Paiement, Légal et Devis enregistrées puis relues (puis restaurées) ; invitation d'un collaborateur (email capturé) ; retrait d'un membre (sa ligne passe à `is_active = false`).
@@ -177,7 +188,6 @@ Mettre à jour cette liste à chaque vérification.
 - Super PDP : connexion.
 - Assistante Sarah : appels IA ; enregistrement d'une clé OpenRouter client ; feuille « Demander à Sarah » du catalogue (module IA désactivé sur le compte d'essai).
 - Envoi réel d'emails par le fournisseur (en local, une boîte de capture remplace Resend) ; bouton flottant du formulaire sur un site tiers.
-- PDF/A strict : veraPDF (nécessite Java), non installé.
 - Fermeture réelle d'un compte (non lancée volontairement).
 
 **Pas vérifié, code serveur que la refonte n'a pas touché :**
