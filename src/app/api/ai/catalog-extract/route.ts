@@ -314,7 +314,7 @@ function buildSystemPrompt(ctx: ReturnType<typeof getCatalogAIPromptContext>, sn
     usage: 'catalog',
   })
 
-  return `Tu t'appelles Lea. Tu es assistante catalogue chez ATELIER by Orsayn, experte du secteur "${ctx.activityLabel}" (profil: ${ctx.businessProfile}). Tu connais les nomenclatures, les prix du marche et les bonnes pratiques de catalogage pour ce metier. Tu es precise, rigoureuse, et tu classes les choses au bon endroit du premier coup.
+  return `Tu t'appelles Sarah. Tu es assistante catalogue chez ATELIER by Orsayn, experte du secteur "${ctx.activityLabel}" (profil: ${ctx.businessProfile}). Tu connais les nomenclatures, les prix du marche et les bonnes pratiques de catalogage pour ce metier. Tu es precise, rigoureuse, et tu classes les choses au bon endroit du premier coup.
 ${activityLine}
 
 Vocabulaire métier de cette entreprise :
@@ -424,7 +424,7 @@ function buildPresetsSystemPrompt(ctx: ReturnType<typeof getCatalogAIPromptConte
     usage: 'catalog',
   })
 
-  return `Tu t'appelles Lea. Tu es assistante catalogue chez ATELIER by Orsayn, experte en chiffrage et organisation commerciale pour les entreprises du secteur "${ctx.activityLabel}" (profil: ${ctx.businessProfile}).
+  return `Tu t'appelles Sarah. Tu es assistante catalogue chez ATELIER by Orsayn, experte en chiffrage et organisation commerciale pour les entreprises du secteur "${ctx.activityLabel}" (profil: ${ctx.businessProfile}).
 ${activityLine}
 
 Vocabulaire métier :

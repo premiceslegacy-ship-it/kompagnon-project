@@ -4,7 +4,6 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Hud } from './Hud'
 import { Sheet } from './Sheet'
-import { Modal } from './Modal'
 
 afterEach(() => {
   cleanup()
@@ -204,7 +203,7 @@ describe('Hud', () => {
     expect(onOpenChange).not.toHaveBeenCalled()
   })
 
-  it.each(['sheet', 'legacy'] as const)('preserves the visible-time budget through %s, including delayed leave events', async (layer) => {
+  it.each(['sheet'] as const)('preserves the visible-time budget through %s, including delayed leave events', async (layer) => {
     vi.useFakeTimers()
     const onOpenChange = vi.fn()
     function Example() {
@@ -212,9 +211,7 @@ describe('Hud', () => {
       return <>
         <button onClick={() => setSheetOpen(true)}>Détails</button>
         <Hud open message="Client archivé" onOpenChange={onOpenChange} onUndo={() => {}} />
-        {layer === 'sheet'
-          ? <Sheet open={sheetOpen} onOpenChange={setSheetOpen} title="Client">Détails du client</Sheet>
-          : <Modal open={sheetOpen} onClose={() => setSheetOpen(false)} title="Client">Détails du client</Modal>}
+        {layer === 'sheet' && <Sheet open={sheetOpen} onOpenChange={setSheetOpen} title="Client">Détails du client</Sheet>}
       </>
     }
     render(<Example />)
@@ -228,7 +225,7 @@ describe('Hud', () => {
     fireEvent.blur(hoverTarget)
     act(() => vi.advanceTimersByTime(5_000))
     expect(onOpenChange).not.toHaveBeenCalled()
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: layer === 'sheet' ? 'Annuler' : 'Fermer' })) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Annuler' })) })
     expect(screen.getByRole('status')).toBe(status)
     act(() => vi.advanceTimersByTime(2_999))
     expect(onOpenChange).not.toHaveBeenCalled()
@@ -237,7 +234,7 @@ describe('Hud', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  it.each(['sheet', 'legacy'] as const)('offers a full undo interval when first opened behind an existing %s modal', async (layer) => {
+  it.each(['sheet'] as const)('offers a full undo interval when first opened behind an existing %s modal', async (layer) => {
     vi.useFakeTimers()
     const onOpenChange = vi.fn()
     const onUndo = vi.fn()
@@ -246,13 +243,11 @@ describe('Hud', () => {
       const [hudOpen, setHudOpen] = useState(false)
       return <>
         <Hud open={hudOpen} message="Client archivé" onOpenChange={onOpenChange} onUndo={onUndo} />
-        {layer === 'sheet'
-          ? <Sheet open={sheetOpen} onOpenChange={setSheetOpen} title="Client">
+        {layer === 'sheet' && (
+          <Sheet open={sheetOpen} onOpenChange={setSheetOpen} title="Client">
               <button onClick={() => setHudOpen(true)}>Archiver</button>
-            </Sheet>
-          : <Modal open={sheetOpen} onClose={() => setSheetOpen(false)} title="Client">
-              <button onClick={() => setHudOpen(true)}>Archiver</button>
-            </Modal>}
+          </Sheet>
+        )}
       </>
     }
     render(<Example />)
@@ -260,7 +255,7 @@ describe('Hud', () => {
     act(() => vi.advanceTimersByTime(5_000))
     expect(onOpenChange).not.toHaveBeenCalled()
     expect(screen.getByRole('status', { hidden: true }).textContent).toBe('')
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: layer === 'sheet' ? 'Annuler' : 'Fermer' })) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Annuler' })) })
     act(() => vi.advanceTimersByTime(3_999))
     expect(onOpenChange).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Annuler' }))

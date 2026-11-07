@@ -108,7 +108,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
   // ─── IA ───────────────────────────────────────────────────────────────────
   'ai.sarah':   'Sarah — widget secrétaire IA (chatbot texte + vocal ElevenLabs)',
   'ai.manage':  'IA de pilotage (analyse devis, planning IA, imports documents, rapports, estimation MO)',
-  'ai.terrain': 'IA terrain (assistant chantier, suggestions tâches, OCR tickets, saisie vocale, catalogue Léa)',
+  'ai.terrain': 'IA terrain (assistant chantier, suggestions tâches, OCR tickets, saisie vocale, catalogue)',
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {

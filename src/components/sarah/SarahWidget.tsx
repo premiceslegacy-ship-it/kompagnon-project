@@ -335,7 +335,7 @@ async function executeLegacyAction(action: ActionProposal): Promise<string> {
           created_at: new Date().toISOString(),
         }))
       }
-      return `Le brief a été transmis à Chloé. Ouvrez l'éditeur de devis, elle aura toutes les informations pour démarrer directement.`
+      return `Brief enregistré. Ouvrez l'éditeur de devis, je reprendrai tout depuis là.`
     }
 
     case 'open_url':

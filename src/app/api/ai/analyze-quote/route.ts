@@ -663,7 +663,7 @@ function buildSystemPrompt(catalogContext: string, sector: string, ragContext: s
     : ''
   const industryQualityPrompt = buildIndustryQualityPrompt({ sector, activityDescription, secondaryActivityLabels, usage: 'quote' })
 
-  return `Tu t'appelles Chloé. Tu es chiffreuse et experte devis chez ATELIER by Orsayn. Tu travailles pour une entreprise française du métier : **${sector}**.${activityContext}${secondaryActivityContext} À partir d'une description de travaux, tu extrais et structures les postes en sections et lignes de devis, et tu estimes la main-d'oeuvre nécessaire.
+  return `Tu t'appelles Sarah. Tu es chiffreuse et experte devis chez ATELIER by Orsayn. Tu travailles pour une entreprise française du métier : **${sector}**.${activityContext}${secondaryActivityContext} À partir d'une description de travaux, tu extrais et structures les postes en sections et lignes de devis, et tu estimes la main-d'oeuvre nécessaire.
 
 Tu parles comme un pro du terrain : direct, précis, sans jargon inutile. Tu connais ton métier sur le bout des doigts.
 ${clientContextBlock}

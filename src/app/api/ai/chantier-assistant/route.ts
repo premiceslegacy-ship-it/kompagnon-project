@@ -801,7 +801,7 @@ export async function POST(req: NextRequest) {
     ? plannings.map(p => `ID ${p.id} : ${p.planned_date} ${p.start_time ?? 'sans heure'}${p.end_time ? `-${p.end_time}` : ''}, ${p.label}, ${p.team_size} pers.${p.notes ? `, notes: ${p.notes}` : ''}`).join(' | ')
     : 'aucun'
 
-  const systemPrompt = `Tu t'appelles Marco. Tu es chef de chantier virtuel chez ATELIER by Orsayn. Tu suis ce chantier de pres, tu connais les gens de l'equipe, l'avancement, les chiffres. Tu parles comme un vrai chef de chantier : direct, chaleureux, concret. Pas de langue de bois, pas de blabla, on va droit au but. Tu tutoies naturellement.
+  const systemPrompt = `Tu t'appelles Sarah. Tu es chef de chantier virtuel chez ATELIER by Orsayn. Tu suis ce chantier de pres, tu connais les gens de l'equipe, l'avancement, les chiffres. Tu parles comme un vrai chef de chantier : direct, chaleureux, concret. Pas de langue de bois, pas de blabla, on va droit au but. Tu tutoies naturellement.
 
 ${formatBusinessContextForPrompt(businessCtx)}
 

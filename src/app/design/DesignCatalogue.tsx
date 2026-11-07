@@ -15,7 +15,6 @@ import { Avatar } from '@/components/ui/Avatar';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { StatTile } from '@/components/ui/StatTile';
 import { Sheet } from '@/components/ui/Sheet';
-import { Modal } from '@/components/ui/Modal';
 import { AlertDialog } from '@/components/ui/AlertDialog';
 import { Menu } from '@/components/ui/Menu';
 import { Hud } from '@/components/ui/Hud';
@@ -67,7 +66,6 @@ export function DesignCatalogue() {
   const [checked, setChecked] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [sheet, setSheet] = useState(false);
-  const [legacyModal, setLegacyModal] = useState(false);
   const [keepSheetOpen, setKeepSheetOpen] = useState(false);
   const [nested, setNested] = useState(false);
   const [alert, setAlert] = useState(false);
@@ -222,7 +220,6 @@ export function DesignCatalogue() {
         <h2 id="overlays-title" ref={overlayHeadingRef} tabIndex={-1}>Sheet, AlertDialog et Menu</h2>
         <div className={styles.examples}>
           <Button variant="secondary" onClick={() => changeSheet(true)}>Ouvrir la feuille</Button>
-          <Button variant="secondary" onClick={() => setLegacyModal(true)}>Modal</Button>
           {archiveVisible && <Button variant="destructive" onClick={() => setAlert(true)}>Supprimer définitivement</Button>}
           <Menu title="Actions" trigger={<Button variant="secondary">Plus</Button>} items={menuItems} />
         </div>
@@ -275,9 +272,6 @@ export function DesignCatalogue() {
           </div>
         </Sheet>
       </Sheet>
-      <Modal open={legacyModal} onClose={() => setLegacyModal(false)} title="Client">
-        <Field type="text" label="Client" value={text} onChange={(event) => setText(event.currentTarget.value)} />
-      </Modal>
       <AlertDialog open={alert} onOpenChange={setAlert} title="Supprimer définitivement ?" description="Cette action est irréversible." confirmLabel="Supprimer" confirmLoading={loading} confirmDisabled={disabled} onConfirm={() => { alertNeedsFallbackFocus.current = !sheet; setArchiveVisible(false); setAlert(false); }} />
       {hud === 'error'
         ? <Hud open variant="error" onOpenChange={(open) => { if (!open) setHud(null); }} message="Envoi échoué" onRetry={() => { setHud(null); setLastAction('Réessayer'); }} />

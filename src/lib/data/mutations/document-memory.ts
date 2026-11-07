@@ -279,7 +279,7 @@ export async function syncQuoteLearningEntry(supabase: SupabaseClientLike, orgId
       const suggested = formatAmount(item.ai_suggested_unit_price)
       const actual = formatAmount(item.unit_price)
       const direction = Number(item.unit_price) > Number(item.ai_suggested_unit_price) ? 'augmente' : 'baisse'
-      const content = `Pour "${label}", Chloe avait propose ${suggested} EUR HT mais l'artisan a ${direction} a ${actual} EUR HT sur un devis envoye. Reutiliser ${actual} EUR HT en priorite sur ce type de ligne.`
+      const content = `Pour "${label}", Sarah avait proposé ${suggested} EUR HT mais l'artisan a ${direction} a ${actual} EUR HT sur un devis envoye. Reutiliser ${actual} EUR HT en priorite sur ce type de ligne.`
 
       // Anti-doublon simple : une correction quasi identique deja memorisee
       // (meme debut de contenu) n'est pas reecrite a chaque nouveau devis.

@@ -217,10 +217,6 @@ export function OtpInput({
   )
 }
 
-export function OtpHelp({ children }: { children: ReactNode }) {
-  return <p className={styles.otpHelp}>{children}</p>
-}
-
 export function PasswordRule({ met, children }: { met: boolean; children: ReactNode }) {
   return (
     <p className={styles.rule} data-met={met}>
