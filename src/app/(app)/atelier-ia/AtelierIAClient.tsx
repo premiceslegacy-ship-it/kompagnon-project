@@ -66,7 +66,7 @@ export default function AtelierIAClient(props: AtelierIAProps) {
                   <p className={ia.lead}>Décrivez les travaux à voix haute. {AI_NAME} structure le devis pour vous.</p>
                   <Button
                     size="lg"
-                    variant={q.isRecording ? 'destructive' : 'primary'}
+                    variant={q.isRecording ? 'destructive' : 'secondary'}
                     disabled={q.isTranscribing}
                     onClick={q.isRecording ? q.stopRecording : q.startRecording}
                   >
