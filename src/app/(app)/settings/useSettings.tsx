@@ -90,7 +90,7 @@ export function useSettings({ initialFullName, initialEmail, members, roles, joi
     }, [activeTab])
     const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
     const [inviteEmail, setInviteEmail] = useState('');
-    const [inviteRoleId, setInviteRoleId] = useState(roles[0]?.id ?? '');
+    const [inviteRoleId, setInviteRoleId] = useState(roles.find(r => r.slug === 'collaborateur')?.id ?? roles.find(r => r.slug !== 'owner')?.id ?? '');
     const [inviteStatus, setInviteStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
     const [inviteError, setInviteError] = useState<string | null>(null);
     const [codeCopied, setCodeCopied] = useState(false);
