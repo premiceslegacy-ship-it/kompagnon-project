@@ -57,7 +57,7 @@
 }
 
 .pillWarn {
-  background: var(--at-danger-texte-remplissage);
+  background: color-mix(in srgb, var(--at-baisse) 14%, transparent);
   color: var(--at-danger-texte);
 }
 

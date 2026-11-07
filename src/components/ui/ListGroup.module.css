@@ -177,7 +177,7 @@ button.rowAction {
   flex: 0 1 auto;
   align-items: center;
   justify-content: flex-end;
-  min-width: 0;
+  min-width: min-content;
   max-width: 45%;
   text-align: end;
   overflow-wrap: anywhere;
