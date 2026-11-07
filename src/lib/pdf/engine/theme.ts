@@ -18,6 +18,14 @@ export const COLOR = {
   white: hexToRgb(DS.color.white),
   body: hexToRgb(DS.color.body),
   muted: hexToRgb(DS.color.muted),
+  rule: hexToRgb(DS.color.rule),
+  ruleStrong: hexToRgb(DS.color.ruleStrong),
+  greenText: hexToRgb('#1B6E36'),
+  greenSoft: hexToRgb('#E6F6EA'),
+  amberText: hexToRgb('#8A4B00'),
+  amberSoft: hexToRgb('#FFF0D6'),
+  redText: hexToRgb('#B3261E'),
+  redSoft: hexToRgb('#FDE7E7'),
   green: hexToRgb('#16A34A'),
   orange: hexToRgb('#EA580C'),
   gray: hexToRgb('#888888'),
@@ -30,8 +38,8 @@ export const PAGE = {
   width: 595.28,
   height: 841.89,
   margin: SPACE.page,
-  footerHeight: 70,
-  headerTop: SPACE.xxl,
+  footerHeight: 60,
+  headerTop: 34,
 }
 
 export const CONTENT_WIDTH = PAGE.width - PAGE.margin * 2

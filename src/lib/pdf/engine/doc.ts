@@ -6,8 +6,12 @@ import type { FontBytes } from './fonts'
 export type Fonts = {
   regular: PDFFont
   bold: PDFFont
+  /** Geist Bold. */
   heading: PDFFont
+  /** Ancien nom de `heading` (les deux étaient deux graisses de Plus Jakarta Sans). */
   headingXBold: PDFFont
+  /** Geist Medium. */
+  medium: PDFFont
 }
 
 export type PageHook = (ctx: { page: PDFPage; pageIndex: number }) => number // retourne le y de départ du contenu
@@ -19,6 +23,8 @@ export class PdfDoc {
   page!: PDFPage
   y = 0
   private pages: PDFPage[] = []
+  /** Limite basse du contenu (au-dessus du pied de page). */
+  bottomLimit: number = PAGE.footerHeight
   onNewPage?: PageHook
   onFinishPage?: FinishHook
 
@@ -30,13 +36,13 @@ export class PdfDoc {
   static async create(fontBytes: FontBytes): Promise<PdfDoc> {
     const doc = await PDFDocument.create()
     doc.registerFontkit(fontkit)
-    const [regular, bold, heading, headingXBold] = await Promise.all([
+    const [regular, bold, heading, medium] = await Promise.all([
       doc.embedFont(fontBytes.interRegular, { subset: true }),
       doc.embedFont(fontBytes.interBold, { subset: true }),
       doc.embedFont(fontBytes.headingBold, { subset: true }),
-      doc.embedFont(fontBytes.headingXBold, { subset: true }),
+      doc.embedFont(fontBytes.headingMedium, { subset: true }),
     ])
-    return new PdfDoc(doc, { regular, bold, heading, headingXBold })
+    return new PdfDoc(doc, { regular, bold, heading, headingXBold: heading, medium })
   }
 
   addPage(): PDFPage {
@@ -52,8 +58,7 @@ export class PdfDoc {
 
   /** Réserve `height` de hauteur ; saute de page si ça ne rentre pas. */
   ensureSpace(height: number): void {
-    const bottomLimit = PAGE.footerHeight
-    if (this.y - height < bottomLimit) {
+    if (this.y - height < this.bottomLimit) {
       this.addPage()
     }
   }
