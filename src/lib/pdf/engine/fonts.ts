@@ -1,4 +1,4 @@
-// Chargement des polices TTF pour embarquement pdf-lib (via @pdf-lib/fontkit).
+// Polices : Inter (texte) et Geist (titres, voir docs/design-system.md). Chargement des polices TTF pour embarquement pdf-lib (via @pdf-lib/fontkit).
 // Cloudflare Workers n'a pas de filesystem au runtime, et un fetch (que ce soit
 // vers le domaine public du Worker, ou via le binding ASSETS depuis du code
 // applicatif hors du contexte direct du fetch handler top-level) s'est avéré
@@ -9,14 +9,16 @@
 
 import { inter_regular_base64 } from './font-data/inter-regular'
 import { inter_bold_base64 } from './font-data/inter-bold'
-import { plus_jakarta_sans_bold_base64 } from './font-data/plus-jakarta-sans-bold'
-import { plus_jakarta_sans_extrabold_base64 } from './font-data/plus-jakarta-sans-extrabold'
+import { geist_bold_base64 } from './font-data/geist-bold'
+import { geist_medium_base64 } from './font-data/geist-medium'
 
 export type FontBytes = {
   interRegular: ArrayBuffer
   interBold: ArrayBuffer
+  /** Geist Bold : titres, noms, chiffres clés. */
   headingBold: ArrayBuffer
-  headingXBold: ArrayBuffer
+  /** Geist Medium : « Devis », « Facture », plus petits et non gras. */
+  headingMedium: ArrayBuffer
 }
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
@@ -34,8 +36,8 @@ export async function loadFontBytes(_origin: string): Promise<FontBytes> {
   cached = {
     interRegular: base64ToArrayBuffer(inter_regular_base64),
     interBold: base64ToArrayBuffer(inter_bold_base64),
-    headingBold: base64ToArrayBuffer(plus_jakarta_sans_bold_base64),
-    headingXBold: base64ToArrayBuffer(plus_jakarta_sans_extrabold_base64),
+    headingBold: base64ToArrayBuffer(geist_bold_base64),
+    headingMedium: base64ToArrayBuffer(geist_medium_base64),
   }
   return cached
 }

@@ -1,0 +1,533 @@
+/* @atelier-migrated */
+.sheet {
+  height: min(92dvh, 760px);
+  background: var(--at-fond);
+  color: var(--at-encre);
+}
+
+.sheet :global([data-sheet-scrollable]) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.appConversation {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--at-fond);
+  color: var(--at-encre);
+}
+
+.appHeader {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 64px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--at-trait);
+  background: var(--at-carte);
+}
+
+.appHeaderCopy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.appHeaderName {
+  margin: 0;
+  color: var(--at-encre);
+  font: 600 14px/20px var(--font-inter);
+}
+
+.appHeaderContext {
+  color: var(--at-encre-2);
+  font: 400 12px/18px var(--font-inter);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.iconButton {
+  flex: 0 0 44px;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  color: var(--at-encre-2);
+}
+
+
+.messages {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 20px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.messageRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.userMessageRow {
+  flex-direction: row-reverse;
+}
+
+.messageColumn {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  max-width: min(82%, 520px);
+}
+
+.userMessageColumn {
+  align-items: flex-end;
+}
+
+.messageBubble {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--at-trait);
+  border-radius: var(--at-rayon-carte);
+  background: var(--at-carte);
+  color: var(--at-encre);
+  overflow-wrap: anywhere;
+  font: 400 14px/21px var(--font-inter);
+}
+
+.userMessageBubble {
+  border-color: var(--at-accent);
+  border-bottom-right-radius: var(--at-rayon-controle-petit);
+  background: var(--at-accent);
+  color: var(--at-sur-accent);
+}
+
+.sarahMessageBubble {
+  border-top-left-radius: var(--at-rayon-controle-petit);
+  white-space: pre-wrap;
+}
+
+.messageText {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.messageTime {
+  margin: 4px 2px 0;
+  color: var(--at-encre-aide);
+  font: 400 11px/16px var(--font-inter);
+}
+
+.actionCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--at-trait);
+  border-radius: var(--at-rayon-carte);
+  background: var(--at-fond);
+}
+
+.actionHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.actionLabel {
+  color: var(--at-encre);
+  font: 600 13px/18px var(--font-inter);
+  overflow-wrap: anywhere;
+}
+
+.actionDescription {
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 400 13px/19px var(--font-inter);
+  overflow-wrap: anywhere;
+}
+
+.actionButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.actionButton {
+  flex: 1 1 120px;
+  min-width: 44px;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.actionStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--at-encre-2);
+  font: 500 12px/18px var(--font-inter);
+}
+
+.typingDots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--at-trait);
+  border-radius: var(--at-rayon-carte);
+  background: var(--at-carte);
+}
+
+.typingDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--at-encre-3);
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+
+.errorBanner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 20px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--at-baisse) 35%, var(--at-trait));
+  border-radius: var(--at-rayon-carte);
+  background: color-mix(in srgb, var(--at-baisse) 7%, var(--at-carte));
+}
+
+.errorTitle {
+  margin: 0;
+  color: var(--at-danger-texte);
+  font: 600 13px/18px var(--font-inter);
+}
+
+.errorBody {
+  margin: 3px 0 0;
+  color: var(--at-encre-2);
+  font: 400 13px/19px var(--font-inter);
+}
+
+.errorLink {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--at-rayon-controle-petit);
+  background: var(--at-remplissage);
+  color: var(--at-accent-texte);
+  font: 600 13px/18px var(--font-inter);
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.voiceHint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--at-trait);
+  border-radius: var(--at-rayon-controle-petit);
+  background: var(--at-carte-2);
+  color: var(--at-encre-2);
+  font: 400 12px/18px var(--font-inter);
+}
+
+.voiceHintText {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.voiceHintTry {
+  flex: 0 0 auto;
+  min-width: 64px;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.quickSuggestions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 10px;
+}
+
+
+.suggestionButton {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding-inline: 12px;
+  border-radius: var(--at-rayon-pilule);
+  white-space: nowrap;
+}
+
+.composer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--at-trait);
+  background: var(--at-carte);
+}
+
+.composerError {
+  margin: 0;
+  color: var(--at-danger-texte);
+  font: 400 12px/18px var(--font-inter);
+}
+
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--at-trait);
+  border-radius: var(--at-rayon-controle-petit);
+  background: var(--at-fond);
+}
+
+.attachmentPreview {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: var(--at-rayon-controle-petit);
+  object-fit: cover;
+}
+
+.attachmentName {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--at-encre-2);
+  font: 400 12px/18px var(--font-inter);
+  overflow-wrap: anywhere;
+}
+
+.composerSurface {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--at-trait);
+  border-radius: var(--at-rayon-champ);
+  background: var(--at-fond);
+}
+
+.composerInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 160px;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: var(--at-rayon-controle-petit);
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--at-encre);
+  font: 400 15px/22px var(--font-inter);
+}
+
+.composerInput::placeholder {
+  color: var(--at-encre-aide);
+  opacity: 1;
+}
+
+.composerInput:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 1px;
+}
+
+.composerInput:disabled {
+  cursor: not-allowed;
+}
+
+.composerActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.sendButton {
+  flex: 0 0 44px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+}
+
+.keyboardHint {
+  margin: 0;
+  color: var(--at-encre-aide);
+  font: 400 11px/16px var(--font-inter);
+  text-align: center;
+}
+
+/* Raccourcis clavier inutiles sur un écran tactile. */
+@media (hover: none) and (pointer: coarse) {
+  .keyboardHint {
+    display: none;
+  }
+}
+
+.voiceScreen {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
+  gap: 24px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 24px;
+  text-align: center;
+}
+
+.voiceStatus {
+  margin: 0;
+  color: var(--at-encre);
+  font: 600 15px/22px var(--font-inter);
+}
+
+.voiceDetail {
+  margin: 4px 0 0;
+  color: var(--at-encre-2);
+  font: 400 13px/19px var(--font-inter);
+}
+
+.voiceBars {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 32px;
+}
+
+.voiceBar {
+  width: 4px;
+  min-height: 3px;
+  border-radius: var(--at-rayon-pilule);
+  background: var(--at-accent-texte);
+}
+
+.voiceBars[data-active='true'] .voiceBar {
+  animation: voice-wave 650ms ease-in-out infinite alternate;
+}
+
+@keyframes voice-wave {
+  to { transform: scaleY(5); }
+}
+
+.voiceError {
+  width: min(100%, 440px);
+  padding: 12px;
+  border: 1px solid var(--at-trait);
+  border-radius: var(--at-rayon-carte);
+  background: var(--at-carte);
+  text-align: left;
+}
+
+.voiceControls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.voicePrimary {
+  min-width: 64px;
+  min-height: 64px;
+  border-radius: var(--at-rayon-pilule);
+}
+
+.voiceSecondary {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+.voiceBack {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+@media (max-width: 520px) {
+  .appHeader {
+    padding-inline: 14px;
+  }
+
+  .messages {
+    padding: 16px 12px;
+  }
+
+  .errorBanner {
+    margin-inline: 12px;
+  }
+
+  .composer {
+    padding-inline: 10px;
+  }
+
+  .composerSurface {
+    gap: 4px;
+    padding: 6px;
+  }
+
+  .iconButton {
+    flex-basis: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typingDot,
+  .voiceBars[data-active='true'] .voiceBar {
+    animation: none;
+  }
+}
+
+@media (min-width: 900px) {
+  .sheet {
+    height: min(86dvh, 760px);
+  }
+}

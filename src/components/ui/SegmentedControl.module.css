@@ -1,0 +1,179 @@
+.root {
+  display: inline-flex;
+  flex-direction: column;
+  max-width: 100%;
+  padding-block: 8px;
+  vertical-align: middle;
+}
+
+.fullWidth {
+  display: flex;
+  width: 100%;
+}
+
+.group {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.scroller {
+  min-width: 0;
+  max-width: calc(100% + 8px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-inline: 4px;
+  margin-inline: -4px;
+  scrollbar-width: none;
+}
+
+.scroller::-webkit-scrollbar {
+  display: none;
+}
+
+.choices {
+  position: relative;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  width: max-content;
+  min-height: 44px;
+  padding-inline: 2px;
+  isolation: isolate;
+}
+
+.fullWidth .choices {
+  min-width: 100%;
+}
+
+.track {
+  position: absolute;
+  z-index: -1;
+  inset: 6px 0;
+  border-radius: 9px;
+  background: var(--at-remplissage);
+  pointer-events: none;
+}
+
+.thumb {
+  position: absolute;
+  z-index: 0;
+  top: 8px;
+  left: 0;
+  width: var(--seg-thumb-w, 0px);
+  height: 28px;
+  border-radius: 7px;
+  background: var(--at-carte);
+  box-shadow: var(--at-ombre-segment), inset 0 0 0 1.5px var(--at-encre-2);
+  transform: translateX(var(--seg-thumb-x, 0px));
+  pointer-events: none;
+}
+
+.choices[data-thumb-disabled] .thumb {
+  opacity: 0.5;
+}
+
+:global(html[data-atelier-surface='app'].dark) .thumb {
+  background: var(--at-carte-2);
+}
+
+.option {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: 0;
+  cursor: pointer;
+}
+
+.fullWidth .option {
+  flex: 1;
+  min-width: max-content;
+}
+
+.option input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.optionVisual {
+  display: grid;
+  place-items: center;
+  min-width: 100%;
+  min-height: 28px;
+  padding: 4px 14px;
+  border-radius: 7px;
+  color: var(--at-encre);
+  font-family: var(--font-inter), sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  letter-spacing: -0.006em;
+  text-align: center;
+  white-space: nowrap;
+  transition: color var(--at-duree-couleur) var(--at-courbe-couleur);
+}
+
+.fullWidth .optionVisual {
+  width: 100%;
+  min-width: 44px;
+  padding-inline: 6px;
+}
+
+.choices:not([data-thumb-ready]) .option input:checked + .optionVisual {
+  background: var(--at-carte);
+  box-shadow: var(--at-ombre-segment), inset 0 0 0 1.5px var(--at-encre-2);
+}
+
+:global(html[data-atelier-surface='app'].dark) .choices:not([data-thumb-ready]) input:checked + .optionVisual {
+  background: var(--at-carte-2);
+}
+
+.option input:focus-visible + .optionVisual {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.option:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+
+.error {
+  margin: 4px 0 0;
+  color: color-mix(in srgb, var(--at-baisse) 78%, var(--at-encre));
+  font-family: var(--font-inter), sans-serif;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .optionVisual {
+    transition-duration: var(--at-duree-reduit);
+  }
+}

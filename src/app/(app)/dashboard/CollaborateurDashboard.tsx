@@ -1,67 +1,21 @@
 'use client'
+// @atelier-migrated
 
-import React, { useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import {
-  CheckCircle2, Clock, AlertTriangle, CalendarDays,
-  HardHat, Target, TrendingUp, MapPin, Loader2, PlayCircle,
-} from 'lucide-react'
+import { Check, Loader2, Play } from 'lucide-react'
 import type { CollaborateurDashboard, MyTask } from '@/lib/data/queries/dashboard-collaborateur'
 import type { MemberGoalWithProgress } from '@/lib/data/queries/member-goals'
 import { updateMyAssignedTaskStatus } from '@/lib/data/mutations/chantiers'
+import { StatusPill } from '@/components/ui/StatusPill'
+import styles from '@/components/layout/Screen.module.css'
 
-const cardCls = "rounded-3xl p-6 card transition-all duration-300 ease-out"
-
-function fmtTime(t: string | null): string {
-  if (!t) return ''
-  return t.slice(0, 5)
-}
-
-function fmtDate(d: string | null): string {
-  if (!d) return ''
-  return new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })
-}
-
-function ProgressBar({ percent }: { percent: number }) {
-  const w = Math.min(100, Math.max(0, percent))
-  return (
-    <div className="h-2 bg-black/5 dark:bg-white/10 rounded-full overflow-hidden">
-      <div
-        className={`h-full rounded-full transition-all duration-500 ${
-          w >= 100 ? 'bg-accent-green' : w >= 60 ? 'bg-accent' : 'bg-blue-500'
-        }`}
-        style={{ width: `${w}%` }}
-      />
-    </div>
-  )
-}
-
-function GoalCard({ goal }: { goal: MemberGoalWithProgress }) {
-  const label = goal.label ?? goal.metric
-  const unit = goal.unit ?? ''
-  const currentFmt = Number.isInteger(goal.current) ? goal.current : goal.current.toFixed(1)
-  const targetFmt = Number.isInteger(goal.target) ? goal.target : goal.target.toFixed(1)
-
-  return (
-    <div className="flex flex-col gap-2 p-4 rounded-2xl bg-black/3 dark:bg-white/5 border border-black/5 dark:border-white/10">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-primary">{label}</p>
-        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-          goal.percent >= 100
-            ? 'bg-green-100 dark:bg-green-500/15 text-green-700 dark:text-green-400'
-            : 'bg-accent/10 text-accent'
-        }`}>
-          {goal.percent}%
-        </span>
-      </div>
-      <ProgressBar percent={goal.percent} />
-      <p className="text-xs text-secondary">
-        {currentFmt}{unit} / {targetFmt}{unit}
-      </p>
-    </div>
-  )
-}
+const NB = ' '
+const fmtTime = (t: string | null) => (t ? t.slice(0, 5) : '')
+const fmtDate = (d: string | null) =>
+  d ? new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : ''
+const num = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1).replace('.', ','))
 
 type Props = {
   data: CollaborateurDashboard
@@ -69,7 +23,7 @@ type Props = {
   firstName: string | null
 }
 
-export default function CollaborateurDashboard({ data, goals, firstName }: Props) {
+export default function CollaborateurDashboard({ data, goals }: Props) {
   const router = useRouter()
   const { todayPlanning, weekPointage } = data
   const [tasks, setTasks] = useState(data.tasks)
@@ -82,11 +36,8 @@ export default function CollaborateurDashboard({ data, goals, firstName }: Props
   const handleTaskStatus = async (task: MyTask, status: 'en_cours' | 'termine') => {
     setTaskError(null)
     setTaskLoadingId(`${task.id}:${status}`)
-    if (status === 'termine') {
-      setTasks(prev => prev.filter(t => t.id !== task.id))
-    } else {
-      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status } : t))
-    }
+    if (status === 'termine') setTasks(prev => prev.filter(t => t.id !== task.id))
+    else setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, status } : t)))
     const { error } = await updateMyAssignedTaskStatus(task.id, status)
     setTaskLoadingId(null)
     if (error) {
@@ -97,219 +48,129 @@ export default function CollaborateurDashboard({ data, goals, firstName }: Props
     router.refresh()
   }
 
+  const figures = [
+    { label: 'Tâches', value: String(activeTasks.length), sub: overdueTasks.length > 0 ? `${overdueTasks.length} en retard` : 'en cours', alert: overdueTasks.length > 0 },
+    { label: 'Chantiers', value: String(weekPointage.days_worked), sub: weekPointage.days_worked > 0 ? `jour${weekPointage.days_worked > 1 ? 's' : ''} de présence` : 'aucun pointage cette semaine', alert: false },
+    { label: 'Heures', value: `${num(weekPointage.total_hours)}${NB}h`, sub: 'cette semaine', alert: false },
+  ]
+
   return (
-    <div className="space-y-6 md:space-y-8">
-
-      {/* KPI perso */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <div className={`${cardCls} flex flex-col justify-between`}>
-          <div className="flex justify-between items-start">
-            <p className="text-xs font-semibold text-secondary tracking-wider uppercase">Tâches en cours</p>
-            <CheckCircle2 className="w-4 h-4 text-accent" />
-          </div>
-          <p className="text-3xl font-bold text-primary tabular-nums mt-4">
-            {activeTasks.length > 0 ? activeTasks.length : '-'}
-          </p>
-          {overdueTasks.length > 0 && (
-            <p className="text-xs font-semibold text-red-500 mt-2">
-              {overdueTasks.length} en retard
-            </p>
-          )}
-        </div>
-
-        <div className={`${cardCls} flex flex-col justify-between`}>
-          <div className="flex justify-between items-start">
-            <p className="text-xs font-semibold text-secondary tracking-wider uppercase">Chantiers semaine</p>
-            <HardHat className="w-4 h-4 text-amber-500" />
-          </div>
-          <p className="text-3xl font-bold text-primary tabular-nums mt-4">
-            {weekPointage.days_worked > 0 ? weekPointage.days_worked : '-'}
-          </p>
-          <p className="text-xs text-secondary mt-2">
-            {weekPointage.days_worked > 0 ? `jour${weekPointage.days_worked > 1 ? 's' : ''} de présence` : 'Aucun pointage cette semaine'}
-          </p>
-        </div>
-
-        <div className={`${cardCls} flex flex-col justify-between`}>
-          <div className="flex justify-between items-start">
-            <p className="text-xs font-semibold text-secondary tracking-wider uppercase">Heures cette semaine</p>
-            <Clock className="w-4 h-4 text-blue-500" />
-          </div>
-          <p className="text-3xl font-bold text-primary tabular-nums mt-4">
-            {weekPointage.total_hours > 0 ? `${weekPointage.total_hours}h` : '-'}
-          </p>
-          <p className="text-xs text-secondary mt-2">pointées sur chantier</p>
-        </div>
+    <>
+      <div className={styles.duo} style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', marginTop: 14 }}>
+        {figures.map(f => (
+          <section key={f.label} className={styles.card} aria-label={f.label}>
+            <div className={styles.label}><span>{f.label}</span></div>
+            <div className={styles.big}>{f.value}</div>
+            <div className={`${styles.sub}${f.alert ? ` ${styles.down}` : ''}`}>{f.sub}</div>
+          </section>
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-5 lg:grid-cols-12 gap-6 md:gap-8">
-
-        {/* Colonne principale : planning du jour + tâches */}
-        <div className="md:col-span-3 lg:col-span-8 space-y-6">
-
-          {/* Planning du jour */}
-          <div className={`${cardCls} p-8`}>
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-xl font-bold text-primary flex items-center gap-2">
-                <CalendarDays className="w-5 h-5 text-accent" />
-                Mon planning aujourd'hui
-              </h3>
-              <Link
-                href="/chantiers/planning"
-                className="text-xs font-semibold text-accent hover:underline"
-              >
-                Planning complet
-              </Link>
-            </div>
-
+      <div className={styles.cols}>
+        <div>
+          <section className={styles.group} aria-labelledby="collab-planning">
+            <h2 className={styles.groupTitle} id="collab-planning">
+              Mon planning aujourd&apos;hui
+              <Link href="/chantiers/planning" className={styles.link}>Planning complet</Link>
+            </h2>
             {todayPlanning.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 gap-2 text-center">
-                <CalendarDays className="w-8 h-8 text-secondary opacity-20" />
-                <p className="text-sm text-secondary">Rien de planifie pour vous aujourd'hui.</p>
-              </div>
+              <div className={styles.empty}>Rien de planifié pour vous aujourd&apos;hui.</div>
             ) : (
-              <div className="flex flex-col gap-3">
+              <ul className={styles.list}>
                 {todayPlanning.map(slot => (
-                  <div
-                    key={slot.id}
-                    className="flex items-start gap-4 p-4 rounded-2xl bg-accent/5 border border-accent/15"
-                  >
-                    <div className="flex-shrink-0 text-center min-w-[48px]">
-                      {slot.start_time ? (
-                        <>
-                          <p className="text-sm font-bold text-primary">{fmtTime(slot.start_time)}</p>
-                          {slot.end_time && (
-                            <p className="text-xs text-secondary">{fmtTime(slot.end_time)}</p>
-                          )}
-                        </>
-                      ) : (
-                        <p className="text-xs text-secondary">Journée</p>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-primary truncate">{slot.chantier_title}</p>
-                      {slot.chantier_address && (
-                        <p className="text-xs text-secondary flex items-center gap-1 mt-0.5">
-                          <MapPin className="w-3 h-3 flex-shrink-0" />
-                          {slot.chantier_address}
-                        </p>
-                      )}
-                      {slot.notes && (
-                        <p className="text-xs text-secondary mt-1 italic">{slot.notes}</p>
-                      )}
-                    </div>
-                    <Link
-                      href={`/chantiers/${slot.chantier_id}`}
-                      className="flex-shrink-0 text-xs font-semibold text-accent hover:underline"
-                    >
-                      Voir
-                    </Link>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Mes tâches */}
-          <div className={`${cardCls} p-8`}>
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-xl font-bold text-primary">Mes tâches</h3>
-              {overdueTasks.length > 0 && (
-                <span className="text-xs font-bold text-red-500 bg-red-50 dark:bg-red-500/10 px-3 py-1 rounded-full">
-                  {overdueTasks.length} en retard
-                </span>
-              )}
-            </div>
-
-            {tasks.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 gap-2 text-center">
-                <CheckCircle2 className="w-8 h-8 text-secondary opacity-20" />
-                <p className="text-sm text-secondary">Aucune tâche assignée.</p>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {taskError && <p className="text-xs text-red-500">{taskError}</p>}
-                {[...overdueTasks, ...activeTasks].map(task => (
-                  <div
-                    key={task.id}
-                    className={`flex items-center justify-between p-3 rounded-2xl border transition-colors hover:bg-black/3 dark:hover:bg-white/5 ${
-                      task.is_overdue
-                        ? 'bg-red-50 dark:bg-red-500/5 border-red-200 dark:border-red-500/20'
-                        : task.status === 'en_cours'
-                        ? 'bg-accent/5 border-accent/15'
-                        : 'bg-black/2 dark:bg-white/3 border-black/5 dark:border-white/10'
-                    }`}
-                  >
-                    <Link href={`/chantiers/${task.chantier_id}`} className="flex items-center gap-3 min-w-0 flex-1">
-                      {task.is_overdue
-                        ? <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                        : task.status === 'en_cours'
-                        ? <TrendingUp className="w-4 h-4 text-accent flex-shrink-0" />
-                        : <Clock className="w-4 h-4 text-secondary flex-shrink-0" />
-                      }
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-primary truncate">{task.title}</p>
-                        <p className="text-xs text-secondary truncate">{task.chantier_title}</p>
-                      </div>
-                    </Link>
-                    <div className="flex items-center gap-2 ml-3 flex-shrink-0 flex-wrap justify-end">
-                      {task.due_date && (
-                        <span className={`text-xs font-medium ${task.is_overdue ? 'text-red-500' : 'text-secondary'}`}>
-                          {fmtDate(task.due_date)}
-                        </span>
-                      )}
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        task.status === 'en_cours'
-                          ? 'bg-accent/10 text-accent'
-                          : 'bg-black/5 dark:bg-white/10 text-secondary'
-                      }`}>
-                        {task.status === 'en_cours' ? 'En cours' : 'A faire'}
+                  <li key={slot.id}>
+                    <Link href={`/chantiers/${slot.chantier_id}`} className={styles.row}>
+                      <span className={styles.slotTime} style={{ width: 44, paddingTop: 0 }}>
+                        {slot.start_time ? fmtTime(slot.start_time) : 'Jour'}
                       </span>
-                      {task.status === 'a_faire' && (
+                      <span className={styles.mid}>
+                        <span className={styles.rowTitle}>{slot.chantier_title}</span>
+                        <span className={styles.rowSub}>
+                          {[slot.end_time ? `Jusqu'à ${fmtTime(slot.end_time)}` : null, slot.chantier_address, slot.notes].filter(Boolean).join(' · ') || 'Voir le chantier'}
+                        </span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className={styles.group} aria-labelledby="collab-tasks">
+            <h2 className={styles.groupTitle} id="collab-tasks">Mes tâches</h2>
+            {tasks.length === 0 || overdueTasks.length + activeTasks.length === 0 ? (
+              <div className={styles.empty}>Aucune tâche assignée.</div>
+            ) : (
+              <ul className={styles.list}>
+                {[...overdueTasks, ...activeTasks].map(task => (
+                  <li key={task.id}>
+                    <div className={styles.row} data-static="true">
+                      <Link href={`/chantiers/${task.chantier_id}`} className={styles.mid} style={{ color: 'inherit', textDecoration: 'none' }}>
+                        <span className={styles.rowTitle}>{task.title}</span>
+                        <span className={styles.rowSub}>
+                          {[task.chantier_title, task.due_date ? `pour le ${fmtDate(task.due_date)}` : null].filter(Boolean).join(' · ')}
+                        </span>
+                      </Link>
+                      <StatusPill status={task.is_overdue ? 'danger' : task.status === 'en_cours' ? 'wait' : 'neutral'}>
+                        {task.is_overdue ? 'En retard' : task.status === 'en_cours' ? 'En cours' : 'À faire'}
+                      </StatusPill>
+                      {task.status === 'a_faire' ? (
                         <button
+                          type="button"
+                          className={styles.round}
                           onClick={() => handleTaskStatus(task, 'en_cours')}
                           disabled={!!taskLoadingId}
-                          className="state-action px-2 py-1 text-xs font-bold text-secondary hover:text-accent"
+                          aria-label={`Commencer : ${task.title}`}
                         >
-                          {taskLoadingId === `${task.id}:en_cours` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}
+                          {taskLoadingId === `${task.id}:en_cours` ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
                         </button>
-                      )}
+                      ) : null}
                       <button
+                        type="button"
+                        className={styles.round}
                         onClick={() => handleTaskStatus(task, 'termine')}
                         disabled={!!taskLoadingId}
-                        className="state-action px-2 py-1 text-xs font-bold text-green-700 dark:text-green-300"
+                        aria-label={`Terminer : ${task.title}`}
                       >
-                        {taskLoadingId === `${task.id}:termine` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                        {taskLoadingId === `${task.id}:termine` ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Check size={16} aria-hidden="true" />}
                       </button>
                     </div>
-                  </div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
-          </div>
+            {taskError ? <p className={styles.error} role="alert">{taskError}</p> : null}
+          </section>
         </div>
 
-        {/* Colonne droite : objectifs */}
-        <div className="md:col-span-2 lg:col-span-4">
-          <div className={`${cardCls} p-6`}>
-            <h3 className="text-xl font-bold text-primary mb-5 flex items-center gap-2">
-              <Target className="w-5 h-5 text-accent" />
-              Mes objectifs
-            </h3>
-
+        <div>
+          <section className={styles.group} aria-labelledby="collab-goals">
+            <h2 className={styles.groupTitle} id="collab-goals">Mes objectifs</h2>
             {goals.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 gap-2 text-center">
-                <Target className="w-8 h-8 text-secondary opacity-20" />
-                <p className="text-sm text-secondary">Aucun objectif fixé ce mois.</p>
-              </div>
+              <div className={styles.empty}>Aucun objectif fixé ce mois.</div>
             ) : (
-              <div className="flex flex-col gap-3">
-                {goals.map(g => <GoalCard key={g.id} goal={g} />)}
-              </div>
+              <ul className={styles.list}>
+                {goals.map(goal => {
+                  const unit = goal.unit ? `${NB}${goal.unit}` : ''
+                  const pct = Math.min(100, Math.max(0, goal.percent))
+                  return (
+                    <li key={goal.id}>
+                      <div className={styles.row} data-static="true">
+                        <span className={styles.mid}>
+                          <span className={styles.rowTitle}>{goal.label ?? goal.metric}</span>
+                          <span className={styles.progress} aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
+                        </span>
+                        <span className={styles.amount}>{num(goal.current)} / {num(goal.target)}{unit}</span>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
             )}
-          </div>
+            {goals.length > 0 ? <p className={styles.note}>Fixés par votre responsable.</p> : null}
+          </section>
         </div>
       </div>
-    </div>
+    </>
   )
 }

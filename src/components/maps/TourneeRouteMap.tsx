@@ -1,19 +1,16 @@
 'use client'
+// @atelier-migrated
 
 import { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { Loader2, MapPinOff } from 'lucide-react'
 import { getOrGeocodeRoutePoints } from '@/lib/data/mutations/geocoding'
 import type { TourneeSlot } from '@/lib/data/queries/chantiers'
 import type { RouteMapPoint } from './LeafletRouteMap'
+import styles from './Maps.module.css'
 
 const LeafletRouteMap = dynamic(() => import('./LeafletRouteMap'), {
   ssr: false,
-  loading: () => (
-    <div className="flex h-full w-full items-center justify-center bg-interactive dark:bg-white/5">
-      <Loader2 className="h-5 w-5 animate-spin text-secondary" />
-    </div>
-  ),
+  loading: () => <div className={styles.placeholder} role="status">Chargement de la carte…</div>,
 })
 
 type TourneeRouteMapProps = {
@@ -53,17 +50,14 @@ export function TourneeRouteMap({ slots, departure, className }: TourneeRouteMap
 
   if (points === null) {
     return (
-      <div className={`flex items-center justify-center rounded-2xl border border-[var(--elevation-border)] bg-interactive dark:bg-white/5 ${wrapperClass}`}>
-        <Loader2 className="h-5 w-5 animate-spin text-secondary" />
-      </div>
+      <div className={`${styles.placeholder} ${styles.frame} ${wrapperClass}`} role="status">Chargement de la carte…</div>
     )
   }
 
   if (points.length === 0) {
     return (
-      <div className={`flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[var(--elevation-border)] bg-interactive text-center dark:bg-white/5 ${wrapperClass}`}>
-        <MapPinOff className="h-6 w-6 text-secondary" />
-        <p className="max-w-xs text-sm text-secondary">Aucun chantier de cette tournée n&apos;a pu être localisé sur la carte.</p>
+      <div className={`${styles.placeholder} ${styles.placeholderDashed} ${wrapperClass}`}>
+        Aucun chantier de cette tournée n’a pu être localisé sur la carte.
       </div>
     )
   }
@@ -71,7 +65,7 @@ export function TourneeRouteMap({ slots, departure, className }: TourneeRouteMap
   const hasDeparture = departure?.latitude != null && departure?.longitude != null
 
   return (
-    <div className={`overflow-hidden rounded-2xl border border-[var(--elevation-border)] shadow-kompagnon ${wrapperClass}`}>
+    <div className={`${styles.frame} ${wrapperClass}`}>
       <LeafletRouteMap
         points={points}
         departure={hasDeparture ? { lat: departure!.latitude!, lng: departure!.longitude! } : null}

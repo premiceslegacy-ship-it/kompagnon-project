@@ -1,0 +1,20 @@
+.root {
+  width: calc(100% - 32px);
+  max-width: 340px;
+  margin: 28px auto 0;
+  color: var(--at-encre);
+  text-align: center;
+}
+
+.title {
+  display: block;
+  margin: 0;
+  font: 600 17px / 22px var(--font-inter);
+}
+
+.description {
+  margin: 6px 0 18px;
+  color: var(--at-encre-2);
+  font: 400 15px / 20px var(--font-inter);
+  text-wrap: balance;
+}

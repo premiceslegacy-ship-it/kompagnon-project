@@ -1,0 +1,90 @@
+.container {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.frame {
+  position: relative;
+  width: min(100%, var(--signature-width));
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--at-document-fond);
+}
+
+.frame::after {
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid var(--at-document-trait);
+  border-radius: inherit;
+  content: '';
+  pointer-events: none;
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: var(--signature-ratio);
+  max-width: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: var(--at-document-fond);
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--at-document-encre-2);
+  font: 400 15px/20px var(--font-inter);
+  pointer-events: none;
+}
+
+.placeholder svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  stroke-width: 1.6;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.clearButton {
+  min-height: 44px;
+  flex: none;
+}
+
+.paper .clearButton {
+  color: var(--at-document-encre);
+}
+
+.paper .hint {
+  color: var(--at-document-encre-2);
+}
+
+.clearButton svg {
+  width: 16px;
+  height: 16px;
+}
+
+.hint {
+  min-width: 0;
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 400 15px/20px var(--font-inter);
+  overflow-wrap: anywhere;
+}

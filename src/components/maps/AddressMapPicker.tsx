@@ -1,17 +1,15 @@
 'use client'
+// @atelier-migrated
 
 import { useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { MapPin, Loader2, Search } from 'lucide-react'
 import { useAddressAutocomplete, reverseGeocode, type AddressFeature } from '@/lib/hooks/useAddressAutocomplete'
+import { Field } from '@/components/ui/Field'
+import styles from './Maps.module.css'
 
 const LeafletMap = dynamic(() => import('./LeafletMap'), {
   ssr: false,
-  loading: () => (
-    <div className="flex h-full w-full items-center justify-center bg-interactive dark:bg-white/5">
-      <Loader2 className="h-5 w-5 animate-spin text-secondary" />
-    </div>
-  ),
+  loading: () => <div className={styles.placeholder} role="status">Chargement de la carte…</div>,
 })
 
 export type AddressMapPickerValue = {
@@ -29,6 +27,7 @@ type AddressMapPickerProps = {
   className?: string
 }
 
+/** Recherche d'adresse avec suggestions, puis ajustement du repère sur la carte. */
 export function AddressMapPicker({ value, onChange, helpText, className }: AddressMapPickerProps) {
   const [query, setQuery] = useState(value.address ?? '')
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -79,61 +78,48 @@ export function AddressMapPicker({ value, onChange, helpText, className }: Addre
     }
   }
 
+  const hasPoint = value.latitude != null && value.longitude != null
+
   return (
     <div className={className}>
-      <div ref={containerRef} className="relative">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => { setQuery(e.target.value); setShowSuggestions(true) }}
-            onFocus={() => setShowSuggestions(true)}
-            placeholder="Rechercher une adresse (ex : 15 avenue de l'Atelier, Lyon)"
-            className="w-full pl-9 pr-4 py-3 bg-base dark:bg-white/5 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent rounded-xl text-primary outline-none transition-all"
-          />
-          {isLoading && (
-            <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-secondary" />
-          )}
-        </div>
-
+      <div ref={containerRef} className={styles.search}>
+        <Field
+          type="text"
+          label="Adresse"
+          placeholder="15 avenue de l’Atelier, Lyon"
+          autoComplete="off"
+          loading={isLoading}
+          value={query}
+          onChange={e => { setQuery(e.target.value); setShowSuggestions(true) }}
+          onFocus={() => setShowSuggestions(true)}
+        />
         {showSuggestions && suggestions.length > 0 && (
-          <div className="menu-panel absolute z-[1100] mt-1.5 w-full max-h-64 overflow-y-auto">
+          <ul className={styles.suggestions}>
             {suggestions.map((feature, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => selectSuggestion(feature)}
-                className="flex w-full items-start gap-2 px-3.5 py-2.5 text-left text-sm text-primary hover:bg-interactive dark:hover:bg-white/5 transition-colors"
-              >
-                <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-secondary" />
-                <span className="truncate">{feature.label}</span>
-              </button>
+              <li key={i}>
+                <button type="button" className={styles.suggestion} onClick={() => selectSuggestion(feature)}>
+                  {feature.label}
+                </button>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </div>
-
-      <p className="mt-2 text-xs text-secondary">
-        {helpText ?? 'Cliquez ou glissez le repère sur la carte pour ajuster précisément le point de départ.'}
+      <p className={styles.note}>
+        {helpText ?? 'Touchez la carte ou glissez le repère pour ajuster précisément le point de départ.'}
       </p>
-
-      <div className="relative mt-3 h-72 w-full overflow-hidden rounded-2xl border border-[var(--elevation-border)] shadow-kompagnon">
-        {value.latitude != null && value.longitude != null ? (
-          <LeafletMap latitude={value.latitude} longitude={value.longitude} onPick={handlePick} />
+      <div className={`${styles.frame} ${styles.mapBox}`}>
+        {hasPoint ? (
+          <LeafletMap latitude={value.latitude!} longitude={value.longitude!} onPick={handlePick} />
         ) : (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-interactive text-center dark:bg-white/5">
-            <MapPin className="h-6 w-6 text-secondary" />
-            <p className="max-w-xs text-sm text-secondary">
-              Recherchez une adresse ci-dessus ou cliquez directement sur la carte pour positionner le point de départ.
-            </p>
+          <div className={styles.placeholder}>
+            Recherchez une adresse ci-dessus ou touchez la carte pour positionner le point de départ.
           </div>
         )}
       </div>
-
-      {(value.latitude != null && value.longitude != null) && (
-        <p className="mt-1.5 text-xs font-mono tabular-nums text-secondary">
-          {isReversing ? 'Recherche de l\'adresse…' : `${value.latitude.toFixed(6)}, ${value.longitude.toFixed(6)}`}
+      {hasPoint && (
+        <p className={styles.coords}>
+          {isReversing ? 'Recherche de l’adresse…' : `${value.latitude!.toFixed(6)}, ${value.longitude!.toFixed(6)}`}
         </p>
       )}
     </div>

@@ -21,6 +21,8 @@ import { getOrganizationEinvoicingConfig } from '@/lib/data/queries/einvoicing'
 const SETTINGS_TABS = new Set([
   'profil',
   'entreprise',
+  'legal',
+  'paiement',
   'devis',
   'equipe',
   'roles',
@@ -45,8 +47,8 @@ export default async function SettingsPage({
   searchParams: Promise<{ tab?: string; oauth?: string; oauth_detail?: string }>
 }) {
   const searchParams = await searchParamsPromise
-  const requestedTab = searchParams?.tab ?? 'profil'
-  const initialTab = SETTINGS_TABS.has(requestedTab) ? requestedTab : 'profil'
+  const requestedTab = searchParams?.tab ?? null
+  const initialTab = requestedTab && SETTINGS_TABS.has(requestedTab) ? requestedTab : null
   const oauthResult = searchParams?.oauth === 'success' || searchParams?.oauth === 'error' ? searchParams.oauth : null
   const oauthDetail = searchParams?.oauth_detail ?? null
 
@@ -80,7 +82,7 @@ export default async function SettingsPage({
   const catalogContext = resolveCatalogContext(organization)
   const { supabaseUrl } = getPublicRuntimeConfig()
   const effectiveInitialTab = initialTab === 'facturation' && !canConfigureEinvoicing
-    ? 'profil'
+    ? null
     : initialTab
 
   return (

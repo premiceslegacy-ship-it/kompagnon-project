@@ -1,12 +1,16 @@
 import type { PdfOrganizationData, QuoteDocumentClient, QuoteDocumentRecord } from '@/lib/pdf/document-types'
-import { fmtCapitalSocial, formatDimDetail, pdfText, splitItemDescription } from '@/lib/pdf/pdf-design-system'
+import { formatDimDetail, pdfText, splitItemDescription } from '@/lib/pdf/pdf-design-system'
 import { PdfDoc } from '../engine/doc'
 import type { FontBytes } from '../engine/fonts'
 import { loadFontBytes } from '../engine/fonts'
 import { drawImageContained, embedImage } from '../engine/image'
-import { drawKeyValueRow, textLineHeight, wrapText, type TextStyle } from '../engine/text'
-import { drawSolidBlock, drawTable, type TableCell, type TableColumn, type TableRow } from '../engine/table'
-import { COL, COL_DESC_WIDTH, COLOR, CONTENT_WIDTH, PAGE, SIZE, SPACE } from '../engine/theme'
+import {
+  K, bottomBlockTop, drawCompactHeader, drawHeader, drawKitTable, drawMeta, drawNote, drawOutlineBox, drawParties,
+  drawTextCard, drawTotals, installFooter, measureCard,
+  type CardParagraph, type KitCell, type KitColumn, type KitRow, type TotalLine,
+} from '../engine/kit'
+import { DECENNALE_LABEL, decennaleText, legalFooterLines, organizationPartyLines } from '../engine/legal'
+import { COLOR, CONTENT_WIDTH, PAGE } from '../engine/theme'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -67,423 +71,148 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
   const validUntil = quote.valid_until ? quote.valid_until : addDays(quote.created_at, quote.validity_days ?? 30)
   const hasClientSignature = Boolean(quote.signed_at && quote.client_signature_image)
 
-  const orgStreet = organization.address_line1 ?? null
-  const orgPostalCity = [organization.postal_code, organization.city].filter(Boolean).join(' ') || null
-  const certifications = Array.isArray(organization.certifications)
-    ? organization.certifications.join(' · ')
-    : organization.certifications
-
-  // ── Footer légal multi-ligne (identique à l'ancienne version react-pdf) ──
-  const line1Parts: string[] = []
-  if (organization.forme_juridique) line1Parts.push(organization.forme_juridique)
-  const capitalFmt = fmtCapitalSocial(organization.capital_social)
-  if (capitalFmt) line1Parts.push(`Capital social : ${capitalFmt}`)
-
-  const line2Parts: string[] = []
-  if (organization.siret) line2Parts.push(`SIRET : ${organization.siret}`)
-  if (organization.rcs && organization.rcs_ville) line2Parts.push(`RCS ${organization.rcs_ville} ${organization.rcs}`)
-  else if (organization.rcs) line2Parts.push(`RCS ${organization.rcs}`)
-  if (!isVatSubject) line2Parts.push('TVA non applicable, art. 293B du CGI')
-  else if (organization.vat_number) line2Parts.push(`TVA : ${organization.vat_number}`)
-
-  let insuranceLine: string | null = null
-  if (organization.insurance_info) {
-    const label = organization.decennale_enabled
-      ? 'Assurance responsabilité civile professionnelle et décennale'
-      : 'Assurance responsabilité civile professionnelle'
-    insuranceLine = `${label} : ${organization.insurance_info}`
-  }
-
-  const legalLines: string[] = [
-    line1Parts.join(' · '),
-    line2Parts.join(' · '),
-    insuranceLine,
-    certifications,
-  ].filter((l): l is string => !!l && l.length > 0)
-
-  // ── Logo (une seule fois, réutilisé sur chaque page) ──
   const logoImg = organization.logo_url ? await embedImage(doc.doc, organization.logo_url) : null
   const signatureImg = quote.client_signature_image ? await embedImage(doc.doc, quote.client_signature_image) : null
 
-  // ── Header répété sur chaque nouvelle page ──
-  doc.onNewPage = ({ page }) => {
-    let y = PAGE.height - PAGE.headerTop
-    const headerTop = y
-
-    // Logo à gauche
-    if (logoImg) {
-      drawImageContained(doc, logoImg, { x: PAGE.margin, y: headerTop - 45, w: 90, h: 45 })
-    } else {
-      page.drawRectangle({ x: PAGE.margin, y: headerTop - 45, width: 90, height: 45, color: COLOR.black })
-      page.drawText(pdfText(organization.name.slice(0, 2).toUpperCase()), {
-        x: PAGE.margin + 30, y: headerTop - 28, size: SIZE.lg, font: F.headingXBold, color: COLOR.white,
-      })
-    }
-
-    // Bloc entreprise à droite (aligné à droite)
-    const rightX = PAGE.width - PAGE.margin - 210
-    let ry = headerTop
-    const drawRight = (text: string, style: TextStyle) => {
-      const w = style.font.widthOfTextAtSize(text, style.size)
-      ry -= style.size
-      page.drawText(text, { x: rightX + 210 - w, y: ry, size: style.size, font: style.font, color: style.color })
-      ry -= textLineHeight(style) - style.size
-    }
-    drawRight(pdfText(organization.name).toUpperCase(), { font: F.headingXBold, size: SIZE.md, color: COLOR.black })
-    ry -= 4
-    if (orgStreet) drawRight(pdfText(orgStreet), { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
-    if (orgPostalCity) drawRight(pdfText(orgPostalCity), { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
-    if (organization.phone) drawRight(`Tél : ${pdfText(organization.phone)}`, { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
-    if (organization.email) drawRight(pdfText(organization.email), { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
-    if (organization.siret) drawRight(`SIRET : ${pdfText(organization.siret)}`, { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
-    if (isVatSubject && organization.vat_number) drawRight(`TVA : ${pdfText(organization.vat_number)}`, { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
-    if (!isVatSubject) drawRight('TVA non applicable, art. 293B CGI', { font: F.regular, size: SIZE.xs, color: COLOR.secondary })
-
-    y = Math.min(headerTop - 45, ry) - SPACE.sm
-    page.drawLine({ start: { x: PAGE.margin, y }, end: { x: PAGE.width - PAGE.margin, y }, thickness: 1, color: COLOR.divider })
-    y -= SPACE.sm
-    return y
-  }
-
+  const brand = { logo: logoImg, name: organization.name }
+  const heading = { title: 'Devis', number: quote.number }
+  doc.onNewPage = ({ pageIndex }) => pageIndex === 0 ? drawHeader(doc, brand, heading) : drawCompactHeader(doc, brand, heading)
+  installFooter(doc, legalFooterLines(organization, isVatSubject))
   doc.addPage()
 
-  // ── Footer légal + pagination, dessiné en 2e passe sur chaque page ──
-  doc.onFinishPage = ({ page, pageIndex, pageCount }) => {
-    const footerY = 14
-    const lineStep = SIZE.xxs * 1.4
-    page.drawLine({ start: { x: PAGE.margin, y: footerY + 8 + legalLines.length * lineStep }, end: { x: PAGE.width - PAGE.margin, y: footerY + 8 + legalLines.length * lineStep }, thickness: 0.5, color: COLOR.divider })
-    let ly = footerY + (legalLines.length - 1) * lineStep
-    for (const line of legalLines) {
-      page.drawText(line, { x: PAGE.margin, y: ly, size: SIZE.xxs, font: F.regular, color: COLOR.muted })
-      ly -= lineStep
-    }
-    if (pageCount > 1) {
-      const label = `${pageIndex + 1} / ${pageCount}`
-      const w = F.regular.widthOfTextAtSize(label, SIZE.xxs)
-      page.drawText(label, { x: PAGE.width - PAGE.margin - w, y: footerY, size: SIZE.xxs, font: F.regular, color: COLOR.muted })
-    }
-  }
-
-  // ── Title block ──
-  const titleText = `DEVIS${quote.number ? ` N° ${quote.number}` : ''}`
-  doc.ensureSpace(SIZE.xxxl + 14)
-  doc.y -= SIZE.xxxl
-  doc.page.drawText(titleText, { x: PAGE.margin, y: doc.y, size: SIZE.xxxl, font: F.headingXBold, color: COLOR.black })
-  doc.y -= 4
-  doc.y -= SIZE.xs
-  doc.page.drawText(`Date : ${fmtDate(quote.created_at)}`, { x: PAGE.margin, y: doc.y, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
-  doc.page.drawText(`Valable jusqu'au : ${fmtDate(validUntil)}`, { x: PAGE.margin + 150, y: doc.y, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
-  doc.y -= SPACE.xs
-  doc.page.drawRectangle({ x: PAGE.margin, y: doc.y, width: 40, height: 3, color: COLOR.accent })
-  doc.y -= SPACE.xs
-  doc.page.drawLine({ start: { x: PAGE.margin, y: doc.y }, end: { x: PAGE.width - PAGE.margin, y: doc.y }, thickness: 1, color: COLOR.black })
-  doc.y -= SPACE.sm
-
-  // ── Address blocks (émetteur / client) ──
-  const addrBoxW = (CONTENT_WIDTH - SPACE.md) / 2
-  const addrLabelStyle: TextStyle = { font: F.headingXBold, size: SIZE.xxs, color: COLOR.secondary }
-  const addrNameStyle: TextStyle = { font: F.heading, size: SIZE.md, color: COLOR.black }
-  const addrLineStyle: TextStyle = { font: F.regular, size: SIZE.xs, color: COLOR.secondary }
-
-  function measureAddressBlock(lines: string[]): number {
-    return SPACE.sm * 2 + SIZE.xxs + SPACE.xs + SIZE.md + 3 + lines.length * (SIZE.xs + 2)
-  }
-
-  function drawAddressBlock(x: number, label: string, name: string, lines: string[]): void {
-    doc.page.drawRectangle({ x, y: doc.y - measureAddressBlock(lines), width: addrBoxW, height: measureAddressBlock(lines), color: COLOR.surface })
-    let cy = doc.y - SPACE.sm - SIZE.xxs
-    doc.page.drawText(label.toUpperCase(), { x: x + SPACE.md, y: cy, size: SIZE.xxs, font: addrLabelStyle.font, color: addrLabelStyle.color })
-    cy -= SPACE.xs + SIZE.md
-    doc.page.drawText(name, { x: x + SPACE.md, y: cy, size: SIZE.md, font: addrNameStyle.font, color: addrNameStyle.color })
-    cy -= 3
-    for (const line of lines) {
-      cy -= SIZE.xs
-      doc.page.drawText(line, { x: x + SPACE.md, y: cy, size: SIZE.xs, font: addrLineStyle.font, color: addrLineStyle.color })
-      cy -= 2
-    }
-  }
-
-  const orgLines = [orgStreet, orgPostalCity, organization.email].filter((l): l is string => !!l).map(pdfText)
-  const clientLines = client
-    ? [
-        client.address_line1,
-        [client.postal_code, client.city].filter(Boolean).join(' ') || null,
-        client.email,
-        client.phone,
-        client.siret ? `SIRET : ${client.siret}` : null,
-      ].filter((l): l is string => !!l).map(pdfText)
-    : ['—']
-
-  const addrBlockH = Math.max(measureAddressBlock(orgLines), measureAddressBlock(clientLines))
-  doc.ensureSpace(addrBlockH)
-  const addrY = doc.y
-  drawAddressBlock(PAGE.margin, 'Émetteur', pdfText(organization.name), orgLines)
-  doc.y = addrY
-  drawAddressBlock(PAGE.margin + addrBoxW + SPACE.md, 'Client', client ? pdfText(clientDisplayName(client)) : '—', clientLines)
-  doc.y = addrY - addrBlockH
-  doc.moveDown(SPACE.sm)
-
-  // ── Demande du client (formulaire public) ──
+  // ── Repères, parties, demande ──
+  drawMeta(doc, [
+    { label: 'Date', value: fmtLongDate(quote.created_at) },
+    { label: "Valable jusqu'au", value: fmtLongDate(validUntil) },
+    ...(quote.title ? [{ label: 'Objet', value: quote.title }] : []),
+  ])
+  drawParties(
+    doc,
+    { label: 'De', name: organization.name, lines: organizationPartyLines(organization) },
+    {
+      label: 'Pour',
+      name: client ? clientDisplayName(client) : '—',
+      lines: client
+        ? [
+            client.address_line1,
+            [client.postal_code, client.city].filter(Boolean).join(' ') || null,
+            [client.email, client.phone].filter(Boolean).join(' · ') || null,
+            client.siret ? `SIRET ${client.siret}` : null,
+          ].filter((l): l is string => !!l).map(pdfText)
+        : [],
+    },
+  )
   if (quote.client_request_description && quote.client_request_visible_on_pdf) {
-    drawBoxedText(doc, 'Votre demande', quote.client_request_description, F)
+    drawNote(doc, 'Votre demande', quote.client_request_description, 12)
   }
+  if (quote.notes_client) drawNote(doc, null, quote.notes_client, 9)
+  const decennale = decennaleText(organization)
+  if (decennale) drawNote(doc, DECENNALE_LABEL, decennale, 9)
 
-  // ── Garantie décennale ──
-  if (organization.decennale_enabled && organization.decennale_assureur) {
-    const parts = [
-      `Assureur : ${organization.decennale_assureur}`,
-      organization.decennale_police ? `Police n° ${organization.decennale_police}` : '',
-      organization.decennale_couverture ? `Couverture : ${organization.decennale_couverture}` : '',
-      (organization.decennale_date_debut || organization.decennale_date_fin)
-        ? `Validité : ${organization.decennale_date_debut ? new Date(organization.decennale_date_debut).toLocaleDateString('fr-FR') : '?'} - ${organization.decennale_date_fin ? new Date(organization.decennale_date_fin).toLocaleDateString('fr-FR') : '?'}`
-        : '',
-    ].filter(Boolean)
-    drawBoxedText(doc, 'Garantie décennale - Art. L241-1 Code des assurances', parts.join('  ·  '), F)
-  }
-
-  // ── Intro ──
-  if (quote.notes_client) {
-    drawIntroBox(doc, quote.notes_client, F)
-  }
-
-  // ── Table ──
+  // ── Tableau ──
   const withVat = isVatSubject
-  const cols: TableColumn[] = [
-    { width: COL_DESC_WIDTH(withVat), header: 'Désignation' },
-    { width: COL.qty, header: 'Qté', align: 'right' },
-    { width: COL.unit, header: 'Unité', align: 'center' },
-    { width: COL.pu, header: 'PU HT', align: 'right' },
-    ...(withVat ? [{ width: COL.vat, header: 'TVA %', align: 'right' as const }] : []),
-    { width: COL.total, header: 'Total HT', align: 'right' },
+  const fixed = 52.5 + 61.5 + 69 + (withVat ? 33 : 0)
+  const gap = 7.5
+  const descWidth = CONTENT_WIDTH - fixed - gap * (withVat ? 4 : 3)
+  const cols: KitColumn[] = [
+    { width: descWidth, header: 'Désignation' },
+    { width: 52.5, header: 'Qté' },
+    { width: 61.5, header: 'P.U. HT' },
+    ...(withVat ? [{ width: 33, header: 'TVA' }] : []),
+    { width: 69, header: 'Total HT' },
   ]
 
-  const cellStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body }
-  const detailStyle: TextStyle = { font: F.regular, size: SIZE.xs, color: COLOR.muted }
-  const headerStyle: TextStyle = { font: F.headingXBold, size: SIZE.xxs, color: COLOR.black }
-
-  function itemToRow(item: (typeof visibleSections)[number]['items'][number]): TableRow {
+  function itemToRow(item: (typeof visibleSections)[number]['items'][number]): KitRow {
     const legacyParts = splitItemDescription(item.description)
     const title = pdfText(item.designation?.trim() || legacyParts.title)
     const detailLines = item.details?.trim()
       ? item.details.split('\n').map(l => pdfText(l.replace(/^\s*[-•]\s*/, '').trim())).filter(Boolean)
       : legacyParts.details
     const dimDetail = formatDimDetail(item)
-    const allDetails = dimDetail
-      ? [...(detailLines.length ? [`Comprend : ${detailLines.join(' · ')}`] : []), dimDetail]
-      : (detailLines.length ? [`Comprend : ${detailLines.join(' · ')}`] : [])
-
-    const cells: TableCell[] = [
-      { value: title, detailLines: allDetails },
-      { value: item.quantity == null ? '' : String(item.quantity) },
-      { value: item.unit ?? '' },
-      item.price_pending
-        ? { value: '—', style: { color: COLOR.gray } }
-        : item.unit_price == null
-          ? { value: '' }
-          : { value: fmt(item.unit_price, quote.currency) },
+    const details = [
+      ...(detailLines.length ? [`Comprend : ${detailLines.join(' · ')}`] : []),
+      ...(dimDetail ? [dimDetail] : []),
     ]
-    if (withVat) cells.push({ value: item.price_pending || item.vat_rate == null ? '' : `${item.vat_rate}%` })
+    const quantity = item.quantity == null ? '' : `${item.quantity}${item.unit ? ` ${item.unit}` : ''}`
+    const cells: KitCell[] = [
+      { value: title, details },
+      { value: quantity },
+      item.price_pending
+        ? { value: '—', color: COLOR.muted }
+        : { value: item.unit_price == null ? '' : fmt(item.unit_price, quote.currency) },
+    ]
+    if (withVat) cells.push({ value: item.price_pending || item.vat_rate == null ? '' : `${item.vat_rate} %` })
     cells.push(
       item.price_pending
-        ? { value: 'A confirmer', style: { color: COLOR.gray } }
-        : item.quantity == null || item.unit_price == null
-          ? { value: '' }
-          : { value: fmt(item.quantity * item.unit_price, quote.currency) },
+        ? { value: 'À confirmer', color: COLOR.muted }
+        : { value: item.quantity == null || item.unit_price == null ? '' : fmt(item.quantity * item.unit_price, quote.currency), bold: true },
     )
     return { cells }
   }
 
-  const rows: TableRow[] = []
+  const rows: KitRow[] = []
   for (const section of visibleSections) {
     if (section.title) {
-      rows.push({ cells: [{ value: section.title.toUpperCase(), style: { font: F.heading, size: SIZE.sm, color: COLOR.black } }, ...cols.slice(1).map(() => ({ value: '' }))] })
+      const subtotal = section.items.filter(i => !i.price_pending).reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0)
+      rows.push({ kind: 'section', title: section.title, amount: quote.show_section_subtotals ? fmt(subtotal, quote.currency) : undefined })
     }
     for (const item of section.items) rows.push(itemToRow(item))
-    if (quote.show_section_subtotals && section.title && section.items.length > 0) {
-      const subtotal = section.items.filter(i => !i.price_pending).reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0)
-      rows.push({
-        cells: [
-          { value: `Sous-total (${section.title})`, style: { font: F.regular, size: SIZE.sm, color: COLOR.secondary } },
-          ...cols.slice(1, -1).map(() => ({ value: '' })),
-          { value: fmt(subtotal, quote.currency), style: { font: F.heading, size: SIZE.sm, color: COLOR.black } },
-        ],
-        zebra: true,
-      })
-    }
   }
   for (const item of visibleUnsectioned) rows.push(itemToRow(item))
-
-  drawTable(doc, cols, rows, {
-    x: PAGE.margin,
-    headerStyle,
-    cellStyle,
-    detailStyle,
-    rowPaddingY: SPACE.sm,
-    headerPaddingY: SPACE.sm,
-    repeatHeader: true,
-  })
-
-  doc.moveDown(SPACE.sm)
+  drawKitTable(doc, cols, rows, { gap })
 
   // ── Totaux ──
-  const totalsBoxW = 250
-  const totalsX = PAGE.width - PAGE.margin - totalsBoxW
-  const rowH = SIZE.sm + SPACE.sm * 2
-  const labelStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.secondary }
-  const valueStyle: TextStyle = { font: F.heading, size: SIZE.sm, color: COLOR.black }
-
-  doc.ensureSpace(rowH * (1 + Object.keys(vatMap).length) + SIZE.md + SPACE.md * 2)
-  drawKeyValueRow(doc, 'Total HT', fmt(totalHt, quote.currency), { x: totalsX, width: totalsBoxW, labelStyle, valueStyle, rowHeight: rowH })
-  doc.page.drawLine({ start: { x: totalsX, y: doc.y }, end: { x: totalsX + totalsBoxW, y: doc.y }, thickness: 0.5, color: COLOR.divider })
-
+  const totalLines: TotalLine[] = [{ label: 'Total HT', value: fmt(totalHt, quote.currency) }]
   if (isVatSubject) {
-    for (const [rate, amount] of Object.entries(vatMap)) {
-      drawKeyValueRow(doc, `TVA ${rate}%`, fmt(amount, quote.currency), { x: totalsX, width: totalsBoxW, labelStyle, valueStyle, rowHeight: rowH })
-      doc.page.drawLine({ start: { x: totalsX, y: doc.y }, end: { x: totalsX + totalsBoxW, y: doc.y }, thickness: 0.5, color: COLOR.divider })
-    }
+    for (const [rate, amount] of Object.entries(vatMap)) totalLines.push({ label: `TVA ${rate} %`, value: fmt(amount, quote.currency) })
   } else {
-    drawKeyValueRow(doc, 'TVA', 'Non applicable', { x: totalsX, width: totalsBoxW, labelStyle, valueStyle: { ...valueStyle, color: COLOR.muted }, rowHeight: rowH })
-    doc.page.drawLine({ start: { x: totalsX, y: doc.y }, end: { x: totalsX + totalsBoxW, y: doc.y }, thickness: 0.5, color: COLOR.divider })
+    totalLines.push({ label: 'TVA', value: 'Non applicable' })
   }
+  drawTotals(doc, totalLines, { label: isVatSubject ? 'Total TTC' : 'Total HT', value: fmt(totalTtc, quote.currency) })
+  if (!isVatSubject) drawNote(doc, null, 'TVA non applicable, art. 293B du CGI', 6)
 
-  doc.moveDown(SPACE.sm)
-  const ttcRowH = SIZE.md + SPACE.md * 2
-  doc.ensureSpace(ttcRowH)
-  doc.page.drawRectangle({ x: totalsX, y: doc.y - ttcRowH, width: totalsBoxW, height: ttcRowH, color: COLOR.black })
-  drawKeyValueRow(doc, isVatSubject ? 'TOTAL TTC' : 'TOTAL HT', fmt(totalTtc, quote.currency), {
-    x: totalsX + SPACE.md, width: totalsBoxW - SPACE.md * 2,
-    labelStyle: { font: F.headingXBold, size: SIZE.md, color: COLOR.white },
-    valueStyle: { font: F.headingXBold, size: SIZE.md, color: COLOR.white },
-    rowHeight: ttcRowH,
-  })
-
-  if (!isVatSubject) {
-    doc.ensureSpace(SIZE.xs + 4)
-    doc.y -= SIZE.xs
-    const label = 'TVA non applicable, art. 293B du CGI'
-    const w = F.regular.widthOfTextAtSize(label, SIZE.xs)
-    doc.page.drawText(label, { x: totalsX + totalsBoxW - w, y: doc.y, size: SIZE.xs, font: F.regular, color: COLOR.muted })
-    doc.y -= 4
+  // ── Conditions et signature ──
+  const gapCols = 12
+  const leftW = (CONTENT_WIDTH - gapCols) * 1.25 / 2.25
+  const rightW = CONTENT_WIDTH - gapCols - leftW
+  const paragraphs: CardParagraph[] = []
+  if (quote.payment_conditions) paragraphs.push({ text: quote.payment_conditions })
+  if (organization.payment_terms_days) {
+    paragraphs.push({ text: `Règlement à ${organization.payment_terms_days} jours à compter de la date de facturation.`, gapBefore: paragraphs.length ? 4.5 : 0 })
   }
-
-  doc.moveDown(SPACE.sm)
-
-  // ── Conditions + Signature ──
-  const bottomColW = (CONTENT_WIDTH - SPACE.lg - 190) // conditionsBox flex, signatureBox 190 fixe
-  const conditionsLines: { title?: string; text: string }[] = []
-  if (quote.payment_conditions) conditionsLines.push({ title: 'Conditions de paiement', text: quote.payment_conditions })
-  if (organization.iban || organization.payment_terms_days) {
-    const parts: string[] = []
-    if (organization.payment_terms_days) parts.push(`Règlement à ${organization.payment_terms_days} jours à compter de la date de facturation.`)
-    conditionsLines.push({ title: 'Modalités de règlement', text: parts.join(' ') })
-    if (organization.iban) {
-      conditionsLines.push({ text: `Virement · IBAN : ${organization.iban}${organization.bic ? `  ·  BIC : ${organization.bic}` : ''}${organization.bank_name ? `  ·  ${organization.bank_name}` : ''}` })
-    }
-    if (organization.late_penalty_rate) {
-      conditionsLines.push({ text: `Pénalités de retard : ${organization.late_penalty_rate}% par an.` })
-      if (isClientPro) {
-        conditionsLines.push({ text: organization.recovery_indemnity_text ?? "Conformément à l'article L441-10 du Code de commerce, une indemnité forfaitaire de 40 € pour frais de recouvrement est due de plein droit en cas de retard de paiement." })
-      }
-    }
-    if (organization.court_competent) conditionsLines.push({ text: `En cas de litige : ${organization.court_competent}.` })
+  if (organization.iban) {
+    paragraphs.push({ text: `Virement · IBAN ${organization.iban}${organization.bic ? ` · BIC ${organization.bic}` : ''}${organization.bank_name ? ` · ${organization.bank_name}` : ''}`, gapBefore: paragraphs.length ? 4.5 : 0 })
   }
-
-  const condTextStyle: TextStyle = { font: F.regular, size: SIZE.xs, color: COLOR.secondary, maxWidth: bottomColW, lineHeight: 1.2 }
-  const condLh = textLineHeight(condTextStyle)
-  const sigBoxH = hasClientSignature ? 118 : 70
-  const bottomBlockH = Math.max(
-    conditionsLines.reduce((s, l) => {
-      const wrapped = wrapText(pdfText(l.text), condTextStyle.font, condTextStyle.size, bottomColW)
-      return s + (l.title ? SIZE.xs + 4 : 0) + wrapped.length * condLh + 1
-    }, 0),
-    sigBoxH,
-  )
-  doc.ensureSpace(bottomBlockH)
-  const bottomY = doc.y
-
-  let condY = bottomY
-  for (const line of conditionsLines) {
-    if (line.title) {
-      condY -= SIZE.xs + 4
-      doc.page.drawText(line.title.toUpperCase(), { x: PAGE.margin, y: condY, size: SIZE.xs, font: F.heading, color: COLOR.black })
+  if (organization.late_penalty_rate) {
+    paragraphs.push({ text: `Pénalités de retard : ${organization.late_penalty_rate} % par an.`, gapBefore: 4.5 })
+    if (isClientPro) {
+      paragraphs.push({ gapBefore: 3, text: organization.recovery_indemnity_text ?? "Conformément à l'article L441-10 du Code de commerce, une indemnité forfaitaire de 40 € pour frais de recouvrement est due de plein droit en cas de retard de paiement." })
     }
-    const wrapped = wrapText(pdfText(line.text), condTextStyle.font, condTextStyle.size, bottomColW)
-    for (const wline of wrapped) {
-      condY -= SIZE.xs
-      doc.page.drawText(wline, { x: PAGE.margin, y: condY, size: SIZE.xs, font: F.regular, color: COLOR.secondary })
-      condY -= condLh - SIZE.xs
-    }
-    condY -= 1
   }
+  if (organization.court_competent) paragraphs.push({ text: `En cas de litige : ${organization.court_competent}.`, gapBefore: 3 })
 
-  const sigX = PAGE.width - PAGE.margin - 190
-  doc.page.drawRectangle({ x: sigX, y: bottomY - sigBoxH, width: 190, height: sigBoxH, borderColor: COLOR.divider, borderWidth: 0.5, color: undefined })
+  const sigH = hasClientSignature ? 96 : 81
+  const blockH = Math.max(paragraphs.length ? measureCard(doc, leftW, 'Conditions', paragraphs) : 0, sigH)
+  const top = bottomBlockTop(doc, blockH, 12)
+  if (paragraphs.length) drawTextCard(doc, PAGE.margin, top, leftW, 'Conditions', paragraphs, blockH)
+  const sigX = PAGE.margin + leftW + gapCols
+  drawOutlineBox(doc, sigX, top, rightW, blockH)
+  doc.page.drawText('Bon pour accord', { x: sigX + 13.5, y: top - 10.5 - K.label, size: K.label, font: F.bold, color: COLOR.secondary })
   if (hasClientSignature) {
-    let sy = bottomY - SPACE.md
-    sy -= SIZE.xxs
-    doc.page.drawText('BON POUR ACCORD', { x: sigX + SPACE.md, y: sy, size: SIZE.xxs, font: F.headingXBold, color: COLOR.black })
-    sy -= SPACE.xs + SIZE.xxs
-    doc.page.drawText(`Nom : ${pdfText(quote.client_signatory_name ?? '')}`, { x: sigX + SPACE.md, y: sy, size: SIZE.xxs, font: F.regular, color: COLOR.secondary })
-    if (quote.client_signatory_role) {
-      sy -= SIZE.xxs + 2
-      doc.page.drawText(`Qualité : ${pdfText(quote.client_signatory_role)}`, { x: sigX + SPACE.md, y: sy, size: SIZE.xxs, font: F.regular, color: COLOR.secondary })
-    }
-    sy -= SIZE.xxs + 2
-    doc.page.drawText(`Date : ${quote.signed_at ? fmtDate(quote.signed_at) : ''}`, { x: sigX + SPACE.md, y: sy, size: SIZE.xxs, font: F.regular, color: COLOR.secondary })
-    if (signatureImg) {
-      drawImageContained(doc, signatureImg, { x: sigX + (190 - 130) / 2, y: bottomY - sigBoxH + 4, w: 130, h: 46 }, 'center')
-    }
+    let sy = top - 10.5 - K.label * 1.4 - 8
+    const small = { size: K.small, font: F.regular, color: COLOR.body }
+    doc.page.drawText(`Nom : ${pdfText(quote.client_signatory_name ?? '')}`, { x: sigX + 13.5, y: sy, ...small })
+    if (quote.client_signatory_role) { sy -= 10.5; doc.page.drawText(`Qualité : ${pdfText(quote.client_signatory_role)}`, { x: sigX + 13.5, y: sy, ...small }) }
+    sy -= 10.5
+    doc.page.drawText(`Date : ${quote.signed_at ? fmtDate(quote.signed_at) : ''}`, { x: sigX + 13.5, y: sy, ...small })
+    if (signatureImg) drawImageContained(doc, signatureImg, { x: sigX + 13.5, y: top - blockH + 6, w: rightW - 27, h: 34 }, 'center')
   } else {
-    const label = 'Bon pour accord, date et signature'
-    const style: TextStyle = { font: F.regular, size: SIZE.xs, color: COLOR.muted, align: 'center', maxWidth: 190 - SPACE.md * 2 }
-    const w = F.regular.widthOfTextAtSize(label, SIZE.xs)
-    doc.page.drawText(label, { x: sigX + (190 - w) / 2, y: bottomY - sigBoxH + SPACE.md, size: SIZE.xs, font: F.regular, color: COLOR.muted })
-    void style
+    doc.page.drawText('Date, signature précédée de « Lu et approuvé »', { x: sigX + 13.5, y: top - blockH + 10.5, size: K.label, font: F.regular, color: COLOR.secondary })
   }
-
-  doc.y = bottomY - bottomBlockH
+  doc.y = top - blockH
 
   return doc.save()
 }
 
-// ─── Helpers de blocs encadrés ──────────────────────────────────────────────
-
-function drawBoxedText(doc: PdfDoc, label: string, text: string, F: PdfDoc['fonts']): void {
-  const labelStyle: TextStyle = { font: F.heading, size: SIZE.xxs, color: COLOR.secondary, maxWidth: CONTENT_WIDTH - SPACE.sm * 2 }
-  const textStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body, maxWidth: CONTENT_WIDTH - SPACE.sm * 2, lineHeight: 1.4 }
-  const labelH = textLineHeight(labelStyle)
-  const textLines = wrapText(pdfText(text), textStyle.font, textStyle.size, textStyle.maxWidth!)
-  const textH = textLines.length * textLineHeight(textStyle)
-  const boxH = SPACE.sm * 2 + labelH + SPACE.xs + textH
-
-  doc.ensureSpace(boxH)
-  doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - boxH, width: CONTENT_WIDTH, height: boxH, color: COLOR.surface })
-  let cy = doc.y - SPACE.sm - labelStyle.size
-  doc.page.drawText(label.toUpperCase(), { x: PAGE.margin + SPACE.sm, y: cy, size: labelStyle.size, font: labelStyle.font, color: labelStyle.color })
-  cy -= (labelH - labelStyle.size) + SPACE.xs
-  for (const line of textLines as string[]) {
-    cy -= textStyle.size
-    doc.page.drawText(line, { x: PAGE.margin + SPACE.sm, y: cy, size: textStyle.size, font: textStyle.font, color: textStyle.color })
-    cy -= textLineHeight(textStyle) - textStyle.size
-  }
-  doc.y -= boxH
-  doc.moveDown(SPACE.sm)
-}
-
-function drawIntroBox(doc: PdfDoc, text: string, F: PdfDoc['fonts']): void {
-  const textStyle: TextStyle = { font: F.regular, size: SIZE.sm, color: COLOR.body, maxWidth: CONTENT_WIDTH - SPACE.sm * 2 - 2, lineHeight: 1.5 }
-  const lines = wrapText(pdfText(text), textStyle.font, textStyle.size, textStyle.maxWidth!)
-  const textH = lines.length * textLineHeight(textStyle)
-  const boxH = SPACE.sm * 2 + textH
-
-  doc.ensureSpace(boxH)
-  doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - boxH, width: CONTENT_WIDTH, height: boxH, color: COLOR.surface })
-  doc.page.drawRectangle({ x: PAGE.margin, y: doc.y - boxH, width: 2, height: boxH, color: COLOR.accent })
-  let cy = doc.y - SPACE.sm - textStyle.size
-  for (const line of lines as string[]) {
-    doc.page.drawText(line, { x: PAGE.margin + SPACE.sm, y: cy, size: textStyle.size, font: textStyle.font, color: textStyle.color })
-    cy -= textLineHeight(textStyle)
-  }
-  doc.y -= boxH
-  doc.moveDown(SPACE.sm)
-}
+const fmtLongDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })

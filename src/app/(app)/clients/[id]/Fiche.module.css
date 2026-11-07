@@ -1,0 +1,57 @@
+/* @atelier-migrated */
+/* Fiche client : compléments propres à l'écran (maquette clients.js, fiche). */
+.referent {
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 400 15px/20px var(--font-inter);
+}
+
+.referent b {
+  color: var(--at-encre);
+  font-weight: 600;
+}
+
+.followup {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--at-accent) 14%, var(--at-carte));
+  color: var(--at-encre);
+  font: 600 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+}
+
+.followup[data-late='true'] {
+  background: color-mix(in srgb, var(--at-baisse) 12%, var(--at-carte));
+  color: var(--at-danger-texte);
+}
+
+.primary > * {
+  width: 100%;
+}
+
+.card {
+  padding: 20px 16px;
+  border-radius: var(--at-rayon-groupe-liste);
+  background: var(--at-carte);
+}
+
+.label {
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 500 13px/18px var(--font-inter);
+}
+
+.big {
+  margin: 4px 0;
+  color: var(--at-encre);
+  font: 700 34px/41px var(--font-geist);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.sub {
+  margin: 0;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+}

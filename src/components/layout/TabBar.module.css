@@ -1,0 +1,96 @@
+/* @atelier-migrated */
+.tabs {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 40;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 6px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  border-top: 0.5px solid var(--at-trait);
+  background: color-mix(in srgb, var(--at-carte) 72%, transparent);
+  color: var(--at-encre-2);
+  backdrop-filter: blur(24px) saturate(1.8);
+  -webkit-backdrop-filter: blur(24px) saturate(1.8);
+}
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.items {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(max-content, 1fr));
+  align-items: center;
+  min-height: 41px;
+}
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: max-content;
+  min-height: 44px;
+  color: var(--at-encre-2);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 1px;
+  border-radius: var(--at-rayon-controle-petit);
+}
+
+.icon {
+  flex: none;
+  transition: transform var(--at-duree-appui) var(--at-courbe-appui);
+}
+
+.label {
+  display: block;
+  max-width: 100%;
+  color: inherit;
+  font-family: var(--font-inter);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 13px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.active {
+  color: var(--at-accent-texte);
+}
+
+.active .label {
+  color: var(--at-accent-texte-fort);
+}
+
+.active .icon {
+  transform: scale(1.06);
+}
+
+.tab:active .icon {
+  transform: scale(0.94);
+}
+
+@media (min-width: 900px) {
+  .tabs {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon {
+    transition-duration: var(--at-duree-reduit);
+  }
+
+  .active .icon,
+  .tab:active .icon {
+    transform: none;
+  }
+}

@@ -1,8 +1,9 @@
 'use client'
+// @atelier-migrated
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import styles from './activation.module.css'
+import { AuthLinkButton, AuthNotice } from '@/components/auth/AuthParts'
 
 export function ActivationCheckoutStatus({ active }: { active: boolean }) {
   const router = useRouter()
@@ -20,9 +21,14 @@ export function ActivationCheckoutStatus({ active }: { active: boolean }) {
   if (active) return null
 
   return (
-    <div className={`${styles.notice} ${styles.noticeWarm}`}>
+    <AuthNotice tone="warning">
       Activation en cours. Nous vérifions votre abonnement Stripe… Si l’accès n’apparaît pas dans quelques instants, relancez la vérification ou écrivez à contact@orsayn.fr.
-      {attempts >= 8 && <button type="button" onClick={() => router.refresh()} className="ml-2 font-bold underline">Vérifier à nouveau</button>}
-    </div>
+      {attempts >= 8 && (
+        <>
+          {' '}
+          <AuthLinkButton onClick={() => router.refresh()}>Vérifier à nouveau</AuthLinkButton>
+        </>
+      )}
+    </AuthNotice>
   )
 }

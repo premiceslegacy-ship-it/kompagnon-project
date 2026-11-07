@@ -25,6 +25,8 @@ export type NotificationsSummary = {
   missingPointages: number
   completedTasks: number
   newRequests: number
+  /** Demandes de nouveau lien de signature faites par des clients, en attente de l'artisan. */
+  signatureLinkRequests?: number
   decennaleExpiringDays: number | null
   chantiersAtRisk: number
   chantiersHighSubcontract: number
@@ -49,6 +51,7 @@ export const EMPTY_NOTIFICATIONS: NotificationsSummary = {
   missingPointages: 0,
   completedTasks: 0,
   newRequests: 0,
+  signatureLinkRequests: 0,
   decennaleExpiringDays: null,
   chantiersAtRisk: 0,
   chantiersHighSubcontract: 0,
@@ -131,6 +134,7 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     { count: planningToday },
     { count: completedTasks },
     { count: newRequests },
+    { count: signatureLinkRequests },
     { data: orgDecennale },
     { data: todayPlanningDetails },
     { data: todayPointages },
@@ -218,6 +222,14 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       .select('id', { count: 'exact', head: true })
       .eq('organization_id', orgId)
       .in('status', ['new', 'read']),
+    // Un client a demandé un nouveau lien de signature : l'artisan renvoie le devis s'il est d'accord.
+    supabase
+      .from('signature_link_requests')
+      .select('id, quote:quotes!inner(status, is_archived)', { count: 'exact', head: true })
+      .eq('organization_id', orgId)
+      .is('resolved_at', null)
+      .eq('quote.is_archived', false)
+      .in('quote.status', ['sent', 'viewed']),
     supabase
       .from('organizations')
       .select('decennale_enabled, decennale_date_fin, default_labor_cost_per_hour, default_hourly_rate')
@@ -514,6 +526,7 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
   if (canSeeReminders && (recentAutoReminders ?? 0) > 0) sarahAlertLines.push(`${recentAutoReminders} relance${(recentAutoReminders ?? 0) > 1 ? 's automatiques envoyées' : ' automatique envoyée'} récemment.`)
   if (canSeeChantiers && (dueTasks ?? 0) > 0) sarahAlertLines.push(`${dueTasks} tâche${(dueTasks ?? 0) > 1 ? 's chantier' : ' chantier'} à échéance.`)
   if (canSeeChantiers && (completedTasks ?? 0) > 0) sarahAlertLines.push(`${completedTasks} tâche${(completedTasks ?? 0) > 1 ? 's chantier terminées' : ' chantier terminée'} récemment.`)
+  if (canSeeQuotes && (signatureLinkRequests ?? 0) > 0) sarahAlertLines.push(`${signatureLinkRequests} client${(signatureLinkRequests ?? 0) > 1 ? 's demandent' : ' demande'} un nouveau lien de signature.`)
   if (canSeeLeads && (newRequests ?? 0) > 0) sarahAlertLines.push(`${newRequests} demande${(newRequests ?? 0) > 1 ? 's' : ''} de devis à traiter.`)
   if (canSeeChantiers && chantiersAtRisk > 0) sarahAlertLines.push(`${chantiersAtRisk} chantier${chantiersAtRisk > 1 ? 's' : ''} en alerte budget.`)
   if (canSeeChantiers && chantiersHighSubcontract > 0) sarahAlertLines.push(`${chantiersHighSubcontract} chantier${chantiersHighSubcontract > 1 ? 's dépassent' : ' dépasse'} 40 % de coûts en sous-traitance.`)
@@ -534,6 +547,7 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
     missingPointages: canSeeChantiers ? missingPointages : 0,
     completedTasks: canSeeChantiers ? completedTasks ?? 0 : 0,
     newRequests: canSeeLeads ? newRequests ?? 0 : 0,
+    signatureLinkRequests: canSeeQuotes ? signatureLinkRequests ?? 0 : 0,
     decennaleExpiringDays,
     chantiersAtRisk: canSeeChantiers ? chantiersAtRisk : 0,
     chantiersHighSubcontract: canSeeChantiers ? chantiersHighSubcontract : 0,
@@ -556,6 +570,7 @@ export async function getNotificationsSummary(): Promise<NotificationsSummary> {
       summary.planningToday +
       summary.missingPointages +
       summary.newRequests +
+      summary.signatureLinkRequests +
       summary.chantiersAtRisk +
       summary.maintenanceDue +
       summary.maintenanceBillingPending +

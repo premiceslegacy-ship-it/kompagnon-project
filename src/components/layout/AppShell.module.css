@@ -1,0 +1,60 @@
+/* @atelier-migrated */
+.application {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--at-fond);
+  color: var(--at-encre);
+}
+
+.layout {
+  display: grid;
+  flex: 1 0 auto;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.main {
+  min-width: 0;
+  padding-bottom: calc(64px + env(safe-area-inset-bottom));
+}
+
+.mobileCommands {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 16px 0;
+}
+
+.decennale {
+  padding: 10px 24px;
+  background: color-mix(in srgb, var(--at-alerte) 14%, var(--at-carte));
+  color: var(--at-alerte-texte);
+  font-family: var(--font-inter);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+.decennale[data-expired='true'] {
+  background: color-mix(in srgb, var(--at-baisse) 12%, var(--at-carte));
+  color: var(--at-danger-texte);
+}
+
+@media (min-width: 900px) {
+  .layout {
+    grid-template-columns: 248px minmax(0, 1fr);
+    min-height: 100dvh;
+  }
+
+  /* Sur ordinateur, rien ne surmonte la page (pas de barre d'outils) : on laisse respirer le haut. */
+  .main {
+    padding-top: 32px;
+    padding-bottom: 0;
+  }
+
+  .mobileCommands {
+    display: none;
+  }
+}

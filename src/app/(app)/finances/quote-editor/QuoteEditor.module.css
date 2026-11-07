@@ -1,0 +1,482 @@
+/* @atelier-migrated */
+/* Éditeur de devis : compléments propres à l'écran (maquette documents.js, éditeur). */
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 44px;
+  margin: 8px 0 0 -8px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: var(--at-accent-texte);
+  font: 500 17px/22px var(--font-inter);
+  letter-spacing: -0.022em;
+  cursor: pointer;
+}
+
+.back:focus-visible,
+.variantLink:focus-visible,
+.linkButton:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.headerEnd {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.saveState {
+  min-height: 18px;
+  color: var(--at-encre-2);
+  font: 500 13px/18px var(--font-inter);
+}
+
+.saveState[data-state='error'] {
+  color: var(--at-danger-texte);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+/* Variantes */
+.variantBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.variantNav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.variantLink {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--at-remplissage);
+  color: var(--at-encre);
+  text-decoration: none;
+}
+
+.variantLink[aria-disabled='true'] {
+  color: var(--at-encre-3);
+  pointer-events: none;
+}
+
+.variantLabel {
+  min-width: 0;
+  padding: 0 8px;
+  color: var(--at-encre);
+  font: 600 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.variantLabel small {
+  display: block;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+  font-variant-numeric: tabular-nums;
+}
+
+.linkButton {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--at-accent-texte);
+  font: 500 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+  cursor: pointer;
+}
+
+/* Saisie */
+.fields {
+  overflow: hidden;
+  border-radius: var(--at-rayon-groupe-liste);
+  background: var(--at-carte);
+}
+
+.fields > * + * {
+  border-top: 0.5px solid var(--at-trait);
+}
+
+.fieldRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 50px;
+  padding: 0 16px;
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-inter);
+  letter-spacing: -0.022em;
+}
+
+.fieldRow > :last-child {
+  min-width: 0;
+}
+
+.fieldValue {
+  color: var(--at-encre-2);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.hint {
+  margin: 8px 16px 0;
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+}
+
+.hint.up,
+.up {
+  color: var(--at-hausse);
+}
+
+.hint.down,
+.down {
+  color: var(--at-baisse);
+}
+
+.warn {
+  color: var(--at-danger-texte);
+}
+
+.total {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.total small {
+  color: var(--at-encre-2);
+  font: 500 13px/18px var(--font-inter);
+}
+
+.total b {
+  color: var(--at-encre);
+  font-family: var(--font-geist);
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 41px;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.segment {
+  display: flex;
+}
+
+/* `li` relève la spécificité : sans lui, la couleur du titre de ListRow l'emporte selon l'ordre du CSS. */
+li.accentRow,
+li.accentRow * {
+  color: var(--at-accent-texte);
+}
+
+.destructiveRow {
+  list-style: none;
+}
+
+.destructiveRow button {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 16px;
+  border: 0;
+  background: none;
+  color: var(--at-danger-texte);
+  font: 400 17px/22px var(--font-inter);
+  letter-spacing: -0.022em;
+  text-align: center;
+  cursor: pointer;
+}
+
+.destructiveRow button:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: -2px;
+}
+
+.amount {
+  color: var(--at-encre);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.recapTotal {
+  color: var(--at-encre);
+  font: 700 22px/26px var(--font-geist);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.requestText {
+  margin: 0;
+  padding: 12px 16px 14px;
+  color: var(--at-encre);
+  font: 400 15px/21px var(--font-inter);
+  letter-spacing: -0.014em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 140px;
+  padding: 12px 16px;
+  border: 0;
+  background: transparent;
+  color: var(--at-encre);
+  font: 400 17px/24px var(--font-inter);
+  letter-spacing: -0.022em;
+  resize: vertical;
+}
+
+.textarea:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: -2px;
+}
+
+.pickList {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.panel {
+  min-width: 0;
+}
+
+.weightRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 16px;
+}
+
+.weightRow > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--at-encre);
+  font: 400 15px/20px var(--font-inter);
+  overflow-wrap: anywhere;
+}
+
+.weightRow > :last-child {
+  flex: none;
+  width: 88px;
+}
+
+.inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  border: 2px solid var(--at-accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: quote-editor-spin 0.8s linear infinite;
+}
+
+.preparing {
+  position: fixed;
+  z-index: 200;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: color-mix(in srgb, var(--at-fond) 80%, transparent);
+  color: var(--at-encre-2);
+  font: 400 15px/20px var(--font-inter);
+  backdrop-filter: blur(8px);
+}
+
+@keyframes quote-editor-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+.weightInput {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--at-remplissage);
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-geist);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.weightInput:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.fieldItem:not(:first-child) {
+  border-top: 0.5px solid var(--at-trait);
+}
+
+.sectionHead {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notice {
+  margin: 0;
+  padding: 24px 16px;
+  color: var(--at-encre-2);
+  font: 400 15px/21px var(--font-inter);
+  text-align: center;
+}
+
+.areas {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.areaCompact {
+  min-height: 76px;
+}
+
+.suffixInput {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--at-encre-2);
+  font: 400 17px/22px var(--font-inter);
+}
+
+.plainInput {
+  box-sizing: border-box;
+  width: 64px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-geist);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.plainInput:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.dateInput {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-inter);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.dateInput:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.highlight {
+  box-shadow: inset 0 0 0 2px var(--at-accent);
+}
+
+.nextDate {
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+  text-align: right;
+}
+
+/* Bouton « + » rond sur téléphone, bouton plein ailleurs. */
+.createRound {
+  display: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--at-accent);
+  color: var(--at-sur-accent);
+  cursor: pointer;
+}
+
+.createRound:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+@media (max-width: 599px) {
+  .createWide {
+    display: none;
+  }
+
+  .createRound {
+    display: inline-grid;
+  }
+}
+
+.trailStack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}

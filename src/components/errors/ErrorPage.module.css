@@ -1,0 +1,182 @@
+/* @atelier-migrated */
+/* Pages d'erreur (maquette erreurs.js). Les couleurs retombent sur celles du navigateur
+   quand les rôles Atelier ne sont pas chargés (erreur dans le layout racine). */
+.page {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  padding: 48px 16px;
+  color-scheme: light dark;
+  background: var(--at-fond, Canvas);
+  color: var(--at-encre, CanvasText);
+}
+
+.page[data-full='true'] {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+}
+
+.logo {
+  display: block;
+  width: auto;
+  height: 18px;
+  margin: 0 0 40px;
+}
+
+.logoDark {
+  display: none;
+}
+
+:global(html.dark) .logoLight {
+  display: none;
+}
+
+:global(html.dark) .logoDark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :global(html:not(.light):not(.dark)) .logoLight {
+    display: none;
+  }
+
+  :global(html:not(.light):not(.dark)) .logoDark {
+    display: block;
+  }
+}
+
+.symbol {
+  display: block;
+  width: 72px;
+  height: 72px;
+  flex: none;
+  fill: none;
+  stroke: var(--at-encre-2, GrayText);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.accent {
+  stroke: var(--at-accent-texte, AccentColor);
+}
+
+.code {
+  margin: 20px 0 0;
+  color: var(--at-encre-2, GrayText);
+  font: 500 13px/18px var(--font-inter, system-ui, sans-serif);
+  letter-spacing: 0.02em;
+}
+
+.title {
+  margin: 8px 0 0;
+  font: 700 28px/34px var(--font-geist, system-ui, sans-serif);
+  letter-spacing: -0.024em;
+  text-wrap: balance;
+}
+
+.description {
+  max-width: 34ch;
+  margin: 12px 0 0;
+  color: var(--at-encre-2, GrayText);
+  font: 400 17px/24px var(--font-inter, system-ui, sans-serif);
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+}
+
+.extra {
+  width: 100%;
+  margin-top: 24px;
+  text-align: left;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 32px;
+}
+
+.primary {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 50px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: var(--at-rayon-pilule, 999px);
+  background: var(--at-accent, AccentColor);
+  color: var(--at-sur-accent, Canvas);
+  font: 500 17px/22px var(--font-inter, system-ui, sans-serif);
+  letter-spacing: -0.02em;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primary:active {
+  transform: scale(0.97);
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--at-accent-texte, LinkText);
+  font: 500 15px/20px var(--font-inter, system-ui, sans-serif);
+  letter-spacing: -0.014em;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primary:focus-visible,
+.link:focus-visible {
+  outline: 2px solid var(--at-accent-texte, LinkText);
+  outline-offset: 2px;
+}
+
+.reference {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 20px 0 0;
+  color: var(--at-encre-2, GrayText);
+  font: 400 13px/18px var(--font-inter, system-ui, sans-serif);
+}
+
+.reference b {
+  color: var(--at-encre, CanvasText);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.notice {
+  margin: 16px 0 0;
+  color: var(--at-danger-texte, CanvasText);
+  font: 400 15px/20px var(--font-inter, system-ui, sans-serif);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary:active {
+    transform: none;
+  }
+}

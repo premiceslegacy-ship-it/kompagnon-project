@@ -5,14 +5,19 @@ import React, {
 } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
-  Send, Mic, MicOff, X, Eye, ChevronDown,
-  AlertCircle, CheckCircle2, ExternalLink, Zap, ChevronRight, PhoneOff,
+  Send, Mic, MicOff, X, ChevronDown,
+  AlertCircle, CheckCircle2, ExternalLink, Zap, PhoneOff,
   Paperclip, FileText, ImageIcon, AudioLines, Loader2,
 } from 'lucide-react'
 import type { NotificationsSummary } from '@/lib/data/queries/notifications'
 import { useSarahVoice } from './useSarahVoice'
 import type { VoiceLiveState, VoiceLiveError } from './useSarahVoice'
-
+import { Avatar } from '@/components/ui/Avatar'
+import { Button } from '@/components/ui/Button'
+import { StatusPill } from '@/components/ui/StatusPill'
+import { SarahLegacyChrome } from './SarahLegacyChrome'
+import { SarahSheet } from './SarahSheet'
+import styles from './SarahWidget.module.css'
 const UPGRADE_URL = process.env.NEXT_PUBLIC_STRIPE_UPGRADE_URL ?? 'https://orsayn.fr/tarifs'
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -88,23 +93,10 @@ type PersistedSarahAction = {
   created_at: string
 }
 
-// ─── Constantes de layout ─────────────────────────────────────────────────────
-
-const BTN = 52
-const PEEK = 14
-const SNAP_KEY   = 'sarah_snap'
-const HIDDEN_KEY = 'sarah_hidden'
 const ALERTS_SEEN_KEY = 'sarah_alerts_seen_signature'
 const VOICE_HINT_KEY = 'sarah_voice_hint_dismissed'
 
 function isClient() { return typeof window !== 'undefined' }
-
-function defaultSnap(): 'left' | 'right' {
-  if (!isClient()) return 'right'
-  const raw = localStorage.getItem(SNAP_KEY)
-  return raw === 'left' ? 'left' : 'right'
-}
-
 // ─── Labels avec article ──────────────────────────────────────────────────────
 
 const LABELS_WITH_ARTICLE: Record<string, string> = {
@@ -343,7 +335,7 @@ async function executeLegacyAction(action: ActionProposal): Promise<string> {
           created_at: new Date().toISOString(),
         }))
       }
-      return `Le brief a été transmis à Chloé. Ouvrez l'éditeur de devis, elle aura toutes les informations pour démarrer directement.`
+      return `Brief enregistré. Ouvrez l'éditeur de devis, je reprendrai tout depuis là.`
     }
 
     case 'open_url':
@@ -454,8 +446,26 @@ function errorContent(code: SarahErrorCode): { title: string; body: string; upgr
 
 // ─── Composant erreur inline ──────────────────────────────────────────────────
 
-function ErrorBanner({ code }: { code: SarahErrorCode }) {
+function ErrorBanner({ code, presentation = 'legacy' }: { code: SarahErrorCode; presentation?: 'app' | 'legacy' }) {
   const { title, body, upgrade } = errorContent(code)
+  if (presentation === 'app') {
+    return (
+      <div className={styles.errorBanner} role="alert">
+        <div className="flex items-start gap-2">
+          {upgrade ? <Zap size={18} aria-hidden="true" /> : <AlertCircle size={18} aria-hidden="true" />}
+          <div className="min-w-0 flex-1">
+            <p className={styles.errorTitle}>{title}</p>
+            <p className={styles.errorBody}>{body}</p>
+          </div>
+        </div>
+        {upgrade && (
+          <a className={styles.errorLink} href={UPGRADE_URL} target="_blank" rel="noopener noreferrer">
+            Voir les offres <ExternalLink size={14} aria-hidden="true" />
+          </a>
+        )}
+      </div>
+    )
+  }
   return (
     <div className="mx-4 my-2 rounded-2xl p-4 flex flex-col gap-2.5 border"
       style={{
@@ -502,16 +512,18 @@ function SarahAvatar({ size = 40, pulse = false }: { size?: number; pulse?: bool
 
 // ─── Carte d'action ───────────────────────────────────────────────────────────
 
-function ActionCard({ action, onConfirm, onReject }: {
-  action: ActionProposal; onConfirm: () => void; onReject: () => void
+function ActionCard({ action, onConfirm, onReject, presentation }: {
+  action: ActionProposal; onConfirm: () => void; onReject: () => void; presentation: 'app' | 'legacy'
 }) {
-  const cfg = {
-    low:    { border: 'rgba(16,185,129,0.3)',  bg: 'rgba(16,185,129,0.06)',  label: 'Simple',       color: 'rgb(16,185,129)' },
-    medium: { border: 'rgba(249,115,22,0.3)',  bg: 'rgba(249,115,22,0.06)',  label: 'Confirmation', color: 'rgb(249,115,22)' },
-    high:   { border: 'rgba(239,68,68,0.3)',   bg: 'rgba(239,68,68,0.06)',   label: 'Sensible',     color: 'rgb(239,68,68)' },
-  }[action.risk]
-
   if (action.confirmed !== undefined) {
+    if (presentation === 'app') {
+      return (
+        <div className={styles.actionStatus}>
+          {action.confirmed ? <CheckCircle2 size={14} aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
+          <span>{action.confirmed ? action.autoExecuted ? 'Exécuté automatiquement' : 'Effectué' : 'Annulé'}</span>
+        </div>
+      )
+    }
     return (
       <div className="flex items-center gap-1.5 text-xs mt-2 opacity-50">
         {action.confirmed
@@ -520,6 +532,29 @@ function ActionCard({ action, onConfirm, onReject }: {
       </div>
     )
   }
+
+  if (presentation === 'app') {
+    const riskLabel = action.risk === 'low' ? 'Simple' : action.risk === 'medium' ? 'Confirmation' : 'Sensible'
+    return (
+      <div className={styles.actionCard}>
+        <div className={styles.actionHeading}>
+          <span className={styles.actionLabel}>{action.label}</span>
+          <StatusPill status={action.risk === 'low' ? 'success' : action.risk === 'medium' ? 'wait' : 'danger'}>{riskLabel}</StatusPill>
+        </div>
+        <p className={styles.actionDescription}>{action.description}</p>
+        <div className={styles.actionButtons}>
+          <Button variant="text" size="md" className={styles.actionButton} onClick={onReject}>Annuler</Button>
+          <Button variant="secondary" size="md" className={styles.actionButton} onClick={onConfirm}>Confirmer</Button>
+        </div>
+      </div>
+    )
+  }
+
+  const cfg = {
+    low:    { border: 'rgba(16,185,129,0.3)',  bg: 'rgba(16,185,129,0.06)',  label: 'Simple',       color: 'rgb(16,185,129)' },
+    medium: { border: 'rgba(249,115,22,0.3)',  bg: 'rgba(249,115,22,0.06)',  label: 'Confirmation', color: 'rgb(249,115,22)' },
+    high:   { border: 'rgba(239,68,68,0.3)',   bg: 'rgba(239,68,68,0.06)',   label: 'Sensible',     color: 'rgb(239,68,68)' },
+  }[action.risk]
 
   return (
     <div className="mt-3 rounded-xl p-3 flex flex-col gap-3"
@@ -557,10 +592,34 @@ function ActionCard({ action, onConfirm, onReject }: {
 
 // ─── Bulle de message ─────────────────────────────────────────────────────────
 
-function Bubble({ msg, onConfirm, onReject }: {
-  msg: Message; onConfirm: (id: string) => void; onReject: (id: string) => void
+function Bubble({ msg, onConfirm, onReject, presentation }: {
+  msg: Message; onConfirm: (id: string) => void; onReject: (id: string) => void; presentation: 'app' | 'legacy'
 }) {
   const isUser = msg.role === 'user'
+  if (presentation === 'app') {
+    return (
+      <div className={`${styles.messageRow}${isUser ? ` ${styles.userMessageRow}` : ''}`}>
+        {!isUser && <Avatar name="Sarah" size={26} />}
+        <div className={`${styles.messageColumn}${isUser ? ` ${styles.userMessageColumn}` : ''}`}>
+          <div className={`${styles.messageBubble} ${isUser ? styles.userMessageBubble : styles.sarahMessageBubble}`}>
+            <p className={styles.messageText}>{msg.content}</p>
+            {msg.action && (
+              <ActionCard
+                action={msg.action}
+                presentation={presentation}
+                onConfirm={() => onConfirm(msg.id)}
+                onReject={() => onReject(msg.id)}
+              />
+            )}
+          </div>
+          <span className={styles.messageTime}>
+            {msg.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={`flex gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
       {!isUser && <SarahAvatar size={26} />}
@@ -581,7 +640,7 @@ function Bubble({ msg, onConfirm, onReject }: {
           }}>
           <p className="whitespace-pre-wrap">{msg.content}</p>
           {msg.action && (
-            <ActionCard action={msg.action} onConfirm={() => onConfirm(msg.id)} onReject={() => onReject(msg.id)} />
+            <ActionCard action={msg.action} presentation={presentation} onConfirm={() => onConfirm(msg.id)} onReject={() => onReject(msg.id)} />
           )}
         </div>
         <span className="text-[10px] mt-1 opacity-35 px-0.5">
@@ -594,7 +653,17 @@ function Bubble({ msg, onConfirm, onReject }: {
 
 // ─── Typing dots ──────────────────────────────────────────────────────────────
 
-function TypingDots() {
+function TypingDots({ presentation }: { presentation: 'app' | 'legacy' }) {
+  if (presentation === 'app') {
+    return (
+      <div className={styles.messageRow} role="status" aria-label="Sarah rédige une réponse">
+        <Avatar name="Sarah" size={26} />
+        <div className={styles.typingDots}>
+          {[0, 1, 2].map(index => <span key={index} className={styles.typingDot} />)}
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="flex gap-2.5">
       <SarahAvatar size={26} />
@@ -618,19 +687,48 @@ function useDictation(onTranscribed: (text: string) => void) {
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const mountedRef = useRef(true)
   const chunksRef = useRef<Blob[]>([])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      const recorder = recorderRef.current
+      if (recorder) {
+        recorder.ondataavailable = null
+        recorder.onstop = null
+        if (recorder.state !== 'inactive') recorder.stop()
+      }
+      streamRef.current?.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+      recorderRef.current = null
+      chunksRef.current = []
+    }
+  }, [])
+
 
   const start = useCallback(async () => {
     setError(null)
+    let acquiredStream: MediaStream | null = null
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      acquiredStream = stream
+      if (!mountedRef.current) {
+        stream.getTracks().forEach(track => track.stop())
+        return
+      }
+      streamRef.current = stream
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
       chunksRef.current = []
 
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
 
       recorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop())
+        stream.getTracks().forEach(track => track.stop())
+        if (streamRef.current === stream) streamRef.current = null
+        if (recorderRef.current === recorder) recorderRef.current = null
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
         setIsTranscribing(true)
         try {
@@ -651,7 +749,11 @@ function useDictation(onTranscribed: (text: string) => void) {
       recorder.start()
       setIsRecording(true)
     } catch {
-      setError('Accès micro refusé ou non disponible.')
+      acquiredStream?.getTracks().forEach(track => track.stop())
+      if (streamRef.current === acquiredStream) streamRef.current = null
+      recorderRef.current = null
+      chunksRef.current = []
+      if (mountedRef.current) setError('Accès micro refusé ou non disponible.')
     }
   }, [onTranscribed])
 
@@ -690,12 +792,13 @@ function voiceErrorLabel(err: VoiceLiveError): { title: string; body: string; up
   }
 }
 
-function VoiceScreen({ onBack, pageCtx, pathname, userName, send }: {
+function VoiceScreen({ onBack, pageCtx, pathname, userName, send, presentation }: {
   onBack: () => void
   pageCtx: PageContext
   pathname: string
   userName: string | null
   send: (override?: string) => void
+  presentation: 'app' | 'legacy'
 }) {
   const { voiceState, error, isMuted, elapsedSeconds, remainingMinutes, startSession, stopSession, toggleMute } = useSarahVoice({
     pageLabel: pageCtx.label,
@@ -729,6 +832,116 @@ function VoiceScreen({ onBack, pageCtx, pathname, userName, send }: {
     autoStartedRef.current = true
     startSession()
   }, [startSession])
+
+  if (presentation === 'app') {
+    const status = voiceState === 'connecting' ? 'Connexion en cours...'
+      : voiceState === 'listening' ? (isMuted ? 'Micro coupé' : 'Je vous écoute')
+        : voiceState === 'speaking' ? 'Je réponds'
+          : voiceState === 'muted' ? 'Micro coupé'
+            : voiceState === 'disconnecting' ? 'Déconnexion...'
+              : voiceState === 'error' ? 'Connexion interrompue'
+                : 'Appuyez pour parler'
+
+    return (
+      <section className={styles.voiceScreen} aria-label="Conversation vocale">
+        <Avatar name="Sarah" size={88} />
+        <div>
+          <p className={styles.voiceStatus}>
+            {useDictationFallback
+              ? isDictationTranscribing ? 'Transcription en cours...' : isDictationRecording ? 'Je vous écoute' : 'Appuyez pour parler'
+              : status}
+          </p>
+          <p className={styles.voiceDetail}>
+            {useDictationFallback
+              ? 'Sarah vous répond en texte'
+              : isActive && remainingMinutes !== null
+                ? `${formatTimer(elapsedSeconds)} (${remainingMinutes} min restantes)`
+                : isActive
+                  ? formatTimer(elapsedSeconds)
+                  : !error
+                    ? 'Mode conversation en direct'
+                    : ''}
+          </p>
+        </div>
+
+        {!useDictationFallback && (
+          <div className={styles.voiceBars} aria-hidden="true" data-active={isActive && !isMuted}>
+            {[0, 1, 2, 3, 4, 5, 6, 7].map(index => (
+              <span
+                key={index}
+                className={styles.voiceBar}
+                style={{
+                  height: isActive ? undefined : 3,
+                  opacity: isActive && !isMuted ? 1 : 0.2,
+                  animationDelay: `${index * 0.08}s`,
+                }}
+              />
+            ))}
+          </div>
+        )}
+
+        {errInfo && (
+          <div className={styles.voiceError} role="alert">
+            <div className="flex items-start gap-2">
+              <AlertCircle size={18} aria-hidden="true" />
+              <div>
+                <p className={styles.errorTitle}>{errInfo.title}</p>
+                <p className={styles.errorBody}>{errInfo.body}</p>
+              </div>
+            </div>
+            {errInfo.upgrade && (
+              <a className={styles.errorLink} href={UPGRADE_URL} target="_blank" rel="noopener noreferrer">
+                Voir les offres <ExternalLink size={14} aria-hidden="true" />
+              </a>
+            )}
+          </div>
+        )}
+
+        <div className={styles.voiceControls}>
+          {useDictationFallback ? (
+            <Button
+              variant={isDictationRecording ? 'destructive' : 'primary'}
+              size="lg"
+              className={styles.voicePrimary}
+              onClick={isDictationRecording ? stopDictation : startDictation}
+              disabled={isDictationTranscribing}
+              aria-label={isDictationRecording ? 'Arrêter la dictée' : 'Commencer la dictée'}
+            >
+              {isDictationRecording ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
+            </Button>
+          ) : (
+            <>
+              {isActive && (
+                <Button
+                  variant={isMuted ? 'destructive' : 'secondary'}
+                  size="md"
+                  className={styles.voiceSecondary}
+                  onClick={toggleMute}
+                  disabled={isConnecting}
+                  aria-label={isMuted ? 'Réactiver le micro' : 'Couper le micro'}
+                >
+                  {isMuted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
+                </Button>
+              )}
+              <Button
+                variant={isActive ? 'destructive' : 'primary'}
+                size="lg"
+                className={styles.voicePrimary}
+                onClick={isActive ? stopSession : startSession}
+                disabled={isConnecting}
+                aria-label={isActive ? 'Terminer la conversation vocale' : 'Commencer la conversation vocale'}
+              >
+                {isActive ? <PhoneOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
+              </Button>
+            </>
+          )}
+        </div>
+        <Button variant="text" size="md" className={styles.voiceBack} onClick={onBack}>
+          Passer en mode texte
+        </Button>
+      </section>
+    )
+  }
 
   if (useDictationFallback) {
     return (
@@ -887,10 +1100,11 @@ function VoiceScreen({ onBack, pageCtx, pathname, userName, send }: {
   )
 }
 
-// ─── Logique partagée d'un drawer (hook) ──────────────────────────────────────
+// ─── Logique d'une conversation Sarah ──────────────────────────────────────────
 
 function useDrawerLogic({
   pageCtx, pathname, userName, alertCount, alerts, autoBriefOnOpen, highlightedActionId,
+  initialText, initialTextRequest,
 }: {
   pageCtx: PageContext
   pathname: string
@@ -899,9 +1113,11 @@ function useDrawerLogic({
   alerts?: SarahAlerts | null
   autoBriefOnOpen: boolean
   highlightedActionId?: string | null
+  initialText?: string
+  initialTextRequest: number
 }) {
   const [messages, setMessages] = useState<Message[]>([])
-  const [input,    setInput]    = useState('')
+  const [input, setInput] = useState(initialText ?? '')
   const [loading,  setLoading]  = useState(false)
   const [voiceMode, setVoiceMode] = useState(false)
   const [errorCode, setErrorCode] = useState<SarahErrorCode | null>(null)
@@ -915,6 +1131,13 @@ function useDrawerLogic({
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef  = useRef<HTMLTextAreaElement>(null)
+
+  const appliedInitialTextRequestRef = useRef(initialTextRequest)
+  useEffect(() => {
+    if (appliedInitialTextRequestRef.current === initialTextRequest) return
+    appliedInitialTextRequestRef.current = initialTextRequest
+    if (initialText !== undefined) setInput(initialText)
+  }, [initialText, initialTextRequest])
   const autoBriefRef = useRef(autoBriefOnOpen)
   const alertCountRef = useRef(alertCount)
   const alertSignature = buildAlertSignature(alerts, alertCount)
@@ -1065,7 +1288,7 @@ function useDrawerLogic({
 
     if (autoBriefRef.current && alertCountRef.current > 0 && !briefSentRef.current) {
       const timer = setTimeout(() => {
-        if (!briefSentRef.current && !historyRef.current.some(entry => entry.role === 'user')) {
+        if (autoBriefRef.current && !briefSentRef.current && !historyRef.current.some(entry => entry.role === 'user')) {
           briefSentRef.current = true
           sendRaw('brief du jour')
         }
@@ -1104,7 +1327,7 @@ function useDrawerLogic({
 
 function PanelContent({ pageCtx, pathname, userName, loading, errorCode, messages, voiceMode,
   input, setInput, onKey, send, setVoiceMode, onClose, inputRef, bottomRef,
-  confirmAction, rejectAction, attachment, setAttachment, isOwner }: {
+  confirmAction, rejectAction, attachment, setAttachment, isOwner, presentation }: {
   pageCtx: PageContext
   pathname: string
   userName: string | null
@@ -1125,6 +1348,7 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
   attachment: PendingAttachment | null
   setAttachment: (a: PendingAttachment | null) => void
   isOwner?: boolean
+  presentation: 'app' | 'legacy'
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
@@ -1179,14 +1403,199 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
     stop: stopDictation,
   } = useDictation(handleDictationText)
 
-  // Auto-resize de la zone de saisie : la hauteur suit le contenu (jusqu'au
-  // plafond CSS), pour qu'aucune ligne ne soit masquée en haut quand on tape.
-  useEffect(() => {
+  // La hauteur suit le contenu, dans la limite CSS, sans perdre le brouillon.
+  const resizeInput = useCallback(() => {
     const el = inputRef.current
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${el.scrollHeight}px`
-  }, [input, inputRef])
+  }, [inputRef])
+
+  useEffect(resizeInput, [input, resizeInput])
+
+  useEffect(() => {
+    if (presentation !== 'app' || voiceMode) return
+    const el = inputRef.current
+    if (!el) return
+    if (!el.style.height) resizeInput()
+    let previousWidth = el.clientWidth
+    const resizeForWidth = () => {
+      const width = el.clientWidth
+      if (width === previousWidth) return
+      previousWidth = width
+      resizeInput()
+    }
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resizeForWidth)
+    if (observer) observer.observe(el)
+    else window.addEventListener('resize', resizeForWidth)
+    return () => {
+      observer?.disconnect()
+      if (!observer) window.removeEventListener('resize', resizeForWidth)
+    }
+  }, [inputRef, presentation, resizeInput, voiceMode])
+
+  if (presentation === 'app') {
+    return (
+      <div className={styles.appConversation}>
+        {voiceMode ? (
+          <VoiceScreen onBack={() => setVoiceMode(false)} pageCtx={pageCtx} pathname={pathname} userName={userName} send={send} presentation="app" />
+        ) : (
+          <>
+            <header className={styles.appHeader}>
+              <Avatar name="Sarah" size={36} />
+              <div className={styles.appHeaderCopy}>
+                <p className={styles.appHeaderName}>Sarah</p>
+                <span className={styles.appHeaderContext}>
+                  {loading ? 'Réponse en cours' : pageCtx.label}
+                </span>
+              </div>
+              <Button
+                variant="text"
+                size="md"
+                className={styles.iconButton}
+                onClick={() => setVoiceMode(true)}
+                aria-label="Ouvrir le mode vocal"
+                title="Mode vocal"
+              >
+                <Mic aria-hidden="true" />
+              </Button>
+            </header>
+
+            <div className={styles.messages} role="log" aria-label="Conversation avec Sarah" aria-live="polite">
+              {messages.map(message => (
+                <Bubble
+                  key={message.id}
+                  msg={message}
+                  presentation="app"
+                  onConfirm={confirmAction}
+                  onReject={rejectAction}
+                />
+              ))}
+              {loading && <TypingDots presentation="app" />}
+              {errorCode && <ErrorBanner code={errorCode} presentation="app" />}
+              <div ref={bottomRef} />
+            </div>
+
+            {showVoiceHint && (
+              <div className={styles.voiceHint}>
+                <Mic size={16} aria-hidden="true" />
+                <p className={styles.voiceHintText}>
+                  Vous pouvez aussi me parler : appuyez ici pour essayer le mode vocal.
+                </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={styles.voiceHintTry}
+                  onClick={() => dismissVoiceHint(true)}
+                >
+                  Essayer
+                </Button>
+                <Button
+                  variant="text"
+                  size="md"
+                  className={styles.iconButton}
+                  onClick={() => dismissVoiceHint(false)}
+                  aria-label="Masquer le conseil vocal"
+                  title="Masquer"
+                >
+                  <X size={16} aria-hidden="true" />
+                </Button>
+              </div>
+            )}
+
+            <div className={styles.quickSuggestions} role="group" aria-label="Suggestions rapides">
+              {['Brief du jour', 'Mes factures impayées', 'Planning aujourd’hui', 'Créer un devis'].map(suggestion => (
+                <Button
+                  key={suggestion}
+                  variant="secondary"
+                  size="sm"
+                  className={styles.suggestionButton}
+                  onClick={() => send(suggestion)}
+                  disabled={loading}
+                >
+                  {suggestion}
+                </Button>
+              ))}
+            </div>
+
+            <div className={styles.composer}>
+              {attachmentError && <p className={styles.composerError} role="alert">{attachmentError}</p>}
+              {dictationError && <p className={styles.composerError} role="alert">{dictationError}</p>}
+              {attachment && (
+                <div className={styles.attachment}>
+                  {attachment.mimeType === 'application/pdf'
+                    ? <FileText size={18} aria-hidden="true" />
+                    : attachment.dataUrl.startsWith('data:image')
+                      ? <img src={attachment.dataUrl} alt="" className={styles.attachmentPreview} />
+                      : <ImageIcon size={18} aria-hidden="true" />}
+                  <span className={styles.attachmentName}>{attachment.name}</span>
+                  <Button
+                    variant="text"
+                    size="md"
+                    className={styles.iconButton}
+                    onClick={() => setAttachment(null)}
+                    aria-label="Retirer la pièce jointe"
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </Button>
+                </div>
+              )}
+              <div className={styles.composerSurface}>
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={event => setInput(event.target.value)}
+                  onKeyDown={onKey}
+                  placeholder="Posez votre question ou donnez une instruction"
+                  rows={1}
+                  disabled={loading}
+                  className={styles.composerInput}
+                  aria-label="Votre demande"
+                />
+                <div className={styles.composerActions}>
+                  <input ref={fileInputRef} type="file" accept={ATTACHMENT_ACCEPT} className="hidden" onChange={onPickFile} />
+                  <Button
+                    variant="text"
+                    size="md"
+                    className={styles.iconButton}
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={loading}
+                    aria-label="Joindre une image ou un PDF"
+                    title="Joindre une image ou un PDF"
+                  >
+                    <Paperclip size={18} aria-hidden="true" />
+                  </Button>
+                  <Button
+                    variant={isRecordingDictation ? 'destructive' : 'text'}
+                    size="md"
+                    className={styles.iconButton}
+                    onClick={isRecordingDictation ? stopDictation : startDictation}
+                    disabled={loading || isTranscribingDictation}
+                    aria-label={isRecordingDictation ? 'Arrêter la dictée' : 'Dicter un message'}
+                    title={isRecordingDictation ? 'Arrêter la dictée' : 'Dicter un message'}
+                  >
+                    {isTranscribingDictation ? <Loader2 size={18} aria-hidden="true" /> : <AudioLines size={18} aria-hidden="true" />}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="md"
+                    className={styles.sendButton}
+                    onClick={() => send()}
+                    disabled={(!input.trim() && !attachment) || loading}
+                    aria-label="Envoyer"
+                  >
+                    <Send size={18} aria-hidden="true" />
+                  </Button>
+                </div>
+              </div>
+              <p className={styles.keyboardHint}>Entrée pour envoyer · Maj+Entrée pour un saut de ligne</p>
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
 
   return (
     <>
@@ -1218,15 +1627,15 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
       </div>
 
       {voiceMode ? (
-        <VoiceScreen onBack={() => setVoiceMode(false)} pageCtx={pageCtx} pathname={pathname} userName={userName} send={send} />
+        <VoiceScreen onBack={() => setVoiceMode(false)} pageCtx={pageCtx} pathname={pathname} userName={userName} send={send} presentation="legacy" />
       ) : (
         <>
           {/* Messages */}
           <div className="flex-1 overflow-y-auto py-4 space-y-4 min-h-0" style={{ paddingLeft: 16, paddingRight: 16 }}>
             {messages.map(m => (
-              <Bubble key={m.id} msg={m} onConfirm={confirmAction} onReject={rejectAction} />
+              <Bubble key={m.id} msg={m} onConfirm={confirmAction} onReject={rejectAction} presentation="legacy" />
             ))}
-            {loading && <TypingDots />}
+            {loading && <TypingDots presentation="legacy" />}
             {errorCode && <ErrorBanner code={errorCode} />}
             <div ref={bottomRef} />
           </div>
@@ -1339,77 +1748,67 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
   )
 }
 
-// ─── Drawer mobile ────────────────────────────────────────────────────────────
 
-function SarahDrawerMobile({ onClose, pathname, pageCtx, userName, alertCount, alerts, autoBriefOnOpen, highlightedActionId, isOwner }: {
-  onClose: () => void; pathname: string; pageCtx: PageContext
-  userName: string | null; alertCount: number; alerts?: SarahAlerts | null; autoBriefOnOpen: boolean; highlightedActionId?: string | null
-  isOwner?: boolean
-}) {
-  const logic = useDrawerLogic({ pageCtx, pathname, userName, alertCount, alerts, autoBriefOnOpen, highlightedActionId })
-  const panelStyle: React.CSSProperties = {
-    background: 'var(--sarah-panel-bg)',
-    backdropFilter: 'blur(var(--sarah-panel-blur, 0px)) saturate(1.4)',
-    WebkitBackdropFilter: 'blur(var(--sarah-panel-blur, 0px)) saturate(1.4)',
-    border: '1px solid var(--sarah-panel-border)',
-    boxShadow: 'var(--sarah-panel-shadow)',
-    color: 'rgb(var(--text-primary))',
-  }
-  return (
-    <>
-      <div className="fixed inset-0 z-[9998]" onClick={onClose} style={{ background: 'rgba(0,0,0,0.4)' }} />
-      <div className="fixed inset-x-0 bottom-0 z-[9999] flex flex-col overflow-hidden"
-        style={{ ...panelStyle, height: '88dvh', borderRadius: '22px 22px 0 0', borderBottom: 'none' }}>
-        <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
-          <div className="w-9 h-1 rounded-full" style={{ background: 'rgba(128,128,128,0.3)' }} />
-        </div>
-        <PanelContent pageCtx={pageCtx} pathname={pathname} userName={userName} onClose={onClose} isOwner={isOwner} {...logic} />
-      </div>
-    </>
-  )
+type SarahConversationProps = {
+  pageCtx: PageContext
+  pathname: string
+  userName: string | null
+  alertCount: number
+  alerts?: SarahAlerts | null
+  autoBriefOnOpen: boolean
+  highlightedActionId?: string | null
+  initialText?: string
+  initialTextRequest: number
+  isOwner: boolean
+  presentation: 'app' | 'legacy'
+  onClose: () => void
+  onVoiceModeChange?: (voiceMode: boolean) => void
 }
 
-// ─── Drawer desktop ───────────────────────────────────────────────────────────
+function SarahConversation({
+  pageCtx,
+  pathname,
+  userName,
+  alertCount,
+  alerts,
+  autoBriefOnOpen,
+  highlightedActionId,
+  initialText,
+  initialTextRequest,
+  isOwner,
+  presentation,
+  onClose,
+  onVoiceModeChange,
+}: SarahConversationProps) {
+  const logic = useDrawerLogic({
+    pageCtx,
+    pathname,
+    userName,
+    alertCount,
+    alerts,
+    autoBriefOnOpen,
+    highlightedActionId,
+    initialText,
+    initialTextRequest,
+  })
 
-function SarahDrawerDesktop({ onClose, pathname, pageCtx, userName, snap, alertCount, alerts, autoBriefOnOpen, highlightedActionId, buttonPos, isOwner }: {
-  onClose: () => void; pathname: string; pageCtx: PageContext
-  userName: string | null; snap: 'left' | 'right'; alertCount: number; alerts?: SarahAlerts | null; autoBriefOnOpen: boolean;
-  highlightedActionId?: string | null;
-  buttonPos: { x: number; y: number } | null
-  isOwner?: boolean
-}) {
-  const logic = useDrawerLogic({ pageCtx, pathname, userName, alertCount, alerts, autoBriefOnOpen, highlightedActionId })
-  const isVoice = logic.voiceMode
-  const PANEL_W = isVoice ? 460 : 400
-  const PANEL_H = isVoice ? Math.min(700, window.innerHeight - 80) : Math.min(620, window.innerHeight - 80)
-  
-  const isRightHalf = buttonPos
-    ? (buttonPos.x + BTN / 2 > window.innerWidth / 2)
-    : (snap === 'right')
+  useEffect(() => {
+    if (presentation === 'legacy') onVoiceModeChange?.(logic.voiceMode)
+  }, [logic.voiceMode, onVoiceModeChange, presentation])
 
-  const panelStyle: React.CSSProperties = {
-    background: 'var(--sarah-panel-bg)',
-    backdropFilter: 'blur(var(--sarah-panel-blur, 0px)) saturate(1.4)',
-    WebkitBackdropFilter: 'blur(var(--sarah-panel-blur, 0px)) saturate(1.4)',
-    border: '1px solid var(--sarah-panel-border)',
-    boxShadow: 'var(--sarah-panel-shadow)',
-    color: 'rgb(var(--text-primary))',
-    transition: 'width 0.35s cubic-bezier(0.34,1.56,0.64,1), height 0.35s cubic-bezier(0.34,1.56,0.64,1), right 0.35s ease, left 0.35s ease',
-    width: PANEL_W,
-    height: PANEL_H,
-    bottom: 20,
-    ...(isRightHalf
-      ? { right: buttonPos ? (window.innerWidth - buttonPos.x + 12) : (BTN + 12) }
-      : { left: buttonPos ? (buttonPos.x + BTN + 12) : (BTN + 12) }
-    ),
-    borderRadius: 22,
-  }
-  return (
-    <div className="fixed z-[9999] flex flex-col overflow-hidden"
-      style={panelStyle}>
-      <PanelContent pageCtx={pageCtx} pathname={pathname} userName={userName} onClose={onClose} isOwner={isOwner} {...logic} />
-    </div>
+  const panel = (
+    <PanelContent
+      pageCtx={pageCtx}
+      pathname={pathname}
+      userName={userName}
+      onClose={onClose}
+      isOwner={isOwner}
+      presentation={presentation}
+      {...logic}
+    />
   )
+
+  return panel
 }
 
 // ─── Widget principal ─────────────────────────────────────────────────────────
@@ -1422,314 +1821,144 @@ export function SarahWidget({ userName, alertCount = 0, alerts = null, isOwner =
 }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const queryString = searchParams.toString()
+  const fullPath = queryString ? `${pathname}?${queryString}` : pathname
   const highlightedActionId = searchParams.get('sarahActionId')
-  const [isOpen,         setIsOpen]         = useState(false)
-  const [isHidden,       setIsHidden]       = useState(false)
-  const [snap,           setSnap]           = useState<'left' | 'right'>('right')
-  const [peekOut,        setPeekOut]        = useState(true)
-  const [pageCtx,        setPageCtx]        = useState<PageContext>({ label: 'Atelier', context: null })
-  const [isMobile,       setIsMobile]       = useState(false)
-  const [isDragging,     setIsDragging]     = useState(false)
-  // true si l'ouverture vient du badge (déclenche le brief auto)
-  const [autoBrief,      setAutoBrief]      = useState(false)
-  // signature du paquet d'alertes déjà consulté dans cette session
+  const isLegacy = pathname === '/orsayn' || pathname.startsWith('/orsayn/')
+  const [isOpen, setIsOpen] = useState(false)
+  const [pageCtx, setPageCtx] = useState<PageContext>({ label: 'Atelier', context: null })
+  const [autoBrief, setAutoBrief] = useState(false)
   const [viewedAlertSignature, setViewedAlertSignature] = useState<string | null>(null)
-
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
-
-  const dragging  = useRef(false)
-  const hasMoved  = useRef(false)
-  const dragOffset = useRef({ x: 0, y: 0 })
-  const currentPos = useRef<{ x: number; y: number } | null>(null)
-  const btnRef    = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    setSnap(defaultSnap())
-    setIsHidden(localStorage.getItem(HIDDEN_KEY) === 'true')
-    setViewedAlertSignature(localStorage.getItem(ALERTS_SEEN_KEY))
-    setIsMobile(window.innerWidth < 640)
-    const onResize = () => setIsMobile(window.innerWidth < 640)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-
-  // Charge la position depuis localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('sarah_pos')
-    if (saved) {
-      try {
-        const { x, y } = JSON.parse(saved)
-        const safeX = Math.max(8, Math.min(x, window.innerWidth - BTN - 8))
-        const safeY = Math.max(8, Math.min(y, window.innerHeight - BTN - 8))
-        setPos({ x: safeX, y: safeY })
-        currentPos.current = { x: safeX, y: safeY }
-      } catch (e) {}
-    }
-  }, [])
-
-  // Réajuste les coordonnées en cas de redimensionnement de la fenêtre
-  useEffect(() => {
-    const handleResize = () => {
-      setPos(current => {
-        if (!current) return null
-        const safeX = Math.max(8, Math.min(current.x, window.innerWidth - BTN - 8))
-        const safeY = Math.max(8, Math.min(current.y, window.innerHeight - BTN - 8))
-        currentPos.current = { x: safeX, y: safeY }
-        return { x: safeX, y: safeY }
-      })
-    }
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [])
-
-  useEffect(() => {
-    let dead = false
-    // On transmet aussi la query string de la page (ex: ?id=... sur l'éditeur
-    // de devis/facture) : usePathname() seul ne la contient jamais, et ces
-    // éditeurs identifient leur document par un paramètre de requête, pas un
-    // segment de chemin.
-    const query = searchParams.toString()
-    const fullPath = query ? `${pathname}?${query}` : pathname
-    fetch(`/api/sarah/page-context?pathname=${encodeURIComponent(fullPath)}`)
-      .then(r => r.json())
-      .then((c: PageContext) => { if (!dead) setPageCtx(c) })
-      .catch(() => {})
-    return () => { dead = true }
-  }, [pathname, searchParams])
-
-  useEffect(() => {
-    if (!highlightedActionId) return
-    setIsHidden(false)
-    localStorage.setItem(HIDDEN_KEY, 'false')
-    setAutoBrief(false)
-    setIsOpen(true)
-    setPeekOut(true)
-  }, [highlightedActionId])
-
-  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect()
-      dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
-      dragging.current = true
-      setIsDragging(true)
-      hasMoved.current = false
-      e.preventDefault()
-    }
-  }, [])
-
-  useEffect(() => {
-    function onMove(e: PointerEvent) {
-      if (!dragging.current) return
-      hasMoved.current = true
-      const x = e.clientX - dragOffset.current.x
-      const y = e.clientY - dragOffset.current.y
-      
-      const safeX = Math.max(8, Math.min(x, window.innerWidth - BTN - 8))
-      const safeY = Math.max(8, Math.min(y, window.innerHeight - BTN - 8))
-      
-      currentPos.current = { x: safeX, y: safeY }
-      setPos({ x: safeX, y: safeY })
-      
-      const newSnap: 'left' | 'right' = safeX + BTN / 2 < window.innerWidth / 2 ? 'left' : 'right'
-      setSnap(newSnap)
-    }
-    
-    function onUp() {
-      if (!dragging.current) return
-      dragging.current = false
-      setIsDragging(false)
-      if (hasMoved.current && currentPos.current) {
-        localStorage.setItem('sarah_pos', JSON.stringify(currentPos.current))
-        const newSnap: 'left' | 'right' = currentPos.current.x + BTN / 2 < window.innerWidth / 2 ? 'left' : 'right'
-        localStorage.setItem(SNAP_KEY, newSnap)
-      }
-    }
-    
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-  }, [])
+  const [legacyVoiceMode, setLegacyVoiceMode] = useState(false)
+  const [openRequest, setOpenRequest] = useState<{ id: number; initialText?: string }>({ id: 0 })
+  const openRequestIdRef = useRef(0)
 
   const alertSignature = buildAlertSignature(alerts, alertCount)
   const markAlertsViewed = useCallback(() => {
-    if (alertCount > 0) {
-      setViewedAlertSignature(alertSignature)
-      localStorage.setItem(ALERTS_SEEN_KEY, alertSignature)
-    }
+    if (alertCount <= 0) return
+    setViewedAlertSignature(alertSignature)
+    if (typeof window !== 'undefined') localStorage.setItem(ALERTS_SEEN_KEY, alertSignature)
   }, [alertCount, alertSignature])
+
+  const clearInitialText = useCallback(() => {
+    setOpenRequest({ id: ++openRequestIdRef.current })
+  }, [])
 
   const openNormal = useCallback(() => {
     setAutoBrief(false)
+    clearInitialText()
     markAlertsViewed()
     setIsOpen(true)
-    setPeekOut(true)
-  }, [markAlertsViewed])
+  }, [clearInitialText, markAlertsViewed])
+
   const openWithBrief = useCallback(() => {
     setAutoBrief(true)
+    clearInitialText()
     markAlertsViewed()
     setIsOpen(true)
-    setPeekOut(true)
-  }, [markAlertsViewed])
+  }, [clearInitialText, markAlertsViewed])
 
-  const ctxValue: SarahCtxValue = { open: openNormal, close: () => setIsOpen(false), isOpen }
+  const close = useCallback(() => {
+    setIsOpen(false)
+    setAutoBrief(false)
+    setLegacyVoiceMode(false)
+  }, [])
 
-  if (isHidden) {
-    return (
-      <SarahCtx.Provider value={ctxValue}>
-        <button
-          onClick={() => { setIsHidden(false); localStorage.setItem(HIDDEN_KEY, 'false') }}
-          className="fixed bottom-4 right-4 z-[9970] flex items-center gap-1.5 px-3 py-1.5 rounded-pill text-xs transition-all opacity-30 hover:opacity-80"
-          style={{ background: 'var(--sarah-panel-bg)', border: '1px solid var(--sarah-panel-border)' }}>
-          <Eye size={11} /> Sarah
-        </button>
-      </SarahCtx.Provider>
-    )
-  }
+  const ctxValue: SarahCtxValue = { open: openNormal, close, isOpen }
 
-  const btnOffset = peekOut ? 0 : -(BTN - PEEK)
-  // z-index sous les modals de l'app (.modal-overlay = 9980) : la bulle fermée
-  // ne doit jamais recouvrir les boutons d'action d'un modal, surtout sur mobile.
-  // bottom: 84 sur mobile pour flotter au-dessus de la BottomNav (64px + safe-area).
-  const btnStyle: React.CSSProperties = isMobile ? {
-    position: 'fixed', bottom: 84, right: 16, zIndex: 9970, width: BTN, height: BTN,
-  } : {
-    position: 'fixed',
-    zIndex: 9970,
-    width: BTN,
-    height: BTN,
-    transition: isDragging
-      ? 'none'
-      : 'right 0.32s cubic-bezier(0.34,1.56,0.64,1), left 0.32s cubic-bezier(0.34,1.56,0.64,1), top 0.32s cubic-bezier(0.34,1.56,0.64,1), bottom 0.32s cubic-bezier(0.34,1.56,0.64,1)',
-    touchAction: 'none',
-    ...(pos
-      ? { left: pos.x, top: pos.y }
-      : {
-          bottom: 20,
-          ...(snap === 'right' ? { right: btnOffset } : { left: btnOffset }),
-        }
-    ),
-  }
+  useEffect(() => {
+    if (isLegacy) setViewedAlertSignature(localStorage.getItem(ALERTS_SEEN_KEY))
+  }, [isLegacy])
+
+  useEffect(() => {
+    let dead = false
+    fetch(`/api/sarah/page-context?pathname=${encodeURIComponent(fullPath)}`)
+      .then(response => response.json())
+      .then((context: PageContext) => { if (!dead) setPageCtx(context) })
+      .catch(() => {})
+    return () => { dead = true }
+  }, [fullPath])
+
+  useEffect(() => {
+    if (!highlightedActionId) return
+    setAutoBrief(false)
+    clearInitialText()
+    setIsOpen(true)
+  }, [clearInitialText, highlightedActionId])
+
+  useEffect(() => {
+    if (isLegacy) return
+    function onSarahOpen(event: Event) {
+      const detail = event instanceof CustomEvent
+        ? event.detail as { initialText?: unknown } | undefined
+        : undefined
+      const initialText = typeof detail?.initialText === 'string' ? detail.initialText : undefined
+      setOpenRequest({
+        id: ++openRequestIdRef.current,
+        ...(initialText !== undefined ? { initialText } : {}),
+      })
+      setAutoBrief(false)
+      markAlertsViewed()
+      setIsOpen(true)
+    }
+    window.addEventListener('sarah-open', onSarahOpen)
+    return () => window.removeEventListener('sarah-open', onSarahOpen)
+  }, [isLegacy, markAlertsViewed])
 
   const showBadge = alertCount > 0 && !isOpen && viewedAlertSignature !== alertSignature
 
   return (
     <SarahCtx.Provider value={ctxValue}>
-      {isOpen && isMobile && (
-        <SarahDrawerMobile onClose={() => setIsOpen(false)} pathname={pathname}
-          pageCtx={pageCtx} userName={userName} alertCount={alertCount} alerts={alerts} autoBriefOnOpen={autoBrief}
-          highlightedActionId={highlightedActionId} isOwner={isOwner} />
+      {isLegacy ? (
+        <SarahLegacyChrome
+          Avatar={SarahAvatar}
+          open={isOpen}
+          onOpen={openNormal}
+          onOpenWithBrief={openWithBrief}
+          onClose={close}
+          alertCount={alertCount}
+          showBadge={showBadge}
+          voiceMode={legacyVoiceMode}
+          highlightedActionId={highlightedActionId}
+        >
+          {isOpen ? (
+            <SarahConversation
+              pageCtx={pageCtx}
+              pathname={pathname}
+              userName={userName}
+              alertCount={alertCount}
+              alerts={alerts}
+              autoBriefOnOpen={autoBrief}
+              highlightedActionId={highlightedActionId}
+              initialText={openRequest.initialText}
+              initialTextRequest={openRequest.id}
+              isOwner={isOwner}
+              presentation="legacy"
+              onClose={close}
+              onVoiceModeChange={setLegacyVoiceMode}
+            />
+          ) : null}
+        </SarahLegacyChrome>
+      ) : (
+        <SarahSheet open={isOpen} onOpenChange={nextOpen => { if (!nextOpen) close() }}>
+          {isOpen ? (
+            <SarahConversation
+              pageCtx={pageCtx}
+              pathname={pathname}
+              userName={userName}
+              alertCount={alertCount}
+              alerts={alerts}
+              autoBriefOnOpen={autoBrief}
+              highlightedActionId={highlightedActionId}
+              initialText={openRequest.initialText}
+              initialTextRequest={openRequest.id}
+              isOwner={isOwner}
+              presentation="app"
+              onClose={close}
+            />
+          ) : null}
+        </SarahSheet>
       )}
-      {isOpen && !isMobile && (
-        <SarahDrawerDesktop onClose={() => setIsOpen(false)} pathname={pathname}
-          pageCtx={pageCtx} userName={userName} snap={snap} alertCount={alertCount} alerts={alerts} autoBriefOnOpen={autoBrief}
-          highlightedActionId={highlightedActionId} buttonPos={pos} isOwner={isOwner} />
-      )}
-
-      {/* Bouton flottant */}
-      <div ref={btnRef} style={btnStyle} onPointerDown={isMobile ? undefined : onPointerDown}>
-
-        {/* Oreillette quand caché */}
-        {!isMobile && !peekOut && (
-          <button
-            className="absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded-full transition-all hover:scale-110 active:scale-95"
-            style={{
-              width: 22, height: 22,
-              background: 'linear-gradient(to bottom, #ffb84d, rgb(255,159,28))',
-              border: '1px solid rgba(255,255,255,0.15)',
-              boxShadow: 'inset 0 1.5px 0 rgba(255,255,255,0.45), 0 2px 0 0 #b45309, 0 2px 0 1px rgba(120,53,15,0.12), 0 4px 8px rgba(0,0,0,0.2)',
-              ...(snap === 'right' ? { left: -28 } : { right: -28 }),
-            }}
-            onClick={() => setPeekOut(true)} title="Afficher Sarah">
-            <ChevronRight size={12} color="#000"
-              style={{ transform: snap === 'right' ? 'none' : 'rotate(180deg)', filter: 'drop-shadow(0px 1px 0px rgba(255,255,255,0.24))' }} />
-          </button>
-        )}
-
-        {/* Bouton masquer */}
-        {!isMobile && (
-          <button data-sarah-hide
-            onClick={() => { setIsHidden(true); setIsOpen(false); localStorage.setItem(HIDDEN_KEY, 'true') }}
-            className="sarah-hide-btn absolute -top-1 z-10 w-4 h-4 rounded-full flex items-center justify-center"
-            style={{
-              background: 'var(--sarah-util-btn-bg)',
-              border: '1px solid var(--sarah-util-btn-border)',
-              boxShadow: 'var(--sarah-util-btn-shadow)',
-              ...(snap === 'right' ? { left: -1 } : { right: -1 }),
-            }} title="Masquer">
-            <X size={8} style={{ opacity: 0.55, filter: 'var(--sarah-icon-filter)' }} />
-          </button>
-        )}
-
-        {/* Bouton rentrer sur le bord */}
-        {!isMobile && peekOut && (
-          <button
-            className="sarah-hide-edge absolute z-10 w-4 h-4 rounded-full flex items-center justify-center"
-            style={{
-              background: 'var(--sarah-util-btn-bg)',
-              border: '1px solid var(--sarah-util-btn-border)',
-              boxShadow: 'var(--sarah-util-btn-shadow)',
-              bottom: -1, ...(snap === 'right' ? { left: -1 } : { right: -1 }),
-            }}
-            onClick={(e) => {
-              e.stopPropagation()
-              setPeekOut(false)
-              setIsOpen(false)
-              setPos(null)
-              localStorage.removeItem('sarah_pos')
-            }}
-            title="Réduire sur le bord">
-            <ChevronRight size={8} style={{ opacity: 0.55, transform: snap === 'right' ? 'none' : 'rotate(180deg)', filter: 'var(--sarah-icon-filter)' }} />
-          </button>
-        )}
-
-        {/* Bouton principal */}
-        <button
-          onClick={() => {
-            if (isMobile) {
-              setIsOpen(v => {
-                if (!v) {
-                  setAutoBrief(false)
-                  markAlertsViewed()
-                }
-                return !v
-              })
-              return
-            }
-            if (hasMoved.current) return
-            if (!peekOut) { setPeekOut(true); return }
-            setIsOpen(v => {
-              if (!v) {
-                setAutoBrief(false)
-                markAlertsViewed()
-              }
-              return !v
-            })
-          }}
-          aria-label={isOpen ? 'Fermer Sarah' : 'Ouvrir Sarah'}
-          className="w-full h-full rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
-          style={{
-            cursor: isMobile ? 'pointer' : 'grab',
-            boxShadow: isOpen
-              ? 'inset 0 1.5px 0 rgba(255,255,255,0.25), 0 0 0 3px rgb(255,159,28), 0 4px 0 0 rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35)'
-              : 'inset 0 1.5px 0 rgba(255,255,255,0.25), 0 4px 0 0 rgba(0,0,0,0.3), 0 4px 0 1px rgba(0,0,0,0.1), 0 8px 20px rgba(0,0,0,0.25), 0 0 0 2px rgba(255,159,28,0.45)',
-          }}>
-          <SarahAvatar size={BTN} />
-        </button>
-
-        {/* Badge d'alerte — ouvre Sarah sur les alertes détaillées */}
-        {showBadge && (
-          <button
-            onClick={(e) => { e.stopPropagation(); openWithBrief() }}
-            className="absolute -top-1 -right-1 z-20 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center text-[10px] font-bold text-white transition-transform hover:scale-110 active:scale-95"
-            style={{ background: 'rgb(var(--danger))', boxShadow: '0 1px 4px rgba(0,0,0,0.3)' }}>
-            {alertCount > 9 ? '9+' : alertCount}
-          </button>
-        )}
-      </div>
-
     </SarahCtx.Provider>
   )
 }

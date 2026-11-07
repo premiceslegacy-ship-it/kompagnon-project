@@ -1,0 +1,383 @@
+/* @atelier-migrated */
+.sidebarCommands,
+.mobileCommands {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sidebarCommands {
+  flex-wrap: wrap;
+}
+
+.mobileCommands {
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.searchTrigger,
+.notificationTrigger,
+.iconTrigger,
+.profileTrigger {
+  position: relative;
+  box-sizing: border-box;
+  min-height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--at-encre);
+  font-family: var(--font-inter);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: -0.014em;
+  cursor: pointer;
+  transition: background-color var(--at-duree-couleur) var(--at-courbe-couleur), transform var(--at-duree-appui) var(--at-courbe-appui);
+}
+
+.searchTrigger:focus-visible,
+.notificationTrigger:focus-visible,
+.iconTrigger:focus-visible,
+.profileTrigger:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.searchTrigger:hover,
+.notificationTrigger:hover,
+.iconTrigger:hover,
+.profileTrigger:hover {
+  background: var(--at-remplissage);
+}
+
+.searchTrigger:active,
+.notificationTrigger:active,
+.iconTrigger:active,
+.profileTrigger:active {
+  transform: scale(0.97);
+}
+
+.searchTrigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0 12px;
+  color: var(--at-encre-2);
+  text-align: left;
+}
+
+.searchTrigger span {
+  flex: 1;
+}
+
+.searchTrigger kbd {
+  padding: 2px 6px;
+  border: 0.5px solid var(--at-trait);
+  border-radius: 6px;
+  color: var(--at-encre-2);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.createTrigger {
+  min-width: 44px;
+}
+
+.createTrigger > span,
+.notificationTrigger > span {
+  white-space: nowrap;
+}
+
+.notificationTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 10px;
+}
+
+.iconTrigger {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  color: var(--at-encre-2);
+}
+
+.badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  padding-inline: 4px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--at-alerte);
+  color: var(--at-sur-accent);
+  font-family: var(--font-inter);
+  font-size: var(--at-taille-legende-2);
+  font-weight: 700;
+  line-height: var(--at-interligne-legende-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.profileTrigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.profileDetails {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.profileName {
+  color: var(--at-encre);
+  font-weight: 600;
+}
+
+.profileOrganization {
+  color: var(--at-encre-2);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+}
+
+.sidebarCommands .profileDetails {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.sidebarCommands .profileName,
+.sidebarCommands .profileOrganization {
+  color: var(--at-encre-2);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.menuContent {
+  display: block;
+  width: min(420px, calc(100vw - 16px));
+  min-width: min(300px, calc(100vw - 16px));
+  padding: 8px;
+}
+
+.menuGroup {
+  margin-block-start: 0;
+}
+
+.sheetBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.searchBody {
+  padding-block-start: 4px;
+}
+
+.searchResults {
+  margin-block-start: 12px;
+}
+
+
+.searchIcon {
+  color: var(--at-accent-texte);
+}
+
+.searchEmpty,
+.notificationEmpty {
+  margin-block-start: 12px;
+}
+
+.pendingIcon {
+  flex: none;
+  color: var(--at-accent-texte);
+  animation: command-spin 0.8s linear infinite;
+}
+
+.notificationIcon {
+  flex: none;
+  color: var(--at-encre-2);
+}
+
+.notificationDot {
+  display: block;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-inline: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.toneDanger {
+  color: var(--at-baisse);
+}
+
+.toneWarning {
+  color: var(--at-alerte-texte);
+}
+
+.toneAccent {
+  color: var(--at-accent-texte);
+}
+
+.tonePositive {
+  color: var(--at-hausse);
+}
+
+.toneBlue {
+  color: var(--at-s2);
+}
+
+.toneViolet {
+  color: var(--at-s4);
+}
+
+.pushButton {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.pushStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  color: var(--at-encre-2);
+  font-family: var(--font-inter);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+@keyframes command-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (min-width: 900px) {
+  .mobileCommands {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .searchTrigger,
+  .notificationTrigger,
+  .iconTrigger,
+  .profileTrigger {
+    transition: none;
+  }
+
+  .searchTrigger:active,
+  .notificationTrigger:active,
+  .iconTrigger:active,
+  .profileTrigger:active {
+    transform: none;
+  }
+
+  .pendingIcon {
+    animation: none;
+  }
+}
+
+.menuOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 69;
+  background: transparent;
+}
+
+.menuContent {
+  position: fixed;
+}
+
+/* Feuille Créer sur téléphone : quatre tuiles, comme la maquette. */
+.createTiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.createTile {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 22px;
+  width: 100%;
+  min-height: 104px;
+  padding: 14px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--at-carte);
+  color: var(--at-encre);
+  font: 600 15px/20px var(--font-inter);
+  letter-spacing: -0.014em;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--at-duree-appui) var(--at-courbe-appui);
+}
+
+.createTile:active {
+  transform: scale(0.97);
+}
+
+.createTile:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.createTileIcon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  color: var(--at-accent-texte);
+}
+
+.createTileText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.createTileText small {
+  color: var(--at-encre-2);
+  font: 400 13px/18px var(--font-inter);
+  letter-spacing: -0.006em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .createTile {
+    transition-duration: var(--at-duree-reduit);
+  }
+
+  .createTile:active {
+    transform: none;
+  }
+}

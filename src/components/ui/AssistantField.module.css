@@ -1,0 +1,214 @@
+@property --assistant-aura-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 200deg;
+}
+
+.root {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  color: var(--at-encre);
+}
+
+.surface {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  border: 2.5px solid transparent;
+  border-radius: 26px;
+  background:
+    linear-gradient(var(--at-carte), var(--at-carte)) padding-box,
+    conic-gradient(
+      from var(--assistant-aura-angle),
+      var(--at-aura-1),
+      var(--at-aura-2) 22%,
+      var(--at-aura-3) 45%,
+      var(--at-aura-4) 68%,
+      var(--at-aura-5) 88%,
+      var(--at-aura-1)
+    ) border-box;
+  animation: assistant-aura-turn 10s linear infinite;
+}
+
+.surface::before {
+  position: absolute;
+  z-index: -1;
+  inset: -2px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--assistant-aura-angle),
+    var(--at-aura-1),
+    var(--at-aura-2) 22%,
+    var(--at-aura-3) 45%,
+    var(--at-aura-4) 68%,
+    var(--at-aura-5) 88%,
+    var(--at-aura-1)
+  );
+  content: '';
+  filter: blur(14px);
+  opacity: 0.3;
+  animation: assistant-aura-breathe 5s ease-in-out infinite;
+}
+
+.root[data-state='thinking'] .surface {
+  animation-duration: 3s;
+}
+
+.root[data-state='thinking'] .surface::before {
+  animation-duration: 1.6s;
+  opacity: 0.5;
+}
+
+.root[data-state='disabled'] .surface {
+  border-color: var(--at-trait);
+  background: var(--at-carte);
+  animation: none;
+}
+
+.root[data-state='disabled'] .surface::before {
+  display: none;
+  animation: none;
+}
+
+.root[data-state='error'] .surface {
+  border-color: color-mix(in srgb, var(--at-baisse) 75%, var(--at-encre));
+  background: var(--at-carte);
+  animation: none;
+}
+
+.root[data-state='error'] .surface::before {
+  display: none;
+  animation: none;
+}
+
+.form {
+  position: relative;
+  z-index: 1;
+  border-radius: 24px;
+  background: var(--at-carte);
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px;
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 180px;
+  padding: 11px 8px;
+  border: 0;
+  border-radius: 12px;
+  outline: none;
+  resize: vertical;
+  background: transparent;
+  color: var(--at-encre);
+  font: 400 17px/22px var(--font-inter);
+  letter-spacing: -0.022em;
+}
+
+.input::placeholder {
+  color: var(--at-encre-aide);
+  opacity: 1;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.input:disabled {
+  cursor: not-allowed;
+}
+
+.sendButton {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.sendButton svg,
+.sendButton > span[aria-hidden='true'] {
+  width: 20px;
+  height: 20px;
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.suggestion {
+  min-height: 44px;
+  max-width: 100%;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--at-remplissage);
+  color: var(--at-encre);
+  font: 500 13px/18px var(--font-inter);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: background var(--at-duree-couleur) var(--at-courbe-couleur), color var(--at-duree-couleur) var(--at-courbe-couleur);
+}
+
+.suggestion:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--at-remplissage) 70%, var(--at-accent));
+  color: var(--at-encre);
+}
+
+.suggestion:focus-visible,
+.sendButton:focus-visible {
+  outline: 2px solid var(--at-accent-texte);
+  outline-offset: 2px;
+}
+
+.suggestion:disabled {
+  cursor: not-allowed;
+}
+
+.error {
+  margin: 0;
+  color: color-mix(in srgb, var(--at-baisse) 75%, var(--at-encre));
+  font: 400 15px/20px var(--font-inter);
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes assistant-aura-turn {
+  to { --assistant-aura-angle: 560deg; }
+}
+
+@keyframes assistant-aura-breathe {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 0.38; }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .surface,
+  .surface::before,
+  .suggestion {
+    animation: none;
+    transition: none;
+  }
+}

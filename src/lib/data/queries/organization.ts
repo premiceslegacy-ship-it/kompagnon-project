@@ -1,4 +1,5 @@
 import { cache } from 'react'
+import { certificationsToText } from '@/lib/data/certifications'
 import { createClient } from '@/lib/supabase/server'
 import { getCachedOrganizationId } from './session-cache'
 import type { BusinessActivityId, BusinessProfile, CatalogLabelSet, DefaultCategories, StarterPreset } from '@/lib/catalog-context'
@@ -137,5 +138,5 @@ export const getOrganization = cache(async (): Promise<Organization | null> => {
     return null
   }
 
-  return data as Organization
+  return { ...(data as unknown as Organization), certifications: certificationsToText((data as { certifications?: string | string[] | null }).certifications) }
 })

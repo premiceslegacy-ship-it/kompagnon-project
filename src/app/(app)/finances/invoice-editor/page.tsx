@@ -1,4 +1,3 @@
-import { notFound } from 'next/navigation'
 import { getClients } from '@/lib/data/queries/clients'
 import { getAcceptedQuotesWithItems } from '@/lib/data/queries/quotes'
 import { getInvoiceById } from '@/lib/data/queries/invoices'
@@ -7,6 +6,7 @@ import { getOrganization } from '@/lib/data/queries/organization'
 import { getChantiers } from '@/lib/data/queries/chantiers'
 import { resolveCatalogContext } from '@/lib/catalog-context'
 import { hasPermission } from '@/lib/data/queries/membership'
+import { AccessDenied } from '@/components/errors/AccessDenied'
 import InvoiceEditorClient from './InvoiceEditorClient'
 
 export const dynamic = 'force-dynamic'
@@ -19,7 +19,7 @@ export default async function InvoiceEditorPage({
   const searchParams = await searchParamsPromise
   const canCreate = await hasPermission('invoices.create')
   const canEdit = searchParams.id ? await hasPermission('invoices.edit') : false
-  if (!canCreate && !canEdit) notFound()
+  if (!canCreate && !canEdit) return <AccessDenied what="l’éditeur de factures" />
 
   const [clients, acceptedQuotes, materials, laborRates, prestationTypes, organization, chantiers] = await Promise.all([
     getClients(),

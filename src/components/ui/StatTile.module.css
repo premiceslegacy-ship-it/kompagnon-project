@@ -1,0 +1,39 @@
+.tile {
+  min-width: 0;
+  padding: 18px;
+  border-radius: var(--at-rayon-carte);
+  background: var(--at-carte);
+}
+
+.label {
+  color: var(--at-encre-2);
+  font-family: var(--font-inter);
+  font-size: var(--at-taille-note);
+  font-weight: 600;
+  line-height: var(--at-interligne-note);
+  letter-spacing: var(--at-approche-note);
+  overflow-wrap: anywhere;
+}
+
+.value {
+  margin-block-start: 4px;
+  color: var(--at-encre);
+  font-family: var(--font-geist);
+  font-size: var(--at-taille-titre-1);
+  font-weight: var(--at-poids-medium);
+  line-height: var(--at-interligne-titre-1);
+  letter-spacing: var(--at-approche-titre-1);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.detail {
+  margin-block-start: 4px;
+  color: var(--at-encre-2);
+  font-family: var(--font-inter);
+  font-size: var(--at-taille-note);
+  font-weight: var(--at-poids-note);
+  line-height: var(--at-interligne-note);
+  letter-spacing: var(--at-approche-note);
+  overflow-wrap: anywhere;
+}

@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { certificationsToArray } from '@/lib/data/certifications'
 import { revalidatePath } from 'next/cache'
 import { hasPermission } from '@/lib/data/queries/membership'
 import {
@@ -229,9 +230,12 @@ export async function updateOrganization(input: UpdateOrganizationInput): Promis
     return { error: 'Certains champs doivent être corrigés.', fieldErrors }
   }
 
+  const dbPayload: Record<string, unknown> = { ...payload, updated_at: new Date().toISOString() }
+  if ('certifications' in payload) dbPayload.certifications = certificationsToArray(payload.certifications)
+
   const { error } = await supabase
     .from('organizations')
-    .update({ ...payload, updated_at: new Date().toISOString() })
+    .update(dbPayload)
     .eq('id', membership.organization_id)
 
   if (error) {

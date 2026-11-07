@@ -1,0 +1,97 @@
+.root {
+  display: flex;
+  padding: 18px;
+  flex-direction: column;
+  gap: 14px;
+  border-radius: var(--at-rayon-carte);
+  background: var(--at-carte);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.avatar {
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.lines {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.row:nth-child(1) .line {
+  width: 62%;
+}
+
+.row:nth-child(1) .secondaryLine {
+  width: 38%;
+}
+
+.row:nth-child(2) .line {
+  width: 48%;
+}
+
+.row:nth-child(2) .secondaryLine {
+  width: 54%;
+}
+
+.row:nth-child(3) .line {
+  width: 70%;
+}
+
+.row:nth-child(3) .secondaryLine {
+  width: 30%;
+}
+
+.line,
+.secondaryLine,
+.avatar {
+  background: linear-gradient(
+    90deg,
+    var(--at-remplissage) 25%,
+    color-mix(in srgb, var(--at-remplissage) 40%, transparent) 50%,
+    var(--at-remplissage) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+.line,
+.secondaryLine {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+}
+
+.secondaryLine {
+  height: 10px;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line,
+  .secondaryLine,
+  .avatar {
+    animation: none;
+    background: var(--at-remplissage);
+  }
+}

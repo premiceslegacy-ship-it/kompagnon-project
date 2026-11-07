@@ -1,86 +1,50 @@
-import React from 'react'
+// @atelier-migrated
 import Link from 'next/link'
-import { CalendarDays, MapPin, Clock } from 'lucide-react'
 import type { MyPlanningSlot } from '@/lib/data/queries/dashboard-collaborateur'
+import styles from '@/components/layout/Screen.module.css'
 
-function fmtTime(t: string | null): string {
-  if (!t) return ''
-  return t.slice(0, 5)
+const fmtTime = (t: string | null) => (t ? t.slice(0, 5) : '')
+
+function parisNow(): string {
+  return new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Paris' }).format(new Date())
 }
 
+/** Planning du jour en frise, comme la maquette : les créneaux passés sont pleins. */
 export default function PlanningDigestWidget({ slots }: { slots: MyPlanningSlot[] }) {
-  const today = new Date().toLocaleDateString('fr-FR', {
-    weekday: 'long', day: 'numeric', month: 'long',
-  })
-  // Capitalise le premier caractère
-  const todayLabel = today.charAt(0).toUpperCase() + today.slice(1)
-
+  const now = parisNow()
   return (
-    <div className="rounded-3xl p-6 card transition-all duration-300 ease-out">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="text-base font-bold text-primary flex items-center gap-2">
-            <CalendarDays className="w-4 h-4 text-accent" />
-            Planning du jour
-          </h3>
-          <p className="text-xs text-secondary mt-0.5">{todayLabel}</p>
-        </div>
-        <Link
-          href="/chantiers/planning"
-          className="text-xs font-semibold text-accent hover:underline flex-shrink-0"
-        >
-          Tout voir
-        </Link>
-      </div>
-
+    <section className={styles.group} aria-labelledby="today-planning">
+      <h2 className={styles.groupTitle} id="today-planning">
+        Aujourd&apos;hui{' '}
+        <Link href="/chantiers/planning" className={styles.link}>Planning complet</Link>
+      </h2>
       {slots.length === 0 ? (
-        <div className="flex flex-col items-center py-6 gap-2 text-center">
-          <CalendarDays className="w-7 h-7 text-secondary opacity-20" />
-          <p className="text-sm text-secondary">Aucun créneau planifié aujourd'hui.</p>
-        </div>
+        <div className={styles.empty}>Aucun créneau planifié aujourd&apos;hui.</div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {slots.map(slot => (
-            <Link
-              key={slot.id}
-              href={slot.source === 'maintenance' ? '/chantiers/entretien' : `/chantiers/${slot.chantier_id}`}
-              className="flex items-start gap-3 p-3 rounded-2xl hover:bg-black/3 dark:hover:bg-white/5 transition-colors group"
-            >
-              {/* Heure */}
-              <div className="flex-shrink-0 w-10 text-right">
-                {slot.start_time ? (
-                  <span className="text-xs font-bold text-accent tabular-nums">
-                    {fmtTime(slot.start_time)}
+        <ul className={styles.timeline}>
+          {slots.map(slot => {
+            const end = slot.end_time ? fmtTime(slot.end_time) : null
+            const past = end !== null && end <= now
+            const sub = [slot.label, slot.chantier_address].filter(Boolean).join(' · ')
+            return (
+              <li key={slot.id}>
+                <Link
+                  href={slot.source === 'maintenance' ? '/chantiers/entretien' : `/chantiers/${slot.chantier_id}`}
+                  className={styles.slot}
+                  data-past={past ? 'true' : 'false'}
+                >
+                  <span className={styles.slotTime}>{fmtTime(slot.start_time) || 'Jour'}</span>
+                  <span className={styles.rail}><i /></span>
+                  <span className={styles.slotText}>
+                    <span className={styles.slotTitle}>{slot.chantier_title}</span>
+                    {sub ? <span className={styles.slotSub}>{end ? `Jusqu'à ${end} · ` : ''}{sub}</span> : null}
                   </span>
-                ) : (
-                  <Clock className="w-3.5 h-3.5 text-secondary ml-auto" />
-                )}
-              </div>
-
-              {/* Contenu */}
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-primary truncate group-hover:text-accent transition-colors">
-                  {slot.chantier_title}
-                </p>
-                <p className="text-xs text-secondary truncate">{slot.label}</p>
-                {slot.chantier_address && (
-                  <p className="text-xs text-secondary flex items-center gap-1 mt-0.5">
-                    <MapPin className="w-3 h-3 flex-shrink-0" />
-                    {slot.chantier_address}
-                  </p>
-                )}
-              </div>
-
-              {/* Fin */}
-              {slot.end_time && (
-                <span className="flex-shrink-0 text-xs text-secondary tabular-nums">
-                  -{fmtTime(slot.end_time)}
-                </span>
-              )}
-            </Link>
-          ))}
-        </div>
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
       )}
-    </div>
+    </section>
   )
 }

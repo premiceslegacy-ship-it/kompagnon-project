@@ -1,4 +1,6 @@
+// @atelier-migrated
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import './globals.css';
 
 export const dynamic = 'force-dynamic';
@@ -14,13 +16,23 @@ import localFont from 'next/font/local';
 const displayFont = localFont({
     src: '../../public/fonts/geist-variable.woff2',
     weight: '100 900',
-    variable: '--font-jakarta'
+    variable: '--font-geist'
 });
 
 const bodyFont = localFont({
-    src: '../../public/fonts/geist-variable.woff2',
-    weight: '100 900',
-    variable: '--font-inter'
+    src: [
+        { path: '../../public/fonts/inter-latin-400.woff2', weight: '400' },
+        {
+            path: '../../public/fonts/inter-latin-500.woff2',
+            weight: '500',
+        },
+        {
+            path: '../../public/fonts/inter-latin-600.woff2',
+            weight: '600',
+        },
+        { path: '../../public/fonts/inter-latin-700.woff2', weight: '700' },
+    ],
+    variable: '--font-inter',
 });
 
 // Cockpit /orsayn uniquement (voir .cockpit-shell dans globals.css)
@@ -33,6 +45,9 @@ const cockpitFont = localFont({
     ],
     variable: '--font-general-sans',
 });
+
+const appFontVariables = `${displayFont.variable} ${bodyFont.variable} ${cockpitFont.variable}`;
+const cockpitFontVariables = `${displayFont.variable} ${cockpitFont.variable}`;
 
 export const metadata: Metadata = {
     title: `${APP_NAME} - ERP`,
@@ -49,16 +64,21 @@ export const metadata: Metadata = {
     manifest: '/api/manifest',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
     children,
 }: {
     children: React.ReactNode;
 }) {
+    const requestHeaders = await headers();
+    const nonce = requestHeaders.get('x-nonce') ?? undefined;
     const runtimeConfig = getPublicRuntimeConfig();
+    const operatorMode = process.env.OPERATOR_MODE === 'true';
 
     return (
         <html
             lang="fr"
+            className={operatorMode ? cockpitFontVariables : appFontVariables}
+            data-atelier-surface={operatorMode ? 'cockpit' : 'app'}
             data-supabase-url={runtimeConfig.supabaseUrl}
             data-supabase-anon-key={runtimeConfig.supabaseAnonKey}
             data-sentry-dsn={process.env.NEXT_PUBLIC_SENTRY_DSN || undefined}
@@ -66,9 +86,9 @@ export default function RootLayout({
             data-posthog-host={process.env.NEXT_PUBLIC_POSTHOG_HOST || undefined}
             suppressHydrationWarning
         >
-            <body className={`${displayFont.variable} ${bodyFont.variable} ${cockpitFont.variable} font-body bg-base min-h-screen transition-colors duration-300 ease-out`}>
+            <body className={`font-body bg-base min-h-screen transition-colors ${operatorMode ? 'duration-300 ease-out' : 'duration-couleur ease-couleur'}`}>
                 <SentryInit />
-                <ThemeProvider>
+                <ThemeProvider operatorMode={operatorMode} nonce={nonce}>
                     <PostHogProvider>
                         {children}
                     </PostHogProvider>

@@ -9,8 +9,8 @@ import {
     LayoutDashboard,
     UserCircle,
     FileText,
-    Package,
     MailWarning,
+    Package,
     Bot,
     HardHat,
     Calendar,
@@ -36,16 +36,10 @@ import {
 } from 'lucide-react';
 import type { UserProfile } from '@/lib/data/queries/user';
 import type { OrganizationModules } from '@/lib/organization-modules';
-import type { NotificationsSummary } from '@/lib/data/queries/notifications';
+import { useNavigationNotifications, type NavigationNotificationsData } from './useNavigationNotifications';
 
 const routeKey = (href: string) => href.split(/[?#]/)[0] || '/';
 
-function urlBase64ToUint8Array(base64String: string) {
-    const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
-    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
-    const rawData = atob(base64)
-    return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)))
-}
 
 const NavChipLink = ({
     href,
@@ -213,153 +207,33 @@ const UserMenu = ({ profile }: { profile: UserProfile | null }) => {
     );
 };
 
-type NotificationsData = Partial<NotificationsSummary> & { overdueInvoices: number; expiringQuotes: number }
+type NotificationsData = NavigationNotificationsData
 
-type PushPermission = 'default' | 'granted' | 'denied'
-const NOTIFICATIONS_SEEN_SIGNATURE_KEY = 'notifications_seen_signature'
 
 const NotificationBell = ({ notifications, onNavigate }: { notifications: NotificationsData; onNavigate?: (href: string) => void }) => {
     const [isOpen, setIsOpen] = useState(false);
-    const [seenSignature, setSeenSignature] = useState<string | null>(null);
-    const [mounted, setMounted] = useState(false);
-    const [pushPermission, setPushPermission] = useState<PushPermission>('granted');
-    const [pendingRoute, setPendingRoute] = useState<string | null>(null);
     const buttonRef = useRef<HTMLButtonElement>(null);
     const [coords, setCoords] = useState({ top: 0, left: 0 });
-    const router = useRouter();
-    const pathname = usePathname();
-
-    useEffect(() => {
-        setMounted(true);
-        setSeenSignature(localStorage.getItem(NOTIFICATIONS_SEEN_SIGNATURE_KEY));
-        if ('Notification' in window) setPushPermission(Notification.permission as PushPermission);
-    }, []);
-
-    useEffect(() => {
-        setPendingRoute(null);
-    }, [pathname]);
-
-    const goToNotification = (href: string) => {
-        setPendingRoute(routeKey(href));
-        setIsOpen(false);
-        onNavigate?.(href);
-        router.prefetch(href);
-        router.push(href);
-    };
-
-    async function handleEnablePush() {
-        // Tout échec (souscription refusée, SW indisponible, réseau) doit rester
-        // silencieux : un rejet non géré ici part en erreur Sentry côté client.
-        try {
-            if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
-            const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
-            if (!vapidKey) return
-
-            const permission = await Notification.requestPermission()
-            setPushPermission(permission as PushPermission)
-            if (permission !== 'granted') return
-
-            const reg = await navigator.serviceWorker.register('/sw.js')
-            await navigator.serviceWorker.ready
-            const existing = await reg.pushManager.getSubscription()
-            const sub = existing ?? await reg.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: urlBase64ToUint8Array(vapidKey),
-            })
-            await fetch('/api/push/subscribe', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(sub.toJSON()),
-            })
-        } catch (err) {
-            console.error('[push] activation impossible :', err)
-        }
-    }
-
-    const total = notifications.total ?? (
-        notifications.overdueInvoices +
-        (notifications.invoiceFollowups ?? 0) +
-        (notifications.pendingQuotes ?? 0) +
-        (notifications.pendingRecurring ?? 0) +
-        (notifications.recurringReady ?? 0) +
-        (notifications.chantierPeriodDrafts ?? 0) +
-        (notifications.dueTasks ?? 0) +
-        (notifications.planningToday ?? 0) +
-        (notifications.missingPointages ?? 0) +
-        (notifications.newRequests ?? 0) +
-        (notifications.chantiersAtRisk ?? 0) +
-        (notifications.maintenanceDue ?? 0) +
-        (notifications.maintenanceBillingPending ?? 0)
-    );
-    const notificationSignature = [
+    const navigationNotifications = useNavigationNotifications(notifications, { open: isOpen, onNavigate });
+    const {
+        badgeTotal,
+        enablePush: handleEnablePush,
+        mounted,
+        pendingRoute,
+        pushPermission,
         total,
-        notifications.overdueInvoices,
-        notifications.invoiceFollowups ?? 0,
-        notifications.pendingQuotes ?? 0,
-        notifications.pendingRecurring ?? 0,
-        notifications.recurringReady ?? 0,
-        notifications.chantierPeriodDrafts ?? 0,
-        notifications.recentAutoReminders ?? 0,
-        notifications.dueTasks ?? 0,
-        notifications.planningToday ?? 0,
-        notifications.missingPointages ?? 0,
-        notifications.completedTasks ?? 0,
-        notifications.newRequests ?? 0,
-        notifications.chantiersAtRisk ?? 0,
-        notifications.maintenanceDue ?? 0,
-        notifications.maintenanceBillingPending ?? 0,
-    ].join(':');
-    const badgeTotal = seenSignature === notificationSignature ? 0 : total;
-    const notificationRoutes = React.useMemo(() => {
-        const routes = new Set<string>();
-        if (notifications.overdueInvoices > 0) routes.add('/finances');
-        if ((notifications.invoiceFollowups ?? 0) > 0) routes.add('/finances');
-        if ((notifications.pendingRecurring ?? 0) > 0) routes.add('/finances/recurring');
-        if ((notifications.recurringReady ?? 0) > 0) routes.add('/finances/recurring');
-        if ((notifications.chantierPeriodDrafts ?? 0) > 0) routes.add('/finances');
-        if (notifications.expiringQuotes > 0) routes.add('/finances');
-        if ((notifications.pendingQuotes ?? 0) > 0) routes.add('/finances');
-        if ((notifications.recentAutoReminders ?? 0) > 0) routes.add('/dashboard');
-        if ((notifications.dueTasks ?? 0) > 0) routes.add('/dashboard');
-        if ((notifications.planningToday ?? 0) > 0) routes.add('/chantiers/planning');
-        if ((notifications.missingPointages ?? 0) > 0) routes.add('/chantiers/heures');
-        if ((notifications.maintenanceDue ?? 0) > 0) routes.add('/chantiers/entretien');
-        if ((notifications.maintenanceBillingPending ?? 0) > 0) routes.add('/chantiers/entretien');
-        if ((notifications.completedTasks ?? 0) > 0) routes.add('/dashboard');
-        if ((notifications.chantiersAtRisk ?? 0) > 0) routes.add('/chantiers');
-        if ((notifications.newRequests ?? 0) > 0) routes.add('/requests');
-        return Array.from(routes);
-    }, [
-        notifications.overdueInvoices,
-        notifications.invoiceFollowups,
-        notifications.pendingRecurring,
-        notifications.recurringReady,
-        notifications.chantierPeriodDrafts,
-        notifications.expiringQuotes,
-        notifications.pendingQuotes,
-        notifications.recentAutoReminders,
-        notifications.dueTasks,
-        notifications.planningToday,
-        notifications.missingPointages,
-        notifications.maintenanceDue,
-        notifications.maintenanceBillingPending,
-        notifications.completedTasks,
-        notifications.chantiersAtRisk,
-        notifications.newRequests,
-    ]);
+        markSeen,
+        navigate,
+    } = navigationNotifications;
 
-    useEffect(() => {
-        if (!isOpen) return;
-        notificationRoutes.forEach(href => router.prefetch(href));
-    }, [isOpen, notificationRoutes, router]);
+    const goToNotification = (href: string) => navigate(href, () => setIsOpen(false));
 
     const toggleMenu = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (!isOpen && buttonRef.current) {
             const rect = buttonRef.current.getBoundingClientRect();
             setCoords({ top: rect.bottom + window.scrollY, left: rect.right + window.scrollX - 320 });
-            setSeenSignature(notificationSignature);
-            localStorage.setItem(NOTIFICATIONS_SEEN_SIGNATURE_KEY, notificationSignature);
+            markSeen();
         }
         setIsOpen(!isOpen);
     };
