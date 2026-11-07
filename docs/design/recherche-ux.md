@@ -29,7 +29,7 @@ Ce document garde la trace des sources qui ont guidé la refonte et de ce qu’o
 4. **Le titre dit l’état** : « 3 devis attendent » plutôt que « Tableau de bord ».
 5. **Une seule assistante**, qui annonce ce qu’elle va faire avant d’agir sur l’extérieur.
 6. **Écrire pour le scan** : un chiffre, un verbe, pas de jargon. Aucun nom de fournisseur technique dans l’interface d’un client.
-7. **Des états complets** : vide, chargement, erreur, réussite, hors ligne, accès réservé.
+7. **Des états complets** : vide, chargement, erreur, réussite, accès réservé (fait) ; hors ligne et session expirée (à faire : un bandeau et un message dédiés).
 
 ## Ce qu’on n’a pas fait (et pourquoi)
 
