@@ -21,6 +21,8 @@ export default async function SignPage({ params: paramsPromise }: { params: Prom
       signature_token_expires_at, document_snapshot`)
     .eq('signature_token', token)
     .maybeSingle()
+  // Un lien mal recopié n'est pas un identifiant valide (22P02) : même réponse qu'un lien inconnu.
+  if (error?.code === '22P02') notFound()
   if (error) throw error
   if (!quote || !isPublicQuoteDocumentState(quote.status, quote.is_archived)
     || !isSignatureTokenFresh(quote.signature_token_expires_at)) notFound()

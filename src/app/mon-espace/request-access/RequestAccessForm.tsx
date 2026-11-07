@@ -1,7 +1,10 @@
 'use client'
+// @atelier-migrated
 
 import { useState } from 'react'
-import { Loader2, Mail, Check } from 'lucide-react'
+import { Field } from '@/components/ui/Field'
+import { Button } from '@/components/ui/Button'
+import { AuthError, AuthFields, AuthLinkButton, AuthNotice } from '@/components/auth/AuthParts'
 import { requestMemberSpaceAccess } from '@/lib/data/mutations/members'
 
 export default function RequestAccessForm() {
@@ -20,52 +23,33 @@ export default function RequestAccessForm() {
     if (err) {
       setError(err)
     } else {
-      // Réponse neutre (pas de leak d'existence d'email)
+      // Réponse neutre (pas de fuite sur l'existence d'une adresse)
       setDone(true)
     }
   }
 
   if (done) {
     return (
-      <div className="space-y-3 text-center py-4">
-        <div className="w-12 h-12 mx-auto rounded-full text-emerald-500 flex items-center justify-center">
-          <Check className="w-6 h-6" />
-        </div>
-        <p className="text-sm text-primary font-semibold">Si cette adresse est enregistrée, un lien vient d&apos;être envoyé.</p>
-        <p className="text-xs text-secondary">Vérifiez votre boîte de réception (ainsi que les spams).</p>
-        <button
-          onClick={() => { setDone(false); setEmail('') }}
-          className="text-xs text-accent hover:underline"
-        >
+      <div>
+        <AuthNotice tone="success">
+          Si cette adresse est enregistrée, un nouveau lien vient d&apos;être envoyé. Vérifiez votre boîte de réception, ainsi que les spams.
+        </AuthNotice>
+        <AuthLinkButton quiet onClick={() => { setDone(false); setEmail('') }}>
           Saisir une autre adresse
-        </button>
+        </AuthLinkButton>
       </div>
     )
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
-      <div className="relative">
-        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary pointer-events-none" />
-        <input
-          type="email"
-          required
-          autoFocus
-          className="input w-full pl-10"
-          placeholder="vous@exemple.fr"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-        />
-      </div>
-      {error && <p className="text-xs text-red-500">{error}</p>}
-      <button
-        type="submit"
-        disabled={loading || !email.trim()}
-        className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-60"
-      >
-        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-        {loading ? 'Envoi…' : "M'envoyer un lien"}
-      </button>
+    <form onSubmit={handleSubmit}>
+      <AuthFields>
+        <Field type="text" inputType="email" label="Email" required autoFocus autoComplete="email" placeholder="vous@exemple.fr" value={email} onChange={(event) => setEmail(event.target.value)} />
+      </AuthFields>
+      <AuthError>{error}</AuthError>
+      <Button type="submit" size="lg" loading={loading} loadingText="Envoi…" aria-disabled={!email.trim() ? true : undefined} style={{ width: '100%', marginTop: 22 }}>
+        Recevoir un nouveau lien
+      </Button>
     </form>
   )
 }
