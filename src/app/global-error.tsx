@@ -1,14 +1,18 @@
 'use client'
+// @atelier-migrated
 
 import { useEffect } from 'react'
 import * as Sentry from '@sentry/browser'
-import { APP_NAME } from '@/lib/brand'
+import { ErrorPage, ErrorTextLink } from '@/components/errors/ErrorPage'
+import { ErrorReference, ErrorRetryButton } from '@/components/errors/ErrorActions'
+import { errorReference, supportHref } from '@/lib/error-pages'
 
 /**
  * Filet de sécurité racine : capte les erreurs qui échappent à tous les
  * error.tsx de segment (y compris une erreur dans le root layout lui-même).
  * Doit fournir son propre <html>/<body> car il remplace le layout racine
- * pendant l'affichage de l'erreur.
+ * pendant l'affichage de l'erreur : les rôles de couleur Atelier peuvent être
+ * absents, la page retombe alors sur les couleurs du navigateur.
  */
 export default function GlobalError({
   error,
@@ -22,29 +26,26 @@ export default function GlobalError({
     Sentry.captureException(error)
   }, [error])
 
+  const reference = errorReference(error.digest)
+  const support = supportHref(process.env.NEXT_PUBLIC_SUPPORT_EMAIL)
+
   return (
     <html lang="fr">
-      <body>
-        <div className="min-h-screen flex items-center justify-center p-8 bg-white text-gray-900">
-          <div className="max-w-md w-full text-center space-y-4">
-            <h1 className="text-2xl font-bold">Petit pépin technique</h1>
-            <p className="text-gray-600">
-              Rien de grave : {APP_NAME} vient de rencontrer un imprévu. Un simple clic sur Réessayer suffit en général.
-            </p>
-            <button
-              onClick={reset}
-              className="px-5 py-2.5 rounded-xl bg-gray-900 text-white font-semibold hover:bg-gray-700 transition-colors"
-            >
-              Réessayer
-            </button>
-            <p className="text-sm text-gray-400">
-              Toujours bloqué ?{' '}
-              <a href={`mailto:${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}`} className="underline hover:text-gray-600">
-                Contactez le support
-              </a>
-            </p>
-          </div>
-        </div>
+      <body style={{ margin: 0 }}>
+        <ErrorPage
+          full
+          symbol="alert"
+          code="Erreur technique"
+          title="Atelier fait une pause"
+          description="Un imprévu a interrompu l'affichage. Vos données sont à l'abri. Rechargez pour reprendre là où vous en étiez."
+          actions={
+            <>
+              <ErrorRetryButton onRetry={reset} />
+              {support && <ErrorTextLink href={support}>Contacter le support</ErrorTextLink>}
+            </>
+          }
+          footer={reference ? <ErrorReference value={reference} /> : undefined}
+        />
       </body>
     </html>
   )

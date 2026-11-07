@@ -1,8 +1,11 @@
 'use client'
+// @atelier-migrated
 
 import { useEffect } from 'react'
-import { AlertTriangle } from 'lucide-react'
 import * as Sentry from '@sentry/browser'
+import { ErrorPage, ErrorTextLink } from '@/components/errors/ErrorPage'
+import { ErrorRetryButton } from '@/components/errors/ErrorActions'
+import { supportHref } from '@/lib/error-pages'
 
 /**
  * Filet de sécurité pour l'espace membre (intervenants terrain, souvent sur
@@ -21,31 +24,21 @@ export default function MemberSpaceError({
     Sentry.captureException(error)
   }, [error])
 
+  const support = supportHref(process.env.NEXT_PUBLIC_SUPPORT_EMAIL)
+
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
-      <div className="card max-w-sm w-full p-6 text-center space-y-4">
-        <div className="w-12 h-12 mx-auto rounded-2xl flex items-center justify-center">
-          <AlertTriangle className="w-6 h-6 text-amber-500" />
-        </div>
-        <div>
-          <h2 className="text-lg font-bold text-primary mb-1">Petit pépin technique</h2>
-          <p className="text-sm text-secondary">
-            Rien de grave : vérifiez votre connexion et réessayez.
-          </p>
-        </div>
-        <button
-          onClick={reset}
-          className="w-full px-5 py-2.5 rounded-xl bg-accent text-white font-semibold hover:opacity-90 transition-opacity"
-        >
-          Réessayer
-        </button>
-        <p className="text-xs text-secondary">
-          Toujours bloqué ?{' '}
-          <a href={`mailto:${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}`} className="underline hover:text-primary">
-            Contactez le support
-          </a>
-        </p>
-      </div>
-    </div>
+    <ErrorPage
+      full
+      symbol="wifi"
+      code="Espace intervenant"
+      title="Le réseau a lâché le chantier"
+      description="Les sous-sols et les grands hangars n'aiment pas le réseau. Vérifiez votre connexion, puis réessayez."
+      actions={
+        <>
+          <ErrorRetryButton onRetry={reset} />
+          {support && <ErrorTextLink href={support}>Contacter le support</ErrorTextLink>}
+        </>
+      }
+    />
   )
 }
