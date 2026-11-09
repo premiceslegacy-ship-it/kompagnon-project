@@ -13,8 +13,8 @@
 }
 
 .label {
-  flex: 0 0 104px;
-  width: 104px;
+  flex: 0 0 var(--field-label-width, 104px);
+  width: var(--field-label-width, 104px);
   min-width: 0;
   color: var(--at-encre);
   font: 400 17px/22px var(--font-inter);
@@ -81,8 +81,14 @@
   box-shadow: none;
 }
 
+/* Focus : la ligne se teinte, sans cadre aux coins carrés dans une liste arrondie. */
 .row:focus-within {
-  box-shadow: inset 0 0 0 2px var(--at-accent-texte);
+  background: color-mix(in srgb, var(--at-accent) 12%, transparent);
+}
+
+.control,
+.numberControl :global(input) {
+  caret-color: var(--at-accent-texte);
 }
 
 .stacked {

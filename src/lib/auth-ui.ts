@@ -66,3 +66,13 @@ export const INVITE_SETUP_ERRORS: Record<string, string> = {
   password_failed: 'Impossible de définir le mot de passe. Veuillez réessayer.',
   update_failed: 'Une erreur est survenue. Veuillez réessayer.',
 }
+
+/**
+ * Une action serveur qui se termine par `redirect()` fait échouer son appel côté
+ * navigateur avec une erreur « NEXT_REDIRECT » : ce n'est pas une panne, la
+ * navigation est déjà en cours.
+ */
+export function isRedirectSignal(error: unknown): boolean {
+  const digest = typeof error === 'object' && error !== null ? (error as { digest?: unknown }).digest : undefined
+  return typeof digest === 'string' && digest.startsWith('NEXT_REDIRECT')
+}
