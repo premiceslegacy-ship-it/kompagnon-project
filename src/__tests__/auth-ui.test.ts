@@ -3,6 +3,7 @@ import {
   canSignup,
   formatJoinCode,
   isEmail,
+  isRedirectSignal,
   otpCells,
   otpComplete,
   otpDigits,
@@ -58,5 +59,14 @@ describe('auth-ui', () => {
 
   it('met le code entreprise en majuscules', () => {
     expect(formatJoinCode('ftr-28k4')).toBe('FTR-28K4')
+  })
+
+  it('distingue la redirection d\u2019une action serveur d\u2019une vraie panne', () => {
+    expect(isRedirectSignal({ digest: 'NEXT_REDIRECT;push;/dashboard;307;' })).toBe(true)
+    expect(isRedirectSignal({ digest: 'NEXT_REDIRECT;replace;/orsayn;303;' })).toBe(true)
+    expect(isRedirectSignal(new Error('Failed to fetch'))).toBe(false)
+    expect(isRedirectSignal({ digest: '123456' })).toBe(false)
+    expect(isRedirectSignal(null)).toBe(false)
+    expect(isRedirectSignal(undefined)).toBe(false)
   })
 })

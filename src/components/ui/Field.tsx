@@ -141,6 +141,9 @@ export function Field(props: FieldProps) {
     let controlText: string
     if (control instanceof HTMLSelectElement) {
       controlText = control.selectedOptions[0]?.textContent ?? ''
+    } else if (control.type === 'password') {
+      // Affiché en points et défilant dans la ligne : la longueur saisie ne doit pas la faire changer de forme.
+      controlText = ''
     } else {
       controlText = control.value || control.placeholder
     }

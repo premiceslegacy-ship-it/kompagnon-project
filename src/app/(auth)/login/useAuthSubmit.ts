@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
+import { isRedirectSignal } from '@/lib/auth-ui'
 import type { AuthState } from '../actions'
 
 const initialState: AuthState = { error: null }
@@ -20,13 +21,17 @@ export function useAuthSubmit(
     event.preventDefault()
     setPending(true)
     setState(initialState)
+    let redirecting = false
     try {
       const result = await action(initialState, new FormData(event.currentTarget))
       if (result) setState(result)
-    } catch {
-      setState({ error: fallbackError })
+    } catch (error) {
+      // Connexion réussie : le serveur redirige. On garde l'attente jusqu'au
+      // changement de page au lieu d'afficher une fausse erreur.
+      if (isRedirectSignal(error)) redirecting = true
+      else setState({ error: fallbackError })
     } finally {
-      setPending(false)
+      if (!redirecting) setPending(false)
     }
   }
 
