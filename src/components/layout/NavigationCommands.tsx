@@ -531,8 +531,8 @@ function NotificationCommand({ id, compact = false }: { id: string; compact?: bo
       title="Notifications"
     >
       {notificationPending ? <Loader2 className={styles.pendingIcon} size={20} aria-hidden="true" /> : <Bell size={20} aria-hidden="true" />}
-      {badgeTotal > 0 && <span className={styles.badge}>{badgeTotal > 9 ? '9+' : badgeTotal}</span>}
       {compact ? null : <span>Notifications</span>}
+      {badgeTotal > 0 && <span className={styles.badge}>{badgeTotal > 9 ? '9+' : badgeTotal}</span>}
     </button>
   )
 

@@ -41,3 +41,14 @@
   color: var(--at-encre-2);
   font: 500 13px/18px var(--font-inter);
 }
+
+/* Le sous-titre reste sur une ligne : le titre dit déjà de quoi il s'agit. */
+.headerText {
+  min-width: 0;
+}
+
+.kickerOneLine {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
