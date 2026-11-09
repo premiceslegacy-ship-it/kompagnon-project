@@ -10,6 +10,7 @@ import { SentryInit } from '@/components/sentry-init';
 import { APP_NAME } from '@/lib/brand';
 import { appIconPath } from '@/lib/pwa';
 import { getPublicRuntimeConfig } from '@/lib/supabase/config';
+import { ESBUILD_NAME_SHIM } from '@/lib/esbuild-name-shim';
 
 import localFont from 'next/font/local';
 
@@ -87,6 +88,7 @@ export default async function RootLayout({
             suppressHydrationWarning
         >
             <body className={`font-body bg-base min-h-screen transition-colors ${operatorMode ? 'duration-300 ease-out' : 'duration-couleur ease-couleur'}`}>
+                <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: ESBUILD_NAME_SHIM }} />
                 <SentryInit />
                 <ThemeProvider operatorMode={operatorMode} nonce={nonce}>
                     <PostHogProvider>
