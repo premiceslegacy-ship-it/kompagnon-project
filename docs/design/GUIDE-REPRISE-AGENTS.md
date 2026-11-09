@@ -61,6 +61,7 @@ Décisions déjà prises, à appliquer sans les rediscuter :
 | Recherche | `SearchField` |
 | État d'un document | `StatusPill` (`wait`, `success`, `danger`, `neutral`) |
 | Chiffre clé | `StatTile` (3 au plus à l'accueil) |
+| Avancement, tendance, répartition | `ProgressRing`, `Sparkline`, `SplitBar` (voir `docs/design-system.md`, « Visuels de données ») |
 | Actions secondaires | `Menu` (⋯) |
 | Liste vide / erreur | `EmptyState` (avec une action), `ErrorState` ou `ErrorPage` (pages) |
 | Chargement | `Skeleton`, `PageSkeleton` |

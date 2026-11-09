@@ -24,9 +24,11 @@ import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { Menu } from '@/components/ui/Menu'
 import { SearchField } from '@/components/ui/SearchField'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
+import { SplitBar } from '@/components/ui/SplitBar'
 import { Sheet } from '@/components/ui/Sheet'
 import { StatusPill, type StatusPillStatus } from '@/components/ui/StatusPill'
 import screen from '@/components/layout/Screen.module.css'
+import { invoicesSplit, quotesSplit } from './documentsSplit'
 import styles from './Documents.module.css'
 
 const NB = ' '
@@ -545,6 +547,14 @@ export default function FinancesClient({
       ? `${formatCurrency(caMois)} HT facturé${pct(caMois, caMoisPrev)} · ${formatCurrency(totalEncaisse)} encaissé${pct(totalEncaisse, totalEncaissePrev)}`
       : `${receivedToPayTotal > 0 ? `${formatCurrency(receivedToPayTotal)} à payer` : 'Rien à payer'}${receivedOverdueCount > 0 ? ` · ${receivedOverdueCount} en retard` : ''}`
 
+  // Répartition du mois, sous le résumé : qui attend, qui est payé, qui est en retard.
+  const splitSegments = activeTab === 'quotes'
+    ? quotesSplit(quotesOfMonth)
+    : activeTab === 'invoices'
+      ? invoicesSplit(invoices.filter(inv => invDate(inv).startsWith(statsMonth)), today, formatCurrency)
+      : []
+  const splitLabel = activeTab === 'quotes' ? 'Répartition des devis du mois' : 'Répartition des factures du mois'
+
   const noun = activeTab === 'quotes' ? 'devis' : activeTab === 'invoices' ? 'facture' : 'facture reçue'
   const listIsEmpty = activeFilteredCount === 0
   const filtersActive = statusFilter !== 'all' || searchTerm.trim() !== ''
@@ -631,6 +641,7 @@ export default function FinancesClient({
           />
           <p className={styles.summary}>{summary}</p>
         </div>
+        {splitSegments.some(seg => seg.value > 0) && <SplitBar className={styles.split} label={splitLabel} segments={splitSegments} />}
 
         <div className={styles.searchRow}>
           <SearchField

@@ -13,6 +13,9 @@ import { FilterChips } from '@/components/ui/FilterChips';
 import { SearchField } from '@/components/ui/SearchField';
 import { Avatar } from '@/components/ui/Avatar';
 import { StatusPill } from '@/components/ui/StatusPill';
+import { ProgressRing } from '@/components/ui/ProgressRing';
+import { Sparkline } from '@/components/ui/Sparkline';
+import { SplitBar } from '@/components/ui/SplitBar';
 import { StatTile } from '@/components/ui/StatTile';
 import { Sheet } from '@/components/ui/Sheet';
 import { AlertDialog } from '@/components/ui/AlertDialog';
@@ -214,6 +217,24 @@ export function DesignCatalogue() {
           <StatTile label="Devis" value={dataset === 'empty' ? '0' : '5'} detail={description} />
           <StatTile label="À encaisser" value={dataset === 'empty' ? '0 €' : '8 420 €'} detail="Données d’exemple" />
         </div>
+      </section>
+
+      <section className={styles.section} id="dataviz" aria-labelledby="dataviz-title">
+        <h2 id="dataviz-title">ProgressRing, Sparkline et SplitBar</h2>
+        <div className={styles.examples}>
+          <ProgressRing value={dataset === 'empty' ? 0 : 40} size={92} stroke={9} label="Avancement : 40 %">{dataset === 'empty' ? '0' : '40'} %</ProgressRing>
+          <ProgressRing value={dataset === 'empty' ? 0 : 100} tone="success" label="Terminé">{dataset === 'empty' ? '0' : '100'}</ProgressRing>
+          <ProgressRing value={dataset === 'empty' ? 0 : 65} size={34} stroke={4} label="Avancement : 65 %">{dataset === 'empty' ? '0' : '65'}</ProgressRing>
+          <Sparkline values={dataset === 'empty' ? [0] : [1200, 1800, 900, 2100, 2800, 2526]} label="Facturé sur six mois" />
+        </div>
+        <SplitBar
+          label="Encaissement des factures"
+          segments={[
+            { key: 'paid', label: 'Encaissé', value: dataset === 'empty' ? 0 : 1200, tone: 'success', display: dataset === 'empty' ? '0 €' : '1 200 €' },
+            { key: 'due', label: 'À encaisser', value: dataset === 'empty' ? 0 : 900, tone: 'accent', display: dataset === 'empty' ? '0 €' : '900 €' },
+            { key: 'late', label: 'En retard', value: dataset === 'empty' ? 0 : 426, tone: 'danger', display: dataset === 'empty' ? '0 €' : '426 €' },
+          ]}
+        />
       </section>
 
       <section className={styles.section} id="overlays" aria-labelledby="overlays-title">

@@ -7,17 +7,30 @@ import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { Menu, type MenuItem } from '@/components/ui/Menu'
+import { ProgressRing } from '@/components/ui/ProgressRing'
 import { SearchField } from '@/components/ui/SearchField'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { formatCurrency } from '@/components/shared'
 import { CreateChoiceSheet, NewChantierSheet } from './ChantierSheets'
-import { STATUS_FILTERS, fmtHours, fmtShortDate, recurrenceLabel, statusPill } from './chantiersModel'
+import { STATUS_FILTERS, chantierProgress, fmtHours, fmtShortDate, recurrenceLabel, statusPill } from './chantiersModel'
+import type { Chantier } from '@/lib/data/queries/chantiers'
 import { useChantiers, type ChantiersProps } from './useChantiers'
 import screen from '@/components/layout/Screen.module.css'
 import styles from '../finances/quote-editor/QuoteEditor.module.css'
 import docs from '../finances/Documents.module.css'
 
 const NB = ' '
+
+/** L'avancement remplace les initiales dès qu'il existe des tâches : l'état du chantier se lit sans ouvrir la fiche. */
+function leadingFor(c: Chantier) {
+  const progress = chantierProgress(c)
+  if (progress === null) return <Avatar name={c.client?.company_name ?? c.title} />
+  return (
+    <ProgressRing value={progress} size={34} stroke={4} tone={progress === 100 ? 'success' : 'accent'} label={`Avancement : ${progress}${NB}%`}>
+      {progress}
+    </ProgressRing>
+  )
+}
 
 export default function ChantiersClient(props: ChantiersProps) {
   const q = useChantiers(props)
@@ -100,7 +113,7 @@ export default function ChantiersClient(props: ChantiersProps) {
                   <ListRow
                     key={c.id}
                     href={`/chantiers/${c.id}`}
-                    leading={<Avatar name={c.client?.company_name ?? c.title} />}
+                    leading={leadingFor(c)}
                     title={c.title}
                     description={[place, rec, dates].filter(Boolean).join(' · ') || undefined}
                     trailing={

@@ -1,0 +1,47 @@
+/* @atelier-migrated */
+.spark {
+  --spark-tone: var(--at-accent);
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+.spark[data-tone='success'] {
+  --spark-tone: var(--at-hausse);
+}
+
+.spark[data-tone='danger'] {
+  --spark-tone: var(--at-baisse);
+}
+
+.spark[data-tone='neutral'] {
+  --spark-tone: var(--at-encre-3);
+}
+
+.line {
+  fill: none;
+  stroke: var(--spark-tone);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  animation: spark-draw var(--at-duree-ressort) var(--at-courbe-deplacement) both;
+}
+
+.dot {
+  fill: var(--spark-tone);
+  animation: spark-dot var(--at-duree-ressort) var(--at-courbe-deplacement) both;
+}
+
+@keyframes spark-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+@keyframes spark-dot {
+  0%,
+  70% {
+    opacity: 0;
+  }
+}

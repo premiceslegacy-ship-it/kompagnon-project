@@ -1,0 +1,56 @@
+/* @atelier-migrated */
+.ring {
+  --ring-tone: var(--at-accent);
+  position: relative;
+  display: inline-block;
+  flex: none;
+}
+
+.ring[data-tone='success'] {
+  --ring-tone: var(--at-hausse);
+}
+
+.ring[data-tone='danger'] {
+  --ring-tone: var(--at-baisse);
+}
+
+.ring[data-tone='neutral'] {
+  --ring-tone: var(--at-encre-3);
+}
+
+.ring svg {
+  display: block;
+  transform: rotate(-90deg);
+}
+
+.track {
+  fill: none;
+  stroke: var(--at-remplissage);
+}
+
+.arc {
+  fill: none;
+  stroke: var(--ring-tone);
+  stroke-linecap: round;
+  animation: ring-in var(--at-duree-deplacement) var(--at-courbe-deplacement) both;
+}
+
+@keyframes ring-in {
+  from {
+    stroke-dashoffset: var(--ring-c);
+  }
+}
+
+.center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--at-encre);
+  font-family: var(--font-geist), sans-serif;
+  font-size: clamp(11px, calc(var(--ring-size) * 0.24), 24px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}

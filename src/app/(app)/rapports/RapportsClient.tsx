@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight, FileText, MoreHorizontal } from 'lucide-reac
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
 import { Menu } from '@/components/ui/Menu'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
+import { SplitBar } from '@/components/ui/SplitBar'
 import { StatTile } from '@/components/ui/StatTile'
 import ObjectifsView from './ObjectifsView'
 import { ActiviteView, ClassementsView, EntretienView, HeuresView, RentabiliteView } from './RapportsDetailViews'
@@ -106,6 +107,20 @@ export default function RapportsClient(props: RapportsProps) {
                 <Figure label={collected} value={r.encaisse > 0 ? fmt(r.encaisse) : '-'} current={r.encaisse} previous={r.prevEncaisse} />
                 <Figure label="Bénéfice réel" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} current={r.beneficeEstime} extra={r.hasCostData ? undefined : 'Aucun coût réel saisi'} />
               </div>
+            )}
+            {r && r.hasCostData && r.caHt > 0 && (
+              <section className={local.chartCard} aria-labelledby="rapports-repartition">
+                <h2 id="rapports-repartition" className={local.chartTitle}>Où va le facturé</h2>
+                <p className={local.chartNote}>Sur {fmt(r.caHt)} facturés, ce qui reste après les coûts réels.</p>
+                <SplitBar
+                  label="Répartition du facturé"
+                  segments={[
+                    { key: 'benefice', label: 'Bénéfice', value: Math.max(0, r.beneficeEstime), tone: 'success', display: fmt(Math.max(0, r.beneficeEstime)) },
+                    { key: 'labor', label: 'Main-d’œuvre', value: r.laborCost, tone: 'info', display: fmt(r.laborCost) },
+                    { key: 'expenses', label: 'Dépenses', value: r.expensesCost, tone: 'accent', display: fmt(r.expensesCost) },
+                  ]}
+                />
+              </section>
             )}
             {q.vue === 'annee' && q.annualReport && <RevenueChart series={q.annualReport.series} prevSeries={q.annualReport.prevSeries} />}
             <ListGroup title="Voir le détail">

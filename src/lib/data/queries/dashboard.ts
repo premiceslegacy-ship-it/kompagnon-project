@@ -765,3 +765,54 @@ export async function getPrevMonthKPIs(month?: string, deps?: QueryDeps): Promis
 
   return { caMois, encaisseMois }
 }
+
+
+// ─── Tendance de facturation ─────────────────────────────────────────────────
+
+export type MonthBilling = { month: string; caMois: number; encaisseMois: number }
+
+/** Les `count` mois se terminant par `month` (AAAA-MM), du plus ancien au plus récent. */
+export function monthsEndingAt(month: string, count: number): string[] {
+  const [year, mon] = month.split('-').map(Number)
+  return Array.from({ length: count }, (_, i) => {
+    const index = year * 12 + (mon - 1) - (count - 1 - i)
+    const y = Math.floor(index / 12)
+    return `${y}-${String((index % 12) + 1).padStart(2, '0')}`
+  })
+}
+
+type BillingInvoice = { issue_date: string | null; total_ttc: number | null; total_paid: number | null; status: string }
+
+/** Même définition que les chiffres du mois : facturé TTC, et encaissé sur ces mêmes factures. */
+export function aggregateBillingByMonth(months: string[], invoices: BillingInvoice[]): MonthBilling[] {
+  const byMonth = new Map(months.map(m => [m, { month: m, caMois: 0, encaisseMois: 0 }]))
+  for (const inv of invoices) {
+    const bucket = inv.issue_date ? byMonth.get(inv.issue_date.slice(0, 7)) : undefined
+    if (!bucket) continue
+    bucket.caMois += inv.total_ttc ?? 0
+    if (inv.status === 'paid') bucket.encaisseMois += inv.total_ttc ?? 0
+    else if (inv.status === 'partial') bucket.encaisseMois += inv.total_paid ?? 0
+  }
+  return months.map(m => byMonth.get(m)!)
+}
+
+export async function getBillingTrend(month: string, count = 6, deps?: QueryDeps): Promise<MonthBilling[]> {
+  const supabase = deps?.client ?? await createClient()
+  const orgId = deps?.orgId ?? await getCurrentOrganizationId()
+  const months = monthsEndingAt(month, count)
+  if (!orgId) return months.map(m => ({ month: m, caMois: 0, encaisseMois: 0 }))
+
+  const [lastYear, lastMon] = months[months.length - 1].split('-').map(Number)
+  const nextIndex = lastYear * 12 + lastMon
+  const firstOfNextMonth = `${Math.floor(nextIndex / 12)}-${String((nextIndex % 12) + 1).padStart(2, '0')}-01`
+
+  const { data } = await supabase
+    .from('invoices')
+    .select('issue_date, total_ttc, total_paid, status')
+    .eq('organization_id', orgId)
+    .gte('issue_date', `${months[0]}-01`)
+    .lt('issue_date', firstOfNextMonth)
+    .in('status', ['sent', 'partial', 'paid'])
+
+  return aggregateBillingByMonth(months, (data ?? []) as BillingInvoice[])
+}
