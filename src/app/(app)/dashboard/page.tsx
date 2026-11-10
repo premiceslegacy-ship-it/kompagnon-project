@@ -72,7 +72,9 @@ function Figures({
             />
           )}
         </div>
-        <div className={styles.sub}><Delta current={stats.caMois} prev={prevStats.caMois} /></div>
+        <div className={styles.sub}>
+          {stats.caMois === 0 && prevStats.caMois === 0 ? 'Aucune facture sur ce mois' : <Delta current={stats.caMois} prev={prevStats.caMois} />}
+        </div>
         {stats.caMois > 0 && (
           <SplitBar
             className={figures.split}

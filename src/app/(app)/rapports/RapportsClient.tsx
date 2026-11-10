@@ -49,8 +49,8 @@ function PeriodBar({ q }: { q: RapportsState }) {
   )
 }
 
-function Figure({ label, value, previous, current, extra }: { label: string; value: string; previous?: number; current: number; extra?: string }) {
-  const d = previous === undefined ? null : delta(current, previous)
+function Figure({ label, value, previous, current, extra, inProgress }: { label: string; value: string; previous?: number; current: number; extra?: string; inProgress?: boolean }) {
+  const d = previous === undefined ? null : delta(current, previous, inProgress)
   const text = d ? deltaText(d) : null
   return (
     <StatTile label={label} value={value} detail={(text || extra) && <span className={local.delta} data-kind={d && (d.kind === 'up' || d.kind === 'down') ? d.kind : undefined}>{text ?? extra}</span>} />
@@ -103,8 +103,8 @@ export default function RapportsClient(props: RapportsProps) {
               <p className={styles.hint} style={{ margin: '0 16px' }}>Aucune donnée pour cette période.</p>
             ) : (
               <div className={local.kpis}>
-                <Figure label={billed} value={r.caHt > 0 ? fmt(r.caHt) : '-'} current={r.caHt} previous={r.prevCaHt} />
-                <Figure label={collected} value={r.encaisse > 0 ? fmt(r.encaisse) : '-'} current={r.encaisse} previous={r.prevEncaisse} />
+                <Figure label={billed} value={r.caHt > 0 ? fmt(r.caHt) : '-'} current={r.caHt} previous={r.prevCaHt} inProgress={!canGoNext(q.period)} />
+                <Figure label={collected} value={r.encaisse > 0 ? fmt(r.encaisse) : '-'} current={r.encaisse} previous={r.prevEncaisse} inProgress={!canGoNext(q.period)} />
                 <Figure label="Bénéfice réel" value={r.hasCostData ? fmt(r.beneficeEstime) : '-'} current={r.beneficeEstime} extra={r.hasCostData ? undefined : 'Aucun coût réel saisi'} />
               </div>
             )}

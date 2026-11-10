@@ -7,6 +7,7 @@ import { AlertDialog } from '@/components/ui/AlertDialog'
 import { Button } from '@/components/ui/Button'
 import { Field } from '@/components/ui/Field'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
+import { SplitBar } from '@/components/ui/SplitBar'
 import { SearchField } from '@/components/ui/SearchField'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { NumericInput } from '@/components/ui/NumericInput'
@@ -194,6 +195,15 @@ export function RentabilitySheet({ q, open, onClose }: SheetProps) {
             <b className={q.margeHt >= 0 ? styles.up : styles.down}>{fmt(q.margeHt)}</b>
             <small>{q.margePct.toFixed(1).replace('.', ',')}&nbsp;% du total HT</small>
           </div>
+          {q.totalHt > 0 && q.totalInternalHt > 0 && (
+            <SplitBar
+              label="Répartition du total HT"
+              segments={[
+                { key: 'marge', label: 'Marge', value: Math.max(0, q.margeHt), tone: 'success', display: fmt(Math.max(0, q.margeHt)) },
+                { key: 'couts', label: 'Coûts', value: q.totalInternalHt, tone: q.margeHt < 0 ? 'danger' : 'neutral', display: fmt(q.totalInternalHt) },
+              ]}
+            />
+          )}
           <ListGroup description="Les lignes internes ne figurent pas sur le PDF du client.">
             <ListRow title="Total client HT" trailing={<span className={styles.amount}>{fmt(q.totalHt)}</span>} />
             <ListRow title="Coût interne" trailing={<span className={styles.amount}>−{fmt(q.totalInternalHt)}</span>} />
