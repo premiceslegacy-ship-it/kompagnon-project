@@ -58,7 +58,7 @@ export default function DevisView({ q }: { q: SettingsState }) {
         {q.hasMetalPricing && (
           <ListGroup
             title="Prix matières métaux"
-            description="Cours indicatif × coefficient, ou prix fixe fournisseur. Ils pré-remplissent les lignes matière des devis. Les prix modifiés n’impactent pas les devis déjà validés ; les cours LME restent indicatifs."
+            description="Vos prix fournisseur HT, saisis et mis à jour par votre entreprise. Ils pré-remplissent les devis sans cours automatique. Les documents déjà validés ne changent pas."
           >
             {grids.map(grid => {
               const detail = [METAL_LABELS[grid.metal_code], gridPriceLabel(grid), ...gridDetails(grid)]
@@ -68,7 +68,7 @@ export default function DevisView({ q }: { q: SettingsState }) {
                   key={grid.id}
                   title={grid.label}
                   description={[...detail, ...links].join(' · ')}
-                  trailing={grid.source_type === 'manual' ? <StatusPill status="neutral">Prix fixe</StatusPill> : undefined}
+                  trailing={<StatusPill status="neutral">{grid.source_type === 'manual' ? 'Prix manuel' : 'À compléter'}</StatusPill>}
                   onClick={() => openGrid(grid)}
                 />
               )

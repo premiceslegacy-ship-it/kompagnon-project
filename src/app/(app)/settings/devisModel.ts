@@ -66,7 +66,7 @@ export function clausePreview(body: string, max = 90): string {
 
 export const GRID_UNITS = ['kg', 'm²', 'ml', 'pièce', 'tonne'] as const
 
-export const GRID_CSV_HEADERS = ['Libellé', 'Métal', 'Source', 'Coefficient', 'Prix fixe', 'Unité', 'Nuance', 'Épaisseur (mm)', 'Format']
+export const GRID_CSV_HEADERS = ['Libellé', 'Métal', 'Prix HT', 'Unité', 'Nuance', 'Épaisseur (mm)', 'Format']
 
 const METAL_CODE_MAP: Record<string, string> = {
   alu: 'ALU', aluminium: 'ALU', aluminum: 'ALU',
@@ -77,9 +77,10 @@ const METAL_CODE_MAP: Record<string, string> = {
   nickel: 'NI', ni: 'NI', inox: 'NI', stainless: 'NI',
 }
 
-/** Nombre saisi à la française (« 1,35 ») ou à l'anglaise (« 1.35 ») ; undefined si illisible ou nul. */
+/** Nombre saisi à la française ou à l'anglaise ; aucune valeur partielle ou non finie. */
 function num(value: string | undefined): number | undefined {
-  return parseFloat((value ?? '').replace(',', '.')) || undefined
+  const parsed = Number((value ?? '').trim().replace(',', '.'))
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
 
 export function parseGridRows(rows: string[][]): { valid: ImportGridRow[]; errors: string[] } {
@@ -92,17 +93,14 @@ export function parseGridRows(rows: string[][]): { valid: ImportGridRow[]; error
     const metalRaw = (row[1] ?? '').trim().toLowerCase()
     const metal_code = METAL_CODE_MAP[metalRaw] ?? row[1]?.trim().toUpperCase()
     if (!metal_code) { errors.push(`Ligne ${line} : métal manquant.`); return }
-    const sourceRaw = (row[2] ?? '').trim().toLowerCase()
-    const source_type: 'lme' | 'manual' = sourceRaw === 'manuel' || sourceRaw === 'manual' || sourceRaw === 'fixe' ? 'manual' : 'lme'
-    const coefficient = num(row[3])
-    const manual_price = num(row[4])
-    const unit = row[5]?.trim() || 'kg'
-    const grade = row[6]?.trim() || undefined
-    const thickness_mm = num(row[7])
-    const format_label = row[8]?.trim() || undefined
-    if (source_type === 'manual' && !manual_price) { errors.push(`Ligne ${line} : prix fixe requis pour la source manuelle.`); return }
-    if (source_type === 'lme' && metal_code === 'STEEL') { errors.push(`Ligne ${line} : l’acier requiert la source manuelle.`); return }
-    valid.push({ label, metal_code, source_type, coefficient, manual_price_eur_kg: manual_price, unit, grade, thickness_mm, format_label })
+    const manual_price = num(row[2])
+    const unit = row[3]?.trim() || 'kg'
+    const grade = row[4]?.trim() || undefined
+    const thickness_mm = num(row[5])
+    const format_label = row[6]?.trim() || undefined
+    if (manual_price === undefined) { errors.push(`Ligne ${line} : prix manuel positif requis.`); return }
+    if (!(GRID_UNITS as readonly string[]).includes(unit)) { errors.push(`Ligne ${line} : unité invalide.`); return }
+    valid.push({ label, metal_code, manual_price_eur_kg: manual_price, unit, grade, thickness_mm, format_label })
   })
   return { valid, errors }
 }
@@ -115,13 +113,13 @@ export function parseGridCsv(text: string): { valid: ImportGridRow[]; errors: st
   return parseGridRows(lines.slice(1).map(l => l.split(sep).map(c => c.replace(/^"|"$/g, '').trim())))
 }
 
-const eur = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const eur = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
 
-/** « 0,95 € / kg » pour un prix fixe, « Cours × 1,35 / kg » pour un cours indicatif. */
-export function gridPriceLabel(grid: Pick<MetalPriceGrid, 'source_type' | 'manual_price_eur_kg' | 'coefficient' | 'unit'>): string {
-  return grid.source_type === 'manual'
-    ? `${eur.format(grid.manual_price_eur_kg ?? 0)} € / ${grid.unit}`
-    : `Cours × ${eur.format(grid.coefficient)} / ${grid.unit}`
+/** Une ancienne grille de cours reste visible, mais n'est pas une référence utilisable. */
+export function gridPriceLabel(grid: Pick<MetalPriceGrid, 'source_type' | 'manual_price_eur_kg' | 'unit'>): string {
+  return grid.source_type === 'manual' && grid.manual_price_eur_kg !== null && Number.isFinite(grid.manual_price_eur_kg) && grid.manual_price_eur_kg > 0
+    ? `${eur.format(grid.manual_price_eur_kg)} € HT / ${grid.unit}`
+    : 'Prix manuel à renseigner'
 }
 
 /** Précisions d'une grille (nuance, épaisseur, format) pour la ligne de liste. */

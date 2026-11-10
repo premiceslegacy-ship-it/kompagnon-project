@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -9,7 +10,7 @@ import { dateParis, todayParis } from '@/lib/utils'
 import { fetchRAGContext } from '@/lib/ai/rag'
 import { generateEmbedding } from '@/lib/ai/embeddings'
 import { hasPermission } from '@/lib/data/queries/membership'
-import { deepLinkForSarahAction, proposeSarahAction, findClientIdForSarahDraft, confirmSarahActionAuto, resolveSarahActionRisk } from '@/lib/sarah/actions'
+import { deepLinkForSarahAction, proposeSarahAction, findClientIdForSarahDraft, confirmSarahActionAuto, resolveSarahActionRisk, SARAH_SERVER_TRUSTED_USER_INPUT_FIELD } from '@/lib/sarah/actions'
 import { findReplacementCandidates, findPlanningConflicts, findMissingPointages } from '@/lib/data/mutations/planning-agent'
 import { getMemberAbsences } from '@/lib/data/mutations/absences'
 import { getDashboardStats } from '@/lib/data/queries/dashboard'
@@ -874,8 +875,9 @@ async function resolveActionOrAskForClient(
   userId: string | null,
   conversationId: string | null,
   parsed: { reply: string; action?: unknown },
+  trustedUserInput: string,
 ): Promise<void> {
-  const attached = await attachPersistentProposal(orgId, userId, conversationId, parsed.action)
+  const attached = await attachPersistentProposal(orgId, userId, conversationId, parsed.action, trustedUserInput)
   if (attached && typeof attached === 'object' && '__clientNotFound' in attached) {
     const clientName = (attached as { __clientNotFound: string }).__clientNotFound
     parsed.action = undefined
@@ -890,13 +892,15 @@ async function attachPersistentProposal(
   userId: string | null,
   conversationId: string | null,
   action: unknown,
+  trustedUserInput: string,
 ): Promise<unknown> {
   if (!action || typeof action !== 'object') return action
   const act = action as Record<string, unknown>
   const type = typeof act.type === 'string' ? act.type : null
   if (!type) return action
 
-  const payload = (act.payload && typeof act.payload === 'object' ? act.payload : {}) as Record<string, unknown>
+  const payload = { ...(act.payload && typeof act.payload === 'object' ? act.payload : {}) } as Record<string, unknown>
+  delete payload[SARAH_SERVER_TRUSTED_USER_INPUT_FIELD]
   const label = typeof act.label === 'string' && act.label.trim() ? act.label.trim() : 'Action Sarah'
   const description = typeof act.description === 'string' && act.description.trim() ? act.description.trim() : label
   // Le `risk` est déclaré par le modèle, donc non fiable : la décision
@@ -925,8 +929,11 @@ async function attachPersistentProposal(
   }
 
   const deepLink = deepLinkForSarahAction(type, payload)
+  const requestDigest = type === 'draft_quote'
+    ? `:request:${createHash('sha256').update(trustedUserInput.trim()).digest('hex').slice(0, 16)}`
+    : ''
   const dedupeKey = conversationId
-    ? `chat:${conversationId}:${type}:${label}:${description.slice(0, 48)}`
+    ? `chat:${conversationId}:${type}:${label}:${description.slice(0, 48)}${requestDigest}`
     : null
 
   const proposal = await proposeSarahAction({
@@ -937,6 +944,7 @@ async function attachPersistentProposal(
     title: label,
     description,
     payload,
+    trustedUserInput,
     deepLink,
     dedupeKey,
   })
@@ -1987,7 +1995,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed2)
+      await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed2, message)
       void persistConversationTurn({ orgId, userId: user?.id ?? null, conversationId, userMessage: message, reply: parsed2.reply })
       return NextResponse.json(parsed2)
     }
@@ -2001,7 +2009,7 @@ export async function POST(req: NextRequest) {
       parsed.reply = safeReplyFromRaw(raw, parsed.action)
     }
 
-    await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed)
+    await resolveActionOrAskForClient(orgId, user?.id ?? null, conversationId, parsed, message)
     void persistConversationTurn({ orgId, userId: user?.id ?? null, conversationId, userMessage: message, reply: parsed.reply })
     return NextResponse.json(parsed)
   } catch (err) {

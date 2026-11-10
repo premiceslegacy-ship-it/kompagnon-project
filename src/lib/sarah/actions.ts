@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/membership'
@@ -15,6 +16,7 @@ import { sendQuoteFollowup, markQuoteRefused } from '@/lib/data/mutations/remind
 import { getPlanningRecipientUserIds, sendPushToPlanningRecipients } from '@/lib/push'
 import { getMaterials, getLaborRates, getPrestationTypes, type CatalogLaborRate, type CatalogMaterial, type PrestationType } from '@/lib/data/queries/catalog'
 import { createMaterialQuick, createLaborRateQuick } from '@/lib/data/mutations/catalog'
+import type { MaterialPriceVariant } from '@/lib/catalog-pricing'
 import { getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 import { createIndividualMember } from '@/lib/data/mutations/members'
 import { dateParis, todayParis } from '@/lib/utils'
@@ -22,7 +24,8 @@ import { Resend } from 'resend'
 import { APP_SIGNATURE, defaultBrandedSenderName } from '@/lib/brand'
 import { renderOrganizationEmail } from '@/lib/email/organization'
 import { MISSING_ORGANIZATION_EMAIL_ERROR } from '@/lib/email/resolver'
-
+import { getBusinessContext } from '@/lib/ai/business-context'
+import { applyManualPriceKnowledge, findCatalogMatch, matchExactCatalogVariant, roundPriceToCents, roundDocumentQuantity, type PriceKnowledgeItem } from '@/lib/ai/manual-pricing'
 export type SarahActionRisk = 'low' | 'medium' | 'high'
 export type SarahActionStatus = 'pending' | 'executed' | 'dismissed' | 'expired' | 'failed'
 
@@ -32,13 +35,14 @@ export type SarahActionProposalInput = {
   type: string
   risk?: SarahActionRisk
   title: string
-  description: string
+  description?: string
   payload?: Record<string, unknown>
   deepLink?: string | null
   dedupeKey?: string | null
   expiresAt?: string | null
+  trustedUserInput?: string
 }
-
+ 
 export type SarahActionProposal = {
   id: string
   organization_id: string
@@ -54,6 +58,35 @@ export type SarahActionProposal = {
   expires_at: string
   created_at: string
   error: string | null
+}
+
+export const SARAH_SERVER_TRUSTED_USER_INPUT_FIELD = '__sarah_server_trusted_user_input'
+type SignedTrustedUserInput = { value: string; signature: string }
+
+function signSarahTrustedUserInput(organizationId: string, type: string, userInput: string | undefined): SignedTrustedUserInput | null {
+  const value = userInput?.trim()
+  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (type !== 'draft_quote' || !value || !secret) return null
+  const signature = createHmac('sha256', secret).update(`${organizationId}\0${type}\0${value}`).digest('hex')
+  return { value, signature }
+}
+
+function verifiedSarahTrustedUserInput(proposal: SarahActionProposal, organizationId: string): string {
+  if (proposal.type !== 'draft_quote') return ''
+  const stored = proposal.payload?.[SARAH_SERVER_TRUSTED_USER_INPUT_FIELD]
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return ''
+  const { value, signature } = stored as Partial<SignedTrustedUserInput>
+  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (typeof value !== 'string' || !value.trim() || typeof signature !== 'string' || !/^[a-f0-9]{64}$/i.test(signature) || !secret) return ''
+  const expected = createHmac('sha256', secret).update(`${organizationId}\0${proposal.type}\0${value}`).digest()
+  const actual = Buffer.from(signature, 'hex')
+  return actual.length === expected.length && timingSafeEqual(actual, expected) ? value : ''
+}
+
+function withoutSarahTrustedUserInput(proposal: SarahActionProposal): SarahActionProposal {
+  const payload = { ...proposal.payload }
+  delete payload[SARAH_SERVER_TRUSTED_USER_INPUT_FIELD]
+  return { ...proposal, payload }
 }
 
 const SARAH_EMAIL_MAX_RECIPIENTS = 50
@@ -169,8 +202,13 @@ export function deepLinkForSarahAction(type: string, payload: Record<string, unk
 export async function proposeSarahAction(input: SarahActionProposalInput): Promise<SarahActionProposal | null> {
   const admin = createAdminClient()
   const type = normalizeSarahActionType(input.type)
-  const deepLink = normalizeSarahDeepLink(input.deepLink) ?? deepLinkForSarahAction(type, input.payload ?? {})
+  const payload = { ...(input.payload ?? {}) }
+  delete payload[SARAH_SERVER_TRUSTED_USER_INPUT_FIELD]
+  const trustedInput = signSarahTrustedUserInput(input.organizationId, type, input.trustedUserInput)
+  if (trustedInput) payload[SARAH_SERVER_TRUSTED_USER_INPUT_FIELD] = trustedInput
+  const deepLink = normalizeSarahDeepLink(input.deepLink) ?? deepLinkForSarahAction(type, payload)
   const expiresAt = input.expiresAt ?? new Date(Date.now() + 7 * 86400000).toISOString()
+ 
 
   if (input.dedupeKey) {
     const { data: existing, error: existingError } = await admin
@@ -188,7 +226,7 @@ export async function proposeSarahAction(input: SarahActionProposalInput): Promi
     if (existing) {
       const existingProposal = existing as SarahActionProposal
       if (new Date(existingProposal.expires_at).getTime() >= Date.now()) {
-        return existingProposal
+        return withoutSarahTrustedUserInput(existingProposal)
       }
       await admin
         .from('sarah_action_proposals')
@@ -206,7 +244,7 @@ export async function proposeSarahAction(input: SarahActionProposalInput): Promi
       risk: input.risk ?? 'low',
       title: input.title,
       description: input.description,
-      payload: input.payload ?? {},
+      payload,
       deep_link: deepLink,
       dedupe_key: input.dedupeKey ?? null,
       expires_at: expiresAt,
@@ -226,13 +264,13 @@ export async function proposeSarahAction(input: SarahActionProposalInput): Promi
         .eq('dedupe_key', input.dedupeKey)
         .eq('status', 'pending')
         .maybeSingle()
-      return existing as SarahActionProposal | null
+      return existing ? withoutSarahTrustedUserInput(existing as SarahActionProposal) : null
     }
     console.error('[proposeSarahAction]', error)
     return null
   }
 
-  return data as SarahActionProposal
+  return withoutSarahTrustedUserInput(data as SarahActionProposal)
 }
 
 export async function executeSarahActionPayload(
@@ -248,7 +286,9 @@ export async function executeSarahActionPayload(
   if (!orgId) return { ok: false, message: 'Non connecté.', error: 'unauthenticated' }
 
   const normalizedType = normalizeSarahActionType(type)
-  const deepLink = normalizeSarahDeepLink(opts.deepLink) ?? deepLinkForSarahAction(normalizedType, payload)
+  const safePayload = { ...payload }
+  delete safePayload[SARAH_SERVER_TRUSTED_USER_INPUT_FIELD]
+  const deepLink = normalizeSarahDeepLink(opts.deepLink) ?? deepLinkForSarahAction(normalizedType, safePayload)
   const proposal: SarahActionProposal = {
     id: 'direct',
     organization_id: orgId,
@@ -257,7 +297,7 @@ export async function executeSarahActionPayload(
     risk: 'medium',
     title: opts.title ?? 'Action Sarah',
     description: opts.title ?? 'Action Sarah',
-    payload,
+    payload: safePayload,
     deep_link: deepLink,
     status: 'pending',
     dedupe_key: null,
@@ -292,7 +332,7 @@ export async function listPendingSarahActions(): Promise<SarahActionProposal[]> 
     .order('created_at', { ascending: false })
     .limit(12)
 
-  return (data ?? []) as SarahActionProposal[]
+  return ((data ?? []) as SarahActionProposal[]).map(withoutSarahTrustedUserInput)
 }
 
 async function saveAIBriefFromSarah(
@@ -503,6 +543,9 @@ type SarahDraftLine = {
   material_id?: string | null
   labor_rate_id?: string | null
   is_internal?: boolean
+  needsManualPriceCheck?: boolean
+  ai_warnings?: string[]
+  ai_source?: PriceKnowledgeItem['ai_source']
 }
 
 function normalizeText(value: unknown): string {
@@ -552,43 +595,56 @@ export async function findClientIdForSarahDraft(orgId: string, payload: Record<s
   return best && best.score >= 70 ? best.id : null
 }
 
-function findCatalogMatch<T extends { id: string }>(
-  items: T[],
+
+function lineFromMaterial(
+  material: CatalogMaterial,
   raw: Record<string, unknown>,
-  fields: Array<keyof T>,
-): T | null {
-  const explicit = typeof raw.catalog_id === 'string'
-    ? raw.catalog_id
-    : typeof raw.catalogId === 'string'
-      ? raw.catalogId
-      : typeof raw.id === 'string'
-        ? raw.id
-        : null
-  if (explicit) {
-    const byId = items.find(item => item.id === explicit)
-    if (byId) return byId
+  preferCatalogPrice = false,
+): SarahDraftLine {
+  let variant: MaterialPriceVariant | null = null
+  if (preferCatalogPrice && material.price_variants?.length) {
+    const variantHints = [
+      raw.variant_label,
+      raw.variantLabel,
+      raw.name,
+      raw.designation,
+      raw.description,
+    ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    const variantMatch = matchExactCatalogVariant(material.price_variants, variantHints)
+    if (variantMatch?.kind === 'ambiguous') {
+      throw new Error(`Précisez la variante catalogue de « ${material.name} » avant de créer le devis.`)
+    }
+    variant = variantMatch?.kind === 'match' ? variantMatch.variant : null
+    if (!variant) {
+      throw new Error(`Précisez la variante catalogue de « ${material.name} » avant de créer le devis.`)
+    }
   }
 
-  const search = normalizeText(raw.name ?? raw.designation ?? raw.description ?? raw.catalog_name ?? raw.catalogName)
-  if (!search) return null
-  return items.find(item => fields.some(field => {
-    const value = item[field]
-    return normalizeText(value).includes(search) || search.includes(normalizeText(value))
-  })) ?? null
-}
+  const requestedUnit = typeof raw.unit === 'string' && raw.unit.trim() ? raw.unit.trim() : null
+  if (preferCatalogPrice && requestedUnit && material.unit && requestedUnit !== material.unit) {
+    throw new Error(`Le catalogue de « ${material.name} » est tarifé en « ${material.unit} », et non en « ${requestedUnit} ». Précisez l’unité sans conversion.`)
+  }
+  const catalogPrice = variant ? variant.sale_price : getCatalogSaleUnitPrice(material)
+  const fallbackDescription = typeof raw.description === 'string' && raw.description.trim() ? raw.description.trim() : material.name
+  const description = variant?.label && !normalizeText(fallbackDescription).includes(normalizeText(variant.label))
+    ? `${fallbackDescription} (${variant.label})`
+    : fallbackDescription
+  const price = preferCatalogPrice
+    ? Number(catalogPrice) || 0
+    : numberOr(raw.unit_price ?? raw.unitPrice, getCatalogSaleUnitPrice(material))
 
-function lineFromMaterial(material: CatalogMaterial, raw: Record<string, unknown>): SarahDraftLine {
   return {
-    description: typeof raw.description === 'string' && raw.description.trim() ? raw.description.trim() : material.name,
+    description,
     quantity: numberOr(raw.quantity ?? raw.qty, 1),
-    unit: typeof raw.unit === 'string' && raw.unit.trim() ? raw.unit.trim() : material.unit ?? 'u',
-    unit_price: numberOr(raw.unit_price ?? raw.unitPrice, getCatalogSaleUnitPrice(material)),
+    unit: preferCatalogPrice ? material.unit ?? requestedUnit ?? 'u' : requestedUnit ?? material.unit ?? 'u',
+    unit_price: price,
     unit_cost_ht: material.purchase_price ?? null,
     vat_rate: numberOr(raw.vat_rate ?? raw.vatRate, material.vat_rate ?? 20),
     type: 'material',
     material_id: material.id,
     labor_rate_id: null,
     is_internal: false,
+    ...(preferCatalogPrice && price <= 0 ? { needsManualPriceCheck: true } : {}),
   }
 }
 
@@ -607,14 +663,18 @@ function lineFromLabor(labor: CatalogLaborRate, raw: Record<string, unknown>): S
   }
 }
 
-function linesFromPrestation(prestation: PrestationType, raw: Record<string, unknown>): SarahDraftLine[] {
+function linesFromPrestation(
+  prestation: PrestationType,
+  raw: Record<string, unknown>,
+  preferCatalogPrice = false,
+): SarahDraftLine[] {
   const multiplier = numberOr(raw.quantity ?? raw.qty, 1)
   if (!prestation.items?.length) {
     return [{
       description: prestation.name,
       quantity: multiplier,
       unit: prestation.unit ?? 'u',
-      unit_price: numberOr(raw.unit_price ?? raw.unitPrice, prestation.base_price_ht),
+      unit_price: preferCatalogPrice ? prestation.base_price_ht : numberOr(raw.unit_price ?? raw.unitPrice, prestation.base_price_ht),
       unit_cost_ht: prestation.base_cost_ht ?? null,
       vat_rate: numberOr(raw.vat_rate ?? raw.vatRate, prestation.vat_rate ?? 20),
       type: 'custom',
@@ -632,10 +692,11 @@ function linesFromPrestation(prestation: PrestationType, raw: Record<string, unk
     material_id: item.material_id,
     labor_rate_id: item.labor_rate_id,
     is_internal: item.is_internal || item.item_type === 'equipment' || item.item_type === 'transport',
+    needsManualPriceCheck: preferCatalogPrice && item.item_type === 'material' && Number(item.unit_price_ht) <= 0,
   }))
 }
 
-async function resolveSarahDraftLines(payload: Record<string, unknown>): Promise<SarahDraftLine[]> {
+async function resolveSarahDraftLines(payload: Record<string, unknown>, preferCatalogPrices = false): Promise<SarahDraftLine[]> {
   const [materials, laborRates, prestations] = await Promise.all([getMaterials(), getLaborRates(), getPrestationTypes()])
   const sections = Array.isArray(payload.sections) ? payload.sections : []
   const rawItems = [
@@ -656,11 +717,12 @@ async function resolveSarahDraftLines(payload: Record<string, unknown>): Promise
         : typeof raw.id === 'string'
           ? raw.id
           : null
-    const prestation = (kind.includes('prestation') || kind.includes('bundle'))
-      ? findCatalogMatch(prestations, raw, ['name', 'category'])
-      : findCatalogMatch(prestations, raw, ['name'])
+    const prestation = (explicitCatalogId ? prestations.find(item => item.id === explicitCatalogId) : null) ??
+      ((kind.includes('prestation') || kind.includes('bundle'))
+        ? findCatalogMatch(prestations, raw, ['name', 'category'])
+        : findCatalogMatch(prestations, raw, ['name']))
     if (prestation && (kind.includes('prestation') || kind.includes('bundle') || explicitCatalogId === prestation.id)) {
-      lines.push(...linesFromPrestation(prestation, raw))
+      lines.push(...linesFromPrestation(prestation, raw, preferCatalogPrices))
       continue
     }
 
@@ -683,9 +745,10 @@ async function resolveSarahDraftLines(payload: Record<string, unknown>): Promise
       continue
     }
 
-    const material = findCatalogMatch(materials, raw, ['name', 'reference', 'category'])
+    const material = (explicitCatalogId ? materials.find(item => item.id === explicitCatalogId) : null) ??
+      findCatalogMatch(materials, raw, ['name', 'reference', 'category'])
     if (material) {
-      lines.push(lineFromMaterial(material, raw))
+      lines.push(lineFromMaterial(material, raw, preferCatalogPrices))
       continue
     }
 
@@ -711,10 +774,71 @@ async function resolveSarahDraftLines(payload: Record<string, unknown>): Promise
         vat_rate: numberOr(raw.vat_rate ?? raw.vatRate, 20),
         type: 'custom',
         is_internal: Boolean(raw.is_internal ?? raw.internal ?? false),
+        needsManualPriceCheck: true,
       })
     }
   }
   return lines
+}
+
+async function enforceSarahManualPricing(
+  orgId: string,
+  lines: SarahDraftLine[],
+  trustedUserInput: string,
+): Promise<SarahDraftLine[]> {
+  const candidates = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => line.needsManualPriceCheck)
+  if (candidates.length === 0) return lines
+
+  const [businessContext, supabase] = await Promise.all([getBusinessContext(orgId), createClient()])
+  const { data: recentItems } = await supabase
+    .from('quote_items')
+    .select('description, unit, unit_price, quote:quotes!inner(organization_id, status)')
+    .eq('quote.organization_id', orgId)
+    .in('quote.status', ['sent', 'accepted'])
+    .not('unit_price', 'eq', 0)
+    .order('created_at', { ascending: false })
+    .limit(80)
+
+  const recentPrices = (recentItems ?? []).flatMap((item: {
+    description: string | null
+    unit: string | null
+    unit_price: number | null
+  }) => {
+    const unitPrice = Number(item.unit_price)
+    return item.description && item.unit && Number.isFinite(unitPrice) && unitPrice > 0
+      ? [{ description: item.description, unit: item.unit, unitPrice }]
+      : []
+  })
+  const requestText = trustedUserInput
+  const candidateItems: PriceKnowledgeItem[] = candidates.map(({ line }) => ({
+    designation: line.description,
+    description: line.description,
+    unit: line.unit,
+    unit_price: line.unit_price,
+    ai_source: 'ai_estimate',
+    is_estimated: true,
+  }))
+  const quote = [{ sections: [{ items: candidateItems }] }]
+  const priced = applyManualPriceKnowledge(quote, {
+    hasMetalPricing: businessContext.hasMetalPricing,
+    catalogPrices: [],
+    recentPrices,
+    manualGrids: businessContext.manualPriceGrids,
+  }, requestText)
+  if (priced.clarification) throw new Error(priced.clarification)
+
+  const updatedItems = priced.quotes[0]?.sections[0]?.items ?? []
+  const byLineIndex = new Map(candidates.map(({ index }, itemIndex) => [index, updatedItems[itemIndex]]))
+  return lines.map((line, index) => {
+    const cleanLine = { ...line }
+    delete cleanLine.needsManualPriceCheck
+    const item = byLineIndex.get(index)
+    return item
+      ? { ...cleanLine, unit: item.unit, unit_price: item.unit_price, ai_source: item.ai_source, ai_warnings: item.ai_warnings }
+      : cleanLine
+  })
 }
 
 function truncateTitle(value: string, max = 60): string {
@@ -743,9 +867,33 @@ function resolveSarahDraftTitle(
   return fallback
 }
 
-async function createSarahQuoteDraft(orgId: string, payload: Record<string, unknown>): Promise<{ quoteId: string; lineCount: number }> {
+function normalizeSarahDocumentLines(lines: SarahDraftLine[]): SarahDraftLine[] {
+  return lines.map(line => {
+    const quantity = roundDocumentQuantity(line.quantity)
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 9_999_999.999) {
+      throw new Error(`La quantité de « ${line.description} » ne peut pas être enregistrée avec cette unité. Choisissez une quantité positive à trois décimales maximum ou une autre unité.`)
+    }
+    if (quantity !== line.quantity) line = { ...line, quantity }
+    const sourcePrice = Number(line.unit_price)
+    if (!Number.isFinite(sourcePrice)) throw new Error(`Précisez un prix unitaire valide pour « ${line.description} ».`)
+    const roundedPrice = roundPriceToCents(sourcePrice)
+    if (sourcePrice > 0 && roundedPrice <= 0) {
+      throw new Error(`Le prix unitaire de « ${line.description} » (${sourcePrice} € / ${line.unit}) s’arrondit à 0,00 € ; indiquez un prix non nul compatible avec cette unité.`)
+    }
+    if (roundedPrice === sourcePrice) return line
+    const warning = `Prix source arrondi au centime : ${sourcePrice} € → ${roundedPrice} €.`
+    return { ...line, unit_price: roundedPrice, ai_warnings: [...(line.ai_warnings ?? []), warning].slice(-5) }
+  })
+}
+
+async function createSarahQuoteDraft(
+  orgId: string,
+  payload: Record<string, unknown>,
+  trustedUserInput = '',
+): Promise<{ quoteId: string; lineCount: number }> {
   const clientId = await findClientIdForSarahDraft(orgId, payload)
-  const lines = await resolveSarahDraftLines(payload)
+  const resolvedLines = await enforceSarahManualPricing(orgId, await resolveSarahDraftLines(payload, true), trustedUserInput)
+  const lines = normalizeSarahDocumentLines(resolvedLines)
   const title = resolveSarahDraftTitle(payload, lines, 'Nouveau devis')
   const quote = await createQuote({
     clientId,
@@ -771,7 +919,8 @@ async function createSarahQuoteDraft(orgId: string, payload: Record<string, unkn
         vat_rate: line.vat_rate,
         position: idx + 1,
         is_internal: line.is_internal ?? false,
-        ai_source: line.material_id || line.labor_rate_id ? 'catalog' : 'client_input',
+        ai_source: line.ai_source ?? (line.material_id || line.labor_rate_id ? 'catalog' : 'client_input'),
+        ai_warnings: line.ai_warnings ?? [],
       })
       if (res.error) throw new Error(res.error)
     }
@@ -779,9 +928,10 @@ async function createSarahQuoteDraft(orgId: string, payload: Record<string, unkn
   return { quoteId: quote.quoteId, lineCount: lines.length }
 }
 
-async function createSarahInvoiceDraft(orgId: string, payload: Record<string, unknown>): Promise<{ invoiceId: string; lineCount: number }> {
+async function createSarahInvoiceDraft(orgId: string, payload: Record<string, unknown>, trustedUserInput = ''): Promise<{ invoiceId: string; lineCount: number }> {
   const clientId = await findClientIdForSarahDraft(orgId, payload)
-  const lines = await resolveSarahDraftLines(payload)
+  const resolvedLines = await enforceSarahManualPricing(orgId, await resolveSarahDraftLines(payload, true), trustedUserInput)
+  const lines = normalizeSarahDocumentLines(resolvedLines)
   const title = resolveSarahDraftTitle(payload, lines, 'Nouvelle facture')
   const invoice = await createInvoice({ clientId, title })
   if (invoice.error || !invoice.invoiceId) throw new Error(invoice.error ?? 'Création de la facture impossible.')
@@ -807,7 +957,10 @@ async function createSarahInvoiceDraft(orgId: string, payload: Record<string, un
 }
 
 async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: string): Promise<{ message: string; deepLink?: string | null }> {
-  const p = proposal.payload ?? {}
+  const storedPayload = proposal.payload ?? {}
+  const trustedUserInput = verifiedSarahTrustedUserInput(proposal, orgId)
+  const p = { ...storedPayload }
+  delete p[SARAH_SERVER_TRUSTED_USER_INPUT_FIELD]
 
   switch (proposal.type) {
     case 'task_complete': {
@@ -847,7 +1000,7 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
         await saveAIBriefFromSarah(orgId, 'chloe', p)
         return { message: "Ce devis demande un peu de travail. J'enregistre le brief et j'ouvre l'éditeur.", deepLink: '/finances/quote-editor' }
       }
-      const result = await createSarahQuoteDraft(orgId, p)
+      const result = await createSarahQuoteDraft(orgId, p, trustedUserInput)
       return {
         message: `Brouillon de devis créé avec ${result.lineCount} ligne${result.lineCount > 1 ? 's' : ''}. J'ouvre l'éditeur.`,
         deepLink: `/finances/quote-editor?id=${result.quoteId}`,
@@ -855,7 +1008,7 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
     }
 
     case 'draft_invoice': {
-      const result = await createSarahInvoiceDraft(orgId, p)
+      const result = await createSarahInvoiceDraft(orgId, p, trustedUserInput)
       return {
         message: `Brouillon de facture créé avec ${result.lineCount} ligne${result.lineCount > 1 ? 's' : ''}. J'ouvre l'éditeur.`,
         deepLink: `/finances/invoice-editor?id=${result.invoiceId}`,

@@ -26,7 +26,7 @@ function item(overrides: Partial<LocalItem> = {}): LocalItem {
     position: 1, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null,
     dim_quantity: 1, is_estimated: false, is_internal: false, transport_km: null,
     transport_conso: null, transport_prix_l: null, metal_grid_id: null,
-    metal_lme_price_eur_kg: null, price_pending: false, labor_category: null,
+    price_pending: false, labor_category: null,
     ...overrides,
   }
 }
