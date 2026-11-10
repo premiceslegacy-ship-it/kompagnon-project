@@ -827,7 +827,7 @@ Effets des migrations 152–166 :
 - `165` : `quote_requests.freeform_notes` — précisions libres du formulaire public, séparées de la description fusionnée, pour générer des lignes de devis IA complémentaires au catalogue sélectionné
 - `166` : crée le bucket Storage `quote-attachments` (les policies RLS existaient depuis la migration `054` mais le bucket lui-même n'avait jamais été créé — tout upload depuis `/demande/[orgSlug]` échouait en 404)
 - `167` : étend les contraintes CHECK `metal_code` (`cached_metal_prices`, `metal_price_grids`, `metal_price_snapshots`) pour accepter `NI` — nickel utilisé comme proxy de cours pour l'inox (MetalPriceAPI n'a pas de code "stainless steel" dédié). Le calcul par poids réel (longueur × largeur × épaisseur de la grille × densité du métal) est aussi disponible depuis cette version pour tous les métaux, y compris l'acier en saisie manuelle — voir `src/lib/metal-prices.ts` (`computeMetalWeightKg`, `METAL_DENSITY_KG_M3`)
-- `168` : nouvelle table `metal_price_history` (une ligne par métal et par jour) — alimente `getMetalPriceTrends()`, affiché comme variation % avec alerte visuelle dans la bannière prix matières (seuil ±2%). Nécessite au moins 2 jours d'historique pour afficher une tendance ; vide à l'activation d'un nouveau client
+- `168` : table `metal_price_history` (une ligne par métal et par jour), conservée pour l'historique. Le flux de cours, les tendances et le cron ont été retirés lors du passage aux prix manuels (§5.d).
 - `169` : nouvelle table RLS `plan_measurements` pour reprendre les brouillons sans conserver le plan source, et colonne `quote_items.measurement_metadata` pour garder formules, variables, preuves et version des règles après conversion en devis
 
 Effets de ces migrations :
@@ -1002,14 +1002,12 @@ Effets de ces migrations :
   - `organizations.secondary_activity_ids JSONB DEFAULT '[]'` — activités secondaires déclarées, injectées dans le contexte IA uniquement
   - migration additive, aucun effet de bord
 
-- `120` :
-  - `organizations.has_metal_pricing BOOLEAN NOT NULL DEFAULT false` — flag d'activation du module prix matières (tôliers, métalliers) ; piloté depuis le cockpit Orsayn
-  - nouvelle table `cached_metal_prices` — cache serveur des cours LME (une ligne par métal : ALU, XCU, ZNC, PB — **étendu à NI/nickel par la migration 167**, voir plus bas), rafraîchi toutes les 10 min par le cron dédié
-  - nouvelle table `metal_price_grids` — grilles matière configurées par l'artisan (métal source + coefficient fournisseur) ; RLS org-scoped
-  - nouvelle table `metal_price_snapshots` — audit immuable des cours LME au moment de la validation du devis (traçabilité art. L. 112-1 CMF) ; RLS org-scoped
-  - **Gating strict :** le bandeau cours, les grilles et le snapshot ne s'affichent que si `has_metal_pricing = true` — activé uniquement depuis le cockpit Orsayn, pour les clients Pro ou Expert tôliers/métalliers. Aucun accès sans activation explicite.
-  - **Nouvelle variable d'env requise** : `METALPRICEAPI_KEY` (voir §3) — uniquement pour les instances où `has_metal_pricing` est activé
-  - **Nouveau cron à planifier** : `POST /api/cron/metal-prices` toutes les 10 min (voir §5.d) — uniquement si au moins un client a le module activé
+- `120` (schéma historique, conservé après le passage aux prix manuels) :
+  - `organizations.has_metal_pricing BOOLEAN NOT NULL DEFAULT false` — accès aux grilles matières manuelles, activé explicitement depuis le cockpit ; les prix du catalogue ne dépendent pas de ce flag
+  - `cached_metal_prices` — ancien cache de cours, désormais ni lu ni alimenté par l'application
+  - `metal_price_grids` — grilles matière de l'entreprise, avec prix manuel HT et unité ; RLS org-scoped. Les anciennes grilles `lme` doivent recevoir un prix manuel avant toute nouvelle utilisation
+  - `metal_price_snapshots` — références historiques conservées ; les snapshots existants ne sont pas réécrits lors d'un nouvel envoi
+  - aucune clé de fournisseur de cours, aucun abonnement de données et aucun cron métaux ne sont requis
 
 - `121` :
   - `quote_items.metal_grid_id UUID REFERENCES metal_price_grids(id) ON DELETE SET NULL` — lien entre une ligne de devis et la grille métal utilisée pour le pré-remplissage ; null pour toutes les autres lignes
@@ -1161,7 +1159,6 @@ NEXT_PUBLIC_SUPPORT_EMAIL=...
 NEXT_PUBLIC_PRIVACY_EMAIL=...
 NEXT_PUBLIC_LEGAL_EMAIL=...
 OPENROUTER_API_KEY=sk-or-...          ← clé Atelier partagée (couvre aussi la transcription vocale Voxtral depuis le 2026-08-22)
-METALPRICEAPI_KEY=...                  ← uniquement si has_metal_pricing activé (plan Basic 12$/mois, mutualisé entre tous les clients du module) — obtenir sur metalpriceapi.com
 CRON_SECRET=...                        ← unique par client (openssl rand -hex 32)
 MEMBER_SESSION_SECRET=...              ← unique par client, signe le cookie de session /mon-espace (openssl rand -hex 32)
 RATE_LIMIT_SECRET=...                  ← requis en production, distinct des deux autres secrets (openssl rand -hex 32)
@@ -1448,42 +1445,25 @@ curl -X POST https://<domaine-du-client.fr>/api/cron/monthly-member-reports \
 
 > **Pourquoi pas dans le Worker `auto-reminder` ?** Le Worker existant tourne tous les jours (`0 7 * * *` UTC). Pour ce cron mensuel on a besoin d'un schedule différent (1er du mois). Soit créer un Worker dédié, soit utiliser cron-job.org. Le déclenchement reste idempotent : le mois courant est calculé côté serveur, pas de risque d'envoi en double.
 
-### 5.d Cron — rafraîchissement cours LME (module prix matières métaux)
+### 5.d Prix matières : références manuelles, sans abonnement de cours
 
-**Concerne uniquement les instances avec `has_metal_pricing = true`.**
+Les cours automatiques, leur cache de repli et les données de démonstration ont été retirés. Les routes `/api/metal-prices` et `/api/cron/metal-prices` n'existent plus. Ne pas souscrire ou configurer un fournisseur pour utiliser les prix manuels.
 
-`POST /api/cron/metal-prices` force un fetch depuis MetalPriceAPI et met à jour le cache `cached_metal_prices` **de l'instance ciblée par l'URL**, plus un point d'historique quotidien dans `metal_price_history` (migration 168, sert au calcul de tendance affiché dans la bannière). L'app a elle-même un cache serveur de 10 min — ce cron n'est nécessaire que pour garantir un rafraîchissement proactif et indépendant du trafic.
+- Le catalogue conserve les prix de vente et d'achat saisis par l'entreprise.
+- Pour un client ayant besoin de grilles métaux, activer `has_metal_pricing` depuis le cockpit, puis saisir les grilles dans Réglages → Devis. Le flag n'active plus de cotations.
+- Chaque grille contient un **prix manuel HT par unité** (`kg`, `tonne`, `m²`, `ml`, `pièce`), éventuellement relié à un article et un fournisseur. Le nom historique `manual_price_eur_kg` de la colonne ne signifie pas que toutes les grilles sont au kilogramme.
+- Les créations, modifications et imports de grilles enregistrent uniquement `source_type=manual`, avec coefficient `1`. Une ancienne grille de cours reste visible mais requiert un prix manuel explicite ; aucune conversion depuis un ancien cache n'est faite.
+- Import CSV : `Libellé;Métal;Prix HT;Unité;Nuance;Épaisseur (mm);Format`. Les anciennes colonnes `Source` et `Coefficient` ne font plus partie du format.
+- Les dimensions respectent l'unité de la grille : surface en `m²`, longueur en `ml`, nombre de pièces, ou poids calculé avec épaisseur et densité pour `kg`. Les quantités en `tonne` sont saisies manuellement. Les quantités de document sont limitées à trois décimales ; une quantité arrondie à zéro bloque l'envoi.
+- Les références manuelles conservent jusqu'à quatre décimales. Les tarifs de devis et les références figées dans les snapshots sont arrondis au centime, conformément aux colonnes existantes. Un changement de dimensions ne rétablit pas un autre prix après une modification manuelle.
+- Les documents et snapshots historiques restent conservés. Aucun nettoyage de table ni migration de prix n'est requis pour cette coupure.
+- Sarah reçoit les grilles actives de l'entreprise avec unité, nuance, format et fournisseur. Pour les matières métalliques, les parcours de devis et les brouillons Sarah de devis/facture refusent un prix inconnu ou une correspondance ambiguë avant création. Les notes générées par le modèle ne prouvent pas qu'un prix a été fourni par l'utilisateur.
+- Un prix extrait d'un document reste signalé comme extraction non vérifiée. Les références manuelles ne constituent ni un cours de marché ni une garantie de marge ; l'entreprise relit le prix de vente avant confirmation.
 
-**Plan API retenu :** Basic (12 $/mois, 10 000 req/mois, MAJ toutes les 10 min) — mutualisé entre tous les clients du module. Une seule clé `METALPRICEAPI_KEY` côté Atelier, identique sur toutes les instances. **Ce plan n'est pas encore souscrit** : à activer sur metalpriceapi.com au moment où un premier client signe sur ce module (pas de raison de payer avant).
+**Lors du prochain déploiement autorisé**, supprimer les anciens jobs externes qui ciblent `/api/cron/metal-prices`, ainsi que les variables inutilisées `METALPRICEAPI_KEY` et `ATELIER_DEMO_METAL_PRICES`. Cette modification du code ne reconfigure pas automatiquement les ordonnanceurs ou les secrets de production.
 
-**Planification — cron-job.org, un job PAR CLIENT actif :**
+Les prix restent sous la responsabilité de l'entreprise : fournisseur, nuance, format, coupe, livraison et date de validité doivent être vérifiés avant l'envoi d'un devis.
 
-Chaque job cible le domaine d'un seul client — la mutualisation ne porte que sur la clé `METALPRICEAPI_KEY`, pas sur le déclenchement. Un job qui appelle `client-a.fr` ne rafraîchit jamais le cache de `client-b.fr`. Pour chaque client avec `has_metal_pricing = true` :
-
-1. Aller sur [cron-job.org](https://cron-job.org) → créer un job
-2. URL : `https://<domaine-du-client.fr>/api/cron/metal-prices`
-3. Méthode : `POST`
-4. Header : `x-cron-secret: <CRON_SECRET du client>` (le `CRON_SECRET` est unique par client, voir §3 — ne pas réutiliser celui d'un autre client)
-5. Fréquence : toutes les 10 minutes
-
-```bash
-# Déclencher manuellement (test ou init)
-curl -X POST https://<domaine-du-client.fr>/api/cron/metal-prices \
-  -H "x-cron-secret: <CRON_SECRET>"
-# Réponse attendue : { "ok": true, "refreshed": 5, "prices": [...] }
-# refreshed=5 depuis la migration 167 (ALU, XCU, ZNC, PB, NI) — était 4 avant (sans NI/nickel)
-```
-
-**Variables d'env requises (injecter via `--apply-all`) :**
-```
-METALPRICEAPI_KEY=...   ← clé Atelier partagée (obtenir sur metalpriceapi.com, plan Basic)
-```
-
-> **Fallback :** si l'API MetalPriceAPI est indisponible, l'app retourne le dernier cours en cache avec l'horodatage de la dernière mise à jour valide. Le bandeau affiche la mention "Cours du JJ/MM/AAAA" pour indiquer que ce n'est pas le cours du jour.
-
-> **Mode démo (dev/qualif) :** `ATELIER_DEMO_METAL_PRICES=true` génère des cours simulés sans appeler MetalPriceAPI (source affichée : "Cours indicatifs Atelier"), utile pour tester le module sans plan payant actif — voir compte démo `demo@weber-tolerie-demo.fr`.
-
-**Lien catalogue (depuis cette version) :** si un article du catalogue (`materials`) est lié à une grille métal (`metal_price_grids.catalog_item_id`), sa fiche d'édition affiche un encart informatif avec le prix suggéré au cours du jour — sans jamais écraser `sale_price` automatiquement. Aucune action de déploiement requise, c'est un appel côté client à la même route `/api/metal-prices`.
 
 ### 6. Edge Functions Supabase : aucune
 

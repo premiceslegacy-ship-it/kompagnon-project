@@ -129,6 +129,7 @@ export function LineSheet({ q, sectionId, itemId, onClose, onSaveToCatalog }: Pr
                   type="number"
                   label="Quantité"
                   min={0}
+                  decimals={3}
                   value={item.quantity}
                   disabled={isDimensioned}
                   onChange={v => change('quantity', v ?? 0)}
@@ -138,7 +139,8 @@ export function LineSheet({ q, sectionId, itemId, onClose, onSaveToCatalog }: Pr
                   <UnitSelect
                     value={item.unit}
                     onChange={v => change('unit', v)}
-                    allowedUnits={q.catalogContext.unitSet}
+                    allowedUnits={[...q.catalogContext.unitSet, item.unit]}
+                    disabled={Boolean(item.metal_grid_id)}
                     compact
                   />
                 </div>

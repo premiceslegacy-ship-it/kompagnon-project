@@ -15,7 +15,6 @@ import DimensionConfigEditor from '@/components/catalog/DimensionConfigEditor'
 import type { CatalogLaborRate, CatalogMaterial } from '@/lib/data/queries/catalog'
 import type { Supplier } from '@/lib/data/queries/suppliers'
 import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids'
-import type { CachedMetalPrice } from '@/lib/metal-prices'
 import { createMaterial, createLaborRate, updateMaterial, updateLaborRate, type ImportCatalogState } from '@/lib/data/mutations/catalog'
 import { createSupplier, updateSupplier } from '@/lib/data/mutations/suppliers'
 import { buildCatalogPricingPreview, displayUnitToMeters, type DimensionPricingMode } from '@/lib/catalog-pricing'
@@ -35,6 +34,7 @@ import local from './Catalog.module.css'
 
 const NB = ' '
 const OTHER_UNIT = '__other__'
+const manualPriceFormat = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
 
 /** Unité : liste par familles, ou saisie libre pour une unité propre à l'entreprise. */
 function UnitField({ value, onChange, allowedUnits, disabled = false }: { value: string; onChange: (v: string) => void; allowedUnits?: string[] | null; disabled?: boolean }) {
@@ -78,29 +78,17 @@ function CategoryField({ value, newValue, categories, onChange, onNewChange }: {
   )
 }
 
-// Affiche le prix suggéré par le cours du jour à côté du prix de vente figé, sans jamais l'écraser :
-// l'artisan décide seul du prix catalogue.
+// La grille manuelle sert de référence, sans écraser le prix de vente catalogue.
 function MetalGridHint({ grid }: { grid: MetalPriceGrid }) {
-  const [price, setPrice] = useState<CachedMetalPrice | null>(null)
-  const [loading, setLoading] = useState(true)
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/metal-prices')
-      .then(res => res.json())
-      .then((data: { prices?: CachedMetalPrice[] }) => { if (!cancelled) setPrice(data.prices?.find(p => p.metal_code === grid.metal_code) ?? null) })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [grid.metal_code])
-  const reference = grid.source_type === 'manual' ? grid.manual_price_eur_kg : price?.price_eur_kg
-  const suggested = reference != null ? Math.round(reference * grid.coefficient * 100) / 100 : null
+  const price = grid.source_type === 'manual' ? grid.manual_price_eur_kg : null
+  const hasPrice = price !== null && Number.isFinite(price) && price > 0
   return (
     <p className={screen.note} role="status" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
       <TrendingUp size={15} aria-hidden="true" style={{ flex: 'none', marginTop: 2 }} />
       <span>
-        {loading ? 'Chargement du cours matière…'
-          : suggested != null ? `Grille matière liée (${grid.label}) : prix suggéré au cours du jour ${suggested.toFixed(2)}${NB}€ / ${grid.unit}. Le prix de vente reste inchangé tant que vous ne le modifiez pas vous-même.`
-            : 'Cours matière indisponible pour le moment.'}
+        {hasPrice
+          ? `Grille matière liée (${grid.label}) : ${manualPriceFormat.format(price!)}${NB}€ HT / ${grid.unit}, saisis manuellement. Le prix de vente reste inchangé tant que vous ne le modifiez pas vous-même.`
+          : 'Cette grille nécessite un prix manuel. Renseignez-le dans Réglages → Devis.'}
       </span>
     </p>
   )

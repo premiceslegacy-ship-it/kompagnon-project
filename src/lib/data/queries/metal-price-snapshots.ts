@@ -17,6 +17,7 @@ export type MetalPriceSnapshotRow = {
   created_at: string
   // joint
   item_description: string | null
+  item_unit: string | null
 }
 
 export async function getMetalPriceSnapshotsForQuote(quoteId: string): Promise<MetalPriceSnapshotRow[]> {
@@ -31,7 +32,7 @@ export async function getMetalPriceSnapshotsForQuote(quoteId: string): Promise<M
       metal_code, lme_price_eur_kg, coefficient,
       computed_price, validated_price, source,
       price_date, show_on_pdf, created_at,
-      quote_items!inner(description)
+      quote_items!inner(description, unit)
     `)
     .eq('quote_id', quoteId)
     .eq('organization_id', orgId)
@@ -42,5 +43,6 @@ export async function getMetalPriceSnapshotsForQuote(quoteId: string): Promise<M
   return data.map((r) => ({
     ...r,
     item_description: ((r.quote_items as unknown) as { description: string | null } | null)?.description ?? null,
+    item_unit: ((r.quote_items as unknown) as { unit: string | null } | null)?.unit ?? null,
   }))
 }

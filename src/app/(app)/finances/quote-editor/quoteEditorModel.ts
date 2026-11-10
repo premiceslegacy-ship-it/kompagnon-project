@@ -159,10 +159,6 @@ export type LocalItem = {
   transport_prix_l: number | null
   // Module prix matières
   metal_grid_id: string | null
-  // Cours LME (€/kg) au moment de la sélection de grille - UI uniquement, non persisté en DB.
-  // Permet de recalculer le prix au poids réel (L × l × épaisseur × densité) quand
-  // l'artisan saisit les dimensions de la pièce après avoir choisi la grille.
-  metal_lme_price_eur_kg: number | null
   price_pending: boolean
   labor_category: 'atelier' | 'pose' | 'finition' | 'autre' | null
 }
@@ -304,7 +300,6 @@ export function itemToLocal(i: QuoteItem): LocalItem {
     transport_conso: isTransportLine ? DEFAULT_CONSUMPTION_L_PER_100KM : null,
     transport_prix_l: isTransportLine ? i.unit_price : null,
     metal_grid_id: i.metal_grid_id ?? null,
-    metal_lme_price_eur_kg: null,
     price_pending: (i as { price_pending?: boolean }).price_pending ?? false,
     labor_category: (i as { labor_category?: 'atelier' | 'pose' | 'finition' | 'autre' | null }).labor_category ?? null,
   }

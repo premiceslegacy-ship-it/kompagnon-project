@@ -10,7 +10,7 @@ type Props = {
   snapshots: MetalPriceSnapshotRow[]
 }
 
-const nf = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const nf = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
 const fmtEurKg = (n: number) => `${nf.format(n)} €/kg`
 const fmtEur = (n: number) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n)
 
@@ -29,14 +29,15 @@ export default function MetalPriceSnapshotPanel({ snapshots }: Props) {
       description="Références matière au moment de la validation, non contractuelles. Le prix final reste celui validé par l’artisan."
     >
       {snapshots.map(s => {
-        const reference = s.source === 'manual' || s.lme_price_eur_kg === null
-          ? `Prix fixe ${fmtEurKg(Number(s.computed_price))}`
-          : `Cours ${fmtEurKg(s.lme_price_eur_kg)}`
+        const manual = s.source === 'manual' || s.lme_price_eur_kg === null
+        const reference = manual
+          ? `Référence manuelle au centime ${nf.format(Number(s.computed_price))} € HT / ${s.item_unit ?? 'unité non renseignée'}`
+          : `Cours ${fmtEurKg(s.lme_price_eur_kg!)} × ${Number(s.coefficient).toFixed(2)}`
         return (
           <ListRow
             key={s.id}
             title={s.item_description ?? '—'}
-            description={`${METAL_LABELS[s.metal_code as MetalCode] ?? s.metal_code} · ${reference} × ${Number(s.coefficient).toFixed(2)} · ${fmtDateHeure(s.price_date)}`}
+            description={`${METAL_LABELS[s.metal_code as MetalCode] ?? s.metal_code} · ${reference} · ${fmtDateHeure(s.price_date)}`}
             trailing={<span className={styles.value}>{fmtEur(s.validated_price)}</span>}
           />
         )

@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation'
 import type { Client } from '@/lib/data/queries/clients'
 import { buildPersonalizedQuoteIntro, isLegacyAutoQuoteIntro } from '@/lib/client'
 import { buildMaterialSelectionPricing } from '@/lib/catalog-pricing'
-import { computeMetalWeightKg, type MetalCode } from '@/lib/metal-prices'
+import { computeManualMetalQuantity } from '@/lib/metal-prices'
 import type { QuoteWithItems } from '@/lib/data/queries/quotes'
 import type { CatalogMaterial, CatalogLaborRate, PrestationType } from '@/lib/data/queries/catalog'
 import { createQuote, updateQuote, upsertQuoteSection, deleteQuoteSection, upsertQuoteItem, deleteQuoteItem, pruneQuoteItems, sendQuote } from '@/lib/data/mutations/quotes'
@@ -28,7 +28,6 @@ import { computeFuel, DEFAULT_CONSUMPTION_L_PER_100KM, DEFAULT_FUEL_PRICE_EUR_PE
 import { getCatalogDocumentVatRate, getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 
 import type { OrganizationModules } from '@/lib/organization-modules'
-import MetalPriceBanner from '@/components/quotes/MetalPriceBanner'
 
 import type { SupplierPriceRequest } from '@/lib/data/mutations/supplier-price-requests'
 
@@ -689,7 +688,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     const desc = `${equipmentLabel}\n\nAmortissement : ${equipmentPurchase} € / ${equipmentUses} usages`
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === equipmentTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, metal_lme_price_eur_kg: null, price_pending: false, labor_category: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, price_pending: false, labor_category: null }] }
         : s
     ))
     setShowEquipment(false)
@@ -718,7 +717,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     const desc = `Carburant - trajet ${transportKm} km`
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === transportTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL, metal_grid_id: null, metal_lme_price_eur_kg: null, price_pending: false, labor_category: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL, metal_grid_id: null, price_pending: false, labor_category: null }] }
         : s
     ))
     setShowTransport(false)
@@ -985,7 +984,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     deletedItemKeys.current.delete(key)
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: internal, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, metal_lme_price_eur_kg: null, price_pending: false, labor_category: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: internal, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, price_pending: false, labor_category: null }] }
         : s
     ))
     const sectionId = await ensureSectionSaved(sectionTempId, qId)
@@ -1003,7 +1002,17 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   }
 
   // F3 — Pré-remplissage depuis une grille matière (MetalPriceBanner)
-  async function handleMetalGridSelect(grid: MetalPriceGrid, lmePriceEurKg: number) {
+  async function handleMetalGridSelect(grid: MetalPriceGrid) {
+    const manualPrice = Number(grid.manual_price_eur_kg)
+    if (grid.source_type !== 'manual' || !Number.isFinite(manualPrice) || manualPrice <= 0) {
+      setErrorMsg('Renseignez un prix manuel valide pour cette grille.')
+      return
+    }
+    const proposedPrice = roundCurrency(manualPrice)
+    if (!Number.isFinite(proposedPrice) || proposedPrice <= 0) {
+      setErrorMsg('Ce prix est trop faible pour un tarif de devis au centime. Choisissez une unité adaptée.')
+      return
+    }
     const qId = await ensureQuote()
     if (!qId) return
     // Cible : première section disponible, ou on en crée une
@@ -1016,11 +1025,10 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     const sec = sectionsRef.current.find(s => s._tempId === targetTempId)!
     const pos = sec.items.length + 1
     const tempId = `item_${Date.now()}`
-    const proposedPrice = Math.round(lmePriceEurKg * grid.coefficient * 100) / 100
     const lineLabel = buildMetalGridLineLabel(grid)
-    // Grille avec épaisseur connue = calcul possible par surface (L × l × épaisseur × densité)
-    // dès que l'artisan renseigne les dimensions ; sinon le prix reste le multiplicateur simple.
-    const canPriceBySurface = grid.thickness_mm != null && grid.thickness_mm > 0
+    const dimensionMode = grid.unit === 'm²'
+      || (grid.unit === 'kg' && grid.thickness_mm !== null && grid.thickness_mm > 0)
+      ? 'area' : grid.unit === 'ml' ? 'linear' : null
     deletedItemKeys.current.delete(`${targetTempId}_${tempId}`)
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === targetTempId
@@ -1037,13 +1045,12 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
             labor_rate_id: null,
             position: pos,
             length_m: null, width_m: null, height_m: null,
-            dimension_pricing_mode: canPriceBySurface ? 'area' : null,
+            dimension_pricing_mode: dimensionMode,
             dim_quantity: 1,
-            is_estimated: true,
+            is_estimated: false,
             is_internal: false,
             transport_km: null, transport_conso: null, transport_prix_l: null,
             metal_grid_id: grid.id,
-            metal_lme_price_eur_kg: lmePriceEurKg,
             price_pending: false,
             labor_category: null,
           }] }
@@ -1066,6 +1073,14 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   }
 
   function handleItemChange(sectionTempId: string, itemTempId: string, field: keyof LocalItem, value: string | number | boolean | null) {
+    if (field === 'quantity' && typeof value === 'number') {
+      const quantity = Math.round((value + Number.EPSILON) * 1000) / 1000
+      if (!Number.isFinite(quantity)) {
+        setErrorMsg('La quantité doit être un nombre fini.')
+        return
+      }
+      value = quantity
+    }
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
         ? { ...s, items: s.items.map(i => i._tempId === itemTempId
@@ -1188,10 +1203,19 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
       if (s._tempId !== sectionTempId) return s
       return { ...s, items: s.items.map(i => {
         if (i._tempId !== itemTempId) return i
-        const mode = getItemDimensionMode(i)
         const nextLength = field === 'length_m' ? value : i.length_m
         const nextWidth = field === 'width_m' ? value : i.width_m
         const nextHeight = field === 'height_m' ? value : i.height_m
+
+        // Une grille manuelle ne doit ni changer d'unité ni reprendre le prix du catalogue lié.
+        const grid = i.metal_grid_id ? metalPriceGrids.find(g => g.id === i.metal_grid_id) : null
+        if (grid) {
+          const quantity = grid.source_type === 'manual' && grid.unit === i.unit
+            ? computeManualMetalQuantity(grid, nextLength, nextWidth, i.dim_quantity || 1)
+            : null
+          return { ...i, [field]: value, quantity: quantity ?? i.quantity }
+        }
+        const mode = getItemDimensionMode(i)
         const sourceMaterial = i.material_id ? materials.find(material => material.id === i.material_id) : null
         const pricing = sourceMaterial
           ? buildMaterialSelectionPricing({
@@ -1201,24 +1225,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
               requestedHeightM: nextHeight,
             })
           : null
-
-        // Ligne issue d'une grille métal : calcul du poids réel (L × l × épaisseur × densité)
-        // plutôt que le multiplicateur "1 pièce" par défaut, quand les données sont disponibles.
-        // Source LME (cours du jour) ou manuelle (acier) : même calcul de poids, prix au kg différent.
-        const grid = i.metal_grid_id ? metalPriceGrids.find(g => g.id === i.metal_grid_id) : null
-        const priceEurKg = grid?.source_type === 'manual' ? grid.manual_price_eur_kg : i.metal_lme_price_eur_kg
-        const weightKg = grid && priceEurKg != null
-          ? computeMetalWeightKg(grid.metal_code as MetalCode, grid.thickness_mm, nextLength, nextWidth)
-          : null
-        if (weightKg != null && grid && priceEurKg != null) {
-          return {
-            ...i,
-            [field]: value,
-            quantity: weightKg,
-            unit: 'kg',
-            unit_price: Math.round(priceEurKg * grid.coefficient * 100) / 100,
-          }
-        }
 
         return {
           ...i,
@@ -1238,6 +1244,13 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
       if (s._tempId !== sectionTempId) return s
       return { ...s, items: s.items.map(i => {
         if (i._tempId !== itemTempId) return i
+        const grid = i.metal_grid_id ? metalPriceGrids.find(g => g.id === i.metal_grid_id) : null
+        if (grid) {
+          const quantity = grid.source_type === 'manual' && grid.unit === i.unit
+            ? computeManualMetalQuantity(grid, i.length_m, i.width_m, qty)
+            : null
+          return { ...i, dim_quantity: qty, quantity: quantity ?? i.quantity }
+        }
         const mode = getItemDimensionMode(i)
         return {
           ...i,
@@ -1288,7 +1301,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
       is_internal: !isMat,
       transport_km: null, transport_conso: null, transport_prix_l: null,
       metal_grid_id: null,
-      metal_lme_price_eur_kg: null,
       price_pending: false,
       labor_category: null,
     }
@@ -1373,10 +1385,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
             quote_item_id: item.id!,
             quote_id: qId,
             grid_id: grid.id,
-            metal_code: grid.metal_code as import('@/lib/metal-prices').MetalCode,
-            coefficient: grid.coefficient,
-            validated_price: item.unit_price,
-            show_on_pdf: false,
           }
         })
         .filter(Boolean) as import('@/lib/data/mutations/metal-price-snapshots').SnapshotInput[]
@@ -1392,6 +1400,12 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   }
 
   async function prepareQuoteSend(skipEmailCheck = false, skipCheck = false) {
+    if (sectionsRef.current.some(section => section.items.some(item =>
+      !Number.isFinite(item.quantity) || item.quantity <= 0 || item.quantity > 9_999_999.999
+      || Math.abs(item.quantity * 1000 - Math.round(item.quantity * 1000)) > 0.000001))) {
+      setErrorMsg('Quantité invalide. Choisissez une unité adaptée et une quantité positive, avec trois décimales maximum.')
+      return
+    }
     if (!clientId) {
       setErrorMsg('Veuillez sélectionner un client avant d\'envoyer le devis.')
       return
@@ -1583,7 +1597,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
           is_internal: isInternal,
           transport_km: null, transport_conso: null, transport_prix_l: null,
           metal_grid_id: null,
-          metal_lme_price_eur_kg: null,
           price_pending: false,
           labor_category: null,
         }
@@ -1671,7 +1684,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
         is_estimated: false, is_internal: true,
         transport_km: null, transport_conso: null, transport_prix_l: null,
         metal_grid_id: null,
-        metal_lme_price_eur_kg: null,
         price_pending: false,
         labor_category: 'atelier' as const,
       }
@@ -1725,7 +1737,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
         is_estimated: false, is_internal: false,
         transport_km: null, transport_conso: null, transport_prix_l: null,
         metal_grid_id: null,
-        metal_lme_price_eur_kg: null,
         price_pending: false,
         labor_category: null,
       }
@@ -1793,7 +1804,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
           transport_conso: isTransport ? conso : null,
           transport_prix_l: isTransport ? prixL : null,
           metal_grid_id: null,
-          metal_lme_price_eur_kg: null,
           price_pending: false,
           labor_category: laborCategory,
         }

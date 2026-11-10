@@ -6,7 +6,6 @@ import { useActionState, useEffect, useRef, useState, useTransition } from 'reac
 import { AlertDialog } from '@/components/ui/AlertDialog'
 import { Field } from '@/components/ui/Field'
 import { ListGroup } from '@/components/ui/ListGroup'
-import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { Sheet } from '@/components/ui/Sheet'
 import { createMetalPriceGrid, deleteMetalPriceGrid, updateMetalPriceGrid, type MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids'
 import type { CatalogMaterial } from '@/lib/data/queries/catalog'
@@ -38,7 +37,6 @@ export default function MetalGridSheet({ open, grid, materials, suppliers, onClo
 
   const [label, setLabel] = useState(grid?.label ?? '')
   const [metalCode, setMetalCode] = useState<MetalCode>(grid?.metal_code ?? 'ALU')
-  const [sourceType, setSourceType] = useState<'lme' | 'manual'>(grid?.source_type ?? (grid?.metal_code === 'STEEL' ? 'manual' : 'lme'))
   const [unit, setUnit] = useState<string>(grid?.unit ?? 'kg')
   const [catalogItemId, setCatalogItemId] = useState(grid?.catalog_item_id ?? '')
   const [supplierId, setSupplierId] = useState(grid?.supplier_id ?? '')
@@ -46,18 +44,11 @@ export default function MetalGridSheet({ open, grid, materials, suppliers, onClo
   const [thickness, setThickness] = useState<number | null>(grid?.thickness_mm ?? null)
   const [format, setFormat] = useState(grid?.format_label ?? '')
   const [price, setPrice] = useState<number | null>(grid?.manual_price_eur_kg ?? null)
-  const [coefficient, setCoefficient] = useState<number | null>(grid?.coefficient ?? 1.35)
 
   useEffect(() => { if (state.success) onClose() }, [state.success]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const articles = materials.filter(item => item.item_kind === 'article')
-  const manual = sourceType === 'manual'
-  const valid = label.trim() !== '' && (manual ? (price ?? 0) > 0 : (coefficient ?? 0) > 0)
-
-  function changeMetal(code: MetalCode) {
-    setMetalCode(code)
-    setSourceType(code === 'STEEL' ? 'manual' : 'lme')
-  }
+  const valid = label.trim() !== '' && price !== null && Number.isFinite(price) && price > 0
 
   function changeCatalogItem(id: string) {
     setCatalogItemId(id)
@@ -91,20 +82,18 @@ export default function MetalGridSheet({ open, grid, materials, suppliers, onClo
           {grid && <input type="hidden" name="id" value={grid.id} />}
           <input type="hidden" name="label" value={label} />
           <input type="hidden" name="metal_code" value={metalCode} />
-          <input type="hidden" name="source_type" value={sourceType} />
+          <input type="hidden" name="source_type" value="manual" />
           <input type="hidden" name="unit" value={unit} />
           <input type="hidden" name="catalog_item_id" value={catalogItemId} />
           <input type="hidden" name="supplier_id" value={supplierId} />
           <input type="hidden" name="grade" value={grade} />
           <input type="hidden" name="thickness_mm" value={thickness == null ? '' : String(thickness)} />
           <input type="hidden" name="format_label" value={format} />
-          {manual
-            ? <input type="hidden" name="manual_price_eur_kg" value={price == null ? '' : String(price)} />
-            : <input type="hidden" name="coefficient" value={coefficient == null ? '' : String(coefficient)} />}
+          <input type="hidden" name="manual_price_eur_kg" value={price == null ? '' : String(price)} />
 
           <div className={styles.fields}>
             <Field type="text" label="Libellé" placeholder={metalCode === 'STEEL' ? 'Acier S235 fournisseur habituel' : 'Alu 2 mm fournisseur habituel'} value={label} onChange={e => setLabel(e.target.value)} />
-            <Field type="select" label="Métal" value={metalCode} onChange={e => changeMetal(e.target.value as MetalCode)}>
+            <Field type="select" label="Métal" value={metalCode} onChange={e => setMetalCode(e.target.value as MetalCode)}>
               {METAL_CODES.map(code => <option key={code} value={code}>{METAL_LABELS[code]}</option>)}
             </Field>
             <Field type="select" label="Unité" value={unit} onChange={e => setUnit(e.target.value)}>
@@ -112,26 +101,16 @@ export default function MetalGridSheet({ open, grid, materials, suppliers, onClo
             </Field>
           </div>
 
-          {metalCode === 'STEEL'
-            ? <p className={styles.hint}>L’acier n’est pas coté sur le LME : le prix est saisi à la main et mis à jour par vos soins.</p>
-            : (
-              <SegmentedControl
-                label="Source du prix"
-                fullWidth
-                value={sourceType}
-                onChange={v => setSourceType(v as 'lme' | 'manual')}
-                options={[{ value: 'lme', label: 'Cours LME' }, { value: 'manual', label: 'Prix fixe' }]}
-              />
-            )}
+          {grid?.source_type === 'lme' && (
+            <p className={styles.hint}>Les cours automatiques sont désactivés. Saisissez un prix manuel pour réutiliser cette grille.</p>
+          )}
 
           <div>
             <div className={styles.fields}>
-              {manual
-                ? <Field type="number" label={`Prix fournisseur (€/${unit})`} min={0} decimals={2} placeholder="0,95" allowEmpty value={price} onChange={setPrice} />
-                : <Field type="number" label="Coefficient" min={0} decimals={2} allowEmpty value={coefficient} onChange={setCoefficient} />}
+              <Field type="number" label={`Prix de référence HT (€/${unit})`} min={0} decimals={4} placeholder="0,95" allowEmpty value={price} onChange={setPrice} />
             </div>
             <p className={styles.hint}>
-              {manual ? 'Prix fixe : à mettre à jour quand votre fournisseur change ses tarifs.' : 'Prix final = cours LME × coefficient.'}
+              Prix manuel : à mettre à jour quand votre fournisseur change ses tarifs.
             </p>
           </div>
 

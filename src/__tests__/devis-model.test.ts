@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampValidity, clausePayload, clausePreview, clauseFormValid, gridDetails, gridPriceLabel, parseGridCsv, sortClauses, upsertClause } from '@/app/(app)/settings/devisModel'
+import { clampValidity, clausePayload, clausePreview, clauseFormValid, parseGridCsv, sortClauses, upsertClause } from '@/app/(app)/settings/devisModel'
 import type { QuoteClauseTemplate } from '@/lib/data/queries/clause-templates'
 
 const clause = (id: string, category: string | null, position: number): QuoteClauseTemplate => ({
@@ -40,26 +40,25 @@ describe('devis : clauses', () => {
 })
 
 describe('devis : grilles de prix', () => {
-  it('lit un CSV avec « ; » ou « , » et reconnaît les noms français', () => {
-    const csv = 'Libellé;Métal;Source;Coefficient;Prix fixe;Unité;Nuance;Épaisseur;Format\nAlu 2mm;aluminium;lme;1,35;;kg;5754;2;1000x2000\nAcier S235;acier;fixe;;0.95;kg;S235;;'
+  it('importe les prix manuels avec leur unité et leur précision', () => {
+    const csv = 'Libellé;Métal;Prix HT;Unité;Nuance;Épaisseur;Format\nAlu 2mm;aluminium;1,355;kg;5754;2;1000x2000\nAcier S235;acier;19.5;m²;S235;;'
     const { valid, errors } = parseGridCsv(csv)
     expect(errors).toEqual([])
-    expect(valid[0]).toMatchObject({ label: 'Alu 2mm', metal_code: 'ALU', source_type: 'lme', grade: '5754', thickness_mm: 2, coefficient: 1.35 })
-    expect(valid[1]).toMatchObject({ metal_code: 'STEEL', source_type: 'manual', manual_price_eur_kg: 0.95 })
+    expect(valid).toEqual([
+      { label: 'Alu 2mm', metal_code: 'ALU', manual_price_eur_kg: 1.355, unit: 'kg', grade: '5754', thickness_mm: 2, format_label: '1000x2000' },
+      { label: 'Acier S235', metal_code: 'STEEL', manual_price_eur_kg: 19.5, unit: 'm²', grade: 'S235', thickness_mm: undefined, format_label: undefined },
+    ])
   })
 
-  it('signale les lignes impossibles avec leur numéro', () => {
-    const csv = 'a;b\nAcier;acier;lme;1;;kg\nCuivre;cuivre;manuel;;;kg'
-    const { valid, errors } = parseGridCsv(csv)
-    expect(valid).toHaveLength(0)
-    expect(errors[0]).toContain('Ligne 2')
-    expect(errors[1]).toContain('prix fixe requis')
-    expect(parseGridCsv('seulement un titre').errors[0]).toContain('vide')
+  it.each(['', '0', '-1', '12abc', 'Infinity', 'lme'])('refuse un prix manuel inutilisable (%s)', price => {
+    const { valid, errors } = parseGridCsv(`Libellé;Métal;Prix HT;Unité\nAcier;acier;${price};kg`)
+    expect(valid).toEqual([])
+    expect(errors).toHaveLength(1)
   })
 
-  it('formate le prix et les précisions d’une grille', () => {
-    expect(gridPriceLabel({ source_type: 'manual', manual_price_eur_kg: 0.95, coefficient: 1, unit: 'kg' })).toMatch(/^0,95 € \/ kg$/)
-    expect(gridPriceLabel({ source_type: 'lme', manual_price_eur_kg: null, coefficient: 1.35, unit: 'm²' })).toMatch(/^Cours × 1,35 \/ m²$/)
-    expect(gridDetails({ grade: 'S235', thickness_mm: 2, format_label: null })).toEqual(['S235', '2 mm'])
+  it('refuse une unité inconnue au lieu de lui attribuer un prix au kg', () => {
+    const { valid, errors } = parseGridCsv('Libellé;Métal;Prix HT;Unité\nAcier;acier;5;m³')
+    expect(valid).toEqual([])
+    expect(errors).toHaveLength(1)
   })
 })

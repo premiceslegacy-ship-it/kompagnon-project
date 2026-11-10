@@ -1,14 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getBusinessActivityById, normalizeSecondaryActivityIds, type BusinessActivityId, type BusinessProfile } from '@/lib/catalog-context'
-import { METAL_LABELS, type MetalCode } from '@/lib/metal-prices'
+import { formatManualPriceGridContext, selectManualPriceGridsForAI, type ManualPriceGridContext, type ManualPriceGridRow } from '@/lib/ai/manual-pricing'
 import { getVerticalPackDefinition, type VerticalPackId } from '@/lib/vertical-packs'
-
-export type MetalPriceGridContext = {
-  label: string
-  metalLabel: string
-  coefficient: number
-  unit: string
-}
 
 export type BusinessContext = {
   businessActivityId: BusinessActivityId | null
@@ -19,7 +12,7 @@ export type BusinessContext = {
   sector: string
   orgName: string
   hasMetalPricing: boolean
-  metalPriceGrids: MetalPriceGridContext[]
+  manualPriceGrids: ManualPriceGridContext[]
   verticalPackId: VerticalPackId | null
   verticalPackLabel: string | null
 }
@@ -35,7 +28,7 @@ export async function getBusinessContext(orgId: string): Promise<BusinessContext
       .single(),
     supabase
       .from('metal_price_grids')
-      .select('label, metal_code, coefficient, unit')
+      .select('id, organization_id, label, metal_code, source_type, manual_price_eur_kg, unit, catalog_item_id, supplier_id, grade, thickness_mm, format_label, is_active')
       .eq('organization_id', orgId)
       .eq('is_active', true)
       .order('position', { ascending: true }),
@@ -55,12 +48,28 @@ export async function getBusinessContext(orgId: string): Promise<BusinessContext
     .filter((label): label is string => Boolean(label))
 
   const hasMetalPricing = org?.has_metal_pricing ?? false
-  const metalPriceGrids: MetalPriceGridContext[] = (grids ?? []).map((g) => ({
-    label: g.label,
-    metalLabel: METAL_LABELS[g.metal_code as MetalCode] ?? g.metal_code,
-    coefficient: g.coefficient,
-    unit: g.unit,
-  }))
+  const manualGridRows = ((grids ?? []) as ManualPriceGridRow[]).filter(row =>
+    row.organization_id === orgId && row.source_type === 'manual',
+  )
+  const materialIds = [...new Set(manualGridRows.map(grid => grid.catalog_item_id).filter((id): id is string => Boolean(id)))]
+  const supplierIds = [...new Set(manualGridRows.map(grid => grid.supplier_id).filter((id): id is string => Boolean(id)))]
+  const [{ data: linkedMaterials }, { data: linkedSuppliers }] = hasMetalPricing
+    ? await Promise.all([
+        materialIds.length > 0
+          ? supabase.from('materials').select('id, name').eq('organization_id', orgId).in('id', materialIds)
+          : Promise.resolve({ data: [] }),
+        supplierIds.length > 0
+          ? supabase.from('suppliers').select('id, name').eq('organization_id', orgId).in('id', supplierIds)
+          : Promise.resolve({ data: [] }),
+      ])
+    : [{ data: [] }, { data: [] }]
+  const manualPriceGrids = selectManualPriceGridsForAI(
+    manualGridRows,
+    orgId,
+    hasMetalPricing,
+    linkedMaterials ?? [],
+    linkedSuppliers ?? [],
+  )
 
   const verticalPack = getVerticalPackDefinition(org?.business_vertical_pack ?? null)
 
@@ -73,7 +82,7 @@ export async function getBusinessContext(orgId: string): Promise<BusinessContext
     sector: org?.sector ?? defaultSector,
     orgName: org?.name ?? 'cette entreprise',
     hasMetalPricing,
-    metalPriceGrids,
+    manualPriceGrids,
     verticalPackId: verticalPack?.id ?? null,
     verticalPackLabel: verticalPack?.label ?? null,
   }
@@ -92,24 +101,14 @@ export function formatBusinessContextForPrompt(ctx: BusinessContext): string {
 
   if (ctx.hasMetalPricing) {
     lines.push('')
-    lines.push('MODULE PRIX MATIÈRES MÉTAUX ACTIVÉ')
+    lines.push('MODULE PRIX MATIÈRES MANUELS ACTIVÉ')
     lines.push('Règles obligatoires pour la génération de devis :')
-    lines.push('- Utiliser les grilles matière comme source de prix indicative, pas comme prix fournisseur réel.')
-    lines.push('- Ne jamais présenter le cours LME comme le prix d\'achat réel.')
-    lines.push('- Toujours préciser que le prix reste à valider par l\'artisan selon fournisseur, format, épaisseur, coupe et livraison.')
-    lines.push('- Demander validation avant d\'insérer définitivement le prix dans le devis.')
-    lines.push('- Ordre de priorité des prix matière : 1. Catalogue client 2. Grille matière client 3. Ancien devis similaire 4. Cours indicatif + coefficient 5. Estimation IA.')
-
-    if (ctx.metalPriceGrids.length > 0) {
-      lines.push('')
-      lines.push('Grilles matière configurées par ce client :')
-      for (const g of ctx.metalPriceGrids) {
-        lines.push(`  - ${g.label} : ${g.metalLabel} × ${g.coefficient.toFixed(2)} → prix en ${g.unit}`)
-      }
-      lines.push('Exemple de warning obligatoire : "Prix matière proposé depuis cours de référence et coefficient client. À valider selon fournisseur, format, épaisseur, coupe et livraison."')
-    } else {
-      lines.push('Aucune grille matière configurée. Avertir l\'artisan qu\'aucun coefficient n\'est disponible et lui demander de les configurer dans ses paramètres avant de valider le prix.')
-    }
+    lines.push('- Les grilles contiennent des prix saisis par l’entreprise, en euros par unité exacte indiquée ; ce ne sont pas des cours de marché ni des coefficients.')
+    lines.push('- Utiliser les prix et variantes catalogue exacts en premier choix ; ne jamais les remplacer par un montant estimé.')
+    lines.push('- N’utiliser une grille manuelle que si la matière, le fournisseur, la nuance, le format, l’épaisseur et l’unité correspondent sans ambiguïté.')
+    lines.push('- Ne jamais convertir l’unité ou substituer un fournisseur, une nuance, une épaisseur ou un format.')
+    lines.push('- Si le prix d’un métal n’est pas connu exactement, demander une précision au lieu d’inventer un prix ou d’insérer zéro.')
+    lines.push(...formatManualPriceGridContext(ctx.manualPriceGrids))
   }
 
   if (ctx.verticalPackId) {
