@@ -20,7 +20,7 @@ export function AssistantField({
   value,
   onChange,
   onSubmit,
-  placeholder = 'Posez votre question…',
+  placeholder = 'Pose ta question…',
   suggestions = [],
   disabled = false,
   loading = false,
