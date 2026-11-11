@@ -199,23 +199,23 @@ function actionFromPersisted(row: PersistedSarahAction): ActionProposal {
 
 function buildGreeting(ctx: PageContext, userName: string | null, alertCount: number, alerts?: SarahAlerts | null): string {
   const prenom = firstName(userName)
-  const salut  = prenom ? `Bonjour ${prenom}.` : 'Bonjour.'
+  const salut  = prenom ? `Salut ${prenom}.` : 'Salut.'
 
   if (!ctx.context) {
     const alertLines = buildAlertLines(alerts)
     const urgence = alertCount > 0
       ? alertLines.length > 0
-        ? ` J'ai un point précis à vous signaler :\n\n${alertLines.map(line => `- ${line}`).join('\n')}`
-        : ' Je regarde vos alertes du jour et je vous détaille ça.'
-      : ' Posez-moi une question ou demandez-moi d\'effectuer une action.'
-    return `${salut} Je suis Sarah, votre assistante.\n\nVous êtes sur ${withArticle(ctx.label)}.${urgence}`
+        ? ` J'ai un point précis à te signaler :\n\n${alertLines.map(line => `- ${line}`).join('\n')}`
+        : ' Je regarde tes alertes du jour et je te détaille ça.'
+      : ' Pose-moi une question ou demande-moi d\'effectuer une action.'
+    return `${salut} Je suis Sarah, ton assistante.\n\nTu es sur ${withArticle(ctx.label)}.${urgence}`
   }
 
   const { type, title, name, clientName, reference, status, totalTtc, clientType } = ctx.context
   if (type === 'chantier') {
     const who = clientName ? `, client ${clientName}` : ''
     const state = status ? ` (statut ${status})` : ''
-    return `${salut} Chantier "${title}"${who}${state}.\n\nJe peux vous dire ce qui a été fait, ce qui est prévu, les tâches, le planning et les factures liées.`
+    return `${salut} Chantier "${title}"${who}${state}.\n\nJe peux te dire ce qui a été fait, ce qui est prévu, les tâches, le planning et les factures liées.`
   }
   if (type === 'client') {
     const kind = clientType ? ` (${clientType})` : ''
@@ -224,22 +224,22 @@ function buildGreeting(ctx: PageContext, userName: string | null, alertCount: nu
   if (type === 'quote') {
     const amount = fmtCurrency(typeof totalTtc === 'string' || typeof totalTtc === 'number' ? totalTtc : null)
     if (!reference && !clientName && !status && !amount) {
-      return `${salut} Vous êtes dans l'éditeur de devis.\n\nJe peux vous aider à construire le devis, analyser les lignes ou vérifier la marge.`
+      return `${salut} Tu es dans l'éditeur de devis.\n\nJe peux t'aider à construire le devis, analyser les lignes ou vérifier la marge.`
     }
     const state = status ? `, statut ${status}` : ''
     const total = amount ? `, ${amount}` : ''
-    return `${salut} Vous êtes sur le devis ${reference ?? 'en cours'}${clientName ? ` pour ${clientName}` : ''}${state}${total}.\n\nJe peux analyser le contenu, les lignes, la marge ou préparer l'envoi.`
+    return `${salut} Tu es sur le devis ${reference ?? 'en cours'}${clientName ? ` pour ${clientName}` : ''}${state}${total}.\n\nJe peux analyser le contenu, les lignes, la marge ou préparer l'envoi.`
   }
   if (type === 'invoice') {
     const amount = fmtCurrency(typeof totalTtc === 'string' || typeof totalTtc === 'number' ? totalTtc : null)
     if (!reference && !clientName && !status && !amount) {
-      return `${salut} Vous êtes dans l'éditeur de facture.\n\nJe peux vous aider à construire la facture, vérifier les montants ou l'échéance.`
+      return `${salut} Tu es dans l'éditeur de facture.\n\nJe peux t'aider à construire la facture, vérifier les montants ou l'échéance.`
     }
     const state = status ? `, statut ${status}` : ''
     const total = amount ? `, ${amount}` : ''
-    return `${salut} Vous êtes sur la facture ${reference ?? 'en cours'}${clientName ? ` pour ${clientName}` : ''}${state}${total}.\n\nJe peux vérifier l'échéance, les paiements reçus et préparer une relance.`
+    return `${salut} Tu es sur la facture ${reference ?? 'en cours'}${clientName ? ` pour ${clientName}` : ''}${state}${total}.\n\nJe peux vérifier l'échéance, les paiements reçus et préparer une relance.`
   }
-  return `${salut} Je suis Sarah, votre assistante.\n\nVous êtes sur ${withArticle(ctx.label)}. Posez-moi une question ou demandez-moi d'effectuer une action.`
+  return `${salut} Je suis Sarah, ton assistante.\n\nTu es sur ${withArticle(ctx.label)}. Pose-moi une question ou demande-moi d'effectuer une action.`
 }
 
 // ─── Exécution réelle des actions ─────────────────────────────────────────────
@@ -343,7 +343,7 @@ async function executeLegacyAction(action: ActionProposal): Promise<string> {
       const url = (p.url ?? p.redirect_url) as string | undefined
       if (url && isClient()) {
         setTimeout(() => window.location.href = url, 400)
-        return `Je vous redirige${p.label ? ` vers ${p.label}` : ''}...`
+        return `Je te redirige${p.label ? ` vers ${p.label}` : ''}...`
       }
       return 'Impossible de rediriger : URL manquante.'
     }
@@ -835,7 +835,7 @@ function VoiceScreen({ onBack, pageCtx, pathname, userName, send, presentation }
 
   if (presentation === 'app') {
     const status = voiceState === 'connecting' ? 'Connexion en cours...'
-      : voiceState === 'listening' ? (isMuted ? 'Micro coupé' : 'Je vous écoute')
+      : voiceState === 'listening' ? (isMuted ? 'Micro coupé' : 'Je t\'écoute')
         : voiceState === 'speaking' ? 'Je réponds'
           : voiceState === 'muted' ? 'Micro coupé'
             : voiceState === 'disconnecting' ? 'Déconnexion...'
@@ -848,12 +848,12 @@ function VoiceScreen({ onBack, pageCtx, pathname, userName, send, presentation }
         <div>
           <p className={styles.voiceStatus}>
             {useDictationFallback
-              ? isDictationTranscribing ? 'Transcription en cours...' : isDictationRecording ? 'Je vous écoute' : 'Appuyez pour parler'
+              ? isDictationTranscribing ? 'Transcription en cours...' : isDictationRecording ? 'Je t\'écoute' : 'Appuyez pour parler'
               : status}
           </p>
           <p className={styles.voiceDetail}>
             {useDictationFallback
-              ? 'Sarah vous répond en texte'
+              ? 'Sarah te répond en texte'
               : isActive && remainingMinutes !== null
                 ? `${formatTimer(elapsedSeconds)} (${remainingMinutes} min restantes)`
                 : isActive
@@ -952,9 +952,9 @@ function VoiceScreen({ onBack, pageCtx, pathname, userName, send, presentation }
 
         <div className="text-center">
           <p className="text-sm font-medium">
-            {isDictationTranscribing ? 'Transcription en cours...' : isDictationRecording ? 'Je vous écoute' : 'Appuyez pour parler'}
+            {isDictationTranscribing ? 'Transcription en cours...' : isDictationRecording ? 'Je t\'écoute' : 'Appuyez pour parler'}
           </p>
-          <p className="text-xs opacity-40 mt-1">Sarah vous répond en texte</p>
+          <p className="text-xs opacity-40 mt-1">Sarah te répond en texte</p>
         </div>
 
         <button
@@ -1012,7 +1012,7 @@ function VoiceScreen({ onBack, pageCtx, pathname, userName, send, presentation }
       <div className="text-center">
         <p className="text-sm font-medium">
           {voiceState === 'connecting'    ? 'Connexion en cours...'
-          : voiceState === 'listening'    ? (isMuted ? 'Micro coupé' : 'Je vous écoute')
+          : voiceState === 'listening'    ? (isMuted ? 'Micro coupé' : 'Je t\'écoute')
           : voiceState === 'speaking'     ? 'Je réponds'
           : voiceState === 'muted'        ? 'Micro coupé'
           : voiceState === 'disconnecting'? 'Déconnexion...'
@@ -1194,7 +1194,7 @@ function useDrawerLogic({
     if (text) {
       sendRaw(text, attachment)
     } else if (attachment) {
-      sendRaw('Voici un document, pouvez-vous l\'analyser ?', attachment)
+      sendRaw('Voici un document, tu peux l\'analyser ?', attachment)
     }
   }, [input, attachment, sendRaw])
 
@@ -1244,8 +1244,8 @@ function useDrawerLogic({
               id: `proposal-${action.id}`,
               role: 'sarah' as const,
               content: action.id === targetId
-                ? "Voici l'action que je vous proposais."
-                : 'J’ai une action en attente qui peut vous aider.',
+                ? "Voici l'action que je te proposais."
+                : 'J’ai une action en attente qui peut t’aider.',
               timestamp: new Date(),
               action: actionFromPersisted(action),
             }))
@@ -1480,7 +1480,7 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
               <div className={styles.voiceHint}>
                 <Mic size={16} aria-hidden="true" />
                 <p className={styles.voiceHintText}>
-                  Vous pouvez aussi me parler : appuyez ici pour essayer le mode vocal.
+                  Tu peux aussi me parler : appuie ici pour essayer le mode vocal.
                 </p>
                 <Button
                   variant="secondary"
@@ -1546,7 +1546,7 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
                   value={input}
                   onChange={event => setInput(event.target.value)}
                   onKeyDown={onKey}
-                  placeholder="Posez votre question ou donnez une instruction"
+                  placeholder="Pose ta question ou donne une instruction"
                   rows={1}
                   disabled={loading}
                   className={styles.composerInput}
@@ -1647,7 +1647,7 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
               <Mic size={13} className="text-accent flex-shrink-0" />
               <button onClick={() => dismissVoiceHint(true)}
                 className="flex-1 text-left text-[11px] leading-snug opacity-75 hover:opacity-100 transition-opacity">
-                Vous pouvez aussi me parler : appuyez ici pour essayer le mode vocal.
+                Tu peux aussi me parler : appuie ici pour essayer le mode vocal.
               </button>
               <button onClick={() => dismissVoiceHint(false)}
                 className="p-1 rounded-lg opacity-40 hover:opacity-70 transition-opacity" title="Masquer">
@@ -1705,7 +1705,7 @@ function PanelContent({ pageCtx, pathname, userName, loading, errorCode, message
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={onKey}
-                placeholder="Posez votre question ou donnez une instruction..."
+                placeholder="Pose ta question ou donne une instruction..."
                 rows={1}
                 disabled={loading}
                 className="flex-1 bg-transparent resize-none outline-none text-sm leading-relaxed placeholder:opacity-40 self-center overflow-y-auto"
