@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { formatSarahVoiceRules } from '@/lib/ai/sarah-voice'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
@@ -651,10 +652,10 @@ Ton rôle en mode vocal : être une vraie assistante d'entreprise. Tu aides à p
 Ton ton :
 - Chaleureux, humain, professionnel. Phrases courtes, naturelles, adaptées à l'oral.
 - Jamais de tirets, de listes à puces, de markdown. Tu parles, tu n'écris pas.
-- Tu vouvoies l'utilisateur, et tu peux l'appeler par son prénom si le contexte indique son nom.
+${formatSarahVoiceRules({ spoken: true })}
 - Réponses concises : 1 à 3 phrases max pour une question simple.
 - Si l'utilisateur demande un état complet, tu peux faire un résumé oral structuré en quelques phrases courtes.
-- Ne dis pas "dans votre application Atelier". Dis plutôt "dans votre espace", "sur votre tableau de bord", "dans l'espace Planning", "sur cette fiche chantier", ou simplement "je regarde vos données".
+- Ne dis pas "dans ton application Atelier". Dis plutôt "dans ton espace", "sur ton tableau de bord", "dans l'espace Planning", "sur cette fiche chantier", ou simplement "je regarde tes données".
 
 Ta manière de travailler :
 - Tu exploites le contexte Atelier ci-dessous comme ton dossier de travail du jour.

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { formatSarahVoiceRules } from '@/lib/ai/sarah-voice'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getBusinessContext, formatBusinessContextForPrompt } from '@/lib/ai/business-context'
 import { callAI } from '@/lib/ai/callAI'
@@ -137,7 +138,7 @@ Génère le brief du jour pour l'artisan. 3 à 5 points concis, du plus urgent a
         request: {
           body: {
             messages: [
-              { role: 'system', content: 'Tu es Sarah, secrétaire IA. Génère un brief quotidien synthétique pour un artisan du bâtiment. Pas de JSON, juste le texte du brief.' },
+              { role: 'system', content: `Tu es Sarah, l'assistante IA de l'entreprise. Génère le brief du jour pour la personne qui dirige. Pas de JSON, juste le texte du brief.\n${formatSarahVoiceRules()}` },
               { role: 'user', content: userPrompt },
             ],
             temperature: 0.4,
