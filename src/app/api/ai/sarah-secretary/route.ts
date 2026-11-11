@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getBusinessContext, formatBusinessContextForPrompt } from '@/lib/ai/business-context'
+import { getEnvironmentContext, formatEnvironmentForPrompt } from '@/lib/ai/environment-context'
 import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { dateParis, todayParis } from '@/lib/utils'
@@ -972,7 +973,7 @@ async function attachPersistentProposal(
   }
 }
 
-const SYSTEM_PROMPT = `Tu es Sarah, la secrétaire de l'application Atelier. Tu travailles aux côtés d'un artisan ou d'un chef d'entreprise du bâtiment au quotidien.
+const SYSTEM_PROMPT = `Tu es Sarah, la secrétaire de l'application Atelier. Tu travailles au quotidien aux côtés d'un artisan ou d'un chef d'entreprise de services et de travaux (le métier exact, parfois plusieurs, est précisé dans le contexte).
 
 Ton rôle : l'aider à piloter son activité, répondre à ses questions, préparer son travail administratif et opérationnel, et lui proposer des actions concrètes quand c'est utile.
 
@@ -1281,8 +1282,9 @@ export async function POST(req: NextRequest) {
 
     const isFirstMessage = !conversationHistory.some(h => h.role === 'user')
 
-    const [businessCtx, ragContext, recentConversationContext, dailyBriefResult, incomingBriefsResult, executedActionsResult, pendingActionsResult] = await Promise.all([
+    const [businessCtx, environmentCtx, ragContext, recentConversationContext, dailyBriefResult, incomingBriefsResult, executedActionsResult, pendingActionsResult] = await Promise.all([
       getBusinessContext(orgId),
+      getEnvironmentContext(orgId),
       fetchRAGContext(orgId, message, { limit: 4 }),
       // Contexte récent persisté en base, uniquement au premier message : le
       // client redémarre avec un historique vide à chaque ouverture du widget
@@ -1331,7 +1333,11 @@ export async function POST(req: NextRequest) {
         .order('created_at', { ascending: false })
         .limit(5),
     ])
-    const businessPrompt = formatBusinessContextForPrompt(businessCtx)
+    const businessPrompt = [
+      formatBusinessContextForPrompt(businessCtx),
+      '',
+      formatEnvironmentForPrompt(environmentCtx, businessCtx, today),
+    ].join('\n')
 
     // Toutes les données opérationnelles en parallèle
     const in7days = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10)
