@@ -1,7 +1,7 @@
 'use client'
 // @atelier-migrated
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Equipe } from '@/lib/data/queries/chantiers'
 import type { TeamMember } from '@/lib/data/queries/team'
 import type { OrgRole } from '@/lib/data/queries/roles'
@@ -65,6 +65,8 @@ export function EquipesTab({
   const [removingMembres, setRemovingMembres] = useState<Set<string>>(new Set())
   const [deletingEquipes, setDeletingEquipes] = useState<Set<string>>(new Set())
   const [pendingMembreIds, setPendingMembreIds] = useState<Record<string, Set<string>>>({})
+  const [assigningEquipes, setAssigningEquipes] = useState<Set<string>>(new Set())
+  const assignmentLocks = useRef(new Set<string>())
 
   // Team suggestions from quote MO lines
   const [teamSuggestions, setTeamSuggestions] = useState<TeamSuggestion[]>([])
@@ -93,21 +95,46 @@ export function EquipesTab({
   const handleCreateFromSuggestion = async (id: string) => {
     const sugg = teamSuggestions.find(s => s._id === id)
     if (!sugg || sugg.created) return
-    const { equipeId, error } = await createEquipe({
-      name: sugg.name.trim(),
-      color: sugg.color,
-      description: `${sugg.quantity} ${sugg.unit} estimés`,
-    })
-    if (!error && equipeId) {
-      const newE: Equipe = {
-        id: equipeId, organization_id: '', name: sugg.name.trim(), color: sugg.color,
-        description: `${sugg.quantity} ${sugg.unit} estimés`, created_at: new Date().toISOString(), membres: [],
+    setError(null)
+    let result: { equipeId: string | null; error: string | null }
+    try {
+      result = await createEquipe({
+        name: sugg.name.trim(),
+        color: sugg.color,
+        description: `${sugg.quantity} ${sugg.unit} estimés`,
+      })
+    } catch {
+      setError('Impossible de créer cette équipe. Veuillez réessayer.')
+      return
+    }
+    if (result.error || !result.equipeId) {
+      setError(result.error ?? 'Impossible de créer cette équipe. Veuillez réessayer.')
+      return
+    }
+
+    const equipeId = result.equipeId
+    const newE: Equipe = {
+      id: equipeId, organization_id: '', name: sugg.name.trim(), color: sugg.color,
+      description: `${sugg.quantity} ${sugg.unit} estimés`, created_at: new Date().toISOString(), membres: [],
+    }
+    setAllEquipes(prev => [...prev, newE])
+    setTeamSuggestions(prev => prev.map(s => s._id === id ? { ...s, created: true } : s))
+
+    assignmentLocks.current.add(equipeId)
+    setAssigningEquipes(prev => new Set([...prev, equipeId]))
+    setAssignedIds(prev => new Set([...prev, equipeId]))
+    try {
+      const { error: assignmentError } = await assignEquipeToChantier(chantierId, equipeId)
+      if (assignmentError) {
+        setAssignedIds(prev => { const next = new Set(prev); next.delete(equipeId); return next })
+        setError(assignmentError)
       }
-      setAllEquipes(prev => [...prev, newE])
-      setTeamSuggestions(prev => prev.map(s => s._id === id ? { ...s, created: true } : s))
-      // auto-assign
-      setAssignedIds(prev => new Set([...prev, equipeId]))
-      await assignEquipeToChantier(chantierId, equipeId)
+    } catch {
+      setAssignedIds(prev => { const next = new Set(prev); next.delete(equipeId); return next })
+      setError('Impossible d’assigner cette équipe au chantier. Veuillez réessayer.')
+    } finally {
+      assignmentLocks.current.delete(equipeId)
+      setAssigningEquipes(prev => { const next = new Set(prev); next.delete(equipeId); return next })
     }
   }
 
@@ -138,12 +165,42 @@ export function EquipesTab({
   }
 
   const handleToggleAssign = async (equipeId: string) => {
-    if (assignedIds.has(equipeId)) {
-      setAssignedIds(prev => { const s = new Set(prev); s.delete(equipeId); return s })
-      await removeEquipeFromChantier(chantierId, equipeId)
-    } else {
-      setAssignedIds(prev => new Set([...prev, equipeId]))
-      await assignEquipeToChantier(chantierId, equipeId)
+    if (assignmentLocks.current.has(equipeId)) return
+    const wasAssigned = assignedIds.has(equipeId)
+    assignmentLocks.current.add(equipeId)
+    setAssigningEquipes(prev => new Set([...prev, equipeId]))
+    setError(null)
+    setAssignedIds(prev => {
+      const next = new Set(prev)
+      if (wasAssigned) next.delete(equipeId)
+      else next.add(equipeId)
+      return next
+    })
+
+    try {
+      const { error: assignmentError } = wasAssigned
+        ? await removeEquipeFromChantier(chantierId, equipeId)
+        : await assignEquipeToChantier(chantierId, equipeId)
+      if (assignmentError) {
+        setAssignedIds(prev => {
+          const next = new Set(prev)
+          if (wasAssigned) next.add(equipeId)
+          else next.delete(equipeId)
+          return next
+        })
+        setError(assignmentError)
+      }
+    } catch {
+      setAssignedIds(prev => {
+        const next = new Set(prev)
+        if (wasAssigned) next.add(equipeId)
+        else next.delete(equipeId)
+        return next
+      })
+      setError('Impossible de modifier l’assignation. Veuillez réessayer.')
+    } finally {
+      assignmentLocks.current.delete(equipeId)
+      setAssigningEquipes(prev => { const next = new Set(prev); next.delete(equipeId); return next })
     }
   }
 
@@ -343,6 +400,7 @@ export function EquipesTab({
               <CheckRow
                 title="Assignée à ce chantier"
                 checked={assignedIds.has(openEquipe.id)}
+                disabled={assigningEquipes.has(openEquipe.id)}
                 onCheckedChange={() => handleToggleAssign(openEquipe.id)}
               />
             </ListGroup>

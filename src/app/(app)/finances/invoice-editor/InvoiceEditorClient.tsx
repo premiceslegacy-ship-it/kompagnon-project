@@ -21,6 +21,7 @@ import {
 import { useInvoiceEditor, type InvoiceEditorProps } from './useInvoiceEditor'
 import screen from '@/components/layout/Screen.module.css'
 import styles from '../quote-editor/QuoteEditor.module.css'
+import { roundMoney } from '@/lib/utils/money'
 
 const NB = ' '
 
@@ -28,8 +29,11 @@ type Panel = 'client' | 'aid' | 'margin' | 'chantier' | 'schedule' | null
 
 const INVOICE_STATUS: Record<string, { label: string; status: StatusPillStatus }> = {
   draft: { label: 'Brouillon', status: 'neutral' },
+  sending: { label: 'Émission en cours', status: 'wait' },
   sent: { label: 'Envoyée', status: 'wait' },
+  viewed: { label: 'Consultée', status: 'wait' },
   partial: { label: 'Partiellement payée', status: 'wait' },
+  overdue: { label: 'En retard', status: 'danger' },
   paid: { label: 'Payée', status: 'success' },
   cancelled: { label: 'Annulée', status: 'danger' },
 }
@@ -50,9 +54,69 @@ export default function InvoiceEditorClient(props: InvoiceEditorProps) {
   const client = q.clients.find(c => c.id === q.clientId) ?? null
   const chantier = q.linkableChantiers.find(c => c.id === q.chantierId) ?? null
   const status = INVOICE_STATUS[q.existingInvoice?.status ?? 'draft'] ?? INVOICE_STATUS.draft
-  const heading = q.existingInvoice?.number ? `Facture ${q.existingInvoice.number}` : q.isEditing ? 'Modifier la facture' : 'Nouvelle facture'
+  const heading = q.existingInvoice?.number
+    ? `${q.existingInvoice.invoice_type === 'avoir' ? 'Avoir' : 'Facture'} ${q.existingInvoice.number}`
+    : q.isEditing
+      ? q.existingInvoice?.invoice_type === 'avoir' ? 'Modifier l’avoir' : 'Modifier la facture'
+      : 'Nouvelle facture'
   const aidActive = q.aidAmount != null && q.aidAmount > 0
   const busy = q.isSaving || q.isSending
+  const issuedInvoice = q.existingInvoice && q.existingInvoice.status !== 'draft' ? q.existingInvoice : null
+  if (issuedInvoice) {
+    const isIssued = ['sending', 'sent', 'viewed', 'partial', 'paid', 'overdue'].includes(issuedInvoice.status)
+    const documentName = issuedInvoice.invoice_type === 'avoir' ? 'Avoir' : 'Facture'
+    const clientName = issuedInvoice.client
+      ? issuedInvoice.client.company_name
+        || [issuedInvoice.client.first_name, issuedInvoice.client.last_name].filter(Boolean).join(' ')
+        || issuedInvoice.client.email
+        || 'Client'
+      : 'Client'
+    const correctedInvoice = issuedInvoice.preceding_invoice_ref
+      ? `N° ${issuedInvoice.preceding_invoice_ref}${issuedInvoice.preceding_invoice_date ? ` · ${new Date(issuedInvoice.preceding_invoice_date).toLocaleDateString('fr-FR')}` : ''}`
+      : null
+    return (
+      <main className={screen.root}>
+        <div className={screen.page}>
+          <button type="button" className={styles.back} onClick={() => q.router.replace(q.returnTo)}>
+            <ChevronLeft size={20} aria-hidden="true" />
+            Documents
+          </button>
+          <header className={screen.header}>
+            <div>
+              <p className={screen.kicker}>{clientName}</p>
+              <h1 className={screen.title}>{documentName} {issuedInvoice.number ?? ''}</h1>
+            </div>
+            <StatusPill status={status.status}>{status.label}</StatusPill>
+          </header>
+          <div className={styles.stack} style={{ marginTop: 16 }}>
+            <p>Ce document émis est en lecture seule. Pour le corriger, créez un avoir lié à la facture d’origine.</p>
+            {correctedInvoice ? (
+              <ListGroup title="Facture corrigée">
+                <ListRow title={correctedInvoice} />
+              </ListGroup>
+            ) : null}
+            {isIssued ? (
+              <>
+                <ListGroup title="Document émis">
+                  <ListRow title="Aperçu du PDF" href={`/api/pdf/invoice/${issuedInvoice.id}`} />
+                  <ListRow title="Télécharger le PDF" href={`/api/pdf/invoice/${issuedInvoice.id}?download=1`} />
+                </ListGroup>
+                <iframe
+                  title={`${documentName} ${issuedInvoice.number ?? ''}`}
+                  src={`/api/pdf/invoice/${issuedInvoice.id}`}
+                  width="100%"
+                  height={800}
+                  style={{ border: 0 }}
+                />
+              </>
+            ) : (
+              <p>Ce document est annulé ; son aperçu officiel n’est plus disponible.</p>
+            )}
+          </div>
+        </div>
+      </main>
+    )
+  }
 
   // Groupes : une section (intitulé) et les lignes qui la suivent ; les lignes sans section d'abord.
   const groups: { section: (typeof q.items)[number] | null; lines: typeof q.items }[] = []
@@ -92,8 +156,10 @@ export default function InvoiceEditorClient(props: InvoiceEditorProps) {
           </div>
         </header>
         {q.error && <p className={screen.error} role="alert">{q.error}</p>}
+        {q.amountsLocked && <p className={styles.notice}>Les lignes et le destinataire sont repris du document source. Le décompte sera revérifié à l’émission.</p>}
 
         <div className={styles.stack} style={{ marginTop: 16 }}>
+          {!q.amountsLocked && (
           <ListGroup>
             <ListRow
               title="Facturer depuis un devis"
@@ -102,6 +168,7 @@ export default function InvoiceEditorClient(props: InvoiceEditorProps) {
               onClick={() => q.setIsQuoteModalOpen(true)}
             />
           </ListGroup>
+          )}
 
           <ListGroup
             title="Informations"
@@ -119,6 +186,7 @@ export default function InvoiceEditorClient(props: InvoiceEditorProps) {
             <ListRow
               title="Client"
               trailing={<span className={styles.fieldValue}>{client ? clientDisplayName(client) : 'À choisir'}</span>}
+              disabled={q.amountsLocked}
               onClick={() => setPanel('client')}
             />
             <li className={`${styles.fieldItem} ${styles.fieldRow}`}>
@@ -133,6 +201,7 @@ export default function InvoiceEditorClient(props: InvoiceEditorProps) {
               <ListRow
                 title="Chantier rattaché"
                 trailing={<span className={styles.fieldValue}>{chantier?.title ?? 'Aucun'}</span>}
+                disabled={q.amountsLocked}
                 onClick={() => setPanel('chantier')}
               />
             )}
@@ -141,7 +210,7 @@ export default function InvoiceEditorClient(props: InvoiceEditorProps) {
           {groups.length === 0 && <p className={styles.notice}>Ajoutez une ligne, une section, ou importez un devis accepté.</p>}
 
           {groups.map((group, gi) => {
-            const subtotal = group.lines.filter(i => !i.is_internal).reduce((s, i) => s + Number(i.qty) * Number(i.pu), 0)
+            const subtotal = group.lines.filter(i => !i.is_internal).reduce((s, i) => s + roundMoney(Number(i.qty) * Number(i.pu)), 0)
             const lastId = group.lines.at(-1)?.id ?? group.section?.id ?? null
             return (
               <ListGroup
@@ -150,7 +219,7 @@ export default function InvoiceEditorClient(props: InvoiceEditorProps) {
                 action={group.section ? (
                   <span className={styles.sectionHead}>
                     <span className={styles.amount}>{fmt(subtotal)}</span>
-                    <button type="button" className={screen.round} aria-label={`Options de la section ${group.section.desc}`.trim()} onClick={() => setSectionSheet(group.section!.id)}>
+                    <button type="button" disabled={q.amountsLocked} className={screen.round} aria-label={`Options de la section ${group.section.desc}`.trim()} onClick={() => setSectionSheet(group.section!.id)}>
                       <MoreHorizontal size={20} aria-hidden="true" />
                     </button>
                   </span>
@@ -164,6 +233,7 @@ export default function InvoiceEditorClient(props: InvoiceEditorProps) {
                     <ListRow
                       key={item.id}
                       title={name || 'Ligne sans description'}
+                      disabled={q.amountsLocked}
                       description={`${item.qty}${item.unit && item.unit !== '__section__' ? `${NB}${item.unit}` : ''} × ${fmt(Number(item.pu))}`}
                       trailing={item.is_internal || equipment
                         ? <StatusPill status="neutral">{equipment ? 'Équipement' : 'Interne'}</StatusPill>
@@ -172,21 +242,27 @@ export default function InvoiceEditorClient(props: InvoiceEditorProps) {
                     />
                   )
                 })}
-                <ListRow title="Ajouter une ligne" className={styles.accentRow} onClick={() => setAddSheet({ afterId: lastId })} />
+                {!q.amountsLocked && <ListRow title="Ajouter une ligne" className={styles.accentRow} onClick={() => setAddSheet({ afterId: lastId })} />}
               </ListGroup>
             )
           })}
 
+          {!q.amountsLocked && (
           <ListGroup>
             <ListRow title="Ajouter une section" description="Un lot, avec son sous-total" className={styles.accentRow} onClick={q.addSection} />
             {groups.length === 0 && (
               <ListRow title="Ajouter une ligne" description="Libre, catalogue, transport, équipement" className={styles.accentRow} onClick={() => setAddSheet({ afterId: null })} />
             )}
           </ListGroup>
+          )}
 
           <ListGroup>
             <ListRow title="Total HT" trailing={<span className={styles.amount}>{fmt(q.totalHt)}</span>} />
-            {Object.entries(q.vatByRate).map(([rate, amount]) => (
+            {q.isReverseCharge ? (
+              <ListRow title="TVA" trailing={<span className={styles.amount}>Autoliquidation</span>} />
+            ) : q.vatConfig.isVatSubject === false ? (
+              <ListRow title="TVA" trailing={<span className={styles.amount}>Non applicable</span>} />
+            ) : Object.entries(q.vatByRate).map(([rate, amount]) => (
               <ListRow key={rate} title={`TVA ${String(rate).replace('.', ',')}${NB}%`} trailing={<span className={styles.amount}>{fmt(amount)}</span>} />
             ))}
             <ListRow title="Total TTC" trailing={<span className={styles.recapTotal}>{fmt(q.totalTtc)}</span>} />
@@ -214,15 +290,16 @@ export default function InvoiceEditorClient(props: InvoiceEditorProps) {
               description={q.isReverseCharge
                 ? 'La mention « Autoliquidation de la TVA (art. 283-2 nonies du CGI) » sera imprimée. TVA portée par le donneur d’ordre.'
                 : 'Sous-traitance du bâtiment, art. 283-2 nonies du CGI'}
-              trailing={<Switch label="Autoliquidation de la TVA" checked={q.isReverseCharge} onChange={q.setIsReverseCharge} />}
+              trailing={<Switch label="Autoliquidation de la TVA" checked={q.isReverseCharge} disabled={q.amountsLocked || (q.vatConfig.isVatSubject === false && !q.isReverseCharge)} onChange={q.setIsReverseCharge} />}
             />
             <ListRow
               title="Aide ou subvention"
               description={aidActive ? `${q.aidLabel || 'Aide'}, −${fmt(q.aidAmount ?? 0)}` : 'MaPrimeRénov’, CEE…'}
+              disabled={q.amountsLocked}
               onClick={() => setPanel('aid')}
             />
             {q.hasInternal && (
-              <ListRow title="Marge interne" description={`Marge estimée ${Math.round(q.margePct)}${NB}%`} onClick={() => setPanel('margin')} />
+              <ListRow title="Marge interne" disabled={q.amountsLocked} description={`Marge estimée ${Math.round(q.margePct)}${NB}%`} onClick={() => setPanel('margin')} />
             )}
             <ListRow title="Aperçu du PDF" disabled={busy} onClick={q.handlePreview} />
           </ListGroup>

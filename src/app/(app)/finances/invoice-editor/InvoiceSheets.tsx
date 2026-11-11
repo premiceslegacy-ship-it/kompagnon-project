@@ -467,31 +467,37 @@ export function ScheduleSheet({ q, open, onClose }: { q: Q; open: boolean; onClo
             <b className={diff === 0 ? undefined : styles.down}>{fmt(diff)}</b>
           </div>
           {q.schedule.map((s, idx) => {
-            const paid = !!s.paid_payment_id
+            const paid = s.is_paid ?? (s.paid_payment_id !== null)
+            const partiallyPaid = (s.paid_amount ?? 0) > 0 && !paid
+            const locked = paid || partiallyPaid
+            const scheduledAmount = q.scheduleLineAmount(s)
+            const remainingAmount = s.remaining_amount ?? Math.max(0, scheduledAmount - (s.paid_amount ?? 0))
+            const suffix = paid ? ' · payée' : partiallyPaid ? ' · partiellement payée' : ''
             return (
-              <ListGroup key={s.id} title={`Échéance ${idx + 1}${paid ? ' · payée' : ''}`}
-                action={!paid ? <Button variant="text" size="sm" onClick={() => q.removeScheduleLine(s.id)}>Retirer</Button> : undefined}>
+              <ListGroup key={s.id} title={`Échéance ${idx + 1}${suffix}`}
+                action={!locked ? <Button variant="text" size="sm" onClick={() => q.removeScheduleLine(s.id)}>Retirer</Button> : undefined}>
                 <li className={styles.panel}>
                   <div className={styles.fields}>
-                    <Field type="text" label="Libellé" placeholder="Acompte, solde…" value={s.label} disabled={paid}
+                    <Field type="text" label="Libellé" placeholder="Acompte, solde…" value={s.label} disabled={locked}
                       onChange={e => q.updateScheduleLine(s.id, 'label', e.target.value)} />
                     <div className={styles.fieldRow}>
                       <label htmlFor={`due-${s.id}`}>Date</label>
-                      <input id={`due-${s.id}`} type="date" className={styles.dateInput} value={s.due_date} disabled={paid}
+                      <input id={`due-${s.id}`} type="date" className={styles.dateInput} value={s.due_date} disabled={locked}
                         onChange={e => q.updateScheduleLine(s.id, 'due_date', e.target.value)} />
                     </div>
                     <div className={styles.fieldRow}>
                       <span>Unité</span>
                       <SegmentedControl label="Type de montant" value={s.amount_type}
-                        options={[{ value: 'amount', label: '€', disabled: paid }, { value: 'percentage', label: '%', disabled: paid }]}
+                        options={[{ value: 'amount', label: '€', disabled: locked }, { value: 'percentage', label: '%', disabled: locked }]}
                         onChange={v => q.setScheduleAmountType(s.id, v as 'amount' | 'percentage')} />
                     </div>
-                    <Field type="number" label="Montant" min={0} max={s.amount_type === 'percentage' ? 100 : undefined} placeholder="0" disabled={paid}
+                    <Field type="number" label="Montant" min={0} max={s.amount_type === 'percentage' ? 100 : undefined} placeholder="0" disabled={locked}
                       value={s.amount_type === 'percentage' ? (s.percentage ?? null) : (s.amount || null)}
                       onChange={v => q.updateScheduleLine(s.id, s.amount_type === 'percentage' ? 'percentage' : 'amount', v ?? 0)} />
                   </div>
                 </li>
-                {s.amount_type === 'percentage' && <ListRow title="Soit" trailing={<span className={styles.amount}>{fmt(q.scheduleLineAmount(s))}</span>} />}
+                {s.amount_type === 'percentage' && <ListRow title="Soit" trailing={<span className={styles.amount}>{fmt(scheduledAmount)}</span>} />}
+                {partiallyPaid && <ListRow title={`Reçu ${fmt(s.paid_amount ?? 0)}`} trailing={<span className={styles.amount}>Reste {fmt(remainingAmount)}</span>} />}
               </ListGroup>
             )
           })}

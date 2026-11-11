@@ -58,6 +58,8 @@ export type ChantierDetailProps = {
   permissions: ChantierPermissions
   initialReserves?: ChantierReserve[]
   canDeleteChantier?: boolean
+  canUseChantierAssistant?: boolean
+  canSuggestAiMilestones?: boolean
 }
 
 export function useChantierDetail({
@@ -88,6 +90,8 @@ export function useChantierDetail({
   permissions,
   initialReserves = [],
   canDeleteChantier = false,
+  canUseChantierAssistant = false,
+  canSuggestAiMilestones = false,
 }: ChantierDetailProps) {
   const router = useRouter()
 
@@ -592,8 +596,7 @@ export function useChantierDetail({
   // ── Task suggestions ──
 
   const handleSuggestTasks = async () => {
-    if (!canEditChantier) return
-    if (!linkedQuoteId) return
+    if (!canSuggestAiMilestones || !canEditChantier || !linkedQuoteId) return
     setSuggestTasksLoading(true)
     setSuggestTasksError(null)
 
@@ -613,7 +616,14 @@ export function useChantierDetail({
       const data = await res.json()
       if (!res.ok || data.error) {
         if (res.status === 402) { setSuggestTasksCreditsError(true); setSuggestTasksLoading(false); return }
-        setSuggestTasksError(data.error ?? 'Erreur lors de la génération')
+        const message = res.status === 403
+          ? 'L’assistant de tâches n’est pas disponible pour ce compte.'
+          : res.status === 429
+            ? 'Trop de demandes. Réessayez dans un instant.'
+            : res.status >= 500
+              ? 'Sarah n’a pas pu proposer de tâches pour le moment. Réessayez dans un instant.'
+              : typeof data.error === 'string' ? data.error : 'Erreur lors de la génération.'
+        setSuggestTasksError(message)
         setSuggestTasksLoading(false)
         return
       }
@@ -1085,6 +1095,8 @@ export function useChantierDetail({
     setQuoteLinkSaving,
     quoteLinkError,
     setQuoteLinkError,
+    canUseChantierAssistant,
+    canSuggestAiMilestones,
     showAIAssistant,
     setShowAIAssistant,
     linkedQuote,

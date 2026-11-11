@@ -1,4 +1,3 @@
-// @atelier-migrated
 'use client'
 
 import { useSearchParams } from 'next/navigation'
@@ -12,36 +11,49 @@ import { completeInviteSetup } from './actions'
 type Props = {
   orgName: string
   initialFullName: string | null
+  invitationId: string
+  requiresPasswordSetup: boolean
 }
 
-function InviteSetupForm({ initialFullName }: Pick<Props, 'initialFullName'>) {
+function InviteSetupForm({ initialFullName, invitationId, requiresPasswordSetup }: Props) {
   const searchParams = useSearchParams()
   const errorKey = searchParams.get('error')
   const errorMsg = errorKey ? INVITE_SETUP_ERRORS[errorKey] : null
 
   return (
     <form action={completeInviteSetup} className={styles.form}>
+      <input type="hidden" name="invitation_id" value={invitationId} />
       <AuthFields>
         <Field type="text" label="Nom" name="full_name" required autoComplete="name" placeholder="Jean Dupont" defaultValue={initialFullName ?? ''} />
         <Field type="text" label="Poste" name="job_title" list="invite-job-titles" placeholder="Ex : Chef de chantier" />
-        <PasswordField label="Mot de passe" name="password" required minLength={8} autoComplete="new-password" placeholder="••••••••" />
+        {requiresPasswordSetup && (
+          <PasswordField label="Mot de passe" name="password" required minLength={8} autoComplete="new-password" placeholder="••••••••" />
+        )}
       </AuthFields>
       <datalist id="invite-job-titles">
         {JOB_TITLE_SUGGESTIONS.map((title) => (
           <option key={title} value={title} />
         ))}
       </datalist>
-      <AuthNote>Le poste est facultatif. Le mot de passe compte au moins 8 caractères : vous en aurez besoin pour vous reconnecter.</AuthNote>
+      <AuthNote>
+        {requiresPasswordSetup
+          ? 'Le poste est facultatif. Choisissez un mot de passe d’au moins 8 caractères pour vous reconnecter.'
+          : 'Le poste est facultatif. Votre mot de passe existant reste inchangé.'}
+      </AuthNote>
       <AuthError>{errorMsg}</AuthError>
       <AuthSubmit pendingLabel="Chargement…">Accéder à mon espace</AuthSubmit>
     </form>
   )
 }
 
-export default function InviteSetupClient({ orgName, initialFullName }: Props) {
+export default function InviteSetupClient(props: Props) {
+  const subtitle = props.requiresPasswordSetup
+    ? `${props.orgName} vous invite à rejoindre son espace. Choisissez votre mot de passe pour commencer.`
+    : `${props.orgName} vous invite à rejoindre son espace. Complétez votre profil pour continuer.`
+
   return (
-    <AuthLayout title="Bienvenue dans l'équipe" subtitle={`${orgName} vous invite à rejoindre son espace. Choisissez votre mot de passe pour commencer.`}>
-      <InviteSetupForm initialFullName={initialFullName} />
+    <AuthLayout title="Bienvenue dans l'équipe" subtitle={subtitle}>
+      <InviteSetupForm {...props} />
     </AuthLayout>
   )
 }

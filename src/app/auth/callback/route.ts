@@ -21,21 +21,32 @@ function safeNext(rawNext: string | null): string {
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
-  const code = searchParams.get('code')
-  const token_hash = searchParams.get('token_hash')
-  const type = searchParams.get('type')
-  const next = safeNext(searchParams.get('next'))
+  const codeValues = searchParams.getAll('code')
+  const tokenHashValues = searchParams.getAll('token_hash')
+  const typeValues = searchParams.getAll('type')
+  const nextValues = searchParams.getAll('next')
+  const hasAmbiguousCredentials =
+    codeValues.length > 1
+    || tokenHashValues.length > 1
+    || typeValues.length > 1
+    || nextValues.length > 1
+    || (codeValues.length > 0 && tokenHashValues.length > 0)
+  if (hasAmbiguousCredentials) {
+    return NextResponse.redirect(`${origin}/login?error=auth_callback_error`)
+  }
 
+  const code = codeValues[0] ?? null
+  const token_hash = tokenHashValues[0] ?? null
+  const type = typeValues[0] ?? null
+  const next = safeNext(nextValues[0] ?? null)
   const supabase = await createClient()
 
-  // PKCE flow (magic link généré via generateLink)
+  // PKCE links remain supported, but invitations use token_hash directly so
+  // they do not depend on a verifier cookie from the browser that requested it.
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) return NextResponse.redirect(new URL(next, origin))
-  }
-
-  // OTP flow (token_hash) - utilisé par les liens d'invitation Supabase
-  if (token_hash && type && ALLOWED_TYPES.has(type)) {
+  } else if (token_hash && type && ALLOWED_TYPES.has(type)) {
     const { error } = await supabase.auth.verifyOtp({
       token_hash,
       type: type as 'invite' | 'magiclink' | 'email' | 'recovery' | 'signup',

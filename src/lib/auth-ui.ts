@@ -65,6 +65,7 @@ export const INVITE_SETUP_ERRORS: Record<string, string> = {
   missing_password: 'Le mot de passe doit contenir au moins 8 caractères.',
   password_failed: 'Impossible de définir le mot de passe. Veuillez réessayer.',
   update_failed: 'Une erreur est survenue. Veuillez réessayer.',
+  invalid_invitation: 'Cette invitation n’est plus valide. Demandez un nouveau lien.',
 }
 
 /**

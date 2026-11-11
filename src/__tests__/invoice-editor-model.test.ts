@@ -24,25 +24,71 @@ function item(overrides: Partial<LocalItem> = {}): LocalItem {
   }
 }
 
+const standardContext = { isVatSubject: true, isReverseCharge: false, derivedTotals: null }
+
 describe('computeInvoiceTotals', () => {
   it('additionne les lignes visibles et ventile la TVA par taux', () => {
     const t = computeInvoiceTotals([
       item({ qty: 2, pu: 50 }),
       item({ id: 2, qty: 1, pu: 200, vat: 10 }),
       item({ id: 3, qty: 1, pu: 100 }),
-    ])
+    ], standardContext)
     expect(t.totalHt).toBe(400)
     expect(t.totalTva).toBeCloseTo(40 + 20)
     expect(t.totalTtc).toBeCloseTo(460)
     expect(t.vatByRate[20]).toBeCloseTo(40)
     expect(t.vatByRate[10]).toBeCloseTo(20)
   })
+  it('arrondit les bases et la TVA par taux au centime', () => {
+    const t = computeInvoiceTotals([
+      item({ qty: 8, pu: 62.8 }),
+      item({ id: 2, qty: 0.001, pu: 625.5 }),
+      item({ id: 3, qty: 1, pu: 100, vat: 10 }),
+    ], standardContext)
+    expect(t.totalHt).toBe(603.03)
+    expect(t.totalTva).toBe(110.61)
+    expect(t.totalTtc).toBe(713.64)
+    expect(t.vatByRate[20]).toBe(100.61)
+    expect(t.vatByRate[10]).toBe(10)
+  })
+
+  it('calcule la TVA par bucket plutôt qu’en arrondissant chaque ligne isolément', () => {
+    const t = computeInvoiceTotals(Array.from({ length: 5 }, (_, id) => item({ id, pu: 0.03 })), standardContext)
+    expect(t.totalHt).toBe(0.15)
+    expect(t.vatByRate[20]).toBe(0.03)
+    expect(t.totalTva).toBe(0.03)
+    expect(t.totalTtc).toBe(0.18)
+  })
+
+  it('calcule les petites lignes par bucket de taux et conserve HT + TVA = TTC', () => {
+    const t = computeInvoiceTotals([
+      ...Array.from({ length: 4 }, (_, id) => item({ id, pu: 0.03, vat: 20 })),
+      ...Array.from({ length: 4 }, (_, index) => item({ id: index + 10, pu: 0.03, vat: 10 })),
+    ], standardContext)
+    expect(t.totalHt).toBe(0.24)
+    expect(t.vatByRate).toEqual({ 20: 0.02, 10: 0.01 })
+    expect(t.totalTva).toBe(0.03)
+    expect(t.totalTtc).toBe(0.27)
+    expect(t.totalHt + t.totalTva).toBe(t.totalTtc)
+  })
+
+  it('met la TVA à zéro et garde le TTC égal au HT en autoliquidation', () => {
+    const t = computeInvoiceTotals([
+      item({ qty: 8, pu: 62.8 }),
+      item({ id: 2, qty: 0.001, pu: 625.5 }),
+    ], { ...standardContext, isReverseCharge: true })
+    expect(t.totalHt).toBe(503.03)
+    expect(t.totalTva).toBe(0)
+    expect(t.totalTtc).toBe(503.03)
+    expect(t.vatByRate).toEqual({})
+  })
+
 
   it('garde les lignes internes hors total mais dans le coût et la marge', () => {
     const t = computeInvoiceTotals([
       item({ pu: 1000, unit_cost_ht: 600 }),
       item({ id: 2, qty: 10, pu: 30, is_internal: true }),
-    ])
+    ], standardContext)
     expect(t.totalHt).toBe(1000)
     expect(t.totalInternalHt).toBe(900)
     expect(t.margeHt).toBe(100)
@@ -51,7 +97,7 @@ describe('computeInvoiceTotals', () => {
   })
 
   it('ne divise pas par zéro sur une facture vide', () => {
-    const t = computeInvoiceTotals([])
+    const t = computeInvoiceTotals([], standardContext)
     expect(t.totalTtc).toBe(0)
     expect(t.margePct).toBe(0)
     expect(t.hasInternal).toBe(false)
@@ -60,7 +106,35 @@ describe('computeInvoiceTotals', () => {
   it('traite les intitulés de section comme des lignes à zéro euro', () => {
     const section = item({ unit: INVOICE_SECTION_UNIT, pu: 0, qty: 1 })
     expect(isSectionItem(section)).toBe(true)
-    expect(computeInvoiceTotals([section, item({ id: 2, pu: 80 })]).totalHt).toBe(80)
+    expect(computeInvoiceTotals([section, item({ id: 2, pu: 80 })], standardContext).totalHt).toBe(80)
+  })
+
+  it('applique la franchise de TVA même si une ancienne ligne conserve son taux nominal', () => {
+    const totals = computeInvoiceTotals([item({ pu: 100, vat: 20 })], { ...standardContext, isVatSubject: false })
+    expect(totals.totalTva).toBe(0)
+    expect(totals.totalTtc).toBe(100)
+  })
+
+  it('conserve la TVA cumulative du décompte et sa marge sans recalculer un autre TTC', () => {
+    const totals = computeInvoiceTotals([
+      item({ pu: 352.12, vat: 20 }), item({ id: 2, pu: 100, is_internal: true }),
+    ], {
+      ...standardContext,
+      derivedTotals: { totalHt: 352.12, totalTva: 70.43, totalTtc: 422.55, vatByRate: { 20: 70.43 } },
+    })
+    expect(totals.totalTtc).toBe(422.55)
+    expect(totals.totalTva).toBe(70.43)
+    expect(totals.margeHt).toBe(252.12)
+  })
+
+  it('ne remplace pas une TVA cumulative nulle par la TVA canonique positive', () => {
+    const totals = computeInvoiceTotals([item({ pu: 0.03, vat: 20 })], {
+      ...standardContext,
+      derivedTotals: { totalHt: 0.03, totalTva: 0, totalTtc: 0.03, vatByRate: { 20: 0 } },
+    })
+    expect(totals.totalHt).toBe(0.03)
+    expect(totals.totalTva).toBe(0)
+    expect(totals.totalTtc).toBe(0.03)
   })
 })
 

@@ -178,11 +178,12 @@ function JalonSheet({ jalon, budgetHt, chantierId, allTaches, onUpdated, onDelet
   )
 }
 
-export default function JalonsSection({ initialJalons, chantierId, budgetHt, taches }: {
+export default function JalonsSection({ initialJalons, chantierId, budgetHt, taches, canSuggestAi = false }: {
   initialJalons: ChantierJalon[]
   chantierId: string
   budgetHt: number
   taches: Tache[]
+  canSuggestAi?: boolean
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -276,7 +277,7 @@ export default function JalonsSection({ initialJalons, chantierId, budgetHt, tac
           />
         ))}
         <ListRow title="Ajouter un jalon" className={fiche.linkRow} onClick={() => setAdding(true)} />
-        {jalons.length === 0 && (
+        {canSuggestAi && jalons.length === 0 && (
           <ListRow
             title={aiLoading ? 'Analyse en cours…' : `Proposer des jalons avec ${AI_NAME}`}
             leading={<Sparkles size={18} aria-hidden="true" />}

@@ -166,6 +166,7 @@ async function updateSession(request: NextRequest, requestHeaders: Headers) {
     !isPathOrChild(pathname, '/onboarding') &&
     !isPathOrChild(pathname, '/login') &&
     !isPathOrChild(pathname, '/auth')
+    && !isPathOrChild(pathname, '/invite')
   ) {
     const onboardedCookie = request.cookies.get('atelier_onboarded')
     const cookieIsValid = onboardedCookie?.value === user.id

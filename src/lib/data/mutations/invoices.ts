@@ -10,7 +10,9 @@ import {
   UpdateInvoiceSchema,
   SaveInvoiceItemsSchema,
   GenerateDepositSchema,
+  MarkInvoicePaidSchema,
 } from '@/lib/validations/invoices'
+import { calculateMonetaryTotals, roundMoney } from '@/lib/utils/money'
 import { getInvoiceById } from '@/lib/data/queries/invoices'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { sendEmail } from '@/lib/email'
@@ -21,13 +23,18 @@ import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { sendPushToOrg } from '@/lib/push'
 import { logAuditEvent } from '@/lib/audit-log'
 import { trackServerEvent } from '@/lib/analytics-server'
-import { coerceLegalVatRate } from '@/lib/utils'
+import { coerceLegalVatRate, todayParis } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { renderInvoicePdfBufferById, renderContractPdfBufferById } from '@/lib/pdf/server'
 import { syncInvoiceMemoryEntry } from '@/lib/data/mutations/document-memory'
 import { transmitInvoiceViaSuperPdp } from '@/lib/data/mutations/einvoicing'
 
+
 type Result = { error: string | null; paTransmission?: { success: boolean; messageId?: string; error?: string } }
+
+const derivedInvoiceEditableFields: Readonly<Record<string, true>> = {
+  title: true, issue_date: true, due_date: true, notes_client: true, payment_conditions: true,
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -55,39 +62,50 @@ type ProratedInvoiceRow = {
   quantity: number
   unit: string | null
   unit_price: number
+  total_ht: number
   unit_cost_ht?: number | null
   vat_rate: number
   is_internal: boolean
   position: number
 }
 
-function roundMoney(value: number) {
-  return Math.round((Number(value) || 0) * 100) / 100
+type ProratedInvoiceItem = {
+  description: string | null
+  quantity: number | null
+  unit?: string | null
+  unit_price: number | null
+  unit_cost_ht?: number | null
+  vat_rate: number | null
+  is_internal?: boolean | null
 }
 
-function buildProratedInvoiceRows(invoiceId: string, items: any[], ratio: number): ProratedInvoiceRow[] {
-  return items.map((item: any, idx: number) => ({
-    invoice_id: invoiceId,
-    description: item.description,
-    quantity: Number(item.quantity) || 0,
-    unit: item.unit ?? null,
-    unit_price: roundMoney((Number(item.unit_price) || 0) * ratio),
-    unit_cost_ht: item.unit_cost_ht ?? null,
-    vat_rate: coerceLegalVatRate(Number(item.vat_rate), 20),
-    is_internal: item.is_internal ?? false,
-    position: idx,
-  }))
+function buildProratedInvoiceRows(
+  invoiceId: string,
+  items: readonly ProratedInvoiceItem[],
+  ratio: number,
+  isVatSubject = true,
+): ProratedInvoiceRow[] {
+  return items.map((item, idx) => {
+    const quantity = Number(item.quantity) || 0
+    const unitPrice = roundMoney((Number(item.unit_price) || 0) * ratio)
+    return {
+      invoice_id: invoiceId,
+      description: item.description ?? '',
+      quantity,
+      unit: item.unit ?? null,
+      unit_price: unitPrice,
+      total_ht: roundMoney(quantity * unitPrice),
+      unit_cost_ht: item.unit_cost_ht ?? null,
+      vat_rate: isVatSubject ? coerceLegalVatRate(Number(item.vat_rate), 20) : 0,
+      is_internal: item.is_internal ?? false,
+      position: idx,
+    }
+  })
 }
 
-function calculateInvoiceTotals(rows: ProratedInvoiceRow[]) {
-  const clientRows = rows.filter(row => !row.is_internal)
-  const totalHt = roundMoney(clientRows.reduce((sum, row) => sum + row.quantity * row.unit_price, 0))
-  const totalTva = roundMoney(clientRows.reduce((sum, row) => sum + row.quantity * row.unit_price * (row.vat_rate / 100), 0))
-  return {
-    totalHt,
-    totalTva,
-    totalTtc: roundMoney(totalHt + totalTva),
-  }
+function calculateInvoiceTotals(rows: ProratedInvoiceRow[], isVatSubject = true) {
+  const { totalHt, totalTva, totalTtc } = calculateMonetaryTotals(rows, { isVatSubject })
+  return { totalHt, totalTva, totalTtc }
 }
 
 // ─── Save invoice items ────────────────────────────────────────────────────────
@@ -120,7 +138,7 @@ export async function saveInvoiceItems(
   const [{ data: inv }, { data: orgVat }] = await Promise.all([
     supabase
       .from('invoices')
-      .select('id, status')
+      .select('id, status, invoice_type')
       .eq('id', invoiceId)
       .eq('organization_id', orgId)
       .single(),
@@ -136,7 +154,14 @@ export async function saveInvoiceItems(
   if (inv.status !== 'draft') {
     return { error: 'Cette facture est émise et ne peut plus être modifiée. Créez un avoir pour la corriger.' }
   }
+  if (inv.invoice_type === 'solde' || inv.invoice_type === 'avoir') {
+    return { error: 'Les montants de ce décompte proviennent du document source et ne peuvent pas être remplacés.' }
+  }
   const isVatSubject = orgVat?.is_vat_subject !== false
+  if (!isVatSubject && meta.isReverseCharge === true) {
+    return { error: 'L’autoliquidation n’est pas compatible avec la franchise de TVA.' }
+  }
+  const isReverseCharge = meta.isReverseCharge === true
   const normalizeVatRate = (rate: number) => isVatSubject ? coerceLegalVatRate(rate, 20) : 0
 
   // Supprimer les lignes existantes
@@ -150,6 +175,7 @@ export async function saveInvoiceItems(
       quantity: item.quantity,
       unit: item.unit || null,
       unit_price: item.unit_price,
+      total_ht: roundMoney(item.quantity * item.unit_price),
       unit_cost_ht: item.unit_cost_ht ?? null,
       vat_rate: normalizeVatRate(item.vat_rate),
       is_internal: item.is_internal ?? false,
@@ -166,12 +192,7 @@ export async function saveInvoiceItems(
 
   // Recalculer les totaux (lignes internes exclues du total client)
   const normalizedItems = items.map(item => ({ ...item, vat_rate: normalizeVatRate(item.vat_rate) }))
-  const clientItems = normalizedItems.filter(i => !i.is_internal)
-  const totalHt = clientItems.reduce((sum, i) => sum + i.quantity * i.unit_price, 0)
-  const totalTva = isVatSubject && meta.isReverseCharge !== true
-    ? clientItems.reduce((sum, i) => sum + i.quantity * i.unit_price * (i.vat_rate / 100), 0)
-    : 0
-  const totalTtc = totalHt + totalTva
+  const { totalHt, totalTva, totalTtc } = calculateMonetaryTotals(normalizedItems, { isVatSubject, isReverseCharge })
 
   const { error: updateError } = await supabase
     .from('invoices')
@@ -184,7 +205,7 @@ export async function saveInvoiceItems(
       chantier_id: meta.chantierId ?? null,
       aid_label: meta.aidLabel ?? null,
       aid_amount: meta.aidAmount ?? null,
-      is_reverse_charge: meta.isReverseCharge ?? false,
+      is_reverse_charge: isReverseCharge,
       total_ht: totalHt,
       total_tva: totalTva,
       total_ttc: totalTtc,
@@ -201,12 +222,17 @@ export async function saveInvoiceItems(
 // ─── Mark as paid ─────────────────────────────────────────────────────────────
 
 /**
- * Enregistre le paiement d'une facture (paiement total).
- * Met le statut à 'paid', enregistre la date de paiement,
- * et envoie un email de remerciement au client.
+ * Marque une facture comme réglée et enregistre le versement restant éventuel.
+ * Un reçu client est envoyé uniquement lorsqu'un montant a réellement été enregistré.
  */
-export async function markInvoicePaid(invoiceId: string): Promise<Result & { total_paid?: number; paid_at?: string | null }> {
+export async function markInvoicePaid(
+  invoiceId: string,
+  paymentMetadata?: { payment_date?: string; method?: string; reference?: string },
+): Promise<Result & { total_paid?: number; paid_at?: string | null }> {
   if (!(await hasPermission('invoices.record_payment'))) return { error: 'Permission refusée.' }
+
+  const parsed = MarkInvoicePaidSchema.safeParse({ invoiceId, payment: paymentMetadata })
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Données invalides.' }
 
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -215,7 +241,14 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
 
-  const { data, error } = await supabase.rpc('mark_invoice_paid', { p_invoice_id: invoiceId })
+  const metadata = parsed.data.payment
+  const paymentDateString = metadata?.payment_date ?? todayParis()
+  const { data, error } = await supabase.rpc('mark_invoice_paid', {
+    p_invoice_id: parsed.data.invoiceId,
+    p_payment_date: paymentDateString,
+    p_method: metadata?.method ?? null,
+    p_reference: metadata?.reference ?? null,
+  })
   if (error || !data) return { error: error?.message ?? 'Impossible de marquer la facture comme payée.' }
 
   type PaidInvoiceMetadata = {
@@ -224,7 +257,6 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
     title: string | null
     currency: string | null
     client_id: string | null
-    total_ttc: number | null
   }
   type PaidInvoiceMutationResult =
     | { changed: true; amount_recorded: number; total_paid: number; paid_at: string; invoice: PaidInvoiceMetadata }
@@ -232,7 +264,6 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
   const payment = data as PaidInvoiceMutationResult
 
   if (payment.changed) {
-    const paidAt = new Date(payment.paid_at)
     const invoice = payment.invoice
 
     await syncInvoiceMemoryEntry(supabase, orgId, invoiceId)
@@ -249,7 +280,8 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
       amount: payment.amount_recorded,
     })
 
-    if (invoice.client_id) {
+    if (invoice.client_id && payment.amount_recorded > 0) {
+      const paymentDate = new Date(`${paymentDateString}T00:00:00.000Z`)
       const [{ data: client }, { data: org }, { data: customTpl }] = await Promise.all([
         supabase.from('clients').select('company_name, contact_name, first_name, last_name, email').eq('id', invoice.client_id).single(),
         supabase.from('organizations').select('name, email, email_from_address, email_signature, logo_url').eq('id', orgId).single(),
@@ -279,7 +311,10 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
           const vars: Record<string, string> = {
             numero_facture: invoice.number ?? '',
             client_nom: clientName,
-            montant_ttc: new Intl.NumberFormat('fr-FR', { style: 'currency', currency: invoice.currency ?? 'EUR' }).format(invoice.total_ttc ?? 0),
+            montant_ttc: new Intl.NumberFormat('fr-FR', { style: 'currency', currency: invoice.currency ?? 'EUR' }).format(payment.amount_recorded),
+            date_reglement: paymentDate.toLocaleDateString('fr-FR', {
+              day: '2-digit', month: 'long', year: 'numeric', timeZone: 'UTC',
+            }),
             entreprise_nom: sender.name,
             email_org: sender.email ?? '',
           }
@@ -294,9 +329,9 @@ export async function markInvoicePaid(invoiceId: string): Promise<Result & { tot
             clientName,
             invoiceNumber: invoice.number,
             invoiceTitle: invoice.title,
-            totalTtc: invoice.total_ttc,
+            amountRecorded: payment.amount_recorded,
             currency: invoice.currency ?? 'EUR',
-            paidAt,
+            paymentDate,
             emailSignature: sender.email_signature,
           })
           subject = built.subject
@@ -388,6 +423,8 @@ export async function updateInvoice(
   invoiceId: string,
   updates: {
     title?: string
+    issue_date?: string
+    due_date?: string
     client_id?: string | null
     currency?: string
     payment_terms_days?: number
@@ -405,10 +442,19 @@ export async function updateInvoice(
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
+  const { data: current } = await supabase.from('invoices')
+    .select('id, status, invoice_type').eq('id', invoiceId).eq('organization_id', orgId).maybeSingle()
+  if (!current) return { error: 'Facture introuvable.' }
+  if (current.status !== 'draft') return { error: 'Cette facture est émise. Corrigez-la par un avoir.' }
+  if (current.invoice_type === 'solde' || current.invoice_type === 'avoir') {
+    if (Object.keys(parsed.data).some(key => !derivedInvoiceEditableFields[key])) {
+      return { error: 'Le destinataire et les montants de ce décompte sont repris du document source.' }
+    }
+  }
 
   const { error } = await supabase
     .from('invoices')
-    .update(updates)
+    .update(parsed.data)
     .eq('id', invoiceId)
     .eq('organization_id', orgId)
 
@@ -802,6 +848,13 @@ export async function generateDepositInvoice(
   if (quote.status !== 'accepted' && quote.status !== 'converted') {
     return { invoiceId: null, error: 'Le devis doit être accepté pour générer un acompte.' }
   }
+  const { data: orgVat, error: orgVatError } = await supabase
+    .from('organizations')
+    .select('is_vat_subject')
+    .eq('id', orgId)
+    .single()
+  if (orgVatError || !orgVat) return { invoiceId: null, error: 'Organisation introuvable.' }
+  const isVatSubject = orgVat.is_vat_subject !== false
 
   const { data: chantier } = await supabase
     .from('chantiers')
@@ -811,14 +864,16 @@ export async function generateDepositInvoice(
     .maybeSingle()
 
   const ratio = depositRate / 100
-  const items = (quote.items ?? []) as any[]
-  const previewRows = buildProratedInvoiceRows('preview', items, ratio)
+  const items = (quote.items ?? []) as ProratedInvoiceItem[]
+  const previewRows = buildProratedInvoiceRows('preview', items, ratio, isVatSubject)
+  const fallbackTotalHt = roundMoney((quote.total_ht ?? 0) * ratio)
+  const fallbackTotalTva = isVatSubject ? roundMoney((quote.total_tva ?? 0) * ratio) : 0
   const rowTotals = previewRows.length > 0
-    ? calculateInvoiceTotals(previewRows)
+    ? calculateInvoiceTotals(previewRows, isVatSubject)
     : {
-        totalHt: roundMoney((quote.total_ht ?? 0) * ratio),
-        totalTva: roundMoney((quote.total_tva ?? 0) * ratio),
-        totalTtc: roundMoney((quote.total_ttc ?? 0) * ratio),
+        totalHt: fallbackTotalHt,
+        totalTva: fallbackTotalTva,
+        totalTtc: roundMoney(fallbackTotalHt + fallbackTotalTva),
       }
 
   const quoteNum = quote.number ?? quoteId.slice(0, 8)
@@ -856,7 +911,7 @@ export async function generateDepositInvoice(
   // Copier les lignes du devis avec les montants proratisés
   // Les items internes sont copiés avec is_internal=true → masqués du PDF client
   if (items.length > 0) {
-    const rows = buildProratedInvoiceRows(invoice.id, items, ratio)
+    const rows = buildProratedInvoiceRows(invoice.id, items, ratio, isVatSubject)
     await supabase.from('invoice_items').insert(rows)
   }
 
@@ -942,11 +997,22 @@ export async function savePaymentSchedule(
   return { error: null }
 }
 
+type ScheduledPaymentResult = {
+  payment_id?: string
+  status?: 'partial' | 'paid'
+  total_paid?: number
+  schedule_amount?: number
+  schedule_paid?: number
+  schedule_remaining?: number
+  schedule_completed?: boolean
+  invoice_outstanding?: number
+}
+
 export async function recordScheduledPayment(
   invoiceId: string,
   scheduleItemId: string,
   payment: { amount: number; payment_date: string; method?: string; reference?: string; notes?: string },
-): Promise<Result & { status?: 'partial' | 'paid'; total_paid?: number }> {
+): Promise<Result & ScheduledPaymentResult> {
   if (!(await hasPermission('invoices.record_payment'))) return { error: 'Permission refusée.' }
 
   if (Number(payment.amount) <= 0) return { error: 'Le montant encaissé doit être supérieur à 0.' }
@@ -963,7 +1029,7 @@ export async function recordScheduledPayment(
   })
   if (error) return { error: error.message }
 
-  const result = data as { status?: 'partial' | 'paid'; total_paid?: number } | null
+  const result = data as ScheduledPaymentResult | null
 
   const orgId = await getCurrentOrganizationId()
   if (orgId) {
@@ -997,7 +1063,7 @@ export async function recordScheduledPayment(
   }
   revalidatePath('/finances')
   revalidatePath('/dashboard')
-  return { error: null, status: result?.status, total_paid: result?.total_paid }
+  return { error: null, ...(result ?? {}) }
 }
 
 // ─── Archive ──────────────────────────────────────────────────────────────────

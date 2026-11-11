@@ -12,7 +12,7 @@ export default async function CatalogPage() {
   const canView = await hasPermission('catalog.view')
   if (!canView) redirect('/dashboard')
 
-  const [materials, laborRates, prestationTypes, suppliers, organization, catalogAIEnabled, metalPriceGrids] = await Promise.all([
+  const [materials, laborRates, prestationTypes, suppliers, organization, catalogAIModuleEnabled, metalPriceGrids, canUseAiTerrain, canEditCatalog] = await Promise.all([
     getMaterials(),
     getLaborRates(),
     getPrestationTypes(true),
@@ -20,6 +20,8 @@ export default async function CatalogPage() {
     getOrganization(),
     isModuleEnabled('catalog_ai'),
     getMetalPriceGrids(),
+    hasPermission('ai.terrain'),
+    hasPermission('catalog.edit'),
   ])
 
   const catalogContext = resolveCatalogContext(organization)
@@ -31,7 +33,7 @@ export default async function CatalogPage() {
       initialPrestationTypes={prestationTypes}
       initialSuppliers={suppliers}
       catalogContext={catalogContext}
-      catalogAIEnabled={catalogAIEnabled}
+      catalogAIEnabled={canUseAiTerrain && canEditCatalog && catalogAIModuleEnabled}
       hasMetalPricing={organization?.has_metal_pricing ?? false}
       metalPriceGrids={metalPriceGrids}
     />

@@ -13,6 +13,7 @@ import { buildQuoteSentEmail } from '@/lib/email/templates'
 import { getClientGreetingName } from '@/lib/client'
 import { renderQuotePdf } from '@/lib/pdf/documents/quote'
 import { quoteDocumentPayloadFromSnapshot, renderContractPdfBufferById } from '@/lib/pdf/server'
+import { calculateMonetaryTotals, roundMoney } from '@/lib/utils/money'
 import { coerceLegalVatRate } from '@/lib/utils'
 import { hasPermission } from '@/lib/data/queries/membership'
 import { syncQuoteMemoryEntry, syncQuoteLearningEntry } from '@/lib/data/mutations/document-memory'
@@ -572,7 +573,7 @@ export async function upsertQuoteItem(item: {
   const vatRate = orgVat?.is_vat_subject === false ? 0 : coerceLegalVatRate(item.vat_rate, 20)
 
   const normalizedItem = parsed.data
-  const total_ht = normalizedItem.quantity * normalizedItem.unit_price
+  const total_ht = roundMoney(normalizedItem.quantity * normalizedItem.unit_price)
 
   const description = normalizedItem.description ?? buildStructuredDescription(normalizedItem.designation, normalizedItem.details, null)
   const payload = {
@@ -662,22 +663,30 @@ async function recalcQuoteTotals(quoteId: string, orgId: string) {
   const supabase = await createClient()
   if (!(await ensureQuoteEditable(quoteId, orgId))) return
 
-  const { data: items } = await supabase
-    .from('quote_items')
-    .select('quantity, unit_price, vat_rate, is_internal')
-    .eq('quote_id', quoteId)
+  const [{ data: items }, { data: orgVat }] = await Promise.all([
+    supabase
+      .from('quote_items')
+      .select('quantity, unit_price, vat_rate, is_internal')
+      .eq('quote_id', quoteId),
+    supabase
+      .from('organizations')
+      .select('is_vat_subject')
+      .eq('id', orgId)
+      .single(),
+  ])
 
   if (!items) return
 
-  // Les lignes internes (is_internal=true) ne comptent pas dans le total client
-  const visible = items.filter(i => !i.is_internal)
-  const total_ht = visible.reduce((sum, i) => sum + (i.quantity * i.unit_price), 0)
-  const total_tva = visible.reduce((sum, i) => sum + (i.quantity * i.unit_price * (i.vat_rate ?? 20) / 100), 0)
-  const total_ttc = total_ht + total_tva
+  // Les lignes internes (is_internal=true) ne comptent pas dans le total client.
+  const visible = items
+    .filter(item => !item.is_internal)
+    .map(item => ({ ...item, vat_rate: item.vat_rate ?? 20 }))
+  const totals = calculateMonetaryTotals(visible, { isVatSubject: orgVat?.is_vat_subject !== false })
+  const { totalHt, totalTva, totalTtc } = totals
 
   await supabase
     .from('quotes')
-    .update({ total_ht, total_tva, total_ttc })
+    .update({ total_ht: totalHt, total_tva: totalTva, total_ttc: totalTtc })
     .eq('id', quoteId)
     .eq('organization_id', orgId)
 }
@@ -928,6 +937,7 @@ export async function duplicateQuote(quoteId: string): Promise<{ quoteId: string
       ...rest,
       quote_id: newId,
       section_id: rest.section_id ? (sectionMap.get(rest.section_id) ?? null) : null,
+      total_ht: roundMoney((Number(rest.quantity) || 0) * (Number(rest.unit_price) || 0)),
     }))
     await supabase.from('quote_items').insert(newItems)
     await recalcQuoteTotals(newId, orgId)
@@ -1017,6 +1027,7 @@ export async function createQuoteVariant(
       ...rest,
       quote_id: newId,
       section_id: rest.section_id ? (sectionMap.get(rest.section_id) ?? null) : null,
+      total_ht: roundMoney((Number(rest.quantity) || 0) * (Number(rest.unit_price) || 0)),
     }))
     await supabase.from('quote_items').insert(newItems)
     await recalcQuoteTotals(newId, orgId)

@@ -147,7 +147,7 @@ export function NewTaskSheet({ q, onClose, onSuggest }: { q: ChantierDetailState
             </ListGroup>
           </>
         )}
-        {q.linkedQuoteId && (
+        {q.canSuggestAiMilestones && q.linkedQuoteId && (
           <ListGroup description={q.suggestTasksError ?? 'Sarah propose des tâches d’après les prestations du devis lié.'}>
             <ListRow
               title="Importer depuis le devis"

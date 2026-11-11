@@ -10,7 +10,9 @@ export type CsvInvoice = {
   total_tva: number
   total_ttc: number
   total_paid: number
-  paid_at: string | null
+  credited_ttc: number
+  paid_in_period: number
+  last_payment_in_period: string | null
   status: string
   chantier_title: string | null
   tva_sur_debits: boolean
@@ -79,10 +81,10 @@ export function generateCsv(invoices: CsvInvoice[], isVatSubject: boolean, inclu
 
   headers.push(
     'Montant TTC',
-    'Montant encaissé',
-    'Reste dû',
+    'Montant encaissé (période)',
+    'Reste dû actuel',
     'Statut',
-    'Date paiement',
+    'Dernier encaissement (période)',
     'Mode TVA',
     'Chantier',
   )
@@ -93,7 +95,7 @@ export function generateCsv(invoices: CsvInvoice[], isVatSubject: boolean, inclu
   headers.push('Référence Peppol')
 
   const rows: CsvRow[] = invoices.map(inv => {
-    const restedu = round2(inv.total_ttc - inv.total_paid)
+    const restedu = round2(inv.total_ttc - inv.total_paid - inv.credited_ttc)
 
     const row: CsvRow = {
       'Numéro': inv.number,
@@ -117,10 +119,11 @@ export function generateCsv(invoices: CsvInvoice[], isVatSubject: boolean, inclu
     }
 
     row['Montant TTC'] = fmtNumber(inv.total_ttc)
-    row['Montant encaissé'] = includePayments ? fmtNumber(inv.total_paid) : ''
-    row['Reste dû'] = includePayments ? fmtNumber(restedu < 0 ? 0 : restedu) : ''
+    row['Montant encaissé (période)'] = includePayments ? fmtNumber(inv.paid_in_period) : ''
+    row['Reste dû actuel'] = includePayments && inv.invoice_type !== 'avoir'
+      ? fmtNumber(inv.status === 'cancelled' || restedu < 0 ? 0 : restedu) : ''
     row['Statut'] = statusLabel(inv.status)
-    row['Date paiement'] = includePayments ? fmtDate(inv.paid_at) : ''
+    row['Dernier encaissement (période)'] = includePayments ? fmtDate(inv.last_payment_in_period) : ''
     row['Mode TVA'] = inv.is_vat_subject
       ? (inv.tva_sur_debits ? 'Débits' : 'Encaissements')
       : 'Franchise art. 293 B CGI'

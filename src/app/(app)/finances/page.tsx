@@ -7,7 +7,7 @@ import { getChantiers } from '@/lib/data/queries/chantiers'
 import FinancesClient from './FinancesClient'
 
 export default async function FinancesPage() {
-  const [quotes, invoices, canCreateQuote, canEditQuote, canSendQuote, canDeleteQuote, canCreateInvoice, canSendInvoice, canRecordPayment, canDeleteInvoice, canCreateSituation, canCreateSolde, einvoicingConfig, canLinkReceivedInvoice] = await Promise.all([
+  const [quotes, invoices, canCreateQuote, canEditQuote, canSendQuote, canDeleteQuote, canCreateInvoice, canSendInvoice, canRecordPayment, canDeleteInvoice, canCreateSituation, canCreateSolde, canCreateCredit, einvoicingConfig, canLinkReceivedInvoice] = await Promise.all([
     getQuotes(),
     getInvoices(),
     hasPermission('quotes.create'),
@@ -20,6 +20,7 @@ export default async function FinancesPage() {
     hasPermission('invoices.delete'),
     hasPermission('invoices.create_situation'),
     hasPermission('invoices.create_solde'),
+    hasPermission('invoices.create_credit'),
     getOrganizationEinvoicingConfig(),
     hasPermission('chantiers.expenses.edit'),
   ])
@@ -52,6 +53,7 @@ export default async function FinancesPage() {
       canDeleteInvoice={canDeleteInvoice}
       canCreateSituation={canCreateSituation}
       canCreateSolde={canCreateSolde}
+      canCreateCredit={canCreateCredit}
       canViewReceivedInvoices={canViewReceivedInvoices}
       initialReceivedInvoices={receivedInvoices}
       linkableChantiers={linkableChantiers}

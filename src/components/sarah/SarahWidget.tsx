@@ -18,6 +18,7 @@ import { StatusPill } from '@/components/ui/StatusPill'
 import { SarahLegacyChrome } from './SarahLegacyChrome'
 import { SarahSheet } from './SarahSheet'
 import styles from './SarahWidget.module.css'
+import { getSarahErrorContent, type SarahErrorCode } from './errorCopy'
 const UPGRADE_URL = process.env.NEXT_PUBLIC_STRIPE_UPGRADE_URL ?? 'https://orsayn.fr/tarifs'
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -52,15 +53,6 @@ type Message = {
   errorCode?: SarahErrorCode
 }
 
-type SarahErrorCode =
-  | 'module_disabled'
-  | 'quota_exceeded'
-  | 'openrouter_credits'
-  | 'rate_limit'
-  | 'server_error'
-  | 'unauthenticated'
-  | 'permission_denied'
-  | 'network'
 
 type PageContext = {
   label: string
@@ -279,33 +271,11 @@ async function executeAction(action: ActionProposal): Promise<ActionResult> {
 }
 
 
-// ─── Textes des erreurs ───────────────────────────────────────────────────────
-
-function errorContent(code: SarahErrorCode): { title: string; body: string; upgrade: boolean } {
-  switch (code) {
-    case 'module_disabled':
-      return { title: 'Fonctionnalité non incluse', body: "Sarah est disponible à partir de l'abonnement Pro.", upgrade: true }
-    case 'quota_exceeded':
-      return { title: 'Quota mensuel atteint', body: "Vous avez atteint la limite de messages IA ce mois-ci.", upgrade: true }
-    case 'openrouter_credits':
-      return { title: 'Crédits OpenRouter à vérifier', body: "Rechargez vos crédits ou vérifiez votre clé OpenRouter.", upgrade: false }
-    case 'rate_limit':
-      return { title: 'Trop de requêtes', body: 'Attendez quelques secondes avant de réessayer.', upgrade: false }
-    case 'unauthenticated':
-      return { title: 'Session expirée', body: 'Rechargez la page pour vous reconnecter.', upgrade: false }
-    case 'permission_denied':
-      return { title: 'Accès non autorisé', body: "Votre rôle n'a pas accès aux assistants IA. Demandez à l'administrateur de vous attribuer la permission dans Paramètres > Rôles.", upgrade: false }
-    case 'network':
-      return { title: 'Problème réseau', body: 'Vérifiez votre connexion puis réessayez.', upgrade: false }
-    default:
-      return { title: 'Erreur inattendue', body: 'Si le problème persiste, contactez le support.', upgrade: false }
-  }
-}
 
 // ─── Composant erreur inline ──────────────────────────────────────────────────
 
 function ErrorBanner({ code, presentation = 'legacy' }: { code: SarahErrorCode; presentation?: 'app' | 'legacy' }) {
-  const { title, body, upgrade } = errorContent(code)
+  const { title, body, upgrade } = getSarahErrorContent(code)
   if (presentation === 'app') {
     return (
       <div className={styles.errorBanner} role="alert">
@@ -546,6 +516,14 @@ function TypingDots({ presentation }: { presentation: 'app' | 'legacy' }) {
 // Alternative au vocal live (ElevenLabs, réservé Pro/Expert) : disponible pour tous
 // les membres ayant accès à Sarah, y compris les setups sans abonnement mensuel.
 
+export function getSarahDictationErrorMessage(code: unknown): string {
+  if (code === 'permission_denied') return 'Votre rôle ne permet pas la transcription vocale.'
+  if (code === 'unauthenticated') return 'Votre session a expiré. Rechargez la page pour vous reconnecter.'
+  if (code === 'rate_limit') return 'Trop de demandes vocales. Réessayez dans un instant.'
+  if (code === 'quota_exceeded') return 'Le quota mensuel de transcription est atteint.'
+  return 'La transcription vocale n’a pas abouti. Réessayez dans un instant.'
+}
+
 function useDictation(onTranscribed: (text: string) => void) {
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
@@ -600,7 +578,7 @@ function useDictation(onTranscribed: (text: string) => void) {
           fd.append('audio', blob, 'recording.webm')
           const res = await fetch('/api/ai/transcribe-audio', { method: 'POST', body: fd })
           const data = await res.json()
-          if (!res.ok) setError(data.error ?? 'Erreur de transcription.')
+          if (!res.ok) setError(getSarahDictationErrorMessage(data?.code))
           else if (data.text) onTranscribed(data.text)
         } catch {
           setError('Impossible de transcrire l\'audio.')
@@ -648,7 +626,7 @@ function voiceErrorLabel(err: VoiceLiveError): { title: string; body: string; up
     case 'module_disabled':
       return { title: 'Conversation en direct non incluse', body: 'Cette formule n\'inclut pas la voix en direct. Vous pouvez dicter votre message à la place.', upgrade: false }
     case 'configuration':
-      return { title: 'Configuration ElevenLabs', body: 'Vérifiez que l\'agent autorise le prompt en remplacement et que la voix est configurée directement dans ElevenLabs.', upgrade: false }
+      return { title: 'Configuration vocale incomplète', body: 'Le service vocal est momentanément indisponible. Réessayez dans un instant ou contactez le support.', upgrade: false }
     case 'network':
       return { title: 'Problème de connexion', body: 'Vérifiez votre réseau puis réessayez.', upgrade: false }
     default:

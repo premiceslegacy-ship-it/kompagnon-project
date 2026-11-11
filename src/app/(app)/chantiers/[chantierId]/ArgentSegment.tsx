@@ -32,7 +32,7 @@ export default function ArgentSegment({ q, onOpenDetails }: { q: ChantierDetailS
     <>
       {showProfit && <ProfitSection q={q} onOpenDetails={onOpenDetails} />}
       {!showProfit && q.canEditChantier && (
-        <JalonsSection initialJalons={q.initialJalons} chantierId={c.id} budgetHt={c.budget_ht ?? 0} taches={q.taches} />
+        <JalonsSection initialJalons={q.initialJalons} chantierId={c.id} budgetHt={c.budget_ht ?? 0} taches={q.taches} canSuggestAi={q.canSuggestAiMilestones} />
       )}
     </>
   )
@@ -111,7 +111,7 @@ function ProfitSection({ q, onOpenDetails }: { q: ChantierDetailState; onOpenDet
           {a.subcontractAlert && <p className={screen.alert}><span>La sous-traitance représente {fmtPct(a.subcontractPct)} du budget du devis, au-delà des 40 % généralement conseillés.</span></p>}
           {a.marginAlert && <p className={screen.alert}><span>La marge facturée ({fmtPct(r.marginPct)}) est sous les 20 % recommandés pour rester rentable une fois le chantier soldé.</span></p>}
 
-          {q.canEditChantier && <JalonsSection initialJalons={q.initialJalons} chantierId={c.id} budgetHt={c.budget_ht ?? 0} taches={q.taches} />}
+          {q.canEditChantier && <JalonsSection initialJalons={q.initialJalons} chantierId={c.id} budgetHt={c.budget_ht ?? 0} taches={q.taches} canSuggestAi={q.canSuggestAiMilestones} />}
 
           {q.situationsSummary && c.quote_id && (
             <SituationsSection

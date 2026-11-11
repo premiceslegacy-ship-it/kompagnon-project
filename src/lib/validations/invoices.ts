@@ -1,17 +1,19 @@
 import { z } from 'zod'
 
-const currencySchema = z.string().length(3).regex(/^[A-Z]{3}$/).default('EUR')
+const currencySchema = z.string().length(3).regex(/^[A-Z]{3}$/)
 
 export const CreateInvoiceSchema = z.object({
   clientId: z.string().uuid().nullable().optional(),
   title: z.string().max(255).optional(),
-  currency: currencySchema.optional(),
+  currency: currencySchema.default('EUR').optional(),
   quoteId: z.string().uuid().nullable().optional(),
   chantierId: z.string().uuid().nullable().optional(),
 })
 
 export const UpdateInvoiceSchema = z.object({
   title: z.string().min(1).max(255).optional(),
+  issue_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   client_id: z.string().uuid().nullable().optional(),
   chantier_id: z.string().uuid().nullable().optional(),
   currency: currencySchema.optional(),
@@ -49,6 +51,7 @@ export const SaveInvoiceItemsSchema = z.object({
     chantierId: z.string().uuid().nullable().optional(),
     aidLabel: z.string().max(200).nullable().optional(),
     aidAmount: z.number().min(0).nullable().optional(),
+    isReverseCharge: z.boolean().optional(),
   }),
 })
 
@@ -58,6 +61,23 @@ export const GenerateDepositSchema = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   balanceDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 })
+const paymentDateSchema = z.string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine(value => {
+    const date = new Date(`${value}T00:00:00.000Z`)
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
+  }, 'Date de paiement invalide.')
+
+export const MarkInvoicePaidSchema = z.object({
+  invoiceId: z.string().uuid(),
+  payment: z.object({
+    payment_date: paymentDateSchema.optional(),
+    method: z.string().trim().max(100).optional(),
+    reference: z.string().trim().max(255).optional(),
+  }).optional(),
+})
+
+export type MarkInvoicePaidInput = z.infer<typeof MarkInvoicePaidSchema>
 
 export type CreateInvoiceInput = z.infer<typeof CreateInvoiceSchema>
 export type UpdateInvoiceInput = z.infer<typeof UpdateInvoiceSchema>

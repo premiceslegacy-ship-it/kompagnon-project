@@ -41,7 +41,10 @@ export class QuoteDocumentAuthorityUnavailableError extends Error {
 export type QuoteDocumentPayload = {
   quoteRecord: QuoteDocumentRecord
   organization: PdfOrganizationData
-  client: QuoteDocumentClient | null
+  client: (QuoteDocumentClient & {
+    siren: string | null
+    vat_number: string | null
+  }) | null
 }
 
 export type InvoiceIssuanceAuthorityData = {
@@ -106,6 +109,10 @@ const invoiceIssuanceSnapshotSchema = z.object({
     number: nullableText,
     title: nullableText,
     invoice_type: nullableText,
+    invoice_type_code: nullableText.optional(),
+    credit_note_for: nullableText.optional(),
+    preceding_invoice_ref: nullableText.optional(),
+    preceding_invoice_date: nullableText.optional(),
     total_ht: nullableNumber,
     total_tva: nullableNumber,
     total_ttc: nullableNumber,
@@ -127,6 +134,12 @@ const invoiceIssuanceSnapshotSchema = z.object({
     retention_amount: nullableNumber,
     market_reference: nullableText,
     is_reverse_charge: z.boolean(),
+    vat_breakdown: z.array(z.object({
+      rate: z.number(),
+      taxable_basis: z.number(),
+      tax_amount: z.number(),
+    })).nullable().optional(),
+    applied_acompte_ht: nullableNumber.optional(),
   }).passthrough(),
   seller: pdfOrganizationDataSchema.extend({
     capital_social: nullableNumber,
@@ -193,7 +206,47 @@ export function isInvoiceIssuanceSnapshot(
   invoiceId: string,
 ): value is InvoiceIssuanceSnapshot {
   const parsed = invoiceIssuanceSnapshotSchema.safeParse(value)
-  return parsed.success && parsed.data.invoice.id === invoiceId
+  if (!parsed.success || parsed.data.invoice.id !== invoiceId) return false
+
+  const { invoice, items, seller } = parsed.data
+  if (invoice.invoice_type === 'avoir'
+      && (invoice.invoice_type_code !== '381' || !invoice.credit_note_for
+        || !invoice.preceding_invoice_ref || !invoice.preceding_invoice_date)) return false
+  if (invoice.applied_acompte_ht != null && invoice.applied_acompte_ht < 0) return false
+  if (!invoice.vat_breakdown?.length) return true
+
+  const cents = (amount: number) => Math.round(amount * 100)
+  const bases = new Map<number, number>()
+  for (const item of items) {
+    if (item.is_internal === true || item.unit === '__section__') continue
+    const rate = item.vat_rate ?? 0
+    const basis = cents((item.quantity ?? 0) * item.unit_price)
+    bases.set(rate, (bases.get(rate) ?? 0) + basis)
+  }
+
+  let previousRate = -1
+  let totalBasis = 0
+  let totalTax = 0
+  for (const bucket of invoice.vat_breakdown) {
+    if (!Number.isFinite(bucket.rate) || bucket.rate < 0 || bucket.rate > 100
+        || bucket.rate <= previousRate || !Number.isFinite(bucket.taxable_basis)
+        || !Number.isFinite(bucket.tax_amount) || bucket.taxable_basis <= 0
+        || bucket.tax_amount < 0) return false
+    const bucketBasis = cents(bucket.taxable_basis)
+    const bucketTax = cents(bucket.tax_amount)
+    if (Math.abs(bucketBasis - bucket.taxable_basis * 100) > 0.000001
+        || Math.abs(bucketTax - bucket.tax_amount * 100) > 0.000001
+        || bases.get(bucket.rate) !== bucketBasis) return false
+    if ((!seller.is_vat_subject || invoice.is_reverse_charge || bucket.rate === 0) && bucketTax !== 0) return false
+    bases.delete(bucket.rate)
+    previousRate = bucket.rate
+    totalBasis += bucketBasis
+    totalTax += bucketTax
+  }
+  return bases.size === 0
+    && cents(invoice.total_ht ?? 0) === totalBasis
+    && cents(invoice.total_tva ?? 0) === totalTax
+    && cents(invoice.total_ttc ?? 0) === totalBasis + totalTax
 }
 const quoteItemSnapshotSchema = z.array(z.object({
   id: z.string().min(1),
@@ -398,7 +451,7 @@ export async function getQuoteDocumentPayload(
     admin.from('quote_sections').select('id, quote_id, title, position').eq('quote_id', quoteId).order('position', { ascending: true }),
     admin.from('quote_items').select('id, quote_id, section_id, type, material_id, labor_rate_id, designation, details, description, quantity, unit, unit_price, unit_cost_ht, ai_confidence, ai_source, ai_warnings, vat_rate, total_ht, position, length_m, width_m, height_m, dim_quantity, is_internal, metal_grid_id, dimension_values, variant_label, catalog_variant_id, price_pending, labor_category').eq('quote_id', quoteId).order('position', { ascending: true }),
     quoteClient?.id
-      ? admin.from('clients').select('id, type, company_name, contact_name, first_name, last_name, email, phone, address_line1, postal_code, city, siret').eq('id', quoteClient.id).maybeSingle()
+      ? admin.from('clients').select('id, type, company_name, contact_name, first_name, last_name, email, phone, address_line1, postal_code, city, siret, siren, vat_number').eq('id', quoteClient.id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     getOrganizationForPdf(orgId),
   ])
@@ -469,7 +522,7 @@ export async function renderQuotePdfBufferById(quoteId: string, orgId: string): 
   return { buffer, fileName }
 }
 
-async function loadInvoiceAuthorityForPdf(invoiceId: string, orgId: string) {
+export async function loadInvoiceAuthorityForPdf(invoiceId: string, orgId: string) {
   const admin = createAdminClient()
   const { data: current, error } = await admin
     .from('invoices')
@@ -511,7 +564,8 @@ async function loadInvoiceAuthorityForPdf(invoiceId: string, orgId: string) {
     admin
       .from('invoices')
       .select(`
-        id, number, title, status, invoice_type, total_ht, total_tva, total_ttc, total_paid, currency,
+        id, number, title, status, invoice_type, invoice_type_code, credit_note_for, preceding_invoice_ref, preceding_invoice_date,
+        total_ht, total_tva, total_ttc, currency, vat_breakdown, applied_acompte_ht,
         issue_date, due_date, sent_at, paid_at, created_at,
         notes_client, payment_conditions, aid_label, aid_amount, quote_id, chantier_id, client_id,
         situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference, is_reverse_charge,
@@ -540,20 +594,57 @@ async function loadInvoiceAuthorityForPdf(invoiceId: string, orgId: string) {
   if (latestError) throw latestError
   if (!latest) return null
   if (latest.status !== 'draft') return fromSnapshot(latest)
-  if (!invoice.data || !organization || invoice.data.status !== 'draft') return null
+  if (!invoice.data) return null
 
   const invoiceData = invoice.data
-  const invoiceClient = Array.isArray(invoiceData.client) ? invoiceData.client[0] : invoiceData.client
+  let invoiceOrganization = organization
+  let invoiceClient: InvoiceDocumentRecord['client'] = Array.isArray(invoiceData.client) ? invoiceData.client[0] : invoiceData.client
   const quoteReference = invoiceQuoteReferenceSchema.parse(invoiceData.quote)
-  const quoteNumber = Array.isArray(quoteReference)
+  let quoteNumber = Array.isArray(quoteReference)
     ? quoteReference[0]?.number ?? null
     : quoteReference?.number ?? null
+
+  if (invoiceData.invoice_type === 'avoir') {
+    if (!invoiceData.credit_note_for) throw new InvoiceIssuanceAuthorityError()
+    const { data: source, error: sourceError } = await admin
+      .from('invoices')
+      .select('id, issuance_snapshot')
+      .eq('id', invoiceData.credit_note_for)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (sourceError) throw sourceError
+    if (!source || !isInvoiceIssuanceSnapshot(source.issuance_snapshot, source.id)) {
+      throw new InvoiceIssuanceAuthorityError()
+    }
+    invoiceOrganization = source.issuance_snapshot.seller
+    invoiceClient = source.issuance_snapshot.buyer
+    quoteNumber = source.issuance_snapshot.quote?.number ?? null
+  } else if (invoiceData.invoice_type === 'solde') {
+    if (!invoiceData.quote_id) throw new QuoteDocumentAuthorityUnavailableError()
+    const { data: acceptedQuote, error: quoteError } = await admin
+      .from('quotes')
+      .select('id, status, signed_at, client_signature_image, client_signatory_name, client_signatory_role, document_snapshot')
+      .eq('id', invoiceData.quote_id)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (quoteError) throw quoteError
+    if (!acceptedQuote) throw new QuoteDocumentAuthorityUnavailableError()
+    const quotePayload = quoteDocumentPayloadFromSnapshot(acceptedQuote, orgId)
+    invoiceOrganization = quotePayload.organization
+    invoiceClient = quotePayload.client
+    quoteNumber = quotePayload.quoteRecord.number
+  }
+  if (!invoiceOrganization) return null
   const invoiceRecord: InvoiceDocumentRecord = {
     id: invoiceData.id,
     number: invoiceData.number,
     title: invoiceData.title,
     status: invoiceData.status,
     invoice_type: invoiceData.invoice_type,
+    invoice_type_code: invoiceData.invoice_type_code,
+    credit_note_for: invoiceData.credit_note_for,
+    preceding_invoice_ref: invoiceData.preceding_invoice_ref,
+    preceding_invoice_date: invoiceData.preceding_invoice_date,
     total_ht: invoiceData.total_ht,
     total_tva: invoiceData.total_tva,
     total_ttc: invoiceData.total_ttc,
@@ -576,6 +667,8 @@ async function loadInvoiceAuthorityForPdf(invoiceId: string, orgId: string) {
     retention_amount: invoiceData.retention_amount,
     market_reference: invoiceData.market_reference,
     is_reverse_charge: invoiceData.is_reverse_charge,
+    vat_breakdown: invoiceData.vat_breakdown ?? null,
+    applied_acompte_ht: invoiceData.applied_acompte_ht ?? null,
     quote_number: quoteNumber,
     client: invoiceClient ?? null,
     items: invoiceData.items ?? [],
@@ -583,7 +676,7 @@ async function loadInvoiceAuthorityForPdf(invoiceId: string, orgId: string) {
 
   return {
     invoiceRecord,
-    organization,
+    organization: invoiceOrganization,
     status: 'draft',
   }
 }

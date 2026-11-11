@@ -20,6 +20,7 @@ import { getJalonsForChantier } from '@/lib/data/queries/chantier-jalons'
 import { getChantierIndividualMembers, getOrgIndividualMembers } from '@/lib/data/queries/members'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { getMaterials } from '@/lib/data/queries/catalog'
+import { isModuleEnabled } from '@/lib/data/queries/organization-modules'
 import { canManageLaborRates, hasPermission } from '@/lib/data/queries/membership'
 import { createClient } from '@/lib/supabase/server'
 import ChantierDetailClient from './ChantierDetailClient'
@@ -63,6 +64,9 @@ export default async function ChantierDetailPage({
     canCreateSituation,
     canCreateSolde,
     canDeleteChantier,
+    canUseAiTerrain,
+    chantierAssistantModuleEnabled,
+    suggestTasksModuleEnabled,
   ] = await Promise.all([
     getChantierById(params.chantierId),
     getChantierTaches(params.chantierId),
@@ -96,6 +100,9 @@ export default async function ChantierDetailPage({
     hasPermission('invoices.create_situation'),
     hasPermission('invoices.create_solde'),
     hasPermission('chantiers.delete'),
+    hasPermission('ai.terrain'),
+    isModuleEnabled('chantier_assistant'),
+    isModuleEnabled('suggest_tasks'),
   ])
 
   // Charger le résumé des situations si le chantier est lié à un devis
@@ -159,6 +166,8 @@ export default async function ChantierDetailPage({
       currentUserId={currentUserId}
       initialReserves={reserves}
       canDeleteChantier={canDeleteChantier}
+      canUseChantierAssistant={canUseAiTerrain && chantierAssistantModuleEnabled}
+      canSuggestAiMilestones={canUseAiTerrain && canEditChantier && suggestTasksModuleEnabled}
       permissions={{
         canEditChantier,
         canManageTeam,

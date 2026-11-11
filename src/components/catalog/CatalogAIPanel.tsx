@@ -142,7 +142,7 @@ export default function CatalogAIPanel({
           fd.append('audio', blob, 'recording.webm')
           const res = await fetch('/api/ai/transcribe-audio', { method: 'POST', body: fd })
           const data = await res.json()
-          if (!res.ok) setError(data.error ?? 'Erreur transcription')
+          if (!res.ok) setError(data?.code === 'permission_denied' ? 'Vous n’avez pas accès à la transcription vocale.' : 'La transcription vocale n’a pas abouti. Réessayez dans un instant.')
           else setText(data.text ?? '')
         } catch {
           setError("Impossible de transcrire l'audio.")
@@ -191,7 +191,15 @@ export default function CatalogAIPanel({
       }
       const data = await res.json()
       if (!res.ok) {
-        setError(data.error ?? 'Erreur inconnue')
+        if (res.status === 400 && typeof data.error === 'string') {
+          setError(data.error)
+        } else if (data?.code === 'permission_denied' || res.status === 403) {
+          setError('L’extraction du catalogue n’est pas disponible pour ce compte.')
+        } else if (res.status === 429) {
+          setError('Trop de demandes. Réessayez dans un instant.')
+        } else {
+          setError('L’analyse du catalogue n’a pas abouti. Réessayez dans un instant.')
+        }
       } else {
         const result = data as CatalogExtractResult
         setItems(result.items ?? [])
