@@ -3,7 +3,10 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { getBusinessContext, formatBusinessContextForPrompt } from '@/lib/ai/business-context'
-import { getEnvironmentContext, formatEnvironmentForPrompt } from '@/lib/ai/environment-context'
+import { getEnvironmentContext, formatEnvironmentForPrompt, normalizeCountry } from '@/lib/ai/environment-context'
+import { verifyOfficialRule, formatOfficialRuleCheckForTool } from '@/lib/ai/official-rule-check'
+import { makeOfficialRuleModelCall } from '@/lib/ai/official-rule-model'
+import { formatSarahVoiceRules, SARAH_VOICE_REMINDER } from '@/lib/ai/sarah-voice'
 import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
 import { AIQuotaExceededError } from '@/lib/quota'
 import { dateParis, todayParis } from '@/lib/utils'
@@ -66,6 +69,20 @@ const SARAH_TOOLS = [
           query: { type: 'string', description: 'Nom, société ou email du client à rechercher.' },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'verify_official_rule',
+      description: 'Vérifier une règle fiscale, sociale ou légale française (taux de TVA, seuil, condition d\'un taux réduit, mention légale obligatoire, assurance obligatoire, délai légal) sur des sources officielles recoupées (légifrance, bofip, impots.gouv.fr, service-public.fr, urssaf). OBLIGATOIRE avant d\'énoncer un taux, un seuil ou une condition de ce type : ne réponds jamais de mémoire. Prend 15 à 30 secondes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'La question précise à vérifier, avec le contexte utile (type de travaux, type de logement, date, statut de l\'entreprise). Ex: "Taux de TVA applicable à des travaux de remplacement de chauffe-eau dans un logement achevé depuis plus de deux ans, chez un particulier."' },
+        },
+        required: ['question'],
       },
     },
   },
@@ -516,6 +533,23 @@ async function executeSarahTool(
     return `Absences déclarées :\n${lines.join('\n')}`
   }
 
+  if (name === 'verify_official_rule') {
+    const question = (args.question as string | undefined)?.trim()
+    if (!question) return 'Précise la règle à vérifier.'
+    try {
+      const environment = await getEnvironmentContext(orgId)
+      const check = await verifyOfficialRule({
+        question,
+        today: todayParis(),
+        isFrance: normalizeCountry(environment.country).isFrance,
+        callModel: makeOfficialRuleModelCall(orgId),
+      })
+      return formatOfficialRuleCheckForTool(check)
+    } catch {
+      return 'VÉRIFICATION INDISPONIBLE pour le moment. Dis que tu n\'as pas pu vérifier cette règle, ne donne aucun taux ou condition de mémoire, et renvoie vers l\'expert-comptable ou service-public.fr.'
+    }
+  }
+
   if (name === 'search_documents') {
     const kind = (args.kind as string | undefined) ?? 'both'
     const query = (args.query as string | undefined)?.trim()
@@ -880,7 +914,7 @@ async function resolveActionOrAskForClient(
   if (attached && typeof attached === 'object' && '__clientNotFound' in attached) {
     const clientName = (attached as { __clientNotFound: string }).__clientNotFound
     parsed.action = undefined
-    parsed.reply = `Je n'ai pas trouvé de client nommé "${clientName}". Pouvez-vous me donner le nom exact tel qu'enregistré, ou voulez-vous que je crée d'abord sa fiche ?`
+    parsed.reply = `Je n'ai pas trouvé de client nommé "${clientName}". Tu peux me donner le nom exact tel qu'il est enregistré, ou je te crée d'abord sa fiche ?`
     return
   }
   parsed.action = attached
@@ -978,12 +1012,11 @@ const SYSTEM_PROMPT = `Tu es Sarah, la secrétaire de l'application Atelier. Tu 
 Ton rôle : l'aider à piloter son activité, répondre à ses questions, préparer son travail administratif et opérationnel, et lui proposer des actions concrètes quand c'est utile.
 
 Ton ton :
-- Chaleureux, humain, professionnel. Comme une vraie secrétaire de confiance qui connaît bien la boîte.
+${formatSarahVoiceRules()}
 - Phrases naturelles, bien construites. Pas de style télégraphique, pas de style "rapport automatique".
 - Jamais de tiret cadratin (—). Jamais de majuscules en milieu de phrase pour "mettre en valeur". Pas d'emojis.
-- Tu vouvois l'utilisateur.
 - Tu vas droit au but, sans introduire inutilement ce que tu vas faire.
-- Bannis les formules d'assistant automatique : jamais "Bien sûr, voici", "Je suis là pour vous aider", "N'hésitez pas à", "Je reste à votre disposition", "En tant qu'assistante". Parle comme une collègue : "J'ai regardé, voilà où on en est", "Je vous ai préparé la fiche", "Attention, la facture Martin traîne depuis trois semaines".
+- Bannis les formules d'assistant automatique : jamais "Bien sûr, voici", "Je suis là pour t'aider", "N'hésite pas à", "Je reste à ta disposition", "En tant qu'assistante". Parle comme une collègue : "J'ai regardé, voilà où on en est", "Je t'ai préparé la fiche", "Attention, la facture Martin traîne depuis trois semaines".
 - Ne récite pas la date du jour en toutes lettres dans tes réponses, sauf si on te la demande. L'utilisateur sait quel jour on est.
 - Commence par l'information la plus utile, pas par ce qui est vide ou ce qui n'a pas eu lieu. Si la journée est calme, dis-le en une demi-phrase et enchaîne sur ce qui mérite l'attention.
 - Si une action échoue techniquement, ne dis jamais "il semble y avoir une erreur technique". Dis simplement que tu n'as pas réussi, ce que tu proposes à la place, et sur quelle page l'utilisateur peut le faire à la main.
@@ -999,7 +1032,7 @@ Ce que tu peux faire :
 - Signaler des anomalies ou urgences détectées dans les données.
 - Résumer la journée ou la semaine à la demande.
 - Créer des fiches clients et prospects, ouvrir des chantiers, ajouter des tâches, des notes internes et des dépenses chantier.
-- Analyser une pièce jointe envoyée dans le chat (photo de chantier, facture fournisseur, devis reçu, document PDF) : décrivez ce que vous y voyez et proposez l'action utile (enregistrer une dépense, créer une note, préparer un devis). La pièce jointe n'est visible que dans le message où elle est envoyée : si l'utilisateur y fait référence plus tard, appuyez-vous sur ce qui a été dit dans la conversation.
+- Analyser une pièce jointe envoyée dans le chat (photo de chantier, facture fournisseur, devis reçu, document PDF) : décris ce que tu y vois et propose l'action utile (enregistrer une dépense, créer une note, préparer un devis). La pièce jointe n'est visible que dans le message où elle est envoyée : si l'utilisateur y fait référence plus tard, appuie-toi sur ce qui a été dit dans la conversation.
 - Suivre la facturation de bout en bout : envoyer un devis ou une facture (uniquement sur demande explicite), marquer un devis accepté ou refusé, marquer une facture payée, relancer un devis ou une facture en attente.
 - Mémoriser des informations importantes via save_memory (préférences client, habitudes, notes durables).
 - Rechercher un client précis via search_client si son nom n'est pas dans les clients récents du contexte.
@@ -1099,9 +1132,9 @@ Pages de l'app accessibles via "open_url" (utilise l'URL exacte) :
 
 Règles absolues :
 - Traite chaque nouveau message comme un sujet neuf, sauf référence explicite au tour précédent ("et pour ce même client", "toujours pour ce devis", "et lui ?"). Ta réponse ne doit répondre QU'à la dernière question posée. N'ouvre jamais ta réponse en revenant sur un client introuvable, un document ou un problème d'un tour précédent si le nouveau message n'en parle pas, même s'il reste "en attente" de clarification. Exemple concret : si tu as demandé "s'agit-il d'un nouveau client ?" à propos de X et que l'utilisateur enchaîne avec "quelles sont mes tâches en retard ?", réponds UNIQUEMENT sur les tâches, sans reparler de X.
-- La carte d'action EST la confirmation. Quand l'utilisateur demande clairement une action (par exemple "crée un devis pour Dupont avec telle prestation"), renvoie DIRECTEMENT la carte d'action dans le même message, sans poser de question de validation préalable du type "voulez-vous que je le fasse ?". L'utilisateur valide en cliquant sur la carte. Ne demande JAMAIS deux confirmations.
+- La carte d'action EST la confirmation. Quand l'utilisateur demande clairement une action (par exemple "crée un devis pour Dupont avec telle prestation"), renvoie DIRECTEMENT la carte d'action dans le même message, sans poser de question de validation préalable du type "tu veux que je le fasse ?". L'utilisateur valide en cliquant sur la carte. Ne demande JAMAIS deux confirmations.
 - Ne pose une question avant la carte QUE s'il manque une information indispensable (client introuvable, prestation ambiguë, quantité absente). Si tout est clair, propose la carte tout de suite.
-- Ton "reply" qui accompagne une carte d'action annonce ce qui va être fait ("Voici la fiche prospect prête à créer, validez la carte ci-dessous."), il ne redemande pas l'autorisation. N'écris jamais "Validez-vous", "Confirmez-vous", "Souhaitez-vous que je" ni aucune autre question de permission dans un message qui contient déjà une carte.
+- Ton "reply" qui accompagne une carte d'action annonce ce qui va être fait ("Voici la fiche prospect prête à créer, validez la carte ci-dessous."), il ne redemande pas l'autorisation. N'écris jamais "Valides-tu", "Confirmes-tu", "Souhaites-tu que je" ni aucune autre question de permission dans un message qui contient déjà une carte.
 - Ne jamais exécuter une action sensible sans avoir proposé une carte d'action et attendu la confirmation (le clic sur la carte).
 - Pour un email à un destinataire précis, résous-le via search_client (qui renvoie son email) avant de proposer l'action. Ne mets jamais une adresse inventée. Prépare une action "draft_email" avec client_ids ou recipient_filter, subject et body. La confirmation humaine déclenchera l'envoi.
 - Ne jamais inventer de données. Si tu ne sais pas, dis-le simplement. Cela vaut en particulier pour la création de fiches ("client_create", "member_create", "chantier_create") : n'invente jamais un nom, un email, un téléphone ou une adresse qui n'a pas été donné mot pour mot par l'utilisateur.
@@ -1126,12 +1159,12 @@ function safeReplyFromRaw(raw: string, action?: unknown): string {
   if (action && typeof action === 'object') {
     const description = (action as Record<string, unknown>).description
     if (typeof description === 'string' && description.trim()) {
-      return `Voici ce que je vous propose : ${description.trim()}. Validez la carte ci-dessous pour confirmer.`
+      return `Voilà ce que je te propose : ${description.trim()}. Valide la carte ci-dessous pour confirmer.`
     }
   }
   const trimmed = raw.trim()
   if (!trimmed || trimmed.startsWith('{') || trimmed.startsWith('"') || trimmed.startsWith('```')) {
-    return "Je n'ai pas réussi à formuler ma réponse correctement. Pouvez-vous reformuler votre demande ?"
+    return "Je n'ai pas réussi à formuler ma réponse correctement. Tu peux reformuler ta demande ?"
   }
   return trimmed
 }
@@ -1858,7 +1891,7 @@ export async function POST(req: NextRequest) {
     // attend encore une validation, pour assurer la continuité entre conversations.
     const executedActions = ((executedActionsResult as any)?.data ?? []) as Array<{ type: string; title: string; description: string | null; executed_at: string | null; deep_link: string | null }>
     if (executedActions.length > 0) {
-      contextLines.push('', 'Vos dernières actions exécutées (validées par l\'utilisateur, à mentionner si on vous demande ce qui a été fait) :')
+      contextLines.push('', 'Les dernières actions exécutées (validées par l\'utilisateur, à mentionner si on te demande ce qui a été fait) :')
       for (const a of executedActions) {
         const when = a.executed_at ? String(a.executed_at).slice(0, 10) : '?'
         contextLines.push(`  ${when} : ${a.title}${a.description && a.description !== a.title ? ` (${shortText(a.description, 100)})` : ''}`)
@@ -1900,7 +1933,7 @@ export async function POST(req: NextRequest) {
       : message
 
     const apiMessages: Array<{ role: string; content: string | Array<Record<string, unknown>> }> = [
-      { role: 'system', content: `${SYSTEM_PROMPT}\n\n---\nCONTEXTE ATELIER (mis à jour à chaque message) :\n${userContext}` },
+      { role: 'system', content: `${SYSTEM_PROMPT}\n\n---\nCONTEXTE ATELIER (mis à jour à chaque message) :\n${userContext}\n\n---\n${SARAH_VOICE_REMINDER}` },
       ...conversationHistory.slice(0, -1).map(h => ({
         role: h.role === 'user' ? 'user' : 'assistant',
         content: h.content,
@@ -1967,7 +2000,7 @@ export async function POST(req: NextRequest) {
     // Si le dernier tour a encore renvoyé des tool_calls (JSON forcé sans tools,
     // ne devrait pas arriver mais on protège contre un contenu vide).
     if (assistantMsg?.tool_calls?.length && !assistantMsg?.content) {
-      const parsed2 = { reply: "Je n'ai pas réussi à formuler ma réponse correctement. Pouvez-vous reformuler votre demande ?" }
+      const parsed2 = { reply: "Je n'ai pas réussi à formuler ma réponse correctement. Tu peux reformuler ta demande ?" }
       return NextResponse.json(parsed2)
     }
 

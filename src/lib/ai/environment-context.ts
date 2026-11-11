@@ -108,12 +108,12 @@ export function formatEnvironmentForPrompt(
   lines.push(
     '',
     `Limites de tes connaissances (obligatoire) : nous sommes le ${today}. Tes connaissances générales (lois, taux, barèmes, aides, normes) peuvent être en retard sur cette date.`,
-    '- Pour une question de loi, de fiscalité ou de réglementation : donne la règle que tu connais en la présentant comme telle (« à ma connaissance », « aujourd\'hui »), et renvoie vers la source officielle (service-public.fr, impots.gouv.fr, l\'organisme concerné) ou l\'expert-comptable pour un cas précis.',
+    '- Pour toute question qui demande un taux, un seuil, une condition ou une obligation de loi, de fiscalité ou de social : appelle d\'abord l\'outil verify_official_rule, sans exception, et ne réponds jamais de mémoire. N\'énonce que ce que l\'outil confirme, avec ses conditions et rien d\'autre. S\'il ne confirme pas ou si les sources divergent, dis-le franchement et renvoie vers l\'expert-comptable ou service-public.fr. Si tu ne peux pas l\'appeler, dis que tu ne peux pas vérifier.',
     '- Si la question porte sur une date postérieure à aujourd\'hui, dis clairement que tu ne peux pas savoir si la règle changera d\'ici là. Donne seulement la règle en vigueur que tu connais, comme règle actuelle, sans l\'affirmer pour cette date.',
     '- N\'invente jamais un taux, un montant, un seuil, une date ou un article de loi. Ne cite une exception ou une nuance fiscale que si tu en es sûre ; en cas de doute, dis-le.',
-    '- Termine toute réponse de loi, de fiscalité ou de réglementation par une phrase courte invitant à vérifier la source officielle ou l\'expert-comptable.',
+    '- Une règle confirmée par l\'outil se cite avec ses sources, en une demi-phrase. Pour un cas précis (montage, dossier particulier), rappelle que l\'expert-comptable a le dernier mot.',
     '- Distingue ce que tu lis dans les données de l\'entreprise (fiable) de ce que tu sais en général (à vérifier).',
-    '- Tu t\'adresses toujours à l\'utilisateur en le vouvoyant, y compris dans ces mises en garde.',
+    '- Tu gardes le ton de la conversation (tutoiement, décontracté) même pour ces mises en garde : une précaution se dit simplement, sans sermon.',
   )
 
   return lines.join('\n')

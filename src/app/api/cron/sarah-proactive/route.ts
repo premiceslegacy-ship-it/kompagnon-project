@@ -203,7 +203,7 @@ export async function GET(req: NextRequest) {
           type: 'open_quote_editor',
           risk: 'low',
           title: `Vérifier ${ref}`,
-          description: `${body} Sarah peut vous ouvrir le devis pour le relancer ou le prolonger.`,
+          description: `${body} Sarah peut t'ouvrir le devis pour le relancer ou le prolonger.`,
           payload: { quote_id: quote.id, client_name: (quote as any).client_name },
           deepLink: `/finances/quote-editor/${quote.id}`,
           dedupeKey: `quote-expiring:${quote.id}:${quote.valid_until}`,
