@@ -4,53 +4,62 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import InviteSetupClient from './InviteSetupClient'
 
-/**
- * Page de configuration du profil pour les utilisateurs invités.
- * Accessible uniquement après acceptation d'une invitation (/invite/accept).
- */
-export default async function InviteSetupPage() {
-  const supabase = await createClient()
-  const admin = createAdminClient()
-
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  // Récupérer le profil de l'utilisateur
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('full_name, onboarding_done')
-    .eq('id', user.id)
-    .single()
-
-  // Si pas encore passé par /invite/accept, rediriger
-  if (!profile || profile.onboarding_done === false) {
-    // Vérifier s'il a bien un membership (invitation acceptée)
-    const { data: membership } = await admin
-      .from('memberships')
-      .select('organization_id')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-      .single()
-
-    if (!membership) redirect('/login')
+export default async function InviteSetupPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ invitation_id?: string }>
+}) {
+  const { invitation_id: invitationId } = await searchParams
+  if (!invitationId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(invitationId)) {
+    redirect('/login?error=auth_callback_error')
   }
 
-  // Récupérer le nom de l'organisation
-  const { data: membership } = await admin
-    .from('memberships')
-    .select('organization_id, organizations(name)')
-    .eq('user_id', user.id)
-    .eq('is_active', true)
-    .single()
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) redirect('/login')
 
-  const orgName =
-    (membership?.organizations as { name?: string } | null)?.name ?? 'votre entreprise'
+  const admin = createAdminClient()
+  const normalizedEmail = user.email.trim().toLowerCase()
+  const { data: invitation } = await admin
+    .from('invitations')
+    .select('organization_id, role_id, password_setup_required')
+    .eq('id', invitationId)
+    .eq('email', normalizedEmail)
+    .not('accepted_at', 'is', null)
+    .maybeSingle()
+
+  if (!invitation) redirect('/login?error=auth_callback_error')
+
+  const [{ data: membership }, { data: org }, { data: profile }] = await Promise.all([
+    admin
+      .from('memberships')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('organization_id', invitation.organization_id)
+      .eq('role_id', invitation.role_id)
+      .eq('is_active', true)
+      .maybeSingle(),
+    admin
+      .from('organizations')
+      .select('name')
+      .eq('id', invitation.organization_id)
+      .maybeSingle(),
+    supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', user.id)
+      .maybeSingle(),
+  ])
+
+  if (!membership) redirect('/login?error=auth_callback_error')
 
   return (
     <Suspense>
       <InviteSetupClient
-        orgName={orgName}
+        orgName={org?.name ?? 'votre entreprise'}
         initialFullName={profile?.full_name ?? null}
+        invitationId={invitationId}
+        requiresPasswordSetup={invitation.password_setup_required}
       />
     </Suspense>
   )

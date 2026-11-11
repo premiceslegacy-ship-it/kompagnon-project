@@ -36,14 +36,60 @@ function section(items: LocalItem[], overrides: Partial<LocalSection> = {}): Loc
 }
 
 describe('computeQuoteTotals', () => {
-  it('additionne les lignes visibles et calcule la TVA ligne par ligne', () => {
+  it('additionne les lignes visibles et calcule la TVA par taux', () => {
     const totals = computeQuoteTotals([
       section([item({ quantity: 2, unit_price: 50 }), item({ quantity: 1, unit_price: 100, vat_rate: 10 })]),
     ])
     expect(totals.totalHt).toBe(200)
-    expect(totals.totalTva).toBeCloseTo(20 + 10)
-    expect(totals.totalTtc).toBeCloseTo(230)
+    expect(totals.totalTva).toBe(30)
+    expect(totals.totalTtc).toBe(230)
   })
+  it('arrondit les lignes fractionnaires avant de calculer les bases et les taxes par taux', () => {
+    const totals = computeQuoteTotals([
+      section([
+        item({ quantity: 8, unit_price: 62.8 }),
+        item({ quantity: 0.001, unit_price: 625.5 }),
+      ]),
+    ])
+    expect(totals.totalHt).toBe(503.03)
+    expect(totals.totalTva).toBe(100.61)
+    expect(totals.totalTtc).toBe(603.64)
+  })
+
+  it('arrondit distinctement chaque taux de TVA à partir de sa base', () => {
+    const totals = computeQuoteTotals([
+      section([
+        item({ quantity: 8, unit_price: 62.8, vat_rate: 20 }),
+        item({ quantity: 0.001, unit_price: 625.5, vat_rate: 10 }),
+      ]),
+    ])
+    expect(totals.totalHt).toBe(503.03)
+    expect(totals.totalTva).toBe(100.54)
+    expect(totals.totalTtc).toBe(603.57)
+  })
+  it('calcule les petits montants par bucket plutôt que par TVA de ligne', () => {
+    const totals = computeQuoteTotals([
+      section(Array.from({ length: 5 }, (_, id) => item({ _tempId: String(id), unit_price: 0.03 }))),
+    ])
+    expect(totals.totalHt).toBe(0.15)
+    expect(totals.totalTva).toBe(0.03)
+    expect(totals.totalTtc).toBe(0.18)
+  })
+
+  it('calcule les petites lignes par bucket de taux et conserve HT + TVA = TTC', () => {
+    const totals = computeQuoteTotals([
+      section([
+        ...Array.from({ length: 4 }, (_, id) => item({ _tempId: String(id), unit_price: 0.03, vat_rate: 20 })),
+        ...Array.from({ length: 4 }, (_, index) => item({ _tempId: `low-${index}`, unit_price: 0.03, vat_rate: 10 })),
+      ]),
+    ])
+    expect(totals.totalHt).toBe(0.24)
+    expect(totals.totalTva).toBe(0.03)
+    expect(totals.totalTtc).toBe(0.27)
+    expect(totals.totalHt + totals.totalTva).toBe(totals.totalTtc)
+  })
+
+
 
   it('exclut les lignes internes du total client mais les compte dans le coût', () => {
     const totals = computeQuoteTotals([

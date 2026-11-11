@@ -8,6 +8,7 @@ import { computeLinearQuantity, computeSurfaceQuantity, computeVolumeQuantity, t
 import type { QuoteItem } from '@/lib/data/queries/quotes'
 import type { AIQuoteResult } from '@/app/api/ai/analyze-quote/route'
 import type { ResolvedCatalogContext } from '@/lib/catalog-context'
+import { calculateMonetaryTotals, roundMoney } from '@/lib/utils/money'
 import { DEFAULT_CONSUMPTION_L_PER_100KM } from '@/lib/utils/fuel'
 
 export const fmt = (n: number) =>
@@ -202,7 +203,7 @@ export type LocalSection = {
 }
 
 export function roundCurrency(n: number) {
-  return Math.round((n + Number.EPSILON) * 100) / 100
+  return roundMoney(n)
 }
 
 export function getInternalCostTotal(item: LocalItem) {
@@ -314,9 +315,8 @@ export function computeQuoteTotals(sections: LocalSection[]) {
   const visibleItems = allItems.filter(i => !i.is_internal)
   const internalItems = allItems.filter(i => i.is_internal)
   // Totaux client = hors lignes internes (celles-ci n'apparaissent pas sur le PDF)
-  const totalHt = visibleItems.reduce((sum, i) => sum + i.quantity * i.unit_price, 0)
-  const totalTva = visibleItems.reduce((sum, i) => sum + i.quantity * i.unit_price * (i.vat_rate / 100), 0)
-  const totalTtc = totalHt + totalTva
+  const monetaryTotals = calculateMonetaryTotals(visibleItems)
+  const { totalHt, totalTva, totalTtc } = monetaryTotals
   // Coût interne réel = unit_cost_ht sur toutes les lignes (achat matière + coût horaire MO).
   // Les lignes sans unit_cost_ht (saisie libre) contribuent leur unit_price comme coût proxy.
   const totalInternalHt = allItems.reduce((sum, i) => sum + getInternalCostTotal(i), 0)

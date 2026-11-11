@@ -82,7 +82,7 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
           fd.append('audio', blob, 'recording.webm')
           const res = await fetch('/api/ai/transcribe-audio', { method: 'POST', body: fd })
           const data = await res.json()
-          if (!res.ok) setError(data.error ?? 'Erreur transcription')
+          if (!res.ok) setError(data?.code === 'permission_denied' ? 'Vous n’avez pas accès à la transcription vocale.' : 'La transcription vocale n’a pas abouti. Réessayez dans un instant.')
           else setText(data.text ?? '')
         } catch {
           setError('Impossible de transcrire l\'audio.')
@@ -131,8 +131,19 @@ export default function AtelierAIPanel({ onImport, onClose, voiceInputEnabled = 
         })
       }
       const data = await res.json()
-      if (!res.ok) setError(data.error ?? 'Erreur inconnue')
-      else setResults((data as { quotes: AIQuoteResult[] }).quotes ?? [])
+      if (!res.ok) {
+        if (res.status === 400 && typeof data.error === 'string') {
+          setError(data.error)
+        } else if (data?.code === 'permission_denied' || res.status === 403) {
+          setError('L’assistance à la création de devis n’est pas disponible pour ce compte.')
+        } else if (res.status === 429) {
+          setError('Trop de demandes. Réessayez dans un instant.')
+        } else {
+          setError('L’analyse du devis n’a pas abouti. Réessayez dans un instant.')
+        }
+      } else {
+        setResults((data as { quotes: AIQuoteResult[] }).quotes ?? [])
+      }
     } catch {
       setError('Impossible de contacter l\'IA. Vérifiez votre connexion.')
     } finally {

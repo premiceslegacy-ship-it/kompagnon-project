@@ -64,7 +64,7 @@ function organizationEmails(logoUrl?: string): Array<[string, Built]> {
     ['devis envoyé', buildQuoteSentEmail({ ...common, quoteNumber: 'DEV-001', quoteTitle: 'Garde-corps', totalTtc: 1200, validUntil: '2026-12-01', signUrl: `${APP_URL}/sign/abc`, emailSignature: 'Paul Weber' })],
     ['devis accepté (client)', buildQuoteAcceptedClientEmail({ ...common, quoteNumber: 'DEV-001', quoteTitle: 'Garde-corps', totalTtc: 1200, signedAt: new Date('2026-10-01') })],
     ['devis accepté (pro)', buildQuoteAcceptedProfessionalEmail({ orgName: ORG, ...logo, clientName: 'Mme Martin', clientEmail: 'm@x.fr', quoteNumber: 'DEV-001', quoteTitle: 'Garde-corps', totalTtc: 1200, currency: 'EUR', signedAt: new Date('2026-10-01'), quoteEditorUrl: `${APP_URL}/quotes/1` })],
-    ['facture payée', buildInvoicePaidEmail({ ...common, invoiceNumber: 'FAC-001', invoiceTitle: 'Garde-corps', totalTtc: 1200, paidAt: new Date('2026-10-01') })],
+    ['facture payée', buildInvoicePaidEmail({ ...common, invoiceNumber: 'FAC-001', invoiceTitle: 'Garde-corps', amountRecorded: 1200, paymentDate: new Date('2026-10-01') })],
     ['facture d’acompte', buildDepositInvoiceEmail({ ...common, invoiceNumber: 'FAC-002', quoteNumber: 'DEV-001', quoteTitle: 'Garde-corps', depositRate: 30, totalTtc: 360, dueDate: '2026-11-01' })],
     ['demande de devis reçue', buildQuoteRequestNotificationEmail({ orgName: ORG, ...logo, name: 'Mme Martin', email: 'm@x.fr', description: 'Besoin d’un garde-corps.' })],
     ['export prêt', buildOrganizationExportReadyEmail({ orgName: ORG, ...logo, downloadUrl: `${APP_URL}/export/1`, expiresAt: '2026-10-08', summary: { counts: { clients: 3 }, files: { pdf: 4 }, warnings: [] } })],
@@ -102,6 +102,7 @@ describe('essai gratuit unique : Pro 7 jours', () => {
     expect(two.html).toContain('role="button"')
   })
 })
+
 
 describe('branding des emails Atelier (support, cycle de vie, essai)', () => {
   it.each(atelierEmails())('%s : habillage Atelier complet', (_name, { subject, html }) => {

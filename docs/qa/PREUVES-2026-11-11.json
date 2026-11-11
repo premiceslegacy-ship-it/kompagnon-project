@@ -1,0 +1,569 @@
+{
+  "date": "2026-11-11",
+  "kind": "Observed qualification results, not independent reviewer executions",
+  "scope": {
+    "localOnly": true,
+    "syntheticActorsOnly": true,
+    "realEmailsPaymentsOrPdpCalls": false,
+    "sharedDesignDatabaseWritten": false,
+    "productionWritten": false
+  },
+  "build": {
+    "node": "24.22.1",
+    "next": "16.4.3",
+    "compiled": true,
+    "typescript": true,
+    "seconds": 52.55
+  },
+  "tests": {
+    "priorFocused": {
+      "files": 26,
+      "tests": 365,
+      "passed": true
+    },
+    "latestFocused": {
+      "files": 1,
+      "tests": 4,
+      "passed": true,
+      "names": [
+        "invoice-payment-receipt"
+      ],
+      "includesParisNewYearBoundary": true
+    },
+    "overlappingDoNotSum": true,
+    "fullSuiteRun": false,
+    "sql": [
+      {
+        "file": "invoice-issuance-authority.sql",
+        "passed": true
+      },
+      {
+        "file": "quote-document-authority.sql",
+        "passed": true
+      },
+      {
+        "file": "invoice-paid-transaction.sql",
+        "passed": true
+      },
+      {
+        "file": "invoice-schedule-payment.sql",
+        "passed": true
+      },
+      {
+        "file": "invoice-adjustments-authority.sql",
+        "passed": true
+      },
+      {
+        "file": "recurring-invoice-authority.sql",
+        "passed": true
+      },
+      {
+        "file": "team-invitation-authority.sql",
+        "passed": true
+      },
+      {
+        "file": "document-reminder-dispatch.sql",
+        "passed": true
+      },
+      {
+        "file": "account-deletion-scope.sql",
+        "passed": true
+      },
+      {
+        "file": "accounting-payment-ledger.sql",
+        "passed": true
+      },
+      {
+        "file": "client-billed-totals.sql",
+        "passed": true
+      },
+      {
+        "file": "invoice-payment-write-authority.sql",
+        "passed": true
+      },
+      {
+        "file": "recurring-skip-authority.sql",
+        "passed": true
+      }
+    ],
+    "intermediateFocused": {
+      "files": 7,
+      "tests": 46,
+      "passed": true,
+      "names": [
+        "dashboard-billing-trend",
+        "dashboard-credit-behavior",
+        "recurring-model",
+        "recurring-invoice-delivery-idempotency",
+        "invoice-reminder-timing",
+        "documents-split",
+        "public-request-authority"
+      ]
+    },
+    "firstReviewFocused": {
+      "files": 5,
+      "tests": 86,
+      "passed": true,
+      "names": [
+        "sarah-invoice-reminder",
+        "recurring-schedule-skip",
+        "dashboard-billing-trend",
+        "invoice-payment-receipt",
+        "email-audit"
+      ],
+      "executedBeforeAtomicSkipCutover": true,
+      "obsoleteRecurringMutationTestRemoved": true
+    },
+    "lastSqlRerun": {
+      "passed": true,
+      "files": [
+        "recurring-skip-authority.sql",
+        "invoice-paid-transaction.sql"
+      ]
+    }
+  },
+  "migrationOrder": {
+    "role": "postgres",
+    "businessRowsCopied": 0,
+    "staticPermissions": 74,
+    "staticBuckets": 4,
+    "allFinalSourcesApplied": true,
+    "applied": [
+      "218_invoice_monetary_and_payment_bounds.sql",
+      "219_individual_member_erasure.sql",
+      "220_identity_team_authority.sql",
+      "221_billing_lifecycle_authority.sql",
+      "222_document_reminder_dispatch.sql",
+      "223_accounting_payment_ledger.sql",
+      "224_client_billed_totals.sql",
+      "225_invoice_payment_write_authority.sql",
+      "226_recurring_skip_authority.sql"
+    ],
+    "parisCivilPaymentDateIncluded": true,
+    "atomicSkipIncluded": true,
+    "syntaxErrorsCaughtAndCorrectedBeforeRuntime": true
+  },
+  "pdf": {
+    "profile": "PDF/A-3b",
+    "validator": "veraPDF core1.31.54",
+    "actualIssuedPdfs": 7,
+    "compliant": 7,
+    "failedRules": 0,
+    "failedChecks": 0,
+    "offlineDockerNetworkNone": true,
+    "scope": "Seven PDF files from initial fiscal validation set; extra receipt fixture invoice is not included"
+  },
+  "xml": {
+    "actualIssuedPdfs": 7,
+    "validators": [
+      "Factur-X XSD",
+      "CEN EN16931 v1.3.17",
+      "Factur-X 1.09",
+      "French Flux2"
+    ],
+    "allPassed": true,
+    "additionalFormatterFixtures": 10,
+    "additionalFixturesAreNotIssuedPdfs": true,
+    "scope": "Same seven initial issued files"
+  },
+  "financial": {
+    "invoiceFromSignedQuote": [
+      503.03,
+      100.61,
+      603.64
+    ],
+    "reverseCharge": [
+      1100,
+      0,
+      1100
+    ],
+    "multipleRates": [
+      1100,
+      210,
+      1310
+    ],
+    "deposit": [
+      150.91,
+      30.18,
+      181.09
+    ],
+    "balanceAndItsCreditEach": [
+      352.12,
+      70.43,
+      422.55
+    ],
+    "recurring": [
+      100,
+      20,
+      120
+    ],
+    "concurrentSchedulePayments": {
+      "requested": [
+        600,
+        600
+      ],
+      "accepted": 1,
+      "rejected": 1,
+      "receipts": 1,
+      "remaining": 600
+    },
+    "paymentOnlyFec": {
+      "columns": 18,
+      "rows": 4,
+      "debit": 700,
+      "credit": 700,
+      "bankReceipt": 600,
+      "vatReclassification": 100
+    },
+    "billingFec": {
+      "columns": 18,
+      "rows": 20,
+      "entries": 10,
+      "debit": 1448.01,
+      "credit": 1448.01,
+      "receivable": 301.09
+    },
+    "billingCsv": {
+      "columns": 22,
+      "rows": 4,
+      "remaining": [
+        181.09,
+        0,
+        0,
+        120
+      ]
+    },
+    "mainDashboard": {
+      "billed": 4213.64,
+      "received": 1203.64,
+      "renderedBilled": 4214
+    },
+    "billingDashboard": {
+      "billed": 301.09,
+      "renderedBilled": 301
+    },
+    "billingCycleQuoteSource": "SQL-prepared, not the distinct public signed quote from brief1"
+  },
+  "reminders": {
+    "race": {
+      "cron": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "invoicesSent": 1,
+          "quotesSent": 0,
+          "interventionNotifsSent": 0,
+          "errors": 0,
+          "processedOrgs": 8
+        }
+      },
+      "dispatches": [
+        {
+          "delivery": "accepted",
+          "dispatch_date": "2026-11-11"
+        }
+      ],
+      "mailCount": 1,
+      "manualTextPreserved": true,
+      "manualOutcome": "Relance déjà envoyée aujourd’hui, en cours ou à vérifier. Aucun nouvel email envoyé.",
+      "generationBlockedWithoutExternalAI": true,
+      "invoiceStatus": "viewed",
+      "startedAt": "2026-11-11T00:16:08.937Z"
+    },
+    "manual": {
+      "accepted": true,
+      "exactlyOneCapturedMail": true,
+      "generationRefusedByRelanceQuota": true,
+      "historyAgedOnlyOwnDispatchAndLog": true,
+      "ageDays": 4
+    },
+    "unknown": {
+      "firstProviderAttemptCaptured": 1,
+      "explicitUiRetryAdditionalProviderAttempts": 0,
+      "reservationRemains": "unknown",
+      "uiMessage": "Résultat de l’envoi à vérifier avant toute nouvelle relance.",
+      "retryMessage": "Relance déjà envoyée aujourd’hui, en cours ou à vérifier. Aucun nouvel email envoyé.",
+      "operationalHistoryAgedForOwnFixtureOnly": true
+    }
+  },
+  "recurring": {
+    "postFixRace": {
+      "newSyntheticPeriod": "2026-11-11",
+      "sourceWasUIModel": true,
+      "results": [
+        {
+          "status": 200,
+          "body": {
+            "created": 1,
+            "autoSent": 0,
+            "errors": 0
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "created": 0,
+            "autoSent": 0,
+            "errors": 0
+          }
+        }
+      ],
+      "uniqueSchedule": true,
+      "existingIssuedPeriodPreserved": true,
+      "driverInitialAttemptUsedWrongMethodNoMutation": true
+    },
+    "originalPeriodActuallyAutoSent": true,
+    "repeatedAutoSendNoNewDelivery": true,
+    "latestTestPeriodDraftOnly": true
+  },
+  "lifecycle": {
+    "uiBackupRequested": true,
+    "zip": {
+      "csv": 38,
+      "pdf": 2,
+      "integrityPassed": true
+    },
+    "scheduledCancelledRescheduled": true,
+    "ownDueDateArtificiallyAged": true,
+    "cronProcessed": 1,
+    "cronReplayProcessed": 0,
+    "cronErrors": [],
+    "authRemoved": true,
+    "freshPasswordLogin": {
+      "http": 400,
+      "code": "invalid_credentials"
+    },
+    "exportAuditRetained": true,
+    "requesterEmailsNull": true,
+    "legalSnapshotsUnchanged": true,
+    "sharedForeignIdentityPreserved": true,
+    "documentProvenance": "SQL-prepared business fixtures, UI export/download/closure and actual cron"
+  },
+  "publicRequest": {
+    "activeFormAndUploadPassed": true,
+    "authenticatedAttachmentByteIdentical": true,
+    "pendingDeletionFreshPage": 404,
+    "staleOpenFormRejected": true,
+    "staleSubmitExtraRows": 0,
+    "fixtureRestoredActive": true
+  },
+  "recovery": {
+    "offlineAndExpiredSessionFieldsRestored": true,
+    "sameContextActorSwitch": "A/B/A",
+    "foreignDraftExposedOrWritten": false,
+    "queuedDeletion": {
+      "offlineTombstonesRetained": true,
+      "onlineReloadRestoredDeletion": true,
+      "explicitRetryCompleted": true,
+      "sectionAndItemDeleted": true,
+      "originalFieldsPreserved": true,
+      "totals": [
+        29.31,
+        5.86,
+        35.17
+      ],
+      "driverInterruptedFirstRetryByReload": true,
+      "fullElapsedMs": 345758,
+      "protocol": "full timer includes interrupted QA retry; do not claim <=300s"
+    },
+    "fullOfflineReloadAppShell": false,
+    "storage": "sessionStorage",
+    "tabOrBrowserClosureUnsyncedDataGuaranteed": false
+  },
+  "unavailableBriefPoints": [
+    7,
+    8,
+    10,
+    15,
+    16,
+    23
+  ],
+  "durationProtocol": {
+    "fullyCompliant": false,
+    "knownSeconds": {
+      "oldFec": 266,
+      "oldArchive": 319,
+      "abandonedFinance": 373,
+      "oldRecovery": 520,
+      "billingCycle": 994.064,
+      "newRecurringModel": 160.911,
+      "expiredSessionPhaseOnly": 153,
+      "queuedDeletion": 345.758
+    },
+    "maintenanceObservationGreaterThanSeconds": 418.501,
+    "multipleRatesGreaterThanSeconds": 300,
+    "newEntireLifecycleAggregate": "not recorded"
+  },
+  "review": {
+    "firstPass": {
+      "model": "anthropic/claude-opus-5-5",
+      "thinking": "high",
+      "fallback": false,
+      "requestedOrganizationPinned": true,
+      "deniedCanary": true,
+      "verdict": "CORRECTIONS REQUISES",
+      "functionalFindings": 4
+    },
+    "corrections": "First and second review corrections implemented; final build, focused tests, SQL and actual UI/REST proofs passed",
+    "counterReview": "Completed: third exact closure pass PASS RAPPORT ET CORRECTIONS; no new P0/P1/P2",
+    "secondPass": {
+      "model": "anthropic/claude-opus-5-5",
+      "thinking": "high",
+      "fallback": false,
+      "requestedOrganizationPinned": true,
+      "exactDeniedCanary": true,
+      "canaryLeak": false,
+      "verdict": "PASS RAPPORT ET CORRECTIONS",
+      "newP2": [
+        "atomic skip versus sending",
+        "Paris civil payment date",
+        "historical received-total provenance"
+      ]
+    },
+    "finalCorrections": "Atomic skip and Paris civil date corrected and verified; B4 historical received-total provenance remains a predeployment blocker",
+    "thirdPass": {
+      "model": "anthropic/claude-opus-5-5",
+      "thinking": "high",
+      "fallback": false,
+      "requestedOrganizationPinned": true,
+      "exactDeniedCanary": true,
+      "canaryLeak": false,
+      "verdict": "PASS RAPPORT ET CORRECTIONS",
+      "newP0P1P2": 0,
+      "staticReviewOnly": true,
+      "seconds": 199
+    },
+    "intermediateTriggerSearch": {
+      "by": "parent",
+      "symbol": "enforce_invoice_lifecycle_permissions",
+      "migrationRange": "197-217",
+      "matches": 0,
+      "staticSearchOnly": true
+    },
+    "nonBlockingObservations": [
+      {
+        "severity": "P3",
+        "kind": "cron error counter after concurrent skip",
+        "status": "static inference, not reproduced; no financial/data defect established"
+      }
+    ]
+  },
+  "postReview": {
+    "sarah": {
+      "unknownClaim": {
+        "status": 400,
+        "body": {
+          "ok": false,
+          "message": "Relance déjà envoyée aujourd’hui, en cours ou à vérifier. Aucun nouvel email envoyé.",
+          "error": "execution_failed"
+        }
+      },
+      "providerAttempts": 0,
+      "realLlmUsed": false,
+      "fullyCredited": {
+        "status": 400,
+        "body": {
+          "ok": false,
+          "message": "Cette facture est soldée ou compensée par un avoir. Aucune relance envoyée.",
+          "error": "execution_failed"
+        }
+      }
+    },
+    "skip": {
+      "uiClick": true,
+      "scheduleStatus": "skipped",
+      "draftStatus": "cancelled",
+      "archived": true,
+      "nextBefore": "2026-12-11",
+      "nextAfter": "2026-12-11"
+    },
+    "cash": {
+      "regressionTests6": true,
+      "knownZeroAndLowerActualPaidPreserved": true,
+      "partialCreditFixtureAttemptRejectedByAuthority": true,
+      "fullCompensationMarkPaidAttemptRefusedHttp400": true,
+      "noActualPaidZeroStateClaim": true,
+      "cancelledDraftRestoredToSourceTotals": true
+    },
+    "receipt": {
+      "ui": true,
+      "invoiceTotal": 1200,
+      "previouslyPaid": 600,
+      "newReceipt": 600,
+      "cumulativePaid": 1200,
+      "date": "2026-11-09",
+      "reference": "QA-REVIEW-FINAL-600",
+      "emailCaptured": true,
+      "elapsedMs": 184166,
+      "emailNewAmount600": true,
+      "emailDate": "09 novembre 2026",
+      "actualSourceReceivedAfter": 1803.64
+    },
+    "atomicSkipRace": {
+      "outcomes": [
+        {
+          "kind": "senderClaim",
+          "rows": 1
+        },
+        {
+          "kind": "skip",
+          "ok": false,
+          "error": {
+            "code": "22023",
+            "details": null,
+            "hint": null,
+            "message": "Cette occurrence ne peut plus être ignorée : la facture est en cours d’envoi ou déjà émise."
+          },
+          "status": 400
+        }
+      ],
+      "winner": "sender",
+      "invoiceStatus": "sending",
+      "scheduleStatus": "pending_confirmation",
+      "providerCalls": 0,
+      "actualSeparateConcurrentRestRequests": true
+    },
+    "atomicSkipUi": {
+      "actualUi": true,
+      "schedule": "skipped",
+      "invoice": "cancelled",
+      "archived": true,
+      "nextBefore": "2026-12-12",
+      "nextAfter": "2026-12-12",
+      "authorizationRowsLeft": 0,
+      "syntheticClaimResetToDraftWithoutProviderAttempt": true
+    },
+    "parisDefaultPayment": {
+      "uiQuickButtonWithoutDate": true,
+      "recordedAmount": 1200,
+      "recordedDate": "2026-11-11",
+      "expectedParisDate": "2026-11-11",
+      "receiptCaptured": true,
+      "realCrossYearClockNotChanged": true,
+      "yearBoundaryProvenInFourFocusedTests": true,
+      "networkIdleWaitNotUsedAsPersistenceEvidence": true
+    }
+  },
+  "historicalCashMigrationRisk": {
+    "countExecuted": false,
+    "targetLinkedReferenceVerified": true,
+    "existingQaProfileLocated": false,
+    "explicitCliAuthenticationVerified": false,
+    "productionBusinessQueries": 0,
+    "loginAttempted": false,
+    "restKeyFallback": false,
+    "defaultProfileSelectionUnchanged": true,
+    "reason": "verified readonly administrative authentication unavailable",
+    "requiredBeforeDeployment": "Count paid rows with missing or understated received total and reconcile authentic receipts; do not infer money from paid status"
+  },
+  "cleanup": {
+    "dedicatedHttpsAndMailServicesStopped": true,
+    "dedicatedChromeClosed": true,
+    "supabaseProject": "atelier-closure-20261110",
+    "projectStoppedAndPurgedWithoutBackup": true,
+    "sharedDesignDatabaseNotStoppedOrPurged": true,
+    "rawUiResultFilesDeleted": 7,
+    "privateThrowawayScriptsDeleted": 6,
+    "pdfsScreenshotsHashesAndPrivateReviewTracesPreserved": true
+  }
+}

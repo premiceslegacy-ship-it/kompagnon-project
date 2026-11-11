@@ -12,6 +12,7 @@ import { usePathname } from 'next/navigation'
 import { NavigationCommands, NavigationCommandsProvider } from './NavigationCommands'
 import { NavigationAccessProvider, useNavigationAccess } from './NavigationAccess'
 import { RouteShortcuts } from './RouteShortcuts'
+import { buildNavigationModel } from './navigation'
 import { OfflineBanner } from './OfflineBanner'
 import { Sidebar } from './Sidebar'
 import { TabBar } from './TabBar'
@@ -95,6 +96,7 @@ export function AppShell({
   const { decennaleExpiringDays } = notifications
 
   if (pathname === '/orsayn' || pathname.startsWith('/orsayn/')) {
+    const canUseAssistant = buildNavigationModel({ permissionKeys, currentRoleSlug, modules }).canUseAssistant
     return (
       <>
         <Topbar
@@ -119,7 +121,7 @@ export function AppShell({
         )}
         <div className="grow pb-[calc(72px+env(safe-area-inset-bottom))] lg:pb-0">{children}</div>
         <BottomNav permissionKeys={permissionKeys} />
-        {modules.sarah_assistant && (
+        {canUseAssistant && (
           <SarahWidget
             userName={profile?.full_name ?? null}
             alertCount={notifications.total}

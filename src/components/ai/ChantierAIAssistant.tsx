@@ -100,7 +100,17 @@ export default function ChantierAIAssistant({ chantierId, chantierTitle, onClose
       })
       const data = await res.json()
       if (!res.ok) {
-        setError(data.error ?? 'Une erreur est survenue.')
+        const code = typeof data?.code === 'string' ? data.code : null
+        const message = code === 'permission_denied' || res.status === 403
+          ? 'L’assistant chantier n’est pas disponible pour ce compte.'
+          : res.status === 401
+            ? 'Votre session a expiré. Rechargez la page pour vous reconnecter.'
+            : res.status === 402
+              ? 'Le service d’assistance est momentanément indisponible. Réessayez dans un instant.'
+              : res.status === 429
+                ? 'Trop de demandes. Réessayez dans un instant.'
+                : 'Sarah n’a pas pu répondre pour le moment. Réessayez dans un instant.'
+        setError(message)
         return
       }
       setMessages(prev => [...prev, {

@@ -184,16 +184,23 @@ Mettre à jour cette liste à chaque vérification.
 - Invitation d'équipe (Réglages et onboarding) : le rôle par défaut était « Propriétaire », refusé par la base. Le rôle Propriétaire n'est plus proposé, Collaborateur est le défaut. Présent depuis la v1.
 - Numéro de facture coupé dans le rapport mensuel ; champ Spécifications collé au groupe de champs dans la feuille Prix fournisseur.
 
-**Pas vérifié, demande un compte ou une clé externe :**
-- Stripe : portail, résiliation, paiement et régularisation d'un setup, état « achat setup suspendu » (pas de clés d'essai).
-- Super PDP : connexion.
-- Assistante Sarah : appels IA ; enregistrement d'une clé OpenRouter client ; feuille « Demander à Sarah » du catalogue (module IA désactivé sur le compte d'essai).
-- Envoi réel d'emails par le fournisseur (en local, une boîte de capture remplace Resend) ; bouton flottant du formulaire sur un site tiers.
-- Fermeture réelle d'un compte (non lancée volontairement).
+**Vérifié dans un banc privé isolé les 10 et 11 novembre 2026 :**
+- Recette des 23 points et limites détaillées dans [`../qa/RAPPORT-2026-11-10.md`](../qa/RAPPORT-2026-11-10.md). Six points nécessitent encore des prérequis externes ; plusieurs parcours fonctionnels dépassent la borne de cinq minutes. Ne pas annoncer une validation globale.
+- Devis envoyé/signé, émission de facture, paiements avec bornes/concurrence, acompte/solde/avoir et préparation/envoi récurrent par vrais crons locaux. Relance manuelle, course UI/cron et refus de renvoi après transport incertain exercés avec collecteur email.
+- Lot fiscal initial de sept PDF réellement émis : quatre validations XML par fichier et PDF/A-3b veraPDF core 1.31.54 conformes. FEC/CSV contrôlés sur montants, écritures et dates des règlements, pas seulement téléchargés.
+- Invitation capturée acceptée avec rôle, affectation persistée, session intervenant sous HTTPS, récupération de saisie après expiration/hors ligne et passage A/B/A. Pas de promesse d'app autonome hors ligne.
+- Sauvegarde puis fermeture de la seule organisation synthétique arrivée artificiellement à échéance : vrai cron, Auth révoquée, audit export anonymisé, autorités documentaires conservées. Formulaire public refusé dès programmation de fermeture.
+- Cours automatiques retirés, prix catalogue/grilles manuels et provenance conservés pour les chemins métier Sarah. Aucun nouvel abonnement.
+- Dernier build Node 24.22.1 : compilation et TypeScript réussis, 52,55 s. Lots ciblés 365 tests / 26 fichiers, 46 / sept, 86 / cinq après la première review Opus puis quatre / un pour date/reçu, avec recouvrement ; ne pas les additionner ni annoncer une suite complète historique. L'ancien test de mutation « Ignorer » a été remplacé par la régression SQL de l'autorité atomique.
+- Migrations 218 à 226 appliquées intégralement dans l'ordre sur une base vide de lignes métier. Course réelle « Ignorer/envoi » et date civile Paris corrigées et vérifiées. Correctifs uniquement sur `feat/manual-pricing-20261110`, pas déployés. Base de design partagée et worktree de refonte laissés intacts.
 
-**Pas vérifié, code serveur que la refonte n'a pas touché :**
-- Envoi des relances par le cron (la configuration est vérifiée, pas l'envoi : il faut un `CRON_SECRET` et la clé de l'assistante).
-- Page d'invitation reçue (`/invite/accept`) : en local, le lien de l'email redirige vers le port 3000 faute de configuration d'URL autorisée.
+**Pas vérifié, demande un compte ou une clé externe :**
+- Stripe : portail, résiliation, paiement et régularisation d'un setup, état « achat setup suspendu » ; projet et clés d'essai autorisés absents.
+- Super PDP : connexion, réception et transmission ; sandbox et consentement OAuth autorisés absents.
+- Assistante Sarah : génération réelle texte/dictée/import et clé client réelle. Quota, permissions, flags, confirmations et prix manuels ont été exercés sans les présenter comme des réponses d'un modèle réel.
+- Envoi réel d'emails par le fournisseur : seule la capture locale est qualifiée ; bouton flottant du formulaire sur un site tiers non requalifié.
+- Safari iOS réel : appareil/session indisponibles. Chrome natif et retour à l'app vérifiés, pas annoncés comme Safari.
+- Parcours Weber dans son UI de production et reprise des documents historiques : aucune session ou source historique authentifiée utilisée. Aucune fermeture de compte réel ni écriture de production.
 
 **À connaître :** la génération d'archive et l'export FEC sur les données de démonstration échouent avec « Aucune autorité historique vérifiée » : ces documents ont été insérés sans passer par l'app, donc sans `issuance_snapshot` ni autorité de publication. Un compte neuf, dont les documents sont émis par l'app, n'a pas ce problème. À vérifier sur un compte de production ancien avant de promettre l'archive ou le FEC à ses propriétaires.
 

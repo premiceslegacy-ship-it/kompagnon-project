@@ -3,9 +3,11 @@
 // Validateur officiel : https://services.fnfe-mpe.org
 
 import type { InvoiceDocumentClient, InvoiceDocumentRecord, PdfOrganizationData } from '@/lib/pdf/document-types'
+import { facturxGuidelineId } from '@/lib/pdf/facturx-profile'
+import { calculateMonetaryTotals, roundMoney } from '@/lib/utils/money'
 
 const INVOICE_SECTION_UNIT = '__section__'
-import { facturxGuidelineId } from '@/lib/pdf/facturx-profile'
+type VatBucket = { rate: number; taxable_basis: number; tax_amount: number }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -21,6 +23,7 @@ function esc(s: string | null | undefined): string {
 // Factur-X exige YYYYMMDD (format "102"), pas ISO 8601
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso.replace(/-/g, '')
   const d = new Date(iso)
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -64,10 +67,9 @@ function partyFiscalId(siret: string | null | undefined, siren: string | null | 
   return siretFrom(siret) ?? sirenFrom(siren)
 }
 
-// Détermine le code TypeCode selon invoice_type
-// 380 = Commercial Invoice, 384 = Credit Note
-function invoiceTypeCode(type: string | null | undefined): string {
-  return type === 'avoir' ? '384' : '380'
+// UNTDID 1001: 380 = commercial invoice, 381 = credit note.
+function invoiceTypeCode(type: string | null | undefined, declaredCode?: string | null): string {
+  return type === 'avoir' ? '381' : declaredCode || '380'
 }
 
 // Mapping des unités vers les codes UN/ECE Rec 20 (codelist 8 du Factur-X)
@@ -200,15 +202,14 @@ function xmlBuyer(client: InvoiceDocumentClient): string {
     </ram:BuyerTradeParty>`
 }
 
-function xmlTradeLines(items: InvoiceDocumentRecord['items']): string {
+function xmlTradeLines(items: InvoiceDocumentRecord['items'], isVatSubject: boolean, isReverseCharge: boolean): string {
   return items
     .filter(item => !item.is_internal && item.unit !== INVOICE_SECTION_UNIT)
     .map((item, idx) => {
       const quantity = item.quantity ?? 0
-      const vatRate = item.vat_rate ?? 0
-      const lineHt = (quantity * item.unit_price).toFixed(2)
-      const isVatExempt = vatRate === 0
-      const taxCategoryCode = isVatExempt ? 'E' : 'S'
+      const originalRate = item.vat_rate ?? 0
+      const taxCategoryCode = !isVatSubject ? 'E' : isReverseCharge ? 'AE' : originalRate === 0 ? 'Z' : 'S'
+      const rate = !isVatSubject || isReverseCharge ? 0 : originalRate
 
       return `<ram:IncludedSupplyChainTradeLineItem>
       <ram:AssociatedDocumentLineDocument>
@@ -223,17 +224,16 @@ function xmlTradeLines(items: InvoiceDocumentRecord['items']): string {
         </ram:NetPriceProductTradePrice>
       </ram:SpecifiedLineTradeAgreement>
       <ram:SpecifiedLineTradeDelivery>
-        <ram:BilledQuantity unitCode="${toUnitCode(item.unit)}">${fmtAmount(item.quantity)}</ram:BilledQuantity>
+        <ram:BilledQuantity unitCode="${toUnitCode(item.unit)}">${quantity.toFixed(3)}</ram:BilledQuantity>
       </ram:SpecifiedLineTradeDelivery>
       <ram:SpecifiedLineTradeSettlement>
         <ram:ApplicableTradeTax>
           <ram:TypeCode>VAT</ram:TypeCode>
           <ram:CategoryCode>${taxCategoryCode}</ram:CategoryCode>
-          <ram:RateApplicablePercent>${fmtAmount(item.vat_rate)}</ram:RateApplicablePercent>
-          ${isVatExempt ? '<ram:ExemptionReason>TVA non applicable, art. 293B du CGI</ram:ExemptionReason>' : ''}
+          <ram:RateApplicablePercent>${fmtAmount(rate)}</ram:RateApplicablePercent>
         </ram:ApplicableTradeTax>
         <ram:SpecifiedTradeSettlementLineMonetarySummation>
-          <ram:LineTotalAmount>${lineHt}</ram:LineTotalAmount>
+          <ram:LineTotalAmount>${fmtAmount(roundMoney(quantity * item.unit_price))}</ram:LineTotalAmount>
         </ram:SpecifiedTradeSettlementLineMonetarySummation>
       </ram:SpecifiedLineTradeSettlement>
     </ram:IncludedSupplyChainTradeLineItem>`
@@ -241,41 +241,59 @@ function xmlTradeLines(items: InvoiceDocumentRecord['items']): string {
     .join('\n  ')
 }
 
-function xmlVatBreakdown(items: InvoiceDocumentRecord['items'], isVatSubject: boolean): string {
+function xmlVatBreakdown(
+  items: InvoiceDocumentRecord['items'],
+  isVatSubject: boolean,
+  isReverseCharge: boolean,
+  authoritativeBreakdown?: VatBucket[] | null,
+): string {
+  const totals = calculateMonetaryTotals(
+    items.filter(item => !item.is_internal && item.unit !== INVOICE_SECTION_UNIT),
+    { isVatSubject, isReverseCharge },
+  )
+  const buckets: VatBucket[] = authoritativeBreakdown ?? Object.entries(totals.htByVatRate)
+    .map(([rate, basis]) => ({
+      rate: Number(rate),
+      taxable_basis: basis,
+      tax_amount: totals.vatByRate[Number(rate)] ?? 0,
+    }))
+
   if (!isVatSubject) {
+    const totalBasis = buckets.reduce((sum, bucket) => sum + bucket.taxable_basis, 0)
     return `<ram:ApplicableTradeTax>
       <ram:CalculatedAmount>0.00</ram:CalculatedAmount>
       <ram:TypeCode>VAT</ram:TypeCode>
       <ram:ExemptionReason>TVA non applicable, art. 293B du CGI</ram:ExemptionReason>
-      <ram:BasisAmount>${fmtAmount(items.filter(i => !i.is_internal && i.unit !== INVOICE_SECTION_UNIT).reduce((s, i) => s + (i.quantity ?? 0) * i.unit_price, 0))}</ram:BasisAmount>
+      <ram:BasisAmount>${fmtAmount(totalBasis)}</ram:BasisAmount>
       <ram:CategoryCode>E</ram:CategoryCode>
       <ram:RateApplicablePercent>0.00</ram:RateApplicablePercent>
     </ram:ApplicableTradeTax>`
   }
 
-  const vatMap: Record<number, { basis: number; amount: number }> = {}
-  for (const item of items.filter(i => !i.is_internal && i.unit !== INVOICE_SECTION_UNIT)) {
-    const quantity = item.quantity ?? 0
-    const vatRate = item.vat_rate ?? 0
-    const ht = quantity * item.unit_price
-    const vat = ht * (vatRate / 100)
-    if (!vatMap[vatRate]) vatMap[vatRate] = { basis: 0, amount: 0 }
-    vatMap[vatRate].basis += ht
-    vatMap[vatRate].amount += vat
+  if (isReverseCharge) {
+    const taxableBasis = buckets.reduce((sum, bucket) => sum + bucket.taxable_basis, 0)
+    return `<ram:ApplicableTradeTax>
+      <ram:CalculatedAmount>0.00</ram:CalculatedAmount>
+      <ram:TypeCode>VAT</ram:TypeCode>
+      <ram:ExemptionReason>Autoliquidation de la TVA par le preneur</ram:ExemptionReason>
+      <ram:BasisAmount>${fmtAmount(taxableBasis)}</ram:BasisAmount>
+      <ram:CategoryCode>AE</ram:CategoryCode>
+      <ram:RateApplicablePercent>0.00</ram:RateApplicablePercent>
+    </ram:ApplicableTradeTax>`
   }
 
-  return Object.entries(vatMap).map(([rate, { basis, amount }]) => {
-    const r = parseFloat(rate)
-    const categoryCode = r === 0 ? 'E' : 'S'
+  return buckets.map(bucket => {
+    const categoryCode = bucket.rate === 0 ? 'Z' : 'S'
     return `<ram:ApplicableTradeTax>
-      <ram:CalculatedAmount>${fmtAmount(amount)}</ram:CalculatedAmount>
+      <ram:CalculatedAmount>${fmtAmount(bucket.tax_amount)}</ram:CalculatedAmount>
       <ram:TypeCode>VAT</ram:TypeCode>
-      <ram:BasisAmount>${fmtAmount(basis)}</ram:BasisAmount>
+      <ram:BasisAmount>${fmtAmount(bucket.taxable_basis)}</ram:BasisAmount>
       <ram:CategoryCode>${categoryCode}</ram:CategoryCode>
-      <ram:RateApplicablePercent>${fmtAmount(r)}</ram:RateApplicablePercent>
+      <ram:RateApplicablePercent>${fmtAmount(bucket.rate)}</ram:RateApplicablePercent>
     </ram:ApplicableTradeTax>`
   }).join('\n  ')
 }
+
 
 function legalNote(subjectCode: 'PMT' | 'PMD' | 'AAB', content: string): string {
   return `<ram:IncludedNote>
@@ -287,6 +305,11 @@ function legalNote(subjectCode: 'PMT' | 'PMD' | 'AAB', content: string): string 
 function invoiceNotes(invoice: InvoiceDocumentRecord, organization: PdfOrganizationData, isClientPro: boolean): string {
   const notes: string[] = []
   if (invoice.notes_client) notes.push(`<ram:IncludedNote><ram:Content>${esc(invoice.notes_client)}</ram:Content></ram:IncludedNote>`)
+  if (invoice.invoice_type === 'solde' && (invoice.applied_acompte_ht ?? 0) > 0) {
+    notes.push(
+      `<ram:IncludedNote><ram:Content>Acomptes HT déjà imputés dans le montant résiduel : ${fmtAmount(invoice.applied_acompte_ht ?? 0)} EUR. Aucun nouvel acompte n'est à déduire.</ram:Content></ram:IncludedNote>`,
+    )
+  }
 
   const lateRate = organization.late_penalty_rate != null
     ? `${organization.late_penalty_rate}% par an`
@@ -308,6 +331,16 @@ function invoiceNotes(invoice: InvoiceDocumentRecord, organization: PdfOrganizat
 
   return notes.join('\n    ')
 }
+function xmlInvoiceReference(invoice: InvoiceDocumentRecord): string {
+  if (invoice.invoice_type !== 'avoir' || !invoice.preceding_invoice_ref) return ''
+  const issueDate = invoice.preceding_invoice_date
+    ? `<ram:FormattedIssueDateTime><qdt:DateTimeString format="102">${fmtDate(invoice.preceding_invoice_date)}</qdt:DateTimeString></ram:FormattedIssueDateTime>`
+    : ''
+  return `<ram:InvoiceReferencedDocument>
+      <ram:IssuerAssignedID>${esc(invoice.preceding_invoice_ref)}</ram:IssuerAssignedID>
+      ${issueDate}
+    </ram:InvoiceReferencedDocument>`
+}
 
 // ─── Export principal ──────────────────────────────────────────────────────────
 
@@ -316,11 +349,16 @@ export function generateFacturXml(
   organization: PdfOrganizationData,
 ): string {
   const isVatSubject = organization.is_vat_subject !== false
+  const isReverseCharge = invoice.is_reverse_charge === true
+  if (!isVatSubject && isReverseCharge) {
+    throw new Error('L’autoliquidation n’est pas compatible avec la franchise de TVA.')
+  }
   const visibleItems = invoice.items.filter(i => !i.is_internal && i.unit !== INVOICE_SECTION_UNIT)
+  const calculatedTotals = calculateMonetaryTotals(visibleItems, { isVatSubject, isReverseCharge })
 
-  const totalHt = invoice.total_ht ?? visibleItems.reduce((s, i) => s + (i.quantity ?? 0) * i.unit_price, 0)
-  const totalTva = invoice.total_tva ?? (isVatSubject ? visibleItems.reduce((s, i) => s + (i.quantity ?? 0) * i.unit_price * ((i.vat_rate ?? 0) / 100), 0) : 0)
-  const totalTtc = invoice.total_ttc ?? (totalHt + totalTva)
+  const totalHt = invoice.total_ht ?? calculatedTotals.totalHt
+  const totalTva = invoice.total_tva ?? calculatedTotals.totalTva
+  const totalTtc = invoice.total_ttc ?? calculatedTotals.totalTtc
 
   const issueDate = fmtDate(invoice.issue_date ?? invoice.created_at)
   const dueDate = fmtDate(invoice.due_date ?? invoice.issue_date ?? invoice.created_at)
@@ -348,7 +386,7 @@ export function generateFacturXml(
 
   <rsm:ExchangedDocument>
     <ram:ID>${esc(invoice.number ?? invoice.id)}</ram:ID>
-    <ram:TypeCode>${invoiceTypeCode(invoice.invoice_type)}</ram:TypeCode>
+    <ram:TypeCode>${invoiceTypeCode(invoice.invoice_type, invoice.invoice_type_code)}</ram:TypeCode>
     <ram:IssueDateTime>
       <udt:DateTimeString format="102">${issueDate}</udt:DateTimeString>
     </ram:IssueDateTime>
@@ -357,7 +395,7 @@ export function generateFacturXml(
 
   <rsm:SupplyChainTradeTransaction>
 
-    ${xmlTradeLines(invoice.items)}
+    ${xmlTradeLines(invoice.items, isVatSubject, isReverseCharge)}
 
     <ram:ApplicableHeaderTradeAgreement>
       ${xmlSeller(organization)}
@@ -384,7 +422,8 @@ export function generateFacturXml(
         </ram:PayeeSpecifiedCreditorFinancialInstitution>` : ''}
       </ram:SpecifiedTradeSettlementPaymentMeans>` : ''}
 
-      ${xmlVatBreakdown(invoice.items, isVatSubject)}
+      ${xmlVatBreakdown(invoice.items, isVatSubject, isReverseCharge, invoice.vat_breakdown)}
+      
 
       ${invoice.payment_conditions ? `<ram:SpecifiedTradePaymentTerms>
         <ram:Description>${esc(invoice.payment_conditions)}</ram:Description>
@@ -404,6 +443,7 @@ export function generateFacturXml(
         <ram:GrandTotalAmount>${fmtAmount(totalTtc)}</ram:GrandTotalAmount>
         <ram:DuePayableAmount>${fmtAmount(totalTtc)}</ram:DuePayableAmount>
       </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+      ${invoice.invoice_type === 'avoir' ? xmlInvoiceReference(invoice) : ''}
     </ram:ApplicableHeaderTradeSettlement>
 
   </rsm:SupplyChainTradeTransaction>

@@ -131,12 +131,22 @@ export type InvoiceDocumentItem = {
   dim_quantity: number | null
 }
 
+export type InvoiceVatBreakdown = {
+  rate: number
+  taxable_basis: number
+  tax_amount: number
+}
+
 export type InvoiceDocumentRecord = {
   id: string
   number: string | null
   title: string | null
   status: string
   invoice_type: string | null
+  invoice_type_code?: string | null
+  credit_note_for?: string | null
+  preceding_invoice_ref?: string | null
+  preceding_invoice_date?: string | null
   total_ht: number | null
   total_tva: number | null
   total_ttc: number | null
@@ -159,6 +169,8 @@ export type InvoiceDocumentRecord = {
   retention_amount: number | null
   market_reference: string | null
   is_reverse_charge: boolean
+  vat_breakdown?: InvoiceVatBreakdown[] | null
+  applied_acompte_ht?: number | null
   quote_number: string | null
   client: InvoiceDocumentClient | null
   items: InvoiceDocumentItem[]

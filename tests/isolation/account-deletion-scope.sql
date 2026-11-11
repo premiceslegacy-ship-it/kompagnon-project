@@ -1,4 +1,4 @@
--- Run only against a disposable LOCAL Supabase database migrated through 212:
+-- Run only against a disposable LOCAL Supabase database migrated through 219:
 -- psql "$LOCAL_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/isolation/account-deletion-scope.sql
 -- All fixtures are inside a transaction and are rolled back on success.
 BEGIN;
@@ -7,6 +7,11 @@ DO $test$
 DECLARE
   v_target_org UUID := gen_random_uuid();
   v_other_org UUID := gen_random_uuid();
+  v_target_team UUID := gen_random_uuid();
+  v_other_team UUID := gen_random_uuid();
+  v_member_individual UUID := gen_random_uuid();
+  v_member_team UUID := gen_random_uuid();
+  v_member_foreign UUID := gen_random_uuid();
   v_actor UUID := gen_random_uuid();
   v_shared_user UUID := gen_random_uuid();
   v_private_user UUID := gen_random_uuid();
@@ -37,6 +42,18 @@ BEGIN
   VALUES
     (v_target_role, v_target_org, 'Deletion scope', 'deletion-scope'),
     (v_other_role, v_other_org, 'Deletion scope', 'deletion-scope');
+  INSERT INTO public.chantier_equipes (id, organization_id, name)
+  VALUES
+    (v_target_team, v_target_org, 'Target team'),
+    (v_other_team, v_other_org, 'Foreign team');
+
+  -- A real account commonly requests a backup before erasure. Keep the audit
+  -- record, erase its personal email, and leave other tenants' records intact.
+  INSERT INTO public.organization_exports (organization_id, requested_by_email, status)
+  VALUES
+    (v_target_org, v_private_email, 'ready'),
+    (v_other_org, 'foreign-export@example.invalid', 'ready');
+
 
   -- The inviter's signup creates its ordinary local fixture organization;
   -- invitee signups below are held by pending target-org invitations.
@@ -76,6 +93,21 @@ BEGIN
     (v_target_org, v_shared_user, v_target_role, v_actor, true),
     (v_other_org, v_shared_user, v_other_role, v_actor, true),
     (v_target_org, v_private_user, v_target_role, v_actor, true);
+  INSERT INTO public.chantier_equipe_membres (
+    id, organization_id, equipe_id, name, prenom, email, profile_id
+  ) VALUES
+    (v_member_individual, v_target_org, NULL, 'Shared staff surname',
+     'Shared staff first name', 'shared-staff@example.invalid', v_shared_user),
+    (v_member_team, v_target_org, v_target_team, 'Private team surname',
+     'Private team first name', 'private-team@example.invalid', v_private_user),
+    (v_member_foreign, v_other_org, v_other_team, 'Foreign staff surname',
+     'Foreign staff first name', 'foreign-staff@example.invalid', NULL);
+  INSERT INTO public.member_space_tokens (member_id, token_hash, expires_at)
+  VALUES
+    (v_member_individual, 'erasure-token-' || v_member_individual::TEXT, now() + INTERVAL '1 day'),
+    (v_member_team, 'erasure-token-' || v_member_team::TEXT, now() + INTERVAL '1 day'),
+    (v_member_foreign, 'erasure-token-' || v_member_foreign::TEXT, now() + INTERVAL '1 day');
+
 
   INSERT INTO storage.objects (bucket_id, name, metadata)
   VALUES
@@ -136,10 +168,34 @@ BEGIN
   EXECUTE 'ALTER TABLE public.contracts ENABLE TRIGGER contract_document_authority_guard';
 
   UPDATE public.organizations
+  SET deletion_scheduled_at = now() + INTERVAL '1 day', public_form_enabled = true
+  WHERE id = v_target_org;
+  BEGIN
+    INSERT INTO public.quote_requests (organization_id, name, email, description)
+    VALUES (v_target_org, 'Late public prospect', 'pending@example.invalid', 'Must be rejected');
+    RAISE EXCEPTION 'A future deletion accepted new intake' USING ERRCODE = 'ZX001';
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    NULL;
+  END;
+  PERFORM * FROM public.anonymize_organization_for_deletion(v_target_org);
+  IF EXISTS (
+    SELECT 1 FROM public.organizations
+    WHERE id = v_target_org AND anonymized_at IS NOT NULL
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.organization_exports
+    WHERE organization_id = v_target_org AND requested_by_email = v_private_email
+  ) THEN
+    RAISE EXCEPTION 'The cancellation period erased retained account data prematurely';
+  END IF;
+
+  UPDATE public.organizations
   SET deletion_scheduled_at = now() - INTERVAL '1 day', public_form_enabled = true
   WHERE id = v_target_org;
 
   PERFORM * FROM public.anonymize_organization_for_deletion(v_target_org);
+  -- The public erasure RPC is safe to retry after anonymization.
+  PERFORM * FROM public.anonymize_organization_for_deletion(v_target_org);
+
 
   v_blocked := false;
   BEGIN
@@ -168,6 +224,19 @@ BEGIN
       AND public_form_enabled = false AND anonymized_at IS NOT NULL
   ) THEN
     RAISE EXCEPTION 'Organization public form and logo were not disabled/cleared';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.organization_exports
+    WHERE organization_id = v_target_org AND requested_by_email IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Export audit record was removed or its requester email survived erasure';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.organization_exports
+    WHERE organization_id = v_other_org
+      AND requested_by_email = 'foreign-export@example.invalid'
+  ) THEN
+    RAISE EXCEPTION 'Erasure changed another organization''s export requester';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM public.organizations
@@ -241,6 +310,45 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Private profile was not anonymized';
   END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.chantier_equipe_membres
+    WHERE id = v_member_individual AND organization_id = v_target_org
+      AND equipe_id IS NULL AND name = 'Membre anonymisé'
+      AND prenom IS NULL AND email IS NULL AND profile_id IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Individual staff PII or identity link was not erased';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.chantier_equipe_membres
+    WHERE id = v_member_team AND organization_id = v_target_org
+      AND equipe_id = v_target_team AND name = 'Membre anonymisé'
+      AND prenom IS NULL AND email IS NULL AND profile_id IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Target team-member PII or identity link was not erased';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.chantier_equipe_membres
+    WHERE id = v_member_foreign AND organization_id = v_other_org
+      AND equipe_id = v_other_team AND name = 'Foreign staff surname'
+      AND prenom = 'Foreign staff first name'
+      AND email = 'foreign-staff@example.invalid'
+  ) THEN
+    RAISE EXCEPTION 'Erasure crossed into another organization''s staff data';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.member_space_tokens
+    WHERE member_id IN (v_member_individual, v_member_team)
+  ) THEN
+    RAISE EXCEPTION 'A target member-space capability survived erasure';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.member_space_tokens
+    WHERE member_id = v_member_foreign
+      AND token_hash = 'erasure-token-' || v_member_foreign::TEXT
+  ) THEN
+    RAISE EXCEPTION 'Erasure revoked another organization''s member capability';
+  END IF;
+
 
   IF NOT EXISTS (
     SELECT 1 FROM public.quote_requests

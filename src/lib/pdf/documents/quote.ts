@@ -12,6 +12,8 @@ import {
 import { DECENNALE_LABEL, decennaleText, legalFooterLines, organizationPartyLines } from '../engine/legal'
 import { COLOR, CONTENT_WIDTH, PAGE } from '../engine/theme'
 
+import { calculateMonetaryTotals, roundMoney } from '@/lib/utils/money'
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = (n: number, currency = 'EUR') =>
@@ -55,18 +57,10 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
   })).filter(s => s.items.length > 0)
   const visibleUnsectioned = quote.unsectionedItems.filter(i => !i.is_internal)
 
-  const totalHt = [...visibleSections.flatMap(s => s.items), ...visibleUnsectioned]
-    .reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0)
-  const vatMap: Record<number, number> = {}
-  if (isVatSubject) {
-    for (const item of [...visibleSections.flatMap(s => s.items), ...visibleUnsectioned]) {
-      if (item.quantity == null || item.unit_price == null || item.vat_rate == null) continue
-      const v = item.quantity * item.unit_price * (item.vat_rate / 100)
-      vatMap[item.vat_rate] = (vatMap[item.vat_rate] ?? 0) + v
-    }
-  }
-  const totalTva = Object.values(vatMap).reduce((s, v) => s + v, 0)
-  const totalTtc = isVatSubject ? totalHt + totalTva : totalHt
+  const visibleItems = [...visibleSections.flatMap(s => s.items), ...visibleUnsectioned]
+  const totals = calculateMonetaryTotals(visibleItems, { isVatSubject })
+  const { totalHt, totalTva, totalTtc } = totals
+  const vatMap = totals.vatByRate
 
   const validUntil = quote.valid_until ? quote.valid_until : addDays(quote.created_at, quote.validity_days ?? 30)
   const hasClientSignature = Boolean(quote.signed_at && quote.client_signature_image)
@@ -145,7 +139,7 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
     cells.push(
       item.price_pending
         ? { value: 'À confirmer', color: COLOR.muted }
-        : { value: item.quantity == null || item.unit_price == null ? '' : fmt(item.quantity * item.unit_price, quote.currency), bold: true },
+        : { value: item.quantity == null || item.unit_price == null ? '' : fmt(roundMoney(item.quantity * item.unit_price), quote.currency), bold: true },
     )
     return { cells }
   }
@@ -153,7 +147,7 @@ export async function renderQuotePdfWithFonts(data: QuotePdfData, fontBytes: Fon
   const rows: KitRow[] = []
   for (const section of visibleSections) {
     if (section.title) {
-      const subtotal = section.items.filter(i => !i.price_pending).reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0)
+      const subtotal = section.items.filter(i => !i.price_pending).reduce((s, i) => roundMoney(s + roundMoney((i.quantity ?? 0) * (i.unit_price ?? 0))), 0)
       rows.push({ kind: 'section', title: section.title, amount: quote.show_section_subtotals ? fmt(subtotal, quote.currency) : undefined })
     }
     for (const item of section.items) rows.push(itemToRow(item))

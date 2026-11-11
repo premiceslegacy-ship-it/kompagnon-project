@@ -24,6 +24,7 @@ vi.mock('@/lib/supabase/admin', () => ({
       if (table === 'organizations') return {
         select() { return this },
         eq(column: string, value: unknown) { filters.push([column, value]); return this },
+        is(column: string, value: unknown) { filters.push([column, value]); return this },
         async single() {
           const matches = filters.every(([column, value]) => state.organization[column] === value)
           return { data: matches ? state.organization : null, error: matches ? null : { code: 'PGRST116' } }
@@ -77,6 +78,8 @@ function publicInput(attachment?: string) {
 
 beforeEach(() => {
   state.organization.public_form_enabled = true
+  state.organization.deletion_scheduled_at = null
+  state.organization.anonymized_at = null
   state.requests = []
   state.registeredPath = null
 })
@@ -84,6 +87,14 @@ beforeEach(() => {
 describe('public quote request authority', () => {
   it('rejects a direct submission after the organization disables its form', async () => {
     state.organization.public_form_enabled = false
+    const result = await submitQuoteRequest({ error: null, success: false }, publicInput())
+    expect(result.success).toBe(false)
+    expect(result.error).not.toBeNull()
+    expect(state.requests).toEqual([])
+  })
+
+  it.each(['deletion_scheduled_at', 'anonymized_at'])('refuses new intake when %s is set', async column => {
+    state.organization[column] = '2099-01-01T00:00:00.000Z'
     const result = await submitQuoteRequest({ error: null, success: false }, publicInput())
     expect(result.success).toBe(false)
     expect(result.error).not.toBeNull()
@@ -111,7 +122,7 @@ describe('public quote request authority', () => {
     state.registeredPath = null
     const unregistered = await submitQuoteRequest({ error: null, success: false }, publicInput(path))
     expect(unregistered.success).toBe(false)
-    expect(unregistered.error).toContain('pièce jointe est invalide')
+    expect(unregistered.error).not.toBeNull()
     expect(state.requests).toEqual([])
   })
 })

@@ -4,10 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 export const dynamic = 'force-dynamic';
 import { verifyCronSecret } from '@/lib/cron-auth'
 import { sendEmail } from '@/lib/email'
-import { computeNextSendDate, computeRecurringInvoiceDueDate, normalizePaymentTermsDays } from '@/lib/data/recurring-utils'
-import type { RecurringFrequency } from '@/lib/data/recurring-utils'
 import { APP_SIGNATURE } from '@/lib/brand'
-import { dateParis } from '@/lib/utils'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { renderInvoicePdfBufferById } from '@/lib/pdf/server'
 import { renderOrganizationEmail } from '@/lib/email/organization'
@@ -66,144 +63,73 @@ export async function POST(req: NextRequest) {
 
       if (today < triggerDate) continue
 
-      // Vérifier qu'on n'a pas déjà créé un schedule pour cette occurrence
-      const { count } = await admin
-        .from('invoice_schedules')
-        .select('id', { count: 'exact', head: true })
-        .eq('recurring_invoice_id', model.id)
-        .eq('scheduled_date', model.next_send_date)
-        .in('status', ['pending_confirmation', 'confirmed', 'sent'])
-
-      if ((count ?? 0) > 0) continue
-
-      // Créer le brouillon facture
-      const client = Array.isArray(model.client) ? model.client[0] : model.client
-      const organization = Array.isArray(model.organization) ? model.organization[0] : model.organization
-      const clientItems = (model.items ?? []).filter((i: { is_internal?: boolean | null }) => !i.is_internal)
-      const totalHt = clientItems.reduce(
-        (sum: number, i: { quantity: number; unit_price: number }) => sum + i.quantity * i.unit_price,
-        0,
-      )
-      const totalTva = organization?.is_vat_subject === false
-        ? 0
-        : clientItems.reduce(
-            (sum: number, i: { quantity: number; unit_price: number; vat_rate: number }) =>
-              sum + i.quantity * i.unit_price * (i.vat_rate / 100),
-            0,
-          )
-      const paymentTermsDays = normalizePaymentTermsDays(
-        client?.payment_terms_days,
-        organization?.payment_terms_days,
-      )
-      const dueDate = computeRecurringInvoiceDueDate(model.next_send_date, paymentTermsDays, null)
-
-      const { data: invoiceRow } = await admin
-        .from('invoices')
-        .insert({
-          organization_id: model.organization_id,
-          client_id: model.client_id,
-          title: model.title,
-          currency: model.currency ?? 'EUR',
-          status: 'draft',
-          issue_date: model.next_send_date,
-          due_date: dueDate,
-          payment_terms_days: paymentTermsDays,
-          total_ht: totalHt,
-          total_tva: totalTva,
-          total_ttc: totalHt + totalTva,
-        })
-        .select('id')
-        .single()
-
-      if (!invoiceRow) { errors++; continue }
-
-      if ((model.items ?? []).length > 0) {
-        const { error: itemsError } = await admin.from('invoice_items').insert(
-          (model.items as any[]).map((i: any) => ({
-            invoice_id: invoiceRow.id,
-            description: i.description,
-            quantity: i.quantity,
-            unit: i.unit ?? null,
-            unit_price: i.unit_price,
-            vat_rate: i.vat_rate,
-            position: i.position,
-            is_internal: i.is_internal ?? false,
-          })),
-        )
-        if (itemsError) {
-          console.error('[cron/recurring] items insert:', itemsError.message)
-          await admin.from('invoices').delete().eq('id', invoiceRow.id)
-          errors++
-          continue
-        }
-      }
-
-      const { error: scheduleError } = await admin.from('invoice_schedules').insert({
-        organization_id: model.organization_id,
-        recurring_invoice_id: model.id,
-        scheduled_date: model.next_send_date,
-        status: model.requires_confirmation ? 'pending_confirmation' : 'confirmed',
-        invoice_id: invoiceRow.id,
-        amount_ht: totalHt,
-        // Renseigné après la notification : un `notified_at` posé d'avance
-        // déclenchait l'auto-envoi sans que l'artisan ait jamais été prévenu.
-        notified_at: null,
+      const { data: prepared, error: prepareError } = await admin.rpc('prepare_recurring_invoice_occurrence', {
+        p_recurring_invoice_id: model.id,
       })
-      if (scheduleError) {
-        console.error('[cron/recurring] schedule insert:', scheduleError.message)
-        await admin.from('invoices').delete().eq('id', invoiceRow.id)
-        errors++
-        continue
+      if (prepareError) throw new Error(prepareError.message)
+      const occurrence = prepared as {
+        invoice_id?: unknown
+        created?: unknown
+        reason?: unknown
+        scheduled_date?: unknown
+        total_ht?: unknown
+      } | null
+      if (!occurrence || typeof occurrence.created !== 'boolean') {
+        throw new Error('L’occurrence récurrente n’a pas retourné un résultat valide.')
       }
+      if (occurrence.created === false && occurrence.reason === 'not_due') continue
+      if (typeof occurrence.invoice_id !== 'string') {
+        throw new Error('L’occurrence récurrente n’a pas retourné de facture valide.')
+      }
+      if (occurrence.created === false) continue
 
-      // Calculer et enregistrer la prochaine occurrence
-      const nextDate = computeNextSendDate(
-        new Date(model.next_send_date),
-        model.frequency as RecurringFrequency,
-        model.send_day,
-        model.custom_interval_days,
-      )
-      await admin
-        .from('recurring_invoices')
-        .update({ next_send_date: dateParis(nextDate.getTime()) })
-        .eq('id', model.id)
+      const invoiceId = occurrence.invoice_id
+      const scheduledDate = typeof occurrence.scheduled_date === 'string'
+        ? occurrence.scheduled_date
+        : model.next_send_date
+      const totalHt = Number(occurrence.total_ht) || 0
 
-      // Lier la facture à l'intervention planifiée du contrat d'entretien associé
+      // Lier la facture à l'intervention planifiée du contrat d'entretien associé.
       const { data: linkedContract } = await admin
         .from('maintenance_contracts')
         .select('id, chantier_id')
         .eq('recurring_invoice_id', model.id)
-        .single()
+        .eq('organization_id', model.organization_id)
+        .maybeSingle()
       if (linkedContract) {
         if (linkedContract.chantier_id) {
           await admin
             .from('invoices')
             .update({ chantier_id: linkedContract.chantier_id, generation_source: 'maintenance_recurring' })
-            .eq('id', invoiceRow.id)
+            .eq('id', invoiceId)
+            .eq('organization_id', model.organization_id)
         }
         const { data: nextIntervention } = await admin
           .from('maintenance_interventions')
           .select('id')
           .eq('maintenance_contract_id', linkedContract.id)
+          .eq('organization_id', model.organization_id)
           .eq('statut', 'planifiée')
           .is('invoice_id', null)
           .order('date_intervention', { ascending: true })
           .limit(1)
-          .single()
+          .maybeSingle()
         if (nextIntervention) {
           await admin
             .from('maintenance_interventions')
-            .update({ invoice_id: invoiceRow.id })
+            .update({ invoice_id: invoiceId })
             .eq('id', nextIntervention.id)
+            .eq('organization_id', model.organization_id)
+            .is('invoice_id', null)
         }
       }
 
-      // Notifier l'artisan si confirmation requise
+      // Notifier l'artisan si confirmation requise.
       if (model.requires_confirmation) {
         const notified = await notifyArtisan(admin, model.organization_id, {
-          invoiceId: invoiceRow.id,
+          invoiceId,
           invoiceTitle: model.title,
-          scheduledDate: model.next_send_date,
+          scheduledDate,
           totalHt,
           currency: model.currency ?? 'EUR',
           autoSendDelayDays: model.auto_send_delay_days ?? null,
@@ -213,7 +139,7 @@ export async function POST(req: NextRequest) {
             .from('invoice_schedules')
             .update({ notified_at: new Date().toISOString() })
             .eq('recurring_invoice_id', model.id)
-            .eq('scheduled_date', model.next_send_date)
+            .eq('scheduled_date', scheduledDate)
             .is('notified_at', null)
         }
       }

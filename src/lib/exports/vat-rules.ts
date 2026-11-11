@@ -1,3 +1,5 @@
+import { calculateMonetaryTotals, roundMoney, type MonetaryLine } from '@/lib/utils/money'
+
 export type VatTiming = 'debits' | 'encaissements'
 
 export function getVatTiming(tvaSurDebits: boolean): VatTiming {
@@ -10,32 +12,59 @@ export type VatBreakdown = {
   vatAmount: number
 }
 
-export function computeVatBreakdowns(
-  items: Array<{ unit_price: number; quantity: number; vat_rate: number }>,
-): VatBreakdown[] {
-  const map = new Map<number, { baseHt: number; vatAmount: number }>()
+export type IssuedVatBucket = { rate: number; taxable_basis: number; tax_amount: number }
 
-  for (const item of items) {
-    const ht = item.unit_price * item.quantity
-    const existing = map.get(item.vat_rate) ?? { baseHt: 0, vatAmount: 0 }
-    map.set(item.vat_rate, {
-      baseHt: existing.baseHt + ht,
-      vatAmount: existing.vatAmount + ht * (item.vat_rate / 100),
-    })
+export class AccountingExportAuthorityError extends Error {
+  constructor(message = 'Le décompte fiscal figé est incomplet ou incohérent. Faites vérifier le document d’origine avant son export.') {
+    super(message)
+    this.name = 'AccountingExportAuthorityError'
+  }
+}
+
+export function computeVatBreakdowns(
+  items: readonly MonetaryLine[],
+  options: {
+    isVatSubject: boolean
+    isReverseCharge: boolean
+    issuedBreakdown: readonly IssuedVatBucket[] | null
+    issuedTotalHt: number
+    issuedTotalVat: number
+  },
+): VatBreakdown[] {
+  const totals = calculateMonetaryTotals(items, options)
+  if (roundMoney(options.issuedTotalHt) !== totals.totalHt) throw new AccountingExportAuthorityError()
+  if (!options.isVatSubject || options.isReverseCharge) {
+    if (options.issuedTotalVat !== 0) throw new AccountingExportAuthorityError()
+    return []
   }
 
-  return Array.from(map.entries())
-    .filter(([, v]) => v.vatAmount > 0)
-    .map(([rate, v]) => ({
-      rate,
-      baseHt: round2(v.baseHt),
-      vatAmount: round2(v.vatAmount),
+  const breakdowns = options.issuedBreakdown === null
+    ? Object.entries(totals.vatByRate).map(([rate, vatAmount]) => ({
+      rate: Number(rate),
+      baseHt: totals.htByVatRate[Number(rate)],
+      vatAmount,
     }))
-    .sort((a, b) => b.rate - a.rate)
+    : options.issuedBreakdown.map(bucket => ({
+      rate: bucket.rate,
+      baseHt: bucket.taxable_basis,
+      vatAmount: bucket.tax_amount,
+    }))
+  const rates = new Set<number>()
+  for (const bucket of breakdowns) {
+    if (rates.has(bucket.rate) || bucket.baseHt !== (totals.htByVatRate[bucket.rate] ?? 0)) {
+      throw new AccountingExportAuthorityError()
+    }
+    rates.add(bucket.rate)
+  }
+  if (roundMoney(breakdowns.reduce((sum, bucket) => sum + bucket.baseHt, 0)) !== totals.totalHt
+      || roundMoney(breakdowns.reduce((sum, bucket) => sum + bucket.vatAmount, 0)) !== roundMoney(options.issuedTotalVat)) {
+    throw new AccountingExportAuthorityError()
+  }
+  return breakdowns.filter(bucket => bucket.baseHt !== 0 || bucket.vatAmount !== 0).sort((a, b) => b.rate - a.rate)
 }
 
 export function round2(n: number): number {
-  return Math.round(n * 100) / 100
+  return roundMoney(n)
 }
 
 export function fmtAmount(n: number): string {

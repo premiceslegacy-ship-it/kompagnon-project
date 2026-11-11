@@ -7,6 +7,7 @@ import { getMaterials, getLaborRates, getPrestationTypes } from '@/lib/data/quer
 import { getQuoteClauseTemplates } from '@/lib/data/queries/clause-templates'
 import { getOrganization } from '@/lib/data/queries/organization'
 import { resolveCatalogContext } from '@/lib/catalog-context'
+import { getCurrentMembershipContext, getUserPermissions } from '@/lib/data/queries/membership'
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules'
 import { getMetalPriceGrids } from '@/lib/data/mutations/metal-price-grids'
 import { getMetalPriceSnapshotsForQuote } from '@/lib/data/queries/metal-price-snapshots'
@@ -18,7 +19,7 @@ export default async function QuoteEditorPage({
   searchParams: Promise<{ id?: string; client?: string; returnTo?: string }>
 }) {
   const searchParams = await searchParamsPromise
-  const [clients, materials, laborRates, prestationTypes, organization, modules, allQuotes, metalPriceGrids, clauseTemplates, allSuppliers] = await Promise.all([
+  const [clients, materials, laborRates, prestationTypes, organization, modules, allQuotes, metalPriceGrids, clauseTemplates, allSuppliers, membership, permissions] = await Promise.all([
     getClients(),
     getMaterials(),
     getLaborRates(),
@@ -29,6 +30,8 @@ export default async function QuoteEditorPage({
     getMetalPriceGrids(),
     getQuoteClauseTemplates(),
     getSuppliers(),
+    getCurrentMembershipContext(),
+    getUserPermissions(),
   ])
 
   let initialQuote = null
@@ -61,6 +64,9 @@ export default async function QuoteEditorPage({
       prestationTypes={prestationTypes}
       initialClientId={searchParams.client}
       returnTo={searchParams.returnTo ?? null}
+      recoveryIdentity={{ userId: membership?.userId ?? null, organizationId: membership?.organizationId ?? null }}
+      canUseQuoteAi={permissions.has('*') || (permissions.has('ai.manage') && permissions.has('quotes.create'))}
+      canUseQuoteVoice={permissions.has('*') || permissions.has('ai.terrain')}
       catalogContext={catalogContext}
       modules={modules}
       allQuotes={allQuotes}

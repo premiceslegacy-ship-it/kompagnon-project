@@ -1,5 +1,5 @@
-import { getAccountingPlan, type BusinessProfile } from './accounting-plan'
-import { computeVatBreakdowns, fmtAmount, fmtDate, round2, type VatTiming } from './vat-rules'
+import { getAccountingPlan, type AccountingEntry, type BusinessProfile } from './accounting-plan'
+import { AccountingExportAuthorityError, computeVatBreakdowns, fmtAmount, fmtDate, round2, type IssuedVatBucket, type VatBreakdown, type VatTiming } from './vat-rules'
 
 // ─── Types d'entrée ────────────────────────────────────────────────────────────
 
@@ -11,9 +11,14 @@ export type FecInvoice = {
   total_ht: number
   total_tva: number
   total_ttc: number
-  total_paid: number
-  paid_at: string | null
   is_vat_subject: boolean
+  is_reverse_charge: boolean
+  vat_breakdown: readonly IssuedVatBucket[] | null
+  applied_acompte_ht: number | null
+  credit_note_source: {
+    invoice_type: FecInvoice['invoice_type']
+    paid_amount_before_credit: number
+  } | null
   tva_sur_debits: boolean
   business_profile: BusinessProfile | null
   pa_message_id: string | null
@@ -28,6 +33,15 @@ export type FecInvoice = {
     vat_rate: number
   }>
   chantier_title: string | null
+}
+
+export type FecPayment = {
+  id: string
+  invoice: FecInvoice
+  amount: number
+  payment_date: string
+  reference: string | null
+  prior_paid_amount: number
 }
 
 export type FecReceivedInvoice = {
@@ -135,6 +149,49 @@ function buildEcritureLib(inv: FecInvoice): string {
   return base
 }
 
+function postInvoiceEntry(
+  inv: FecInvoice,
+  entry: AccountingEntry,
+  amount: number,
+  label: string,
+  counters: Counters,
+  lines: FecLine[],
+  reverse = false,
+) {
+  if (amount === 0) return
+  const journalCode = inv.invoice_type === 'avoir' ? 'AV' : 'VE'
+  const journalLib = journalCode === 'AV' ? 'Avoirs' : 'Ventes'
+  const date = fmtDate(inv.issue_date)
+  const num = nextNum(counters, journalCode, inv.issue_date.substring(0, 4))
+  const debit = reverse ? entry.credit : entry.debit
+  const credit = reverse ? entry.debit : entry.credit
+  const debitLib = reverse ? entry.creditLib : entry.debitLib
+  const creditLib = reverse ? entry.debitLib : entry.creditLib
+  const auxNum = inv.client?.id.substring(0, 8).toUpperCase() ?? ''
+  const auxLib = inv.client?.display_name ?? ''
+  const debitCustomer = debit === '411' || debit === '4191'
+  const creditCustomer = credit === '411' || credit === '4191'
+  lines.push(
+    line(journalCode, journalLib, num, date, debit, debitLib,
+      debitCustomer ? auxNum : '', debitCustomer ? auxLib : '',
+      inv.number, date, label, amount, 0),
+    line(journalCode, journalLib, num, date, credit, creditLib,
+      creditCustomer ? auxNum : '', creditCustomer ? auxLib : '',
+      inv.number, date, label, 0, amount),
+  )
+}
+
+function invoiceVatBreakdowns(inv: FecInvoice, cache: Map<string, VatBreakdown[]>): VatBreakdown[] {
+  const cached = cache.get(inv.id)
+  if (cached) return cached
+  const buckets = computeVatBreakdowns(inv.items, {
+    isVatSubject: inv.is_vat_subject, isReverseCharge: inv.is_reverse_charge,
+    issuedBreakdown: inv.vat_breakdown, issuedTotalHt: inv.total_ht, issuedTotalVat: inv.total_tva,
+  })
+  cache.set(inv.id, buckets)
+  return buckets
+}
+
 // ─── Génération écritures facture émise ────────────────────────────────────────
 
 function generateInvoiceLines(
@@ -142,145 +199,91 @@ function generateInvoiceLines(
   profile: BusinessProfile,
   vatTiming: VatTiming,
   counters: Counters,
+  vatBreakdowns: readonly VatBreakdown[],
 ): FecLine[] {
   const plan = getAccountingPlan(profile)
-  const year = inv.issue_date.substring(0, 4)
-  const dateStr = fmtDate(inv.issue_date)
   const lib = buildEcritureLib(inv)
-  const clientAuxNum = inv.client?.id.substring(0, 8).toUpperCase() ?? ''
-  const clientAuxLib = inv.client?.display_name ?? ''
   const lines: FecLine[] = []
-
   const isAvoir = inv.invoice_type === 'avoir'
-  const isAcompte = inv.invoice_type === 'acompte'
-  const journalCode = isAvoir ? 'AV' : 'VE'
-  const journalLib = isAvoir ? 'Avoirs' : 'Ventes'
-
-  const totalHt = round2(inv.total_ht)
-  const vatBreakdowns = inv.is_vat_subject
-    ? computeVatBreakdowns(inv.items)
-    : []
-
-  if (isAcompte) {
-    // Acompte : débit 411 / crédit 4191
-    const num = nextNum(counters, journalCode, year)
-    const htEntry = plan.depositReceived
-    lines.push(
-      line(journalCode, journalLib, num, dateStr,
-        htEntry.debit, htEntry.debitLib, clientAuxNum, clientAuxLib,
-        inv.number, dateStr, lib, totalHt, 0),
-      line(journalCode, journalLib, num, dateStr,
-        htEntry.credit, htEntry.creditLib, '', '',
-        inv.number, dateStr, lib, 0, totalHt),
-    )
-    return lines
+  if (isAvoir && !inv.credit_note_source) {
+    throw new AccountingExportAuthorityError('La facture d’origine de cet avoir doit être vérifiée avant son export comptable.')
   }
+  const isDepositCredit = isAvoir && inv.credit_note_source?.invoice_type === 'acompte'
+  const htEntry = inv.invoice_type === 'acompte' || isDepositCredit
+    ? plan.depositReceived
+    : isAvoir ? plan.creditNoteSale : plan.invoiceSale
+  postInvoiceEntry(inv, htEntry, round2(inv.total_ht), lib, counters, lines, isDepositCredit)
 
-  if (isAvoir) {
-    // Avoir : débit 706/707, crédit 411
-    const htEntry = plan.creditNoteSale
-    const num = nextNum(counters, journalCode, year)
-    lines.push(
-      line(journalCode, journalLib, num, dateStr,
-        htEntry.debit, htEntry.debitLib, '', '',
-        inv.number, dateStr, lib, totalHt, 0),
-      line(journalCode, journalLib, num, dateStr,
-        htEntry.credit, htEntry.creditLib, clientAuxNum, clientAuxLib,
-        inv.number, dateStr, lib, 0, totalHt),
-    )
-
-    // TVA
-    if (inv.is_vat_subject && vatTiming === 'debits') {
-      for (const vat of vatBreakdowns) {
-        const tvaEntry = plan.creditNoteTva(vat.rate)
-        const tvaNum = nextNum(counters, journalCode, year)
-        lines.push(
-          line(journalCode, journalLib, tvaNum, dateStr,
-            tvaEntry.debit, tvaEntry.debitLib, '', '',
-            inv.number, dateStr, `TVA ${vat.rate}% ${inv.number}`, vat.vatAmount, 0),
-          line(journalCode, journalLib, tvaNum, dateStr,
-            tvaEntry.credit, tvaEntry.creditLib, clientAuxNum, clientAuxLib,
-            inv.number, dateStr, `TVA ${vat.rate}% ${inv.number}`, 0, vat.vatAmount),
-        )
-      }
-    }
-    return lines
-  }
-
-  // Facture standard, situation, solde
-  const htEntry = plan.invoiceSale
-  const num = nextNum(counters, journalCode, year)
-  lines.push(
-    line(journalCode, journalLib, num, dateStr,
-      htEntry.debit, htEntry.debitLib, clientAuxNum, clientAuxLib,
-      inv.number, dateStr, lib, totalHt, 0),
-    line(journalCode, journalLib, num, dateStr,
-      htEntry.credit, htEntry.creditLib, '', '',
-      inv.number, dateStr, lib, 0, totalHt),
-  )
-
-  // TVA sur débits : générée à l'émission
-  if (inv.is_vat_subject && vatTiming === 'debits') {
-    for (const vat of vatBreakdowns) {
-      const tvaEntry = plan.invoiceTva(vat.rate)
-      const tvaNum = nextNum(counters, journalCode, year)
-      lines.push(
-        line(journalCode, journalLib, tvaNum, dateStr,
-          tvaEntry.debit, tvaEntry.debitLib, clientAuxNum, clientAuxLib,
-          inv.number, dateStr, `TVA ${vat.rate}% ${inv.number}`, vat.vatAmount, 0),
-        line(journalCode, journalLib, tvaNum, dateStr,
-          tvaEntry.credit, tvaEntry.creditLib, '', '',
-          inv.number, dateStr, `TVA ${vat.rate}% ${inv.number}`, 0, vat.vatAmount),
-      )
+  for (const vat of vatBreakdowns) {
+    if (vat.vatAmount === 0) continue
+    const label = `TVA ${vat.rate}% ${inv.number}`
+    if (isAvoir) {
+      const paidBefore = inv.credit_note_source!.paid_amount_before_credit
+      const collectedVat = vatTiming === 'debits' ? vat.vatAmount
+        : round2(vat.vatAmount * Math.min(paidBefore / inv.total_ttc, 1))
+      postInvoiceEntry(inv, plan.creditNoteTva(vat.rate), collectedVat, label, counters, lines)
+      postInvoiceEntry(inv, plan.creditNoteDeferredTva, round2(vat.vatAmount - collectedVat), label, counters, lines)
+    } else {
+      postInvoiceEntry(inv, vatTiming === 'debits' ? plan.invoiceTva(vat.rate) : plan.invoiceDeferredTva,
+        vat.vatAmount, label, counters, lines)
     }
   }
 
+  const appliedDeposit = round2(inv.applied_acompte_ht ?? 0)
+  if (appliedDeposit > 0) {
+    postInvoiceEntry(inv, plan.depositApplied, appliedDeposit,
+      `Apurement des acomptes ${inv.number}`, counters, lines, isAvoir)
+  }
   return lines
 }
 
 // ─── Génération écritures encaissement ─────────────────────────────────────────
 
 function generatePaymentLines(
-  inv: FecInvoice,
+  payment: FecPayment,
   profile: BusinessProfile,
   vatTiming: VatTiming,
   counters: Counters,
+  vatBreakdowns: readonly VatBreakdown[],
 ): FecLine[] {
-  if (!inv.paid_at || inv.total_paid <= 0) return []
-
+  const inv = payment.invoice
   const plan = getAccountingPlan(profile)
-  const year = inv.paid_at.substring(0, 4)
-  const dateStr = fmtDate(inv.paid_at)
+  const year = payment.payment_date.substring(0, 4)
+  const dateStr = fmtDate(payment.payment_date)
   const lib = `Encaissement ${inv.number}`
+  const pieceRef = payment.reference || inv.number
   const clientAuxNum = inv.client?.id.substring(0, 8).toUpperCase() ?? ''
   const clientAuxLib = inv.client?.display_name ?? ''
   const lines: FecLine[] = []
-  const totalPaid = round2(inv.total_paid)
+  const totalPaid = round2(payment.amount)
 
   const bqEntry = plan.payment
   const bqNum = nextNum(counters, 'BQ', year)
   lines.push(
     line('BQ', 'Banque', bqNum, dateStr,
       bqEntry.debit, bqEntry.debitLib, '', '',
-      inv.number, dateStr, lib, totalPaid, 0),
+      pieceRef, dateStr, lib, totalPaid, 0),
     line('BQ', 'Banque', bqNum, dateStr,
       bqEntry.credit, bqEntry.creditLib, clientAuxNum, clientAuxLib,
-      inv.number, dateStr, lib, 0, totalPaid),
+      pieceRef, dateStr, lib, 0, totalPaid),
   )
 
   // TVA sur encaissements : générée à l'encaissement
-  if (inv.is_vat_subject && vatTiming === 'encaissements' && inv.invoice_type !== 'avoir') {
-    const vatBreakdowns = computeVatBreakdowns(inv.items)
+  if (inv.is_vat_subject && !inv.is_reverse_charge && vatTiming === 'encaissements' && inv.invoice_type !== 'avoir') {
     for (const vat of vatBreakdowns) {
-      const tvaEntry = plan.invoiceTva(vat.rate)
+      const beforeVat = round2(vat.vatAmount * Math.min(payment.prior_paid_amount / inv.total_ttc, 1))
+      const afterVat = round2(vat.vatAmount * Math.min((payment.prior_paid_amount + totalPaid) / inv.total_ttc, 1))
+      const vatReceived = round2(afterVat - beforeVat)
+      if (vatReceived === 0) continue
+      const tvaEntry = plan.paymentTva(vat.rate)
       const tvaNum = nextNum(counters, 'BQ', year)
       lines.push(
         line('BQ', 'Banque', tvaNum, dateStr,
-          tvaEntry.debit, tvaEntry.debitLib, clientAuxNum, clientAuxLib,
-          inv.number, dateStr, `TVA ${vat.rate}% ${inv.number}`, vat.vatAmount, 0),
+          tvaEntry.debit, tvaEntry.debitLib, '', '',
+          pieceRef, dateStr, `TVA ${vat.rate}% ${inv.number}`, vatReceived, 0),
         line('BQ', 'Banque', tvaNum, dateStr,
           tvaEntry.credit, tvaEntry.creditLib, '', '',
-          inv.number, dateStr, `TVA ${vat.rate}% ${inv.number}`, 0, vat.vatAmount),
+          pieceRef, dateStr, `TVA ${vat.rate}% ${inv.number}`, 0, vatReceived),
       )
     }
   }
@@ -346,6 +349,7 @@ function serializeFec(lines: FecLine[]): string {
 
 export type GenerateFecInput = {
   invoices: FecInvoice[]
+  payments: FecPayment[]
   receivedInvoices: FecReceivedInvoice[]
   orgProfile: FecOrgProfile
   includeInvoices: boolean
@@ -363,6 +367,7 @@ export type GenerateFecResult = {
 export function generateFec(input: GenerateFecInput): GenerateFecResult {
   const {
     invoices,
+    payments,
     receivedInvoices,
     orgProfile,
     includeInvoices,
@@ -372,11 +377,12 @@ export function generateFec(input: GenerateFecInput): GenerateFecResult {
   } = input
   const profile: BusinessProfile = orgProfile.business_profile ?? 'btp'
   const counters: Counters = {}
+  const vatCache = new Map<string, VatBreakdown[]>()
   const warnings: string[] = []
 
   // Vérification auto-liquidation
   const autoLiqCount = invoices.filter(inv =>
-    !inv.is_vat_subject && inv.invoice_type !== 'avoir' && inv.total_ttc > 0,
+    inv.is_reverse_charge && inv.total_ttc > 0,
   ).length
   if (autoLiqCount > 0) {
     warnings.push(`${autoLiqCount} facture(s) sans TVA détectée(s). Vérifiez les cas d'auto-liquidation (sous-traitance BTP, art. 283-2 nonies CGI) avec votre comptable.`)
@@ -395,10 +401,18 @@ export function generateFec(input: GenerateFecInput): GenerateFecResult {
     const invoiceProfile = inv.business_profile ?? profile
     const invoiceVatTiming = inv.tva_sur_debits ? 'debits' : 'encaissements'
     if (shouldIncludeInvoiceEntry) {
-      allLines.push(...generateInvoiceLines(inv, invoiceProfile, invoiceVatTiming, counters))
+      allLines.push(...generateInvoiceLines(inv, invoiceProfile, invoiceVatTiming, counters, invoiceVatBreakdowns(inv, vatCache)))
     }
-    if (includePayments) {
-      allLines.push(...generatePaymentLines(inv, invoiceProfile, invoiceVatTiming, counters))
+  }
+
+  if (includePayments) {
+    const sortedPayments = [...payments].sort((a, b) =>
+      a.payment_date.localeCompare(b.payment_date) || a.id.localeCompare(b.id))
+    for (const payment of sortedPayments) {
+      const inv = payment.invoice
+      const invoiceProfile = inv.business_profile ?? profile
+      allLines.push(...generatePaymentLines(payment, invoiceProfile,
+        inv.tva_sur_debits ? 'debits' : 'encaissements', counters, invoiceVatBreakdowns(inv, vatCache)))
     }
   }
 

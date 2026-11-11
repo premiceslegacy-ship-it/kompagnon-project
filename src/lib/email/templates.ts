@@ -41,7 +41,7 @@ export function buildInviteEmail({
   ${escHtml(inviterName)} vous a invité à rejoindre l'équipe !
 </h1>
 <p style="${BODY_P}">
-  Cliquez sur le bouton ci-dessous pour accepter l'invitation et créer votre compte.
+  Cliquez sur le bouton ci-dessous pour accepter l'invitation et rejoindre l'équipe.
 </p>
 ${renderCTA(`Rejoindre ${escHtml(orgName)} →`, inviteUrl)}
 <p style="${SMALL_P}">
@@ -444,9 +444,9 @@ export function buildInvoicePaidEmail({
   clientName,
   invoiceNumber,
   invoiceTitle,
-  totalTtc,
+  amountRecorded,
   currency,
-  paidAt,
+  paymentDate,
   emailSignature,
 }: {
   orgName: string
@@ -455,19 +455,17 @@ export function buildInvoicePaidEmail({
   clientName: string
   invoiceNumber: string | null
   invoiceTitle: string | null
-  totalTtc: number | null
+  amountRecorded: number
   currency: string
-  paidAt: Date
+  paymentDate: Date
   emailSignature?: string | null
 }): { subject: string; html: string } {
   const subject = `Merci ${clientName ? clientName + ', votre ' : 'pour votre '}règlement a bien été reçu · ${orgName}`
   const numHtml = invoiceNumber ? ` N° ${escHtml(invoiceNumber)}` : ''
 
-  const fmtAmt = totalTtc != null
-    ? new Intl.NumberFormat('fr-FR', { style: 'currency', currency }).format(totalTtc)
-    : null
-  const fmtDate = paidAt.toLocaleDateString('fr-FR', {
-    day: '2-digit', month: 'long', year: 'numeric',
+  const fmtAmt = new Intl.NumberFormat('fr-FR', { style: 'currency', currency }).format(amountRecorded)
+  const fmtDate = paymentDate.toLocaleDateString('fr-FR', {
+    day: '2-digit', month: 'long', year: 'numeric', timeZone: 'UTC',
   })
 
   const infoRows = [
@@ -669,7 +667,7 @@ export function buildMemberSpaceInviteEmail({
 </p>
 ${renderCTA('Ouvrir mon espace →', spaceUrl)}
 <p style="${SMALL_P}">
-  Ce lien est valable <strong style="color:#080807;">30 jours</strong>. Vous pourrez en redemander un nouveau à tout moment depuis la page d'accès.
+  Ce lien est valable <strong style="color:#080807;">7 jours</strong>. Vous pourrez en redemander un nouveau à tout moment depuis la page d'accès.
 </p>`
 
   const fallback = `

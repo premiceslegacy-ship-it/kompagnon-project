@@ -9,6 +9,7 @@ import { escHtml } from '@/lib/email/layout'
 import { DEFAULT_EMAIL_TEMPLATES } from '@/lib/data/queries/emailTemplates'
 import { getClientGreetingName } from '@/lib/client'
 import { verifyCronSecret } from '@/lib/cron-auth'
+import { dispatchDocumentReminder } from '@/lib/email/document-reminder'
 
 // ─── Interpolation ─────────────────────────────────────────────────────────────
 
@@ -94,7 +95,8 @@ export async function GET(req: NextRequest) {
         .from('invoices')
         .select('id, number, total_ttc, currency, due_date, sent_at, client_id')
         .eq('organization_id', org.id)
-        .in('status', ['sent', 'partial'])
+        .in('status', ['sent', 'viewed', 'partial', 'overdue'])
+        .neq('invoice_type', 'avoir')
         .gte('sent_at', windowStart.toISOString())
         .lte('sent_at', windowEnd.toISOString())
 
@@ -154,20 +156,21 @@ export async function GET(req: NextRequest) {
         const html = wrapHtml(org.name, interpolate(tpl.body_text, vars), org.logo_url)
 
         try {
-          const mail = await sendEmail({ organizationId: org.id, to: clientEmail, subject, html })
-          if (mail.error) throw new Error(mail.error)
-          await admin.from('reminders').insert({
-            organization_id: org.id,
-            invoice_id: invoice.id,
-            client_id: invoice.client_id ?? null,
-            type: 'payment_reminder',
-            rank,
-            sent_at: today.toISOString(),
-            is_auto: true,
-            email_subject: subject,
-            email_body: tpl.body_text,
+          const dispatched = await dispatchDocumentReminder({
+            organizationId: org.id,
+            invoiceId: invoice.id,
+            deliver: () => sendEmail({ organizationId: org.id, to: clientEmail!, subject, html }),
+            reminder: {
+              client_id: invoice.client_id ?? null,
+              type: 'payment_reminder',
+              rank,
+              is_auto: true,
+              email_subject: subject,
+              email_body: tpl.body_text,
+            },
           })
-          invoicesSent++
+          if (dispatched.sent) invoicesSent++
+          if (dispatched.error && !dispatched.duplicate) throw new Error(dispatched.error)
         } catch (err) {
           console.error(`[cron/reminders] invoice ${invoice.id}:`, err)
           errors++
@@ -239,20 +242,21 @@ export async function GET(req: NextRequest) {
         const html = wrapHtml(org.name, interpolate(tpl.body_text, vars), org.logo_url)
 
         try {
-          const mail = await sendEmail({ organizationId: org.id, to: clientEmail, subject, html })
-          if (mail.error) throw new Error(mail.error)
-          await admin.from('reminders').insert({
-            organization_id: org.id,
-            quote_id: quote.id,
-            client_id: quote.client_id ?? null,
-            type: 'quote_followup',
-            rank: 1,
-            sent_at: today.toISOString(),
-            is_auto: true,
-            email_subject: subject,
-            email_body: tpl.body_text,
+          const dispatched = await dispatchDocumentReminder({
+            organizationId: org.id,
+            quoteId: quote.id,
+            deliver: () => sendEmail({ organizationId: org.id, to: clientEmail!, subject, html }),
+            reminder: {
+              client_id: quote.client_id ?? null,
+              type: 'quote_followup',
+              rank: 1,
+              is_auto: true,
+              email_subject: subject,
+              email_body: tpl.body_text,
+            },
           })
-          quotesSent++
+          if (dispatched.sent) quotesSent++
+          if (dispatched.error && !dispatched.duplicate) throw new Error(dispatched.error)
         } catch (err) {
           console.error(`[cron/reminders] quote ${quote.id}:`, err)
           errors++

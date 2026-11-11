@@ -1,6 +1,7 @@
 // @atelier-migrated
 // Logique pure : types locaux, conversions et calculs. Aucun état React ici.
 
+import { calculateMonetaryTotals, roundMoney } from '@/lib/utils/money'
 import type { Client } from '@/lib/data/queries/clients'
 
 import { computeLinearQuantity, computeSurfaceQuantity, computeVolumeQuantity, type DimensionPricingMode } from '@/lib/catalog-pricing'
@@ -175,32 +176,49 @@ export type LocalScheduleItem = {
   amount_type: ScheduleAmountType
   percentage: number | null
   paid_payment_id: string | null
+  paid_amount?: number
+  remaining_amount?: number
+  is_paid?: boolean
 }
 
 // ─── Totaux ─────────────────────────────────────────────────────────────────
 
-export function computeInvoiceTotals(items: LocalItem[]) {
+export type InvoiceDerivedTotals = {
+  totalHt: number
+  totalTva: number
+  totalTtc: number
+  vatByRate: Record<number, number>
+}
+
+export function computeInvoiceTotals(items: LocalItem[], context: {
+  isVatSubject: boolean
+  isReverseCharge: boolean
+  derivedTotals: InvoiceDerivedTotals | null
+}) {
   const clientItems = items.filter(i => !i.is_internal)
-  const totalHt = clientItems.reduce((acc, i) => acc + Number(i.qty) * Number(i.pu), 0)
-  const totalTva = clientItems.reduce((acc, i) => acc + Number(i.qty) * Number(i.pu) * (Number(i.vat) / 100), 0)
-  const totalTtc = totalHt + totalTva
+  const monetaryTotals = calculateMonetaryTotals(
+    clientItems.map(i => ({ quantity: i.qty, unit_price: i.pu, vat_rate: i.vat })),
+    { isVatSubject: context.isVatSubject, isReverseCharge: context.isReverseCharge },
+  )
+  const totals = context.derivedTotals ?? monetaryTotals
+  if (context.derivedTotals && (
+    totals.totalHt !== monetaryTotals.totalHt
+    || roundMoney(totals.totalHt + totals.totalTva) !== totals.totalTtc
+    || roundMoney(Object.values(totals.vatByRate).reduce((sum, amount) => sum + amount, 0)) !== totals.totalTva
+  )) throw new Error('Le décompte du brouillon ne correspond pas à ses lignes. Recréez-le depuis le document source.')
+  const { totalHt, totalTva, totalTtc, vatByRate } = totals
   const totalInternalHt = items.reduce((acc, i) => acc + getInternalCostTotal(i), 0)
   const margeHt = totalHt - totalInternalHt
   const margePct = totalHt > 0 ? (margeHt / totalHt) * 100 : 0
   const hasInternal = items.some(i => i.unit_cost_ht != null || i.is_internal)
-  const vatByRate = clientItems.reduce<Record<number, number>>((acc, i) => {
-    const vatAmt = Number(i.qty) * Number(i.pu) * (Number(i.vat) / 100)
-    acc[Number(i.vat)] = (acc[Number(i.vat)] ?? 0) + vatAmt
-    return acc
-  }, {})
   return { clientItems, totalHt, totalTva, totalTtc, totalInternalHt, margeHt, margePct, hasInternal, vatByRate }
 }
 
 /** Montant d'une échéance : en pourcentage du TTC (arrondi au centime) ou fixe. */
 export function scheduleAmount(item: Pick<LocalScheduleItem, 'amount_type' | 'percentage' | 'amount'>, totalTtc: number) {
   if (item.amount_type === 'percentage') {
-    return Math.round(totalTtc * ((Number(item.percentage) || 0) / 100) * 100) / 100
+    return roundMoney(totalTtc * ((Number(item.percentage) || 0) / 100))
   }
-  return Number(item.amount) || 0
+  return roundMoney(Number(item.amount) || 0)
 }
 

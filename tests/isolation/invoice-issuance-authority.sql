@@ -1,4 +1,4 @@
--- Run only against a disposable LOCAL Supabase database migrated through 208:
+-- Run only against a disposable LOCAL Supabase database migrated through 218:
 -- psql "$LOCAL_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/isolation/invoice-issuance-authority.sql
 -- All fixture rows and trigger changes are rolled back on success.
 BEGIN;
@@ -9,6 +9,9 @@ DECLARE
   v_client_id UUID := gen_random_uuid();
   v_quote_id UUID := gen_random_uuid();
   v_invoice_id UUID := gen_random_uuid();
+  v_rounding_invoice_id UUID := gen_random_uuid();
+  v_reverse_invoice_id UUID := gen_random_uuid();
+  v_small_vat_invoice_id UUID := gen_random_uuid();
   v_cancelled_invoice_id UUID := gen_random_uuid();
   v_non_draft_id UUID := gen_random_uuid();
   v_import_invoice_id UUID := gen_random_uuid();
@@ -49,6 +52,9 @@ BEGIN
 
   INSERT INTO public.quotes (id, organization_id, client_id, number, title)
   VALUES (v_quote_id, v_org_id, v_client_id, 'DEV-ORIGINAL-7', 'Travaux originaux');
+  INSERT INTO public.quote_items (quote_id, description, quantity, unit, unit_price, vat_rate, total_ht, position)
+  VALUES (v_quote_id, 'Ligne originale', 1, 'h', 100, 20, 100, 0);
+  UPDATE public.quotes SET status = 'accepted' WHERE id = v_quote_id;
 
   INSERT INTO public.invoices (
     id, organization_id, client_id, quote_id, number, title, status,
@@ -69,6 +75,61 @@ BEGIN
   ) VALUES (
     v_item_id, v_invoice_id, 'Ligne originale', 2, 'h', 50, 20, 0
   );
+
+  INSERT INTO public.invoices (
+    id, organization_id, client_id, number, title, status, total_ht, total_tva, total_ttc, is_reverse_charge
+  ) VALUES
+    (v_rounding_invoice_id, v_org_id, v_client_id, 'FAC-ROUNDING-218', 'Fractional VAT buckets',
+     'draft', 603.18, 110.64, 713.82, false),
+    (v_reverse_invoice_id, v_org_id, v_client_id, 'FAC-REVERSE-218', 'Reverse charge',
+     'draft', 603.18, 0, 603.18, true);
+  INSERT INTO public.invoice_items (invoice_id, description, quantity, unit, unit_price, vat_rate, position)
+  VALUES
+    (v_rounding_invoice_id, 'Fractional 20 percent line', 8, 'u', 62.80, 20, 0),
+    (v_rounding_invoice_id, 'Fractional cent line', 0.001, 'u', 625.50, 20, 1),
+    (v_rounding_invoice_id, 'Second VAT bucket', 1, 'u', 100, 10, 2),
+    (v_rounding_invoice_id, 'Small 20 percent line 1', 1, 'u', 0.03, 20, 3),
+    (v_rounding_invoice_id, 'Small 20 percent line 2', 1, 'u', 0.03, 20, 4),
+    (v_rounding_invoice_id, 'Small 20 percent line 3', 1, 'u', 0.03, 20, 5),
+    (v_rounding_invoice_id, 'Small 20 percent line 4', 1, 'u', 0.03, 20, 6),
+    (v_rounding_invoice_id, 'Small 20 percent line 5', 1, 'u', 0.03, 20, 7),
+    (v_reverse_invoice_id, 'Fractional 20 percent line', 8, 'u', 62.80, 20, 0),
+    (v_reverse_invoice_id, 'Fractional cent line', 0.001, 'u', 625.50, 20, 1),
+    (v_reverse_invoice_id, 'Second VAT bucket', 1, 'u', 100, 10, 2),
+    (v_reverse_invoice_id, 'Small 20 percent line 1', 1, 'u', 0.03, 20, 3),
+    (v_reverse_invoice_id, 'Small 20 percent line 2', 1, 'u', 0.03, 20, 4),
+    (v_reverse_invoice_id, 'Small 20 percent line 3', 1, 'u', 0.03, 20, 5),
+    (v_reverse_invoice_id, 'Small 20 percent line 4', 1, 'u', 0.03, 20, 6),
+    (v_reverse_invoice_id, 'Small 20 percent line 5', 1, 'u', 0.03, 20, 7);
+
+  -- Initial issuance persists per-line rounded HT, bucketed VAT, and reverse-charge zero VAT.
+  UPDATE public.invoices SET status = 'sending'
+  WHERE id IN (v_rounding_invoice_id, v_reverse_invoice_id);
+  IF NOT EXISTS (
+    SELECT 1 FROM public.invoices
+    WHERE id = v_rounding_invoice_id
+      AND total_ht = 603.18 AND total_tva = 110.64 AND total_ttc = 713.82
+      AND issuance_snapshot->'invoice'->>'total_ht' = '603.18'
+      AND issuance_snapshot->'invoice'->>'total_tva' = '110.64'
+      AND issuance_snapshot->'invoice'->>'total_ttc' = '713.82'
+  ) THEN
+    RAISE EXCEPTION 'fractional invoice did not persist cent-rounded line and multi-rate bucket totals';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.invoices
+    WHERE id = v_reverse_invoice_id
+      AND total_ht = 603.18 AND total_tva = 0 AND total_ttc = 603.18
+      AND issuance_snapshot->'invoice'->>'total_ht' = '603.18'
+      AND (issuance_snapshot->'invoice'->>'total_tva')::NUMERIC = 0
+      AND issuance_snapshot->'invoice'->>'total_ttc' = '603.18'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(issuance_snapshot->'items') AS line(item)
+        WHERE (item->>'vat_amount')::NUMERIC <> 0
+      )
+  ) THEN
+    RAISE EXCEPTION 'reverse-charge issuance did not persist zero VAT across invoice and snapshot lines';
+  END IF;
 
   INSERT INTO public.invoice_payment_schedule (
     id, organization_id, invoice_id, label, due_date, amount, amount_type, position
@@ -153,6 +214,28 @@ BEGIN
   END IF;
 
 
+  -- Nominal line VAT must use the cent-rounded base, including at 5.5%.
+  INSERT INTO public.invoices (
+    id, organization_id, client_id, number, title, status, total_ht, total_tva, total_ttc, currency
+  ) VALUES (
+    v_small_vat_invoice_id, v_org_id, v_client_id, 'FAC-CENT-VAT-' || v_small_vat_invoice_id,
+    'Cent-rounded 5.5% basis', 'draft', 0.09, 0, 0.09, 'EUR'
+  );
+  INSERT INTO public.invoice_items (invoice_id, description, quantity, unit, unit_price, vat_rate, position)
+  VALUES (v_small_vat_invoice_id, 'Small VAT basis', 0.001, 'u', 91.10, 5.5, 0);
+  IF (SELECT vat_amount FROM public.invoice_items WHERE invoice_id = v_small_vat_invoice_id) <> 0 THEN
+    RAISE EXCEPTION 'Line VAT was computed from unrounded rather than displayed net basis';
+  END IF;
+  UPDATE public.invoices SET status = 'sending' WHERE id = v_small_vat_invoice_id;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.invoices WHERE id = v_small_vat_invoice_id
+      AND (issuance_snapshot #>> '{invoice,total_ht}')::NUMERIC = 0.09
+      AND (issuance_snapshot #>> '{invoice,total_tva}')::NUMERIC = 0
+      AND (issuance_snapshot #>> '{items,0,vat_amount}')::NUMERIC = 0
+  ) THEN
+    RAISE EXCEPTION 'Canonical zero VAT on a positive 5.5%% basis did not reach issuance authority';
+  END IF;
+
   -- Contradictory current drafts fail before issuance rather than having their
   -- displayed or delivered totals silently changed.
   -- A nullable subtotal is normalized for authority; a conflicting stored
@@ -207,6 +290,23 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'reverse-charge VAT mismatch was not rejected before authority capture';
   END IF;
+  UPDATE public.organizations SET is_vat_subject = false WHERE id = v_org_id;
+  UPDATE public.invoices SET total_tva = 0, total_ttc = 100 WHERE id = v_invoice_id;
+  v_rejected := false;
+  v_sqlstate := NULL;
+  BEGIN
+    UPDATE public.invoices SET status = 'sending' WHERE id = v_invoice_id;
+  EXCEPTION WHEN OTHERS THEN
+    v_rejected := true;
+    GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+  END;
+  IF NOT v_rejected OR v_sqlstate IS DISTINCT FROM '23514' OR EXISTS (
+    SELECT 1 FROM public.invoices
+    WHERE id = v_invoice_id AND (status <> 'draft' OR issuance_snapshot IS NOT NULL)
+  ) THEN
+    RAISE EXCEPTION 'Franchise and reverse-charge were combined into an invalid emitted document';
+  END IF;
+  UPDATE public.organizations SET is_vat_subject = true WHERE id = v_org_id;
   UPDATE public.invoices
   SET is_reverse_charge = false, total_tva = 20, total_ttc = 120
   WHERE id = v_invoice_id;

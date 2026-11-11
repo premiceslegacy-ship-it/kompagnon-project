@@ -47,7 +47,11 @@ export function generateMagicToken(): { raw: string; hash: string; expiresAt: Da
 }
 
 /** Pose un cookie de session signé après vérification réussie d'un magic-link. */
-export async function setMemberSessionCookie(memberId: string, organizationId: string): Promise<void> {
+export async function setMemberSessionCookie(
+  memberId: string,
+  organizationId: string,
+  options: { requestIsHttps: boolean },
+): Promise<void> {
   const issuedAt = Date.now()
   const payload = `${memberId}.${organizationId}.${issuedAt}`
   const sig = sign(payload)
@@ -56,7 +60,7 @@ export async function setMemberSessionCookie(memberId: string, organizationId: s
   const c = await cookies()
   c.set(COOKIE_NAME, cookieValue, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.NODE_ENV === 'production' || options.requestIsHttps,
     sameSite: 'lax',
     path: '/',
     maxAge: COOKIE_MAX_AGE_S,

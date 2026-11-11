@@ -52,7 +52,7 @@ export async function createOrganizationExport(): Promise<{ error: string | null
     .insert({
       organization_id: membership.organizationId,
       requested_by_user_id: membership.userId,
-      requested_by_email: membership.email ?? 'contact@orsayn.fr',
+      requested_by_email: membership.email ?? null,
       status: 'processing',
       summary_json: { counts: {}, files: {}, warnings: [] },
     })

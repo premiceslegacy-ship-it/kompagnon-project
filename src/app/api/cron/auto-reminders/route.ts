@@ -14,6 +14,7 @@ import { renderOrganizationEmail } from '@/lib/email/organization'
 import { renderCTA, escHtml } from '@/lib/email/layout'
 import { resolveOrganizationFromAddress } from '@/lib/email/resolver'
 import { invoiceReminderTiming } from '@/lib/invoice-reminder-timing'
+import { dispatchDocumentReminder } from '@/lib/email/document-reminder'
 
 // ─── Sécurité ─────────────────────────────────────────────────────────────────
 // Appelé par Cloudflare Worker (ou cron-job.org) avec le header X-Cron-Secret
@@ -178,35 +179,38 @@ export async function POST(req: NextRequest) {
           }
 
           const fromName = reminderFromName
-          const { error: emailError } = await resend.emails.send({
-            from: `${fromName} <${fromAddress}>`,
-            to: recipient,
-            subject,
-            html: wrapHtml(reminderOrgName, escHtml(body).replace(/\n/g, '<br>'), signUrl, reminderLogoUrl),
-            replyTo: org.email,
-            ...(attachments?.length ? { attachments } : {}),
+          const dispatched = await dispatchDocumentReminder({
+            organizationId: org.id,
+            ...(item.type === 'invoice' ? { invoiceId: item.id } : { quoteId: item.id }),
+            deliver: async () => {
+              const { error } = await resend.emails.send({
+                from: `${fromName} <${fromAddress}>`,
+                to: recipient,
+                subject,
+                html: wrapHtml(reminderOrgName, escHtml(body).replace(/\n/g, '<br>'), signUrl, reminderLogoUrl),
+                replyTo: org.email ?? undefined,
+                ...(attachments?.length ? { attachments } : {}),
+              })
+              return {
+                error: error ? 'Impossible d’envoyer la relance.' : null,
+                delivery: !error ? 'accepted' : (
+                  typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 500
+                    ? 'rejected' : 'unknown'
+                ),
+              }
+            },
+            reminder: {
+              client_id: reminderItem.clientId,
+              type: item.type === 'invoice' ? 'payment_reminder' : 'quote_followup',
+              rank: item.rank,
+              is_auto: true,
+              email_subject: subject,
+              email_body: body,
+            },
           })
-          if (emailError) throw new Error(`Resend: ${emailError.message}`)
-
-          // Log relance : l'index unique (invoice_id|quote_id, rank) WHERE is_auto
-          // absorbe la double exécution concurrente. L'erreur est lue pour ne
-          // pas perdre silencieusement l'état de dédup.
-          const { error: reminderError } = await supabase.from('reminders').insert({
-            organization_id: org.id,
-            ...(item.type === 'invoice' ? { invoice_id: item.id } : { quote_id: item.id }),
-            client_id: reminderItem.clientId,
-            type: item.type === 'invoice' ? 'payment_reminder' : 'quote_followup',
-            rank: item.rank,
-            sent_at: new Date().toISOString(),
-            is_auto: true,
-            email_subject: subject,
-            email_body: body,
-          })
-          // 23505 = relance déjà enregistrée par une exécution concurrente :
-          // l'email est parti deux fois, mais l'état de dédup reste correct.
-          if (reminderError && reminderError.code !== '23505') {
-            errors.push(`[${org.id}] reminder log ${item.id}: ${reminderError.message}`)
-          }
+          if (dispatched.duplicate) continue
+          if (dispatched.sent) totalSent++
+          if (dispatched.error) throw new Error(dispatched.error)
 
           // Log activité
           await supabase.from('activity_log').insert({
@@ -217,7 +221,6 @@ export async function POST(req: NextRequest) {
             metadata: { rank: item.rank, client: reminderItem.clientName, amount: reminderItem.amount },
           })
 
-          totalSent++
         } catch (itemErr) {
           errors.push(`[${org.id}] ${item.type} ${item.id}: ${String(itemErr)}`)
         }
@@ -257,7 +260,8 @@ async function collectItems(
       .from('invoices')
       .select('id, number, total_ttc, currency, due_date, sent_at, invoice_type, client_id, client:clients(company_name, contact_name, first_name, last_name, email)')
       .eq('organization_id', orgId)
-      .in('status', ['sent', 'partial'])
+      .in('status', ['sent', 'viewed', 'partial', 'overdue'])
+      .neq('invoice_type', 'avoir')
       .or(`sent_at.lt.${maxInvoiceSentBefore},due_date.lt.${todayStr}`),
 
     supabase

@@ -8,6 +8,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { sendEmail } from '@/lib/email'
 import { buildInviteEmail } from '@/lib/email/templates'
+import { authUserExistsByEmail, buildInvitationCallbackUrl } from '@/lib/auth/invitation-link'
+import { canAssignRoleToCurrentUser } from '@/lib/data/queries/roles'
 import {
   normalizeSecondaryActivityIds,
   resolveBusinessSelection,
@@ -269,61 +271,96 @@ export async function completeOnboarding(formData: FormData) {
     const roleId = (formData.get(`invite_role_${i}`) as string | null)?.trim()
     if (!email) break
 
-    if (!roleId) { i++; continue }
+    const normalizedEmail = email.toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || !roleId) {
+      inviteErrors.push(email)
+      i++
+      continue
+    }
+    if (!(await canAssignRoleToCurrentUser(organizationId, roleId))) {
+      inviteErrors.push(email)
+      i++
+      continue
+    }
 
-    // Insérer dans la table invitations
+    let userExists: boolean
+    try {
+      userExists = await authUserExistsByEmail(admin, normalizedEmail)
+    } catch (error) {
+      console.error('[completeOnboarding] user lookup failed:', error)
+      inviteErrors.push(email)
+      i++
+      continue
+    }
+
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-    const { error: inviteInsertError } = await supabase
+    const { data: invitation, error: inviteInsertError } = await supabase
       .from('invitations')
       .insert({
         organization_id: organizationId,
         invited_by: user.id,
-        email,
+        email: normalizedEmail,
         role_id: roleId,
+        password_setup_required: !userExists,
         expires_at: expiresAt,
       })
+      .select('id')
+      .single()
 
-    if (inviteInsertError) {
-      console.error('[completeOnboarding] invite insert error:', inviteInsertError.message)
+    if (inviteInsertError || !invitation) {
+      console.error('[completeOnboarding] invite insert error:', inviteInsertError?.message)
       inviteErrors.push(email)
       i++
       continue
     }
 
-    // Générer le lien magique sans envoyer l'email Supabase
+    const verificationType = userExists ? 'magiclink' : 'invite'
     const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
-      type: 'invite',
-      email,
-      options: {
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/invite/accept`,
-      },
+      type: verificationType,
+      email: normalizedEmail,
     })
 
-    if (linkError || !linkData?.properties?.action_link) {
+    if (linkError || !linkData?.properties?.hashed_token) {
       console.error('[completeOnboarding] generateLink error:', linkError?.message)
+      await admin.from('invitations').delete().eq('id', invitation.id).eq('organization_id', organizationId)
       inviteErrors.push(email)
       i++
       continue
     }
 
-    // Envoyer l'email brandé via Resend
+    let inviteUrl: string
+    try {
+      inviteUrl = buildInvitationCallbackUrl({
+        tokenHash: linkData.properties.hashed_token,
+        verificationType,
+        invitationId: invitation.id,
+      })
+    } catch (error) {
+      console.error('[completeOnboarding] callback URL error:', error)
+      await admin.from('invitations').delete().eq('id', invitation.id).eq('organization_id', organizationId)
+      inviteErrors.push(email)
+      i++
+      continue
+    }
+
     const { subject, html } = buildInviteEmail({
-      orgName: org?.name,
+      orgName: org?.name ?? 'Votre entreprise',
       logoUrl: org?.logo_url,
       inviterName: profile?.full_name || user.email || 'Votre responsable',
-      inviteUrl: linkData.properties.action_link,
+      inviteUrl,
     })
 
     const { error: sendError } = await sendEmail({
-      organizationId: organizationId!,
-      to: email,
+      organizationId,
+      to: normalizedEmail,
       subject,
       html,
-      allowAtelierReplyTo: true, // invitation de compte : une réponse peut aller au support Atelier
+      allowAtelierReplyTo: true,
     })
 
     if (sendError) {
       console.error('[completeOnboarding] sendEmail error:', sendError)
+      await admin.from('invitations').delete().eq('id', invitation.id).eq('organization_id', organizationId)
       inviteErrors.push(email)
     }
 

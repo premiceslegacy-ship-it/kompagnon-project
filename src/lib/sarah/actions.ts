@@ -12,7 +12,7 @@ import { createClientInline, updateClient } from '@/lib/data/mutations/clients'
 import { getClientById } from '@/lib/data/queries/clients'
 import { createChantier, createTache, createChantierNote, updateChantier, createMemberPointageAdmin } from '@/lib/data/mutations/chantiers'
 import { createChantierExpense } from '@/lib/data/mutations/chantier-expenses'
-import { sendQuoteFollowup, markQuoteRefused } from '@/lib/data/mutations/reminders'
+import { sendInvoiceReminder, sendQuoteFollowup, markQuoteRefused } from '@/lib/data/mutations/reminders'
 import { getPlanningRecipientUserIds, sendPushToPlanningRecipients } from '@/lib/push'
 import { getMaterials, getLaborRates, getPrestationTypes, type CatalogLaborRate, type CatalogMaterial, type PrestationType } from '@/lib/data/queries/catalog'
 import { createMaterialQuick, createLaborRateQuick } from '@/lib/data/mutations/catalog'
@@ -1157,28 +1157,18 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
       return { message: 'Le rappel de pointage a été envoyé.', deepLink: proposal.deep_link }
     }
 
-    case 'invoice_reminder':
-      if (typeof p.invoice_id === 'string' && typeof p.draft_text === 'string') {
-        const admin = createAdminClient()
-        const { data: invoice } = await admin
-          .from('invoices')
-          .select('id, client_id, number, title')
-          .eq('id', p.invoice_id)
-          .eq('organization_id', orgId)
-          .maybeSingle()
-
-        if (!invoice?.client_id) throw new Error('Cette facture n’est pas liée à un client joignable.')
-        const ref = invoice.number ?? invoice.title ?? 'facture'
-        const result = await sendSarahDraftEmail(orgId, {
-          client_ids: [invoice.client_id],
-          subject: typeof p.subject === 'string' ? p.subject : `Relance facture ${ref}`,
-          body: p.draft_text,
-          recipient_filter: { mode: 'manual', ids: [invoice.client_id] },
+    case 'invoice_reminder': {
+      const invoiceId = typeof p.invoice_id === 'string' ? p.invoice_id.trim() : ''
+      if (invoiceId) {
+        const body = typeof p.draft_text === 'string' ? p.draft_text.trim() : ''
+        if (!body) throw new Error('Objet ou contenu email manquant.')
+        const subject = typeof p.subject === 'string' ? p.subject.trim() : ''
+        const result = await sendInvoiceReminder(invoiceId, {
+          subject: subject || 'Relance facture',
+          body,
         })
-        return {
-          message: `${result.sent} relance envoyée.${result.errors > 0 ? ` ${result.errors} échec.` : ''}`,
-          deepLink: proposal.deep_link,
-        }
+        if (result.error) throw new Error(result.error)
+        return { message: 'La relance de facture a bien été envoyée au client.', deepLink: proposal.deep_link }
       }
       return {
         message: typeof p.draft_text === 'string'
@@ -1186,6 +1176,7 @@ async function executeProposalSideEffect(proposal: SarahActionProposal, orgId: s
           : 'La relance est prête à être vérifiée.',
         deepLink: proposal.deep_link,
       }
+    }
 
     case 'draft_email':
     case 'email_broadcast': {

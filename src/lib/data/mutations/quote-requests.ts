@@ -142,10 +142,12 @@ export async function submitQuoteRequest(
     .select('id, slug, name, logo_url, public_form_notification_email')
     .eq('slug', orgSlug)
     .eq('public_form_enabled', true)
+    .is('deletion_scheduled_at', null)
+    .is('anonymized_at', null)
     .single()
 
   if (orgError || !org) {
-    return { error: "Organisation introuvable. Vérifiez le lien utilisé.", success: false }
+    return { error: "Le formulaire n’est plus disponible. Contactez directement l’entreprise.", success: false }
   }
 
   const requestHeaders = await headers()

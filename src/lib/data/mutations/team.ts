@@ -5,9 +5,11 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
 import { canManageLaborRates, hasPermission } from '@/lib/data/queries/membership'
+import { canAssignRoleToCurrentUser } from '@/lib/data/queries/roles'
 import { sendEmail } from '@/lib/email'
 import { buildInviteEmail } from '@/lib/email/templates'
 import { logAuditEvent } from '@/lib/audit-log'
+import { authUserExistsByEmail, buildInvitationCallbackUrl } from '@/lib/auth/invitation-link'
 
 /**
  * Change le rôle d'un membre de l'équipe.
@@ -20,29 +22,32 @@ export async function updateMemberRole(membershipId: string, newRoleId: string):
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
+  if (!(await hasPermission('team.edit_roles'))) return { error: 'Permission refusée.' }
 
-  // Vérifier que l'appelant est owner ou admin
-  if (!(await canManageLaborRates())) return { error: 'Action réservée aux administrateurs.' }
-
-  // Vérifier que le membership cible appartient bien à l'org
   const { data: target } = await supabase
     .from('memberships')
-    .select('id, roles ( slug )')
+    .select('id, user_id, roles ( slug )')
     .eq('id', membershipId)
     .eq('organization_id', orgId)
     .single()
 
   if (!target) return { error: 'Membre introuvable.' }
+  if (target.user_id === user.id) return { error: 'Vous ne pouvez pas modifier votre propre rôle.' }
 
-  // Interdire de modifier un owner
-  if ((target as any).roles?.slug === 'owner') {
+  const roles = target.roles as { slug: string } | { slug: string }[] | null
+  const targetRole = Array.isArray(roles) ? roles[0] : roles
+  if (targetRole?.slug === 'owner') {
     return { error: 'Le rôle du dirigeant ne peut pas être modifié.' }
+  }
+  if (!(await canAssignRoleToCurrentUser(orgId, newRoleId))) {
+    return { error: 'Rôle invalide ou droits insuffisants.' }
   }
 
   const { error } = await supabase
     .from('memberships')
     .update({ role_id: newRoleId })
     .eq('id', membershipId)
+    .eq('organization_id', orgId)
 
   if (error) {
     console.error('[updateMemberRole]', error.message)
@@ -55,7 +60,7 @@ export async function updateMemberRole(membershipId: string, newRoleId: string):
     action: 'audit.member.role_changed',
     entityType: 'membership',
     entityId: membershipId,
-    metadata: { previous_role_slug: (target as any).roles?.slug ?? null, new_role_id: newRoleId },
+    metadata: { previous_role_slug: targetRole?.slug ?? null, new_role_id: newRoleId },
   }).catch(() => {})
 
   revalidatePath('/settings')
@@ -71,28 +76,28 @@ export async function updateMemberRole(membershipId: string, newRoleId: string):
 export async function sendTeamInvite(email: string, roleId: string): Promise<{ error: string | null }> {
   if (!(await hasPermission('team.invite'))) return { error: 'Permission refusée.' }
 
+  const normalizedEmail = email.trim().toLowerCase()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) return { error: 'Adresse email invalide.' }
+
   const supabase = await createClient()
   const admin = createAdminClient()
-
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Non authentifié.' }
 
   const organizationId = await getCurrentOrganizationId()
   if (!organizationId) return { error: 'Organisation introuvable.' }
+  if (!(await canAssignRoleToCurrentUser(organizationId, roleId))) {
+    return { error: 'Rôle invalide ou droits insuffisants.' }
+  }
 
-  // Sécurité : le rôle attribué doit appartenir à l'organisation et ne jamais
-  // être le rôle owner (sinon un membre avec team.invite pourrait faire entrer
-  // quelqu'un directement en dirigeant/admin non prévu).
-  const { data: roleRow } = await supabase
-    .from('roles')
-    .select('id, slug')
-    .eq('id', roleId)
-    .eq('organization_id', organizationId)
-    .maybeSingle()
-  if (!roleRow) return { error: 'Rôle invalide.' }
-  if (roleRow.slug === 'owner') return { error: 'Le rôle dirigeant ne peut pas être attribué par invitation.' }
+  let userExists: boolean
+  try {
+    userExists = await authUserExistsByEmail(admin, normalizedEmail)
+  } catch (error) {
+    console.error('[sendTeamInvite] user lookup failed:', error)
+    return { error: "Impossible de vérifier le compte invité. Veuillez réessayer." }
+  }
 
-  // Récupérer les infos de l'invitant et de l'organisation
   const { data: profile } = await supabase
     .from('profiles')
     .select('full_name')
@@ -105,55 +110,52 @@ export async function sendTeamInvite(email: string, roleId: string): Promise<{ e
     .eq('id', organizationId)
     .single()
 
-  if (!org) {
-    return { error: 'Organisation introuvable.' }
-  }
+  if (!org) return { error: 'Organisation introuvable.' }
 
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-
-  // Insérer l'invitation en DB
-  const { error: insertError } = await supabase
+  const { data: invitation, error: insertError } = await supabase
     .from('invitations')
     .insert({
       organization_id: organizationId,
       invited_by: user.id,
-      email,
+      email: normalizedEmail,
       role_id: roleId,
+      password_setup_required: !userExists,
       expires_at: expiresAt,
     })
+    .select('id')
+    .single()
 
-  if (insertError) {
-    console.error('[sendTeamInvite] insert error:', insertError.message)
+  if (insertError || !invitation) {
+    console.error('[sendTeamInvite] insert error:', insertError?.message)
     return { error: "Impossible de créer l'invitation. Veuillez réessayer." }
   }
 
-  // Vérifier si l'utilisateur existe déjà dans Supabase Auth
-  const { data: existingUsers } = await admin.auth.admin.listUsers()
-  const userExists = existingUsers?.users?.some(u => u.email === email)
-
-  // Générer le lien selon que l'utilisateur existe ou non
+  const verificationType = userExists ? 'magiclink' : 'invite'
   const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
-    type: userExists ? 'magiclink' : 'invite',
-    email,
-    options: {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/invite/accept`,
-    },
+    type: verificationType,
+    email: normalizedEmail,
   })
 
-  if (linkError || !linkData?.properties?.action_link) {
+  if (linkError || !linkData?.properties?.hashed_token) {
     console.error('[sendTeamInvite] generateLink error:', linkError?.message)
-    await supabase
-      .from('invitations')
-      .delete()
-      .eq('email', email)
-      .eq('organization_id', organizationId)
-      .is('accepted_at', null)
+    await admin.from('invitations').delete().eq('id', invitation.id).eq('organization_id', organizationId)
     return { error: "Impossible de générer le lien d'invitation. Veuillez réessayer." }
   }
 
-  const inviteUrl = linkData.properties.action_link
+  let inviteUrl: string
+  try {
+    inviteUrl = buildInvitationCallbackUrl({
+      tokenHash: linkData.properties.hashed_token,
+      verificationType,
+      invitationId: invitation.id,
+    })
+  } catch (error) {
+    console.error('[sendTeamInvite] callback URL error:', error)
+    await admin.from('invitations').delete().eq('id', invitation.id).eq('organization_id', organizationId)
+    return { error: "Impossible de générer le lien d'invitation. Veuillez réessayer." }
+  }
 
-  // Envoyer l'email brandé via Resend
   const { subject, html } = buildInviteEmail({
     orgName: org.name,
     logoUrl: org.logo_url,
@@ -163,21 +165,15 @@ export async function sendTeamInvite(email: string, roleId: string): Promise<{ e
 
   const { error: sendError } = await sendEmail({
     organizationId,
-    to: email,
+    to: normalizedEmail,
     subject,
     html,
-    allowAtelierReplyTo: true, // invitation de compte : une réponse peut aller au support Atelier
+    allowAtelierReplyTo: true,
   })
 
   if (sendError) {
     console.error('[sendTeamInvite] sendEmail error:', sendError)
-    // Nettoyer l'invitation si l'envoi échoue
-    await supabase
-      .from('invitations')
-      .delete()
-      .eq('email', email)
-      .eq('organization_id', organizationId)
-      .is('accepted_at', null)
+    await admin.from('invitations').delete().eq('id', invitation.id).eq('organization_id', organizationId)
     return { error: sendError }
   }
 

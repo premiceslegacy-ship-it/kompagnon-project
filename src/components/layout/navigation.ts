@@ -55,7 +55,7 @@ const COMPANY_GROUPS: readonly (readonly (NavigationEntry & { readonly permissio
 ]
 
 const CREATIONS: readonly (NavigationEntry & { readonly permission: string })[] = [
-  { id: 'create-quote', label: 'Devis', description: 'Dicter ou décrire', href: '/finances/quote-editor?returnTo=%2Ffinances', icon: 'document', permission: 'quotes.create' },
+  { id: 'create-quote', label: 'Devis', href: '/finances/quote-editor?returnTo=%2Ffinances', icon: 'document', permission: 'quotes.create' },
   { id: 'create-invoice', label: 'Facture', description: 'Depuis un devis', href: '/finances/invoice-editor?returnTo=%2Ffinances', icon: 'invoice', permission: 'invoices.create' },
   { id: 'create-client', label: 'Client', description: 'Nom et téléphone', href: '/clients?new=1', icon: 'clients', permission: 'clients.create' },
   { id: 'create-chantier', label: 'Chantier', description: "À partir d'un devis", href: '/chantiers?new=1', icon: 'chantier', permission: 'chantiers.create' },

@@ -11,7 +11,7 @@ import type { InvoiceWithItems } from '@/lib/data/queries/invoices'
 import type { CatalogMaterial, CatalogLaborRate, PrestationType } from '@/lib/data/queries/catalog'
 import { type VatConfig } from '@/lib/utils'
 import { buildMaterialSelectionPricing } from '@/lib/catalog-pricing'
-import { createInvoice, saveInvoiceItems, sendInvoice, savePaymentSchedule } from '@/lib/data/mutations/invoices'
+import { createInvoice, saveInvoiceItems, updateInvoice, sendInvoice, savePaymentSchedule } from '@/lib/data/mutations/invoices'
 import { type SaveToCatalogResult } from '@/components/catalog/SaveToCatalogModal'
 import { fetchClientContractsForAttachment } from '@/lib/data/mutations/contracts'
 import { type AttachmentGroup } from '@/components/AttachmentPickerModal'
@@ -23,6 +23,7 @@ import { getCatalogDocumentVatRate } from '@/lib/catalog-ui'
 import { todayParis, dateParis } from '@/lib/utils'
 import { computeFuel, DEFAULT_CONSUMPTION_L_PER_100KM, DEFAULT_FUEL_PRICE_EUR_PER_L } from '@/lib/utils/fuel'
 import { LocalItem, getSafeReturnTo, inferDimensionMode, getItemDimensionMode, getModeUnit, getInternalCostTotal, parseEquipmentAmortization, buildEquipmentDescription, computeEquipmentCostPerUse, computeDimensionQuantity, INVOICE_SECTION_UNIT, isSectionItem, LinkableChantier, getTransportMeta, ScheduleAmountType, LocalScheduleItem, computeInvoiceTotals, scheduleAmount } from './invoiceEditorModel'
+import type { InvoiceDerivedTotals } from './invoiceEditorModel'
 
 export type InvoiceEditorProps = {
   clients: Client[]
@@ -33,6 +34,7 @@ export type InvoiceEditorProps = {
   prestationTypes: PrestationType[]
   catalogContext: ResolvedCatalogContext
   vatConfig: VatConfig
+  derivedTotals: InvoiceDerivedTotals | null
   linkableChantiers?: LinkableChantier[]
   defaultChantierId?: string | null
   returnTo?: string | null
@@ -47,6 +49,7 @@ export function useInvoiceEditor({
   prestationTypes,
   catalogContext,
   vatConfig,
+  derivedTotals,
   linkableChantiers = [],
   defaultChantierId = null,
   returnTo: rawReturnTo = null,
@@ -55,6 +58,7 @@ export function useInvoiceEditor({
   const router = useRouter()
   const [, startTransition] = useTransition()
   const defaultVatRate = getCatalogDocumentVatRate(vatConfig)
+  const amountsLocked = derivedTotals !== null
   const returnTo = getSafeReturnTo(rawReturnTo, '/finances?tab=invoices')
 
   const today = todayParis()
@@ -123,6 +127,9 @@ export function useInvoiceEditor({
           amount_type: s.amount_type ?? 'amount',
           percentage: s.percentage ?? null,
           paid_payment_id: s.paid_payment_id,
+          paid_amount: s.paid_amount ?? 0,
+          remaining_amount: s.remaining_amount ?? s.amount,
+          is_paid: s.is_paid ?? s.paid_payment_id !== null,
         }))
       : [],
   )
@@ -636,6 +643,13 @@ export function useInvoiceEditor({
     }))
   }
 
+  async function persistDraft(id: string) {
+    if (amountsLocked) {
+      return updateInvoice(id, { title: title || 'Facture', issue_date: issueDate, due_date: dueDate })
+    }
+    return saveInvoiceItems(id, getItemsPayload(), getMeta())
+  }
+
   async function ensureInvoiceId(): Promise<string | null> {
     if (invoiceId) return invoiceId
     const res = await createInvoice({ clientId: clientId || null, title: title || 'Facture', quoteId: importedQuoteId, chantierId: chantierId || null })
@@ -650,7 +664,7 @@ export function useInvoiceEditor({
     startTransition(async () => {
       const id = await ensureInvoiceId()
       if (!id) { setIsSaving(false); return }
-      const saveRes = await saveInvoiceItems(id, getItemsPayload(), getMeta())
+      const saveRes = await persistDraft(id)
       setIsSaving(false)
       if (saveRes.error) { setError(saveRes.error); return }
       router.push(`/api/pdf/invoice/${id}`)
@@ -663,7 +677,7 @@ export function useInvoiceEditor({
     startTransition(async () => {
       const id = await ensureInvoiceId()
       if (!id) { setIsSaving(false); return }
-      const saveRes = await saveInvoiceItems(id, getItemsPayload(), getMeta())
+      const saveRes = await persistDraft(id)
       setIsSaving(false)
       if (saveRes.error) { setError(saveRes.error); return }
     })
@@ -690,7 +704,7 @@ export function useInvoiceEditor({
     startTransition(async () => {
       const id = await ensureInvoiceId()
       if (!id) { setIsSending(false); return }
-      const saveRes = await saveInvoiceItems(id, getItemsPayload(), getMeta())
+      const saveRes = await persistDraft(id)
       if (saveRes.error) { setError(saveRes.error); setIsSending(false); return }
       // Ouvrir la modale d'envoi avec sélection optionnelle de contrats du client
       setPendingInvoiceId(id)
@@ -734,7 +748,9 @@ export function useInvoiceEditor({
   }
 
   // ── Totaux ───────────────────────────────────────────────────────────────────
-  const { clientItems, totalHt, totalTva, totalTtc, totalInternalHt, margeHt, margePct, hasInternal, vatByRate } = computeInvoiceTotals(items)
+  const { clientItems, totalHt, totalTva, totalTtc, totalInternalHt, margeHt, margePct, hasInternal, vatByRate } = computeInvoiceTotals(items, {
+    isVatSubject: vatConfig.isVatSubject !== false, isReverseCharge, derivedTotals,
+  })
   const scheduleTotalAmount = schedule.reduce((sum, s) => sum + scheduleLineAmount(s), 0)
   const scheduleRemaining = totalTtc - scheduleTotalAmount
 
@@ -749,6 +765,7 @@ export function useInvoiceEditor({
     prestationTypes,
     catalogContext,
     vatConfig,
+    amountsLocked,
     linkableChantiers,
     defaultChantierId,
     rawReturnTo,
