@@ -14,7 +14,7 @@
 // 60s s'avère insuffisant en usage réel (voir docs/perf-dashboard-cache-kv.md).
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getDashboardStats, getDashboardSetupReadiness, getPrevMonthKPIs, type DashboardStats, type DashboardSetupReadiness } from './dashboard'
+import { getBillingTrend, getDashboardStats, getDashboardSetupReadiness, getPrevMonthKPIs, type DashboardStats, type DashboardSetupReadiness, type MonthBilling } from './dashboard'
 
 const REVALIDATE_SECONDS = 60
 
@@ -29,6 +29,13 @@ const cachedGetPrevMonthKPIs = unstable_cache(
   async (orgId: string, month: string): Promise<Pick<DashboardStats, 'caMois' | 'encaisseMois'>> =>
     getPrevMonthKPIs(month, { client: createAdminClient(), orgId }),
   ['dashboard-prev-kpis-v1'],
+  { revalidate: REVALIDATE_SECONDS },
+)
+
+const cachedGetBillingTrend = unstable_cache(
+  async (orgId: string, month: string): Promise<MonthBilling[]> =>
+    getBillingTrend(month, 6, { client: createAdminClient(), orgId }),
+  ['dashboard-billing-trend-v1'],
   { revalidate: REVALIDATE_SECONDS },
 )
 
@@ -56,4 +63,8 @@ export function getPrevMonthKPIsCached(orgId: string, month: string): Promise<Pi
 
 export function getDashboardSetupReadinessCached(orgId: string): Promise<DashboardSetupReadiness | null> {
   return cachedGetDashboardSetupReadiness(orgId)
+}
+
+export function getBillingTrendCached(orgId: string, month: string): Promise<MonthBilling[]> {
+  return cachedGetBillingTrend(orgId, month)
 }

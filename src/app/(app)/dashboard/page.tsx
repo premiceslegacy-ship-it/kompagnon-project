@@ -1,14 +1,16 @@
 // @atelier-migrated
 import { getCurrentUserProfile } from '@/lib/data/queries/user';
 import type { DashboardStats } from '@/lib/data/queries/dashboard';
-import { getDashboardStatsCached, getPrevMonthKPIsCached, getDashboardSetupReadinessCached } from '@/lib/data/queries/dashboard-cached';
+import { getBillingTrendCached, getDashboardStatsCached, getPrevMonthKPIsCached, getDashboardSetupReadinessCached } from '@/lib/data/queries/dashboard-cached';
+import type { MonthBilling } from '@/lib/data/queries/dashboard';
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients';
 import { getChantierStats } from '@/lib/data/queries/chantiers';
 import { getOrganizationModules } from '@/lib/data/queries/organization-modules';
 import { getCurrentMembershipContext, getUserPermissions } from '@/lib/data/queries/membership';
 import { getCollaborateurDashboard, getTodayPlanningDigest } from '@/lib/data/queries/dashboard-collaborateur';
 import { getMemberGoalsWithProgress } from '@/lib/data/queries/member-goals';
-import { StatusPill } from '@/components/ui/StatusPill';
+import { Sparkline } from '@/components/ui/Sparkline';
+import { SplitBar } from '@/components/ui/SplitBar';
 import UrgentTasksClient from './UrgentTasksClient';
 import MonthNav from './MonthNav';
 import MaSemaineWidget from './MaSemaineWidget';
@@ -17,6 +19,7 @@ import PlanningDigestWidget from './PlanningDigestWidget';
 import SetupChecklist from './SetupChecklist';
 import TodayHeader from './TodayHeader';
 import styles from '@/components/layout/Screen.module.css';
+import figures from './DashboardFigures.module.css';
 
 const NB = '\u00a0'
 
@@ -42,49 +45,59 @@ function Delta({ current, prev }: { current: number; prev: number }) {
   )
 }
 
-function deltaPill(current: number, prev: number) {
-  if (prev === 0 || current === 0) return null
-  const pct = Math.round(((current - prev) / prev) * 100)
-  if (pct === 0) return null
-  return <StatusPill status={pct > 0 ? 'success' : 'danger'}>{pct > 0 ? '+' : '−'}{Math.abs(pct)}{NB}%</StatusPill>
-}
-
 function Figures({
-  stats, prevStats, chantiersEnCours, month,
+  stats, prevStats, chantiersEnCours, month, trend,
 }: {
   stats: DashboardStats
   prevStats: Pick<DashboardStats, 'caMois' | 'encaisseMois'>
   chantiersEnCours: number
   month: string
+  trend: MonthBilling[]
 }) {
+  const due = Math.max(0, stats.caMois - stats.encaisseMois)
+  const series = trend.map(t => t.caMois)
+  const showTrend = series.length >= 2 && series.some(v => v > 0)
   return (
     <>
       <MonthNav currentMonth={month} />
-      <section className={`${styles.card} ${styles.hero}`} aria-labelledby="today-cash">
-        <div className={styles.label}>
-          <span id="today-cash">Encaissé TTC</span>
-          {deltaPill(stats.encaisseMois, prevStats.encaisseMois)}
+      <section className={`${styles.card} ${styles.hero}`} aria-labelledby="today-billed">
+        <div className={styles.label}><span id="today-billed">Facturé TTC</span></div>
+        <div className={figures.heroRow}>
+          <div className={styles.big}>{fmt(stats.caMois)}</div>
+          {showTrend && (
+            <Sparkline
+              className={figures.trend}
+              values={series}
+              label={`Facturé sur les ${series.length} derniers mois, de ${fmt(series[0])} à ${fmt(series[series.length - 1])}`}
+            />
+          )}
         </div>
-        <div className={styles.big}>{fmt(stats.encaisseMois)}</div>
-        {stats.encaisseMois === 0 ? <div className={styles.sub}><Delta current={stats.encaisseMois} prev={prevStats.encaisseMois} /></div> : null}
+        <div className={styles.sub}>
+          {stats.caMois === 0 && prevStats.caMois === 0 ? 'Aucune facture sur ce mois' : <Delta current={stats.caMois} prev={prevStats.caMois} />}
+        </div>
+        {stats.caMois > 0 && (
+          <SplitBar
+            className={figures.split}
+            label="Encaissement des factures du mois"
+            segments={[
+              { key: 'paid', label: 'Encaissé', value: stats.encaisseMois, tone: 'success', display: fmt(stats.encaisseMois) },
+              { key: 'due', label: 'À encaisser', value: due, tone: 'accent', display: fmt(due) },
+            ]}
+          />
+        )}
       </section>
       <div className={styles.duo}>
-        <section className={styles.card} aria-labelledby="today-billed">
-          <div className={styles.label}><span id="today-billed">Facturé TTC</span></div>
-          <div className={styles.big}>{fmt(stats.caMois)}</div>
-          <div className={styles.sub}><Delta current={stats.caMois} prev={prevStats.caMois} /></div>
-        </section>
         <section className={styles.card} aria-labelledby="today-pending">
           <div className={styles.label}><span id="today-pending">Devis en attente</span></div>
           <div className={styles.big}>{stats.devisEnAttente}</div>
-          <div className={styles.sub}>{stats.devisEnAttente === 0 ? 'Aucun en attente de réponse' : 'En attente de réponse'}</div>
+          <div className={styles.sub}>{stats.devisEnAttente === 0 ? 'Aucun en attente' : 'En attente de réponse'}</div>
+        </section>
+        <section className={styles.card} aria-labelledby="today-sites">
+          <div className={styles.label}><span id="today-sites">Chantiers en cours</span></div>
+          <div className={styles.big}>{chantiersEnCours}</div>
+          <div className={styles.sub}>{chantiersEnCours === 0 ? 'Aucun chantier actif' : 'Sur le terrain'}</div>
         </section>
       </div>
-      <section className={styles.card} aria-labelledby="today-sites">
-        <div className={styles.label}><span id="today-sites">Chantiers en cours</span></div>
-        <div className={styles.big}>{chantiersEnCours}</div>
-        {chantiersEnCours === 0 ? <div className={styles.sub}>Aucun chantier actif</div> : null}
-      </section>
     </>
   )
 }
@@ -157,13 +170,14 @@ export default async function DashboardPage({
   // (client admin + TTL 60s sur le KV OpenNext déjà provisionné) : endpoint le
   // plus lourd du dashboard (confirmé par test de charge, p95 ~10s sans cache).
   const orgId = await getCurrentOrganizationId();
-  const [stats, prevStats, chantierStats, modules, todaySlots, setupReadiness] = await Promise.all([
+  const [stats, prevStats, chantierStats, modules, todaySlots, setupReadiness, billingTrend] = await Promise.all([
     orgId ? getDashboardStatsCached(orgId, selectedMonth) : Promise.resolve({ caMois: 0, encaisseMois: 0, devisEnAttente: 0, facturesEnRetard: 0, urgentItems: [] }),
     orgId ? getPrevMonthKPIsCached(orgId, previousMonth) : Promise.resolve({ caMois: 0, encaisseMois: 0 }),
     getChantierStats(),
     getOrganizationModules(),
     getTodayPlanningDigest(),
     roleSlug === 'owner' && orgId ? getDashboardSetupReadinessCached(orgId) : Promise.resolve(null),
+    canViewCA && orgId ? getBillingTrendCached(orgId, selectedMonth) : Promise.resolve([] as MonthBilling[]),
   ])
 
   const toFollow = stats.urgentItems.filter(item => !SENT_TYPES.has(item.type)).length
@@ -183,7 +197,7 @@ export default async function DashboardPage({
           <div className={styles.side}>
             <SetupChecklist readiness={setupReadiness} />
             {canViewCA ? (
-              <Figures stats={stats} prevStats={prevStats} chantiersEnCours={chantierStats.enCours} month={selectedMonth} />
+              <Figures stats={stats} prevStats={prevStats} chantiersEnCours={chantierStats.enCours} month={selectedMonth} trend={billingTrend} />
             ) : null}
             {modules.planning_ai ? <MaSemaineWidget /> : null}
           </div>

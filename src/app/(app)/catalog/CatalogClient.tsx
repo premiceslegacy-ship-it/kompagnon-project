@@ -105,8 +105,8 @@ export default function CatalogClient(props: CatalogProps) {
     <main className={screen.root}>
       <div className={screen.page}>
         <header className={screen.header}>
-          <div>
-            <p className={screen.kicker}>{ls.catalogSubtitle}</p>
+          <div className={local.headerText}>
+            <p className={`${screen.kicker} ${local.kickerOneLine}`}>{ls.catalogSubtitle}</p>
             <h1 className={screen.title}>{ls.catalogTitle}</h1>
           </div>
           <div className={styles.headerEnd}>

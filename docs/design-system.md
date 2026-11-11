@@ -82,12 +82,23 @@ Neuf rôles, un par intention : `appui` (0,1 s, échelle 0,97), `couleur` (0,32 
 | `Hud` | retour d’action avec « Annuler » ou « Réessayer » |
 | `StatusPill` | pastille d’état : wait, success, danger, neutral |
 | `StatTile` | chiffre clé |
+| `ProgressRing`, `Sparkline`, `SplitBar` | visuels de données : avancement en anneau, tendance en un trait, répartition d’un total en une barre (voir « Visuels de données ») |
 | `EmptyState`, `ErrorState`, `Skeleton`, `PageSkeleton` | états vide, erreur, chargement |
 | `Avatar` | initiales ou image |
 | `Dock` | barre de total et d’action fixe en bas d’un éditeur |
 | `SignaturePad` | signature manuscrite |
 | `AssistantField` | champ de demande à l’assistante |
 | `icons/AtelierIcons` | famille d’icônes maison (trait de 1,6 à 1,75) ; Lucide pour les icônes utilitaires |
+
+### Visuels de données
+
+Un chiffre reste le héros ; le visuel l'accompagne, jamais l'inverse. Trois pièces, toutes sur les jetons `--at-*`, sans dégradé ni ombre :
+
+- **`ProgressRing`** : un avancement de 0 à 100. Un seul chiffre au centre, tracé qui se pose en un mouvement (`--at-duree-deplacement`). Teintes `accent`, `success`, `danger`, `neutral`. Utilisé pour l'avancement d'un chantier (fiche : 92 px ; liste : 34 px à la place des initiales dès qu'il existe des tâches).
+- **`Sparkline`** : la tendance sur quelques points, sans axe ni légende ; le chiffre est à côté. Au moins deux valeurs, sinon rien n'est dessiné. Utilisé pour le facturé des six derniers mois (carte « Facturé » de l'accueil).
+- **`SplitBar`** : un total réparti en parts (2 à 4), avec légende. Les parts à zéro disparaissent. Utilisé pour encaissé et à encaisser (accueil), devis par étape et factures par état (Documents), bénéfice, main-d'œuvre et dépenses (Rapports, vue Mois).
+
+Règles : une teinte par sens (vert encaissé ou gardé, orange en attente, rouge en retard, bleu main-d'œuvre, gris neutre) ; trois visuels au plus par écran ; chaque visuel a un libellé lu à voix haute (`role="img"` et `aria-label`) ; l'animation d'apparition disparaît avec le mouvement réduit (les durées tombent à 0,01 s). Le graphique annuel de Rapports garde `recharts` : une barre pour le facturé, deux traits pour l'encaissé et l'année précédente.
 
 La page `/design` (développement seulement) montre chaque composant dans tous ses états. Elle sert de preuve pour les portes qualité.
 
