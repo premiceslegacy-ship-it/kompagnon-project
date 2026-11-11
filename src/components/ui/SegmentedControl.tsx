@@ -82,13 +82,25 @@ export function SegmentedControl({
       }
     }
 
+    // Quand les choix dépassent la largeur, un fondu au bord dit qu'on peut faire défiler.
+    const updateEdges = () => {
+      const max = scroller.scrollWidth - scroller.clientWidth
+      scroller.toggleAttribute('data-fade-start', max > 2 && scroller.scrollLeft > 2)
+      scroller.toggleAttribute('data-fade-end', max > 2 && scroller.scrollLeft < max - 2)
+    }
+
     measure(previousValueRef.current !== value)
     previousValueRef.current = value
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => measure(false, true))
+    updateEdges()
+    scroller.addEventListener('scroll', updateEdges, { passive: true })
+    if (typeof ResizeObserver === 'undefined') return () => scroller.removeEventListener('scroll', updateEdges)
+    const observer = new ResizeObserver(() => { measure(false, true); updateEdges() })
     observer.observe(scroller)
     choices.querySelectorAll<HTMLElement>(`.${styles.optionVisual}`).forEach((element) => observer.observe(element))
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      scroller.removeEventListener('scroll', updateEdges)
+    }
   }, [value, options, isDisabled])
 
   function moveSelection(event: KeyboardEvent<HTMLInputElement>) {

@@ -52,29 +52,6 @@
   gap: 16px;
 }
 
-.ring {
-  position: relative;
-  flex: none;
-  width: 92px;
-  height: 92px;
-}
-
-.ring svg {
-  display: block;
-  transform: rotate(-90deg);
-}
-
-.ringValue {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--at-encre);
-  font: 700 22px/1 var(--font-geist);
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-}
-
 .next {
   min-width: 0;
 }
@@ -437,4 +414,23 @@
 
 .meter[data-over='true'] > span {
   background: var(--at-baisse);
+}
+
+/* Sur téléphone, le titre prend toute la largeur ; les actions passent dessous, à droite. */
+.header {
+  flex-wrap: wrap;
+}
+
+.headerText {
+  min-width: 0;
+}
+
+@media (max-width: 560px) {
+  .headerText {
+    flex: 1 1 100%;
+  }
+
+  .header > :last-child {
+    margin-inline-start: auto;
+  }
 }

@@ -1,0 +1,90 @@
+/* @atelier-migrated */
+.root {
+  display: grid;
+  gap: var(--at-espace-12);
+  min-width: 0;
+}
+
+.bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 5px;
+}
+
+.segment,
+.legend li {
+  --split-tone: var(--at-accent);
+}
+
+.segment[data-tone='success'],
+.legend li[data-tone='success'] {
+  --split-tone: var(--at-hausse);
+}
+
+.segment[data-tone='danger'],
+.legend li[data-tone='danger'] {
+  --split-tone: var(--at-baisse);
+}
+
+.segment[data-tone='info'],
+.legend li[data-tone='info'] {
+  --split-tone: var(--at-s2);
+}
+
+.segment[data-tone='neutral'],
+.legend li[data-tone='neutral'] {
+  --split-tone: var(--at-encre-3);
+}
+
+.segment {
+  flex-basis: 0;
+  min-width: 6px;
+  background: var(--split-tone);
+  transform-origin: left center;
+  animation: split-in var(--at-duree-deplacement) var(--at-courbe-deplacement) both;
+}
+
+.empty {
+  flex: 1;
+  background: var(--at-remplissage);
+}
+
+@keyframes split-in {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--at-espace-4) var(--at-espace-16);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--at-encre-2);
+  font: 500 13px/18px var(--font-inter), sans-serif;
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.legend i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--split-tone);
+}
+
+.legend b {
+  color: var(--at-encre);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
