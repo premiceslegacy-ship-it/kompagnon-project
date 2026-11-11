@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { EMAIL_DRAFT_NO_INVENTION_RULE } from '@/lib/ai/email-draft-rules'
 import { createClient } from '@/lib/supabase/server'
 import { APP_NAME } from '@/lib/brand'
 import { AIModuleDisabledError, AIProviderCreditError, AIRateLimitError, callAI } from '@/lib/ai/callAI'
@@ -59,6 +60,7 @@ Règles de rédaction :
 - Jamais d'emojis.
 - Jamais de tiret cadratin (—).
 - Vouvoie le destinataire.
+${EMAIL_DRAFT_NO_INVENTION_RULE}
 - Ton professionnel et humain, adapté au secteur du bâtiment.
 - Commence TOUJOURS par "Bonjour [Prénom]," sur sa propre ligne, exactement ainsi, sans modifier ce texte. Il sera automatiquement remplacé par le vrai prénom, le contact référent ou le nom d'équipe de chaque destinataire à l'envoi.
 - Ne rédige PAS de formule de signature ni de bloc de coordonnées en fin de mail : la signature de l'organisation est ajoutée automatiquement après ton texte.
