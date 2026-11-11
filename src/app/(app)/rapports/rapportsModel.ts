@@ -57,11 +57,13 @@ export const pdfHref = (p: Period) => `/api/exports/rapport-pdf?vue=${p.vue}&per
 
 /* ── Évolutions ──────────────────────────────────────────────────────── */
 
-export type Delta = { kind: 'none' } | { kind: 'new' } | { kind: 'same' } | { kind: 'up' | 'down'; pct: number }
+export type Delta = { kind: 'none' } | { kind: 'new' } | { kind: 'empty' } | { kind: 'same' } | { kind: 'up' | 'down'; pct: number }
 
-export function delta(current: number, prev: number): Delta {
+/** `inProgress` : la période n'est pas terminée. Un zéro n'y est pas une chute, c'est « pas encore ». */
+export function delta(current: number, prev: number, inProgress = false): Delta {
   if (prev === 0 && current === 0) return { kind: 'none' }
   if (prev === 0) return { kind: 'new' }
+  if (current === 0 && inProgress) return { kind: 'empty' }
   const pct = Math.round(((current - prev) / prev) * 100)
   if (pct === 0) return { kind: 'same' }
   return { kind: pct > 0 ? 'up' : 'down', pct: Math.abs(pct) }
@@ -70,6 +72,7 @@ export function delta(current: number, prev: number): Delta {
 export function deltaText(d: Delta): string | null {
   if (d.kind === 'none') return null
   if (d.kind === 'new') return 'Nouveau'
+  if (d.kind === 'empty') return 'Pas encore de donnée sur cette période'
   if (d.kind === 'same') return 'Stable sur la période précédente'
   return `${d.kind === 'up' ? '+' : '-'}${d.pct} % sur la période précédente`
 }

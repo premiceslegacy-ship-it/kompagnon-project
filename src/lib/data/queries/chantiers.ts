@@ -48,6 +48,9 @@ export type Chantier = {
     company_name: string | null
     email: string | null
   } | null
+  /** Renseignés par la liste des chantiers (avancement en un coup d'œil). */
+  taches_count?: number
+  taches_done?: number
 }
 
 export type ChantierDetail = Chantier & {
@@ -203,7 +206,8 @@ export async function getChantiers(): Promise<Chantier[]> {
       recurrence, recurrence_times, recurrence_team_size,
       recurrence_duration_h, recurrence_notes,
       reception_status, reception_at, reception_notes,
-      client:clients(id, company_name, email)
+      client:clients(id, company_name, email),
+      taches:chantier_taches(status)
     `)
     .eq('organization_id', orgId)
     .eq('is_archived', false)
@@ -216,7 +220,14 @@ export async function getChantiers(): Promise<Chantier[]> {
     return []
   }
 
-  return (data ?? []) as unknown as Chantier[]
+  return ((data ?? []) as unknown as Array<Chantier & { taches: { status: TacheStatus }[] | null }>).map(row => {
+    const { taches, ...chantier } = row
+    return {
+      ...chantier,
+      taches_count: taches?.length ?? 0,
+      taches_done: taches?.filter(t => t.status === 'termine').length ?? 0,
+    }
+  })
 }
 
 export async function getChantierById(chantierId: string): Promise<ChantierDetail | null> {

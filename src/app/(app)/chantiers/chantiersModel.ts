@@ -119,3 +119,11 @@ export function applyQuoteToForm(form: NewChantierForm, quoteId: string, quotes:
     contactPhone: q.client_contact_phone || '',
   }
 }
+
+/** Avancement en pourcentage pour la liste : null tant qu'aucune tâche n'est posée (on garde alors les initiales). */
+export function chantierProgress(c: Pick<Chantier, 'status' | 'taches_count' | 'taches_done'>): number | null {
+  if (c.status === 'termine') return 100
+  const total = c.taches_count ?? 0
+  if (total <= 0) return null
+  return Math.round((Math.min(c.taches_done ?? 0, total) / total) * 100)
+}

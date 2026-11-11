@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  applyQuoteToForm, EMPTY_CHANTIER_FORM, filterChantiers, fmtHours, recurrenceLabel, statusPill, statusTransitions,
-} from '@/app/(app)/chantiers/chantiersModel'
+import { applyQuoteToForm, EMPTY_CHANTIER_FORM, filterChantiers, fmtHours, recurrenceLabel, statusPill, statusTransitions, chantierProgress } from '@/app/(app)/chantiers/chantiersModel'
 import { buildDateFromParts, splitDateParts, visibleSegments } from '@/app/(app)/chantiers/[chantierId]/chantierModel'
 import type { Chantier } from '@/lib/data/queries/chantiers'
 
@@ -68,5 +66,24 @@ describe('fiche chantier', () => {
     expect(buildDateFromParts('2026', '2', '31')).toBe('2026-02-28')
     expect(buildDateFromParts('2028', '2', '31')).toBe('2028-02-29')
     expect(splitDateParts('2026-11-05')).toEqual({ day: '5', month: '11', year: '2026' })
+  })
+})
+
+describe('chantierProgress', () => {
+  it('compte les tâches terminées sur le total', () => {
+    expect(chantierProgress({ status: 'en_cours', taches_count: 5, taches_done: 2 })).toBe(40)
+  })
+
+  it('garde les initiales tant qu’aucune tâche n’existe', () => {
+    expect(chantierProgress({ status: 'planifie', taches_count: 0, taches_done: 0 })).toBeNull()
+    expect(chantierProgress({ status: 'planifie' })).toBeNull()
+  })
+
+  it('affiche 100 % pour un chantier terminé, même sans tâche', () => {
+    expect(chantierProgress({ status: 'termine', taches_count: 0, taches_done: 0 })).toBe(100)
+  })
+
+  it('ne dépasse jamais 100 %', () => {
+    expect(chantierProgress({ status: 'en_cours', taches_count: 2, taches_done: 5 })).toBe(100)
   })
 })

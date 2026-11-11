@@ -33,6 +33,18 @@
   display: none;
 }
 
+.scroller[data-fade-end] {
+  mask-image: linear-gradient(to right, CanvasText calc(100% - 28px), transparent);
+}
+
+.scroller[data-fade-start] {
+  mask-image: linear-gradient(to right, transparent, CanvasText 28px);
+}
+
+.scroller[data-fade-start][data-fade-end] {
+  mask-image: linear-gradient(to right, transparent, CanvasText 28px, CanvasText calc(100% - 28px), transparent);
+}
+
 .choices {
   position: relative;
   display: flex;

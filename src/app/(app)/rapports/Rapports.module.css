@@ -95,6 +95,16 @@
   background: var(--swatch);
 }
 
+.legend li[data-kind='line'] i,
+.legend li[data-kind='dash'] i {
+  height: 3px;
+  border-radius: 2px;
+}
+
+.legend li[data-kind='dash'] i {
+  background: repeating-linear-gradient(90deg, var(--swatch) 0 4px, transparent 4px 7px);
+}
+
 .tooltip {
   min-width: 180px;
   padding: 10px 12px;

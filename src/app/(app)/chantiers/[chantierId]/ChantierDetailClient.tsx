@@ -7,6 +7,7 @@ import { AddressLink } from '@/components/shared/AddressLink'
 import ChantierAIAssistant from '@/components/ai/ChantierAIAssistant'
 import ClientEmailRequiredModal from '@/components/ClientEmailRequiredModal'
 import { AlertDialog } from '@/components/ui/AlertDialog'
+import { ProgressRing } from '@/components/ui/ProgressRing'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { ListGroup, ListRow } from '@/components/ui/ListGroup'
@@ -29,22 +30,6 @@ import styles from '../../finances/quote-editor/QuoteEditor.module.css'
 import fiche from './ChantierFiche.module.css'
 
 const NB = ' '
-
-function Ring({ percent }: { percent: number }) {
-  const size = 92
-  const stroke = 9
-  const r = (size - stroke) / 2
-  const c = 2 * Math.PI * r
-  return (
-    <div className={fiche.ring} role="img" aria-label={`Avancement : ${percent}${NB}%`}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--at-remplissage)" strokeWidth={stroke} />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--at-accent)" strokeWidth={stroke} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - percent / 100)} />
-      </svg>
-      <span className={fiche.ringValue}>{percent}{NB}%</span>
-    </div>
-  )
-}
 
 type Overlay = 'details' | 'contact' | 'bill' | 'report' | null
 
@@ -85,8 +70,8 @@ export default function ChantierDetailClient(props: ChantierDetailProps) {
           Chantiers
         </button>
 
-        <header className={screen.header}>
-          <div>
+        <header className={`${screen.header} ${fiche.header}`}>
+          <div className={fiche.headerText}>
             <p className={screen.kicker}>{[clientName, c.city].filter(Boolean).join(' · ') || 'Chantier'}</p>
             <h1 className={screen.title}>{c.title}</h1>
           </div>
@@ -107,7 +92,7 @@ export default function ChantierDetailClient(props: ChantierDetailProps) {
           <div className={fiche.left}>
             <section className={fiche.hero} aria-label="Avancement">
               <div className={fiche.heroTop}>
-                <Ring percent={q.donePct} />
+                <ProgressRing value={q.donePct} size={92} stroke={9} label={`Avancement : ${q.donePct}${NB}%`}>{q.donePct}{NB}%</ProgressRing>
                 <div className={fiche.next}>
                   <p className={fiche.nextLabel}>
                     {nextTask ? 'Prochaine étape' : q.taches.length ? 'Travaux terminés' : 'Aucune tâche'}

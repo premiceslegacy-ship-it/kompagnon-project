@@ -1,0 +1,22 @@
+/* @atelier-migrated */
+/* Carte « Facturé » : le chiffre, sa tendance sur six mois, et ce qui est déjà rentré. */
+.heroRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--at-espace-8) var(--at-espace-12);
+  margin-top: 14px;
+}
+
+.heroRow > :first-child {
+  margin-top: 0;
+}
+
+.trend {
+  margin-bottom: 4px;
+}
+
+.split {
+  margin-top: var(--at-espace-20);
+}
