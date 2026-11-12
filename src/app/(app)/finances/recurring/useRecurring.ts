@@ -16,6 +16,7 @@ import { createClientInline } from '@/lib/data/mutations/clients'
 
 import { type VatConfig, dateParis } from '@/lib/utils'
 import { getCatalogDocumentVatRate } from '@/lib/catalog-ui'
+import { calculateMonetaryTotals } from '@/lib/utils/money'
 import { FormItem, FromInvoice } from './recurringModel'
 
 export type RecurringProps = {
@@ -334,17 +335,23 @@ export function useRecurring({
 
   function handleSkip(scheduleId: string) {
     setLoadingId(`skip-${scheduleId}`)
+    setPageError(null)
     startTransition(async () => {
-      await skipSchedule(scheduleId)
-      setSchedules(prev => prev.filter(s => s.id !== scheduleId))
+      const result = await skipSchedule(scheduleId)
       setLoadingId(null)
+      if (result.error) { setPageError(result.error); return }
+      setSchedules(prev => prev.filter(s => s.id !== scheduleId))
     })
   }
 
   // ── Totaux ──────────────────────────────────────────────────────────────────
   const clientItems = formItems.filter(i => !i.is_internal)
   const internalItems = formItems.filter(i => i.is_internal)
-  const totalHt = clientItems.reduce((acc, i) => acc + Number(i.qty) * Number(i.pu), 0)
+  const totalHt = calculateMonetaryTotals(clientItems.map(i => ({
+    quantity: i.qty,
+    unit_price: i.pu,
+    vat_rate: i.vat,
+  }))).totalHt
   const totalInternalHt = internalItems.reduce((acc, i) => acc + Number(i.qty) * Number(i.pu), 0)
   const margeHt = totalHt - totalInternalHt
   const margePct = totalHt > 0 ? (margeHt / totalHt) * 100 : 0

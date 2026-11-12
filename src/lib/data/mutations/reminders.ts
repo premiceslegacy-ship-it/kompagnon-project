@@ -16,6 +16,8 @@ import { getClientGreetingName } from '@/lib/client'
 import { InvoiceIssuanceAuthorityError, renderInvoicePdfBufferById } from '@/lib/pdf/server'
 import type { InvoicePdfResult } from '@/lib/pdf/server'
 
+import { dispatchDocumentReminder } from '@/lib/email/document-reminder'
+import { requirePermission } from '@/lib/data/queries/membership'
 type Result = { error: string | null }
 
 // ─── Interpolation helper ──────────────────────────────────────────────────────
@@ -35,6 +37,8 @@ export async function sendInvoiceReminder(
   invoiceId: string,
   aiDraft?: { subject: string; body: string },
 ): Promise<Result> {
+  const denied = await requirePermission('reminders.send_manual')
+  if (denied) return { error: denied }
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -109,27 +113,21 @@ export async function sendInvoiceReminder(
   }
 
 
-  // Une relance non partie ne doit pas être journalisée comme envoyée.
-  const mail = await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
-    .catch((err): { error: string | null } => {
-      console.error('[sendInvoiceReminder] email error:', err)
-      return { error: "Impossible d'envoyer l'email." }
-    })
-  if (mail.error) return { error: mail.error }
-
-  // Logger la relance dans la table reminders
-  await supabase.from('reminders').insert({
-    organization_id: orgId,
-    invoice_id: invoiceId,
-    client_id: invoice.client_id ?? null,
-    type: 'payment_reminder',
-    rank,
-    sent_at: new Date().toISOString(),
-    sent_by: user.id,
-    is_auto: false,
-    email_subject: subject,
-    email_body: bodyText,
+  const dispatched = await dispatchDocumentReminder({
+    organizationId: orgId,
+    invoiceId,
+    deliver: () => sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments }),
+    reminder: {
+      client_id: invoice.client_id ?? null,
+      type: 'payment_reminder',
+      rank,
+      sent_by: user.id,
+      is_auto: false,
+      email_subject: subject,
+      email_body: bodyText,
+    },
   })
+  if (dispatched.error) return { error: dispatched.error }
 
   revalidatePath('/dashboard')
   return { error: null }
@@ -141,6 +139,8 @@ export async function sendQuoteFollowup(
   quoteId: string,
   aiDraft?: { subject: string; body: string },
 ): Promise<Result> {
+  const denied = await requirePermission('reminders.send_manual')
+  if (denied) return { error: denied }
   const supabase = await createClient()
   const orgId = await getCurrentOrganizationId()
   if (!orgId) return { error: 'Non authentifié.' }
@@ -237,29 +237,23 @@ export async function sendQuoteFollowup(
     }
   }
 
-  if (clientEmail) {
-    const mail = await sendEmail({ organizationId: orgId, to: clientEmail, subject, html, attachments })
-      .catch((err): { error: string | null } => {
-        console.error('[sendQuoteFollowup] email error:', err)
-        return { error: "Impossible d'envoyer l'email." }
-      })
-    // Une relance non partie ne doit pas être journalisée comme envoyée.
-    if (mail.error) return { error: mail.error }
-  }
-
-  // Logger
-  await supabase.from('reminders').insert({
-    organization_id: orgId,
-    quote_id: quoteId,
-    client_id: quote.client_id ?? null,
-    type: 'quote_followup',
-    rank: 1,
-    sent_at: new Date().toISOString(),
-    sent_by: user.id,
-    is_auto: false,
-    email_subject: subject,
-    email_body: bodyText,
+  if (!clientEmail) return { error: 'Adresse email du client absente.' }
+  const recipient = clientEmail
+  const dispatched = await dispatchDocumentReminder({
+    organizationId: orgId,
+    quoteId,
+    deliver: () => sendEmail({ organizationId: orgId, to: recipient, subject, html, attachments }),
+    reminder: {
+      client_id: quote.client_id ?? null,
+      type: 'quote_followup',
+      rank: 1,
+      sent_by: user.id,
+      is_auto: false,
+      email_subject: subject,
+      email_body: bodyText,
+    },
   })
+  if (dispatched.error) return { error: dispatched.error }
 
   revalidatePath('/dashboard')
   return { error: null }

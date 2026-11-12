@@ -575,23 +575,45 @@ describe('cycle de vie facture — permission de paiement', () => {
     expect(after).toEqual(before)
   })
 
-  it("autorise l'owner à marquer payé", async () => {
+  it("refuse à l'owner d'écrire un paiement directement sur la facture", async () => {
     const paidAt = new Date().toISOString()
     const { error } = await tenantA.client
       .from('invoices')
       .update({ status: 'paid', total_paid: 1200, paid_at: paidAt })
       .eq('id', dataA.invoiceId)
       .select()
-    expect(error).toBeNull()
+    expect(error?.code).toBe('42501')
 
     const { data: after, error: afterError } = await adminClient()
+      .from('invoices')
+      .select('status, total_paid')
+      .eq('id', dataA.invoiceId)
+      .single()
+    if (afterError || !after) throw afterError ?? new Error('Invoice fixture missing after refused update')
+    expect(after.status).not.toBe('paid')
+  })
+
+  it("autorise l'owner à marquer payé par la fonction verrouillée", async () => {
+    const admin = adminClient()
+    const { data: before, error: beforeError } = await admin
+      .from('invoices')
+      .select('total_ttc')
+      .eq('id', dataA.invoiceId)
+      .single()
+    if (beforeError || !before) throw beforeError ?? new Error('Issued invoice fixture missing')
+
+    const { error } = await tenantA.client.rpc('mark_invoice_paid', { p_invoice_id: dataA.invoiceId })
+    expect(error).toBeNull()
+
+    const { data: after, error: afterError } = await admin
       .from('invoices')
       .select('status, total_paid, paid_at')
       .eq('id', dataA.invoiceId)
       .single()
-    if (afterError || !after) throw afterError ?? new Error('Paid invoice fixture missing after update')
-    expect(after).toMatchObject({ status: 'paid', total_paid: 1200 })
-    expect(Date.parse(after.paid_at)).toBe(Date.parse(paidAt))
+    if (afterError || !after) throw afterError ?? new Error('Paid invoice fixture missing after RPC')
+    expect(after.status).toBe('paid')
+    expect(Number(after.total_paid)).toBe(Number(before.total_ttc))
+    expect(after.paid_at).not.toBeNull()
   })
 
   it('refuse la modification du xml e-facturation sans einvoicing.configure', async () => {

@@ -12,6 +12,7 @@ import {
 import { DECENNALE_LABEL, decennaleText, legalFooterLines, organizationPartyLines } from '../engine/legal'
 import { COLOR, CONTENT_WIDTH, PAGE } from '../engine/theme'
 
+import { calculateMonetaryTotals, roundMoney } from '@/lib/utils/money'
 const INVOICE_SECTION_UNIT = '__section__'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -52,6 +53,7 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
   const invoiceType = invoice.invoice_type ?? 'standard'
   const isSituation = invoiceType === 'situation' || invoiceType === 'solde'
   const invoiceTypeLabel =
+    invoiceType === 'avoir'     ? 'Avoir' :
     invoiceType === 'acompte'   ? "Facture d'acompte" :
     invoiceType === 'solde'     ? 'Facture de solde'  :
     invoiceType === 'situation' ? `Situation de travaux n° ${invoice.situation_number ?? ''}`.trim() :
@@ -61,18 +63,20 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
   const billableItems = items.filter(i => i.unit !== INVOICE_SECTION_UNIT)
   const currency = invoice.currency ?? 'EUR'
 
-  const calculatedTotalHt = billableItems.reduce((s, i) => s + (i.quantity ?? 0) * i.unit_price, 0)
+  const calculatedTotals = calculateMonetaryTotals(billableItems, {
+    isVatSubject,
+    isReverseCharge,
+  })
+  const calculatedTotalHt = calculatedTotals.totalHt
+  const calculatedTotalTva = calculatedTotals.totalTva
   const totalHt = data.useStoredTotals ? invoice.total_ht ?? calculatedTotalHt : calculatedTotalHt
-  const vatMap: Record<number, number> = {}
-  if (isVatSubject) {
-    for (const item of billableItems) {
-      const vatRate = item.vat_rate ?? 0
-      const v = (item.quantity ?? 0) * item.unit_price * (vatRate / 100)
-      vatMap[vatRate] = (vatMap[vatRate] ?? 0) + v
-    }
-  }
-  const calculatedTotalTva = Object.values(vatMap).reduce((s, v) => s + v, 0)
-  const calculatedTotalTtc = (isVatSubject && !isReverseCharge) ? calculatedTotalHt + calculatedTotalTva : calculatedTotalHt
+  const vatMap = data.useStoredTotals && invoice.vat_breakdown
+    ? Object.fromEntries(invoice.vat_breakdown.map(bucket => [String(bucket.rate), bucket.tax_amount]))
+    : calculatedTotals.vatByRate
+  const totalTva = data.useStoredTotals && invoice.vat_breakdown
+    ? invoice.vat_breakdown.reduce((sum, bucket) => sum + bucket.tax_amount, 0)
+    : calculatedTotalTva
+  const calculatedTotalTtc = roundMoney(calculatedTotalHt + calculatedTotalTva)
   const totalTtc = data.useStoredTotals ? invoice.total_ttc ?? calculatedTotalTtc : calculatedTotalTtc
 
   const logoImg = organization.logo_url ? await embedImage(doc.doc, organization.logo_url) : null
@@ -85,6 +89,10 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
   // ── Repères, parties ──
   const meta: { label: string; value: string }[] = [
     ...(invoice.issue_date ? [{ label: 'Date', value: fmtLongDate(invoice.issue_date) }] : []),
+    ...(invoice.preceding_invoice_ref ? [{
+      label: 'Facture corrigée',
+      value: `N° ${invoice.preceding_invoice_ref}${invoice.preceding_invoice_date ? ` · ${fmtDate(invoice.preceding_invoice_date)}` : ''}`,
+    }] : []),
     ...(invoice.due_date ? [{ label: 'À régler avant le', value: fmtLongDate(invoice.due_date) }] : []),
     ...(invoice.title ? [{ label: 'Objet', value: invoice.title }] : invoice.quote_number ? [{ label: 'Devis', value: invoice.quote_number }] : []),
   ]
@@ -153,7 +161,7 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
       { value: fmt(item.unit_price, currency) },
     ]
     if (withVat) cells.push({ value: item.vat_rate == null ? '' : `${item.vat_rate} %` })
-    cells.push({ value: fmt((item.quantity ?? 0) * item.unit_price, currency), bold: true })
+    cells.push({ value: fmt(roundMoney((item.quantity ?? 0) * item.unit_price), currency), bold: true })
     return { cells }
   }
 
@@ -161,7 +169,7 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
   items.forEach((item, index) => {
     if (item.unit === INVOICE_SECTION_UNIT) {
       let sum = 0
-      for (let i = index + 1; i < items.length && items[i].unit !== INVOICE_SECTION_UNIT; i++) sum += (items[i].quantity ?? 0) * items[i].unit_price
+      for (let i = index + 1; i < items.length && items[i].unit !== INVOICE_SECTION_UNIT; i++) sum = roundMoney(sum + roundMoney((items[i].quantity ?? 0) * items[i].unit_price))
       rows.push({ kind: 'section', title: pdfText(item.description), amount: fmt(sum, currency) })
     } else {
       rows.push(itemToRow(item))
@@ -194,6 +202,14 @@ export async function renderInvoicePdfWithFonts(data: InvoicePdfData, fontBytes:
   }
   drawTotals(doc, totalLines, grand)
   if (!isVatSubject) drawNote(doc, null, 'TVA non applicable, art. 293B du CGI', 6)
+  if (invoiceType === 'solde' && data.useStoredTotals && (invoice.applied_acompte_ht ?? 0) > 0) {
+    drawNote(
+      doc,
+      null,
+      `Acomptes déjà imputés dans ce solde (HT) : ${fmt(invoice.applied_acompte_ht ?? 0, currency)}. Aucun nouvel acompte n’est à déduire.`,
+      6,
+    )
+  }
 
   // ── Règlement et statut ──
   const gapCols = 12

@@ -417,6 +417,10 @@ BEGIN
     'construction', now() - INTERVAL '1 minute'
   );
   ALTER TABLE public.quote_requests DISABLE TRIGGER trg_guard_quote_request_attachment_ownership;
+  -- Depuis la migration 219, une organisation dont l'effacement est programmé
+  -- refuse toute nouvelle demande. Le test a besoin d'une demande antérieure :
+  -- on désactive cette garde le temps de poser la donnée.
+  ALTER TABLE public.quote_requests DISABLE TRIGGER trg_block_quote_request_for_anonymized_organization;
   INSERT INTO public.quote_requests (
     id, organization_id, name, email, description, attachments, attachment_url
   ) VALUES (
@@ -425,6 +429,7 @@ BEGIN
     jsonb_build_array(jsonb_build_object('storage_path', v_missing_source, 'filename', 'private-request.pdf')),
     NULL
   );
+  ALTER TABLE public.quote_requests ENABLE TRIGGER trg_block_quote_request_for_anonymized_organization;
   ALTER TABLE public.quote_requests ENABLE TRIGGER trg_guard_quote_request_attachment_ownership;
 
   v_rejected := false;

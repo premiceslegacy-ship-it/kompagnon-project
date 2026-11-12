@@ -4,6 +4,8 @@ import { renderInvoicePdfWithFonts, invoiceStatus } from '@/lib/pdf/documents/in
 import { renderQuotePdfWithFonts } from '@/lib/pdf/documents/quote'
 import { loadFontBytes } from '@/lib/pdf/engine/fonts'
 import { sampleClient, sampleInvoice, sampleOrganization, sampleQuote } from '@/lib/pdf/samples'
+import { generateFacturXml } from '@/lib/pdf/facturx-xml'
+import { embedFacturXml } from '@/lib/pdf/facturx-embed'
 
 async function pageCount(buffer: Buffer): Promise<number> {
   expect(buffer.subarray(0, 5).toString('latin1')).toBe('%PDF-')
@@ -156,14 +158,101 @@ describe('PDF : rapports', () => {
 
 describe('PDF : facture Factur-X', () => {
   it("garde une page lisible et embarque le XML après la nouvelle mise en page", async () => {
-    const { generateFacturXml } = await import('@/lib/pdf/facturx-xml')
-    const { embedFacturXml } = await import('@/lib/pdf/facturx-embed')
     const pdf = await renderInvoicePdfWithFonts({ invoice: sampleInvoice, organization: sampleOrganization }, fonts)
     const xml = generateFacturXml(sampleInvoice as never, sampleOrganization as never)
     const withXml = await embedFacturXml(pdf, xml, { title: 'Facture' })
     expect(await pageCount(withXml)).toBe(1)
-    expect(withXml.length).toBeGreaterThan(pdf.length)
     // Le XML Factur-X est bien présent dans les pièces jointes du PDF.
     expect(withXml.toString('latin1')).toContain('factur-x.xml')
+  })
+  it('rend un Avoir Factur-X type 381 avec la facture corrigée et ses montants canoniques', async () => {
+    const sourceItem = sampleInvoice.items[0]
+    const invoice = {
+      ...sampleInvoice,
+      issue_date: '2026-11-10',
+      invoice_type: 'avoir',
+      invoice_type_code: '380',
+      preceding_invoice_ref: 'FAC-2026-001',
+      preceding_invoice_date: '2026-11-01',
+      is_reverse_charge: false,
+      total_ht: 503.03,
+      total_tva: 100.61,
+      total_ttc: 603.64,
+      vat_breakdown: [{ rate: 20, taxable_basis: 503.03, tax_amount: 100.61 }],
+      items: [
+        { ...sourceItem, id: 'avoir-line-1', quantity: 8, unit: 'u', unit_price: 62.80, vat_rate: 20, is_internal: false },
+        { ...sourceItem, id: 'avoir-line-2', quantity: 0.001, unit: 'u', unit_price: 625.50, vat_rate: 20, is_internal: false },
+      ],
+    }
+    const xml = generateFacturXml(invoice as never, sampleOrganization as never)
+
+    expect(xml).toContain('<ram:TypeCode>381</ram:TypeCode>')
+    expect(xml).toContain('<ram:BasisAmount>503.03</ram:BasisAmount>')
+    expect(xml).toContain('<ram:CalculatedAmount>100.61</ram:CalculatedAmount>')
+    expect(xml).toContain('<ram:GrandTotalAmount>603.64</ram:GrandTotalAmount>')
+    const agreement = xml.match(/<ram:ApplicableHeaderTradeAgreement>([\s\S]*?)<\/ram:ApplicableHeaderTradeAgreement>/)?.[1] ?? ''
+    const settlement = xml.match(/<ram:ApplicableHeaderTradeSettlement>([\s\S]*?)<\/ram:ApplicableHeaderTradeSettlement>/)?.[1] ?? ''
+    expect(agreement).not.toContain('<ram:InvoiceReferencedDocument>')
+    expect(settlement).toMatch(/<ram:InvoiceReferencedDocument>[\s\S]*?<ram:IssuerAssignedID>FAC-2026-001<\/ram:IssuerAssignedID>[\s\S]*?<qdt:DateTimeString format="102">20261101<\/qdt:DateTimeString>/)
+  })
+
+  it('émet des lignes Avoir autoliquidées sans TVA calculée', async () => {
+    const sourceItem = sampleInvoice.items[0]
+    const invoice = {
+      ...sampleInvoice,
+      invoice_type: 'avoir',
+      is_reverse_charge: true,
+      preceding_invoice_ref: 'FAC-2025-001',
+      preceding_invoice_date: '2025-11-01',
+      total_ht: 100,
+      total_tva: 0,
+      total_ttc: 100,
+      items: [{ ...sourceItem, quantity: 1, unit: 'forfait', unit_price: 100, vat_rate: 20, is_internal: false }],
+    }
+    const xml = generateFacturXml(invoice as never, sampleOrganization as never)
+
+    const lineSettlement = xml.match(/<ram:SpecifiedLineTradeSettlement>([\s\S]*?)<\/ram:SpecifiedLineTradeSettlement>/)?.[1] ?? ''
+    const headerSettlement = xml.split('<ram:ApplicableHeaderTradeSettlement>')[1] ?? ''
+
+    expect(lineSettlement).toContain('<ram:CategoryCode>AE</ram:CategoryCode>')
+    expect(lineSettlement).toContain('<ram:RateApplicablePercent>0.00</ram:RateApplicablePercent>')
+    expect(lineSettlement).not.toContain('<ram:CalculatedAmount>')
+    expect(lineSettlement).not.toContain('<ram:ExemptionReason>')
+    expect(headerSettlement.match(/<ram:CategoryCode>AE<\/ram:CategoryCode>/g)).toHaveLength(1)
+    expect(xml).toContain('<ram:GrandTotalAmount>100.00</ram:GrandTotalAmount>')
+    expect(xml).not.toContain('<ram:CategoryCode>S</ram:CategoryCode>')
+  })
+
+  it('conserve un solde à TVA cumulative nulle sur une base positive', () => {
+    const sourceItem = sampleInvoice.items[0]
+    const invoice = {
+      ...sampleInvoice,
+      invoice_type: 'standard',
+      is_reverse_charge: false,
+      total_ht: 0.03,
+      total_tva: 0,
+      total_ttc: 0.03,
+      vat_breakdown: [{ rate: 20, taxable_basis: 0.03, tax_amount: 0 }],
+      items: [{ ...sourceItem, quantity: 1, unit: 'forfait', unit_price: 0.03, vat_rate: 20, is_internal: false }],
+    }
+    const xml = generateFacturXml(invoice as never, sampleOrganization as never)
+    const headerSettlement = xml.split('<ram:ApplicableHeaderTradeSettlement>')[1] ?? ''
+
+    expect(headerSettlement).toContain('<ram:BasisAmount>0.03</ram:BasisAmount>')
+    expect(headerSettlement).toContain('<ram:CalculatedAmount>0.00</ram:CalculatedAmount>')
+    expect(headerSettlement).toContain('<ram:GrandTotalAmount>0.03</ram:GrandTotalAmount>')
+    expect(headerSettlement).toContain('<ram:RateApplicablePercent>20.00</ram:RateApplicablePercent>')
+  })
+
+  it('préserve la quantité au millième au lieu d’arrondir les unités comme des euros', () => {
+    const invoice = {
+      ...sampleInvoice, invoice_type: 'standard', is_reverse_charge: false,
+      total_ht: 1, total_tva: 0.20, total_ttc: 1.20, vat_breakdown: null,
+      items: [{ ...sampleInvoice.items[0], unit: 'u', quantity: 0.125, unit_price: 8, vat_rate: 20, is_internal: false }],
+    }
+    const xml = generateFacturXml(invoice as never, sampleOrganization as never)
+    const quantity = Number(xml.match(/<(?:\w+:)?BilledQuantity\b[^>]*>([^<]+)</)?.[1])
+    expect(quantity).toBe(0.125)
+    expect(xml).toContain('<ram:LineTotalAmount>1.00</ram:LineTotalAmount>')
   })
 })

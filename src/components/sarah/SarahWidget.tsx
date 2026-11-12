@@ -18,6 +18,7 @@ import { StatusPill } from '@/components/ui/StatusPill'
 import { SarahLegacyChrome } from './SarahLegacyChrome'
 import { SarahSheet } from './SarahSheet'
 import styles from './SarahWidget.module.css'
+import { getSarahErrorContent, type SarahErrorCode } from './errorCopy'
 const UPGRADE_URL = process.env.NEXT_PUBLIC_STRIPE_UPGRADE_URL ?? 'https://orsayn.fr/tarifs'
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -37,6 +38,7 @@ type ActionProposal = {
   description: string
   risk: 'low' | 'medium' | 'high'
   confirmed?: boolean
+  executionStatus?: 'executing' | 'failed' | 'uncertain'
   autoExecuted?: boolean
   deepLink?: string | null
   payload?: Record<string, unknown>
@@ -51,15 +53,6 @@ type Message = {
   errorCode?: SarahErrorCode
 }
 
-type SarahErrorCode =
-  | 'module_disabled'
-  | 'quota_exceeded'
-  | 'openrouter_credits'
-  | 'rate_limit'
-  | 'server_error'
-  | 'unauthenticated'
-  | 'permission_denied'
-  | 'network'
 
 type PageContext = {
   label: string
@@ -244,41 +237,16 @@ function buildGreeting(ctx: PageContext, userName: string | null, alertCount: nu
 
 // ─── Exécution réelle des actions ─────────────────────────────────────────────
 
-type ActionResult = { message: string; deepLink?: string | null }
+type ActionResult = { status: 'executed' | 'failed' | 'uncertain'; message: string; deepLink?: string | null }
 
 async function executeAction(action: ActionProposal): Promise<ActionResult> {
-  if (action.proposalId) {
-    // La confirmation est idempotente côté serveur : un retry après une coupure
-    // réseau ne recrée pas de second devis/facture. On réessaie donc plutôt que
-    // de conclure à tort à un échec alors que l'action a pu aboutir.
-    let lastNetworkError = false
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const res = await fetch(`/api/sarah/actions/${action.proposalId}/confirm`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        })
-        const data = await res.json().catch(() => ({}))
-        const deepLink = (data.deepLink ?? data.deep_link ?? action.deepLink ?? action.payload?.deep_link) as string | undefined
-        const message = (data.message as string | undefined)
-          ?? (res.ok ? 'Action confirmée.' : 'Impossible de confirmer cette action.')
-        return { message, deepLink: res.ok ? deepLink ?? null : null }
-      } catch {
-        lastNetworkError = true
-        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 600 * (attempt + 1)))
-      }
-    }
-    if (lastNetworkError) {
-      return { message: "La connexion a été interrompue. Si l'action s'est terminée côté serveur, elle apparaîtra dans la liste. Ne la relancez pas pour éviter un doublon." }
-    }
-    return { message: 'Impossible de confirmer cette action pour le moment.' }
-  }
-
   try {
-    const res = await fetch('/api/sarah/actions/execute', {
+    const res = await fetch(action.proposalId
+      ? `/api/sarah/actions/${encodeURIComponent(action.proposalId)}/confirm`
+      : '/api/sarah/actions/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: action.proposalId ? undefined : JSON.stringify({
         type: action.type,
         title: action.label,
         description: action.description,
@@ -287,167 +255,27 @@ async function executeAction(action: ActionProposal): Promise<ActionResult> {
         deepLink: action.deepLink ?? action.payload?.deep_link ?? null,
       }),
     })
-    const data = await res.json().catch(() => ({}))
-    const deepLink = (data.deepLink ?? data.deep_link ?? action.deepLink ?? action.payload?.deep_link) as string | undefined
-    const message = (data.message as string | undefined)
-      ?? (res.ok ? 'Action confirmée.' : 'Impossible de confirmer cette action.')
-    return { message, deepLink: res.ok ? deepLink ?? null : null }
+    const data = await res.json().catch(() => null)
+    const status = res.ok && data?.ok === true ? 'executed' : data?.ok === false ? 'failed' : 'uncertain'
+    const message = typeof data?.message === 'string'
+      ? data.message
+      : status === 'executed' ? 'Action confirmée.' : 'Le résultat de cette action n’a pas pu être confirmé.'
+    const target = data?.deepLink ?? data?.deep_link
+    return { status, message, deepLink: status === 'executed' && typeof target === 'string' ? target : null }
   } catch {
-    // Les anciens endpoints restent en filet de secours pour les installations partielles.
-  }
-
-  return { message: await executeLegacyAction(action) }
-}
-
-// Filet de secours pour les installations sans table de propositions persistantes.
-// La redirection y reste gérée par window.location (cas marginal).
-async function executeLegacyAction(action: ActionProposal): Promise<string> {
-  const p = action.payload ?? {}
-
-  switch (action.type) {
-    case 'task_complete': {
-      if (!p.tache_id) return 'Identifiant de tâche manquant.'
-      const res = await fetch(`/api/sarah/actions/task-complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tache_id: p.tache_id }),
-      })
-      return res.ok ? 'La tâche a bien été marquée comme terminée.' : 'Impossible de mettre à jour la tâche.'
+    return {
+      status: 'uncertain',
+      message: 'La connexion a été interrompue. Vérifiez le résultat avant de relancer cette action pour éviter un doublon.',
     }
-
-    case 'invoice_reminder': {
-      // On retourne le brouillon de relance pour que l'utilisateur le voie
-      const draft = p.draft_text as string | undefined
-      return draft
-        ? `Voici le brouillon de relance :\n\n${draft}\n\nConfirmez pour l'enregistrer ou modifiez-le avant envoi.`
-        : 'Le brouillon de relance n\'a pas pu être généré.'
-    }
-
-    case 'brief_chloe': {
-      // Stocke le brief dans sessionStorage pour que Chloé le récupère à l'ouverture
-      if (isClient()) {
-        sessionStorage.setItem('sarah_brief_chloe', JSON.stringify({
-          client_name: p.client_name,
-          client_id: p.client_id,
-          description: p.description,
-          items: p.items,
-          conditions: p.conditions,
-          created_at: new Date().toISOString(),
-        }))
-      }
-      return `Brief enregistré. Ouvrez l'éditeur de devis, je reprendrai tout depuis là.`
-    }
-
-    case 'open_url':
-    case 'open_quote_editor': {
-      const url = (p.url ?? p.redirect_url) as string | undefined
-      if (url && isClient()) {
-        setTimeout(() => window.location.href = url, 400)
-        return `Je te redirige${p.label ? ` vers ${p.label}` : ''}...`
-      }
-      return 'Impossible de rediriger : URL manquante.'
-    }
-
-    case 'draft_email': {
-      const body = p.body as string | undefined
-      return body
-        ? `Voici le message préparé :\n\n${body}\n\nCopiez-le ou demandez-moi de l'adapter.`
-        : 'Le brouillon n\'a pas pu être généré.'
-    }
-
-    case 'planning_create': {
-      const res = await fetch('/api/sarah/actions/planning-create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chantierId: p.chantierId,
-          plannedDate: p.plannedDate,
-          startTime: p.startTime ?? null,
-          endTime: p.endTime ?? null,
-          label: p.label ?? p.memberName ?? p.equipeName ?? 'Équipe',
-          teamSize: p.teamSize ?? 1,
-          notes: p.notes ?? null,
-          memberId: p.memberId ?? null,
-          equipeId: p.equipeId ?? null,
-        }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        return `Impossible de créer le créneau : ${(data as any).error ?? 'erreur inconnue'}.`
-      }
-      const who = (p.memberName ?? p.equipeName) as string | undefined
-      const when = p.startTime ? `le ${p.plannedDate} à ${p.startTime}` : `le ${p.plannedDate}`
-      return `Le créneau a été créé pour "${p.chantierTitle}"${who ? `, avec ${who},` : ''} ${when}.`
-    }
-
-    case 'planning_update': {
-      const res = await fetch('/api/sarah/actions/planning-update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          slotId: p.slotId,
-          ...(p.plannedDate !== undefined && { plannedDate: p.plannedDate }),
-          ...(p.startTime !== undefined && { startTime: p.startTime }),
-          ...(p.endTime !== undefined && { endTime: p.endTime }),
-          ...(p.label !== undefined && { label: p.label }),
-          ...(p.teamSize !== undefined && { teamSize: p.teamSize }),
-          ...(p.notes !== undefined && { notes: p.notes }),
-          ...(p.memberId !== undefined && { memberId: p.memberId }),
-          ...(p.equipeId !== undefined && { equipeId: p.equipeId }),
-        }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        return `Impossible de modifier le créneau : ${(data as any).error ?? 'erreur inconnue'}.`
-      }
-      return `Le créneau "${p.slotLabel ?? p.slotId}" a bien été mis à jour.`
-    }
-
-    case 'planning_delete': {
-      const res = await fetch('/api/sarah/actions/planning-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slotId: p.slotId }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        return `Impossible de supprimer le créneau : ${(data as any).error ?? 'erreur inconnue'}.`
-      }
-      return `Le créneau du ${p.plannedDate} pour "${p.chantierTitle}" a été supprimé.`
-    }
-
-    default:
-      return 'Action non disponible : la table des actions Sarah n’est pas installée et aucun exécuteur direct ne correspond.'
   }
 }
 
-// ─── Textes des erreurs ───────────────────────────────────────────────────────
 
-function errorContent(code: SarahErrorCode): { title: string; body: string; upgrade: boolean } {
-  switch (code) {
-    case 'module_disabled':
-      return { title: 'Fonctionnalité non incluse', body: "Sarah est disponible à partir de l'abonnement Pro.", upgrade: true }
-    case 'quota_exceeded':
-      return { title: 'Quota mensuel atteint', body: "Vous avez atteint la limite de messages IA ce mois-ci.", upgrade: true }
-    case 'openrouter_credits':
-      return { title: 'Crédits OpenRouter à vérifier', body: "Rechargez vos crédits ou vérifiez votre clé OpenRouter.", upgrade: false }
-    case 'rate_limit':
-      return { title: 'Trop de requêtes', body: 'Attendez quelques secondes avant de réessayer.', upgrade: false }
-    case 'unauthenticated':
-      return { title: 'Session expirée', body: 'Rechargez la page pour vous reconnecter.', upgrade: false }
-    case 'permission_denied':
-      return { title: 'Accès non autorisé', body: "Votre rôle n'a pas accès aux assistants IA. Demandez à l'administrateur de vous attribuer la permission dans Paramètres > Rôles.", upgrade: false }
-    case 'network':
-      return { title: 'Problème réseau', body: 'Vérifiez votre connexion puis réessayez.', upgrade: false }
-    default:
-      return { title: 'Erreur inattendue', body: 'Si le problème persiste, contactez le support.', upgrade: false }
-  }
-}
 
 // ─── Composant erreur inline ──────────────────────────────────────────────────
 
 function ErrorBanner({ code, presentation = 'legacy' }: { code: SarahErrorCode; presentation?: 'app' | 'legacy' }) {
-  const { title, body, upgrade } = errorContent(code)
+  const { title, body, upgrade } = getSarahErrorContent(code)
   if (presentation === 'app') {
     return (
       <div className={styles.errorBanner} role="alert">
@@ -515,20 +343,26 @@ function SarahAvatar({ size = 40, pulse = false }: { size?: number; pulse?: bool
 function ActionCard({ action, onConfirm, onReject, presentation }: {
   action: ActionProposal; onConfirm: () => void; onReject: () => void; presentation: 'app' | 'legacy'
 }) {
-  if (action.confirmed !== undefined) {
+  const executing = action.executionStatus === 'executing'
+  const failed = action.executionStatus === 'failed'
+  const uncertain = action.executionStatus === 'uncertain'
+  if (action.confirmed !== undefined || failed || uncertain) {
+    const completed = action.confirmed === true && !failed && !uncertain
+    const label = failed ? 'Échec de l’action'
+      : uncertain ? 'Résultat à vérifier'
+        : completed ? action.autoExecuted ? 'Exécuté automatiquement' : 'Effectué' : 'Annulé'
     if (presentation === 'app') {
       return (
-        <div className={styles.actionStatus}>
-          {action.confirmed ? <CheckCircle2 size={14} aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
-          <span>{action.confirmed ? action.autoExecuted ? 'Exécuté automatiquement' : 'Effectué' : 'Annulé'}</span>
+        <div className={styles.actionStatus} role={failed || uncertain ? 'alert' : 'status'}>
+          {completed ? <CheckCircle2 size={14} aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
+          <span>{label}</span>
         </div>
       )
     }
     return (
-      <div className="flex items-center gap-1.5 text-xs mt-2 opacity-50">
-        {action.confirmed
-          ? <><CheckCircle2 size={11} /><span>{action.autoExecuted ? 'Exécuté automatiquement' : 'Effectué'}</span></>
-          : <><X size={11} /><span>Annulé</span></>}
+      <div className="flex items-center gap-1.5 text-xs mt-2 opacity-50" role={failed || uncertain ? 'alert' : 'status'}>
+        {completed ? <CheckCircle2 size={11} /> : <X size={11} />}
+        <span>{label}</span>
       </div>
     )
   }
@@ -543,8 +377,8 @@ function ActionCard({ action, onConfirm, onReject, presentation }: {
         </div>
         <p className={styles.actionDescription}>{action.description}</p>
         <div className={styles.actionButtons}>
-          <Button variant="text" size="md" className={styles.actionButton} onClick={onReject}>Annuler</Button>
-          <Button variant="secondary" size="md" className={styles.actionButton} onClick={onConfirm}>Confirmer</Button>
+          <Button variant="text" size="md" className={styles.actionButton} onClick={onReject} disabled={executing}>Annuler</Button>
+          <Button variant="secondary" size="md" className={styles.actionButton} onClick={onConfirm} disabled={executing} aria-busy={executing}>{executing ? 'En cours' : 'Confirmer'}</Button>
         </div>
       </div>
     )
@@ -566,7 +400,7 @@ function ActionCard({ action, onConfirm, onReject, presentation }: {
       </div>
       <p className="text-xs leading-relaxed opacity-65">{action.description}</p>
       <div className="flex gap-2">
-        <button onClick={onConfirm}
+        <button onClick={onConfirm} disabled={executing} aria-busy={executing}
           className="flex-1 py-2 rounded-xl text-xs font-bold transition-all active:scale-95"
           style={{
             background: 'linear-gradient(to bottom, #ffb84d, rgb(255,159,28))',
@@ -574,9 +408,9 @@ function ActionCard({ action, onConfirm, onReject, presentation }: {
             border: '1px solid rgba(255,255,255,0.15)',
             boxShadow: 'inset 0 1.5px 0 rgba(255,255,255,0.45), 0 3px 0 0 #b45309, 0 3px 0 1px rgba(120,53,15,0.12), 0 6px 12px rgba(180,83,9,0.2)',
           }}>
-          Confirmer
+          {executing ? 'En cours' : 'Confirmer'}
         </button>
-        <button onClick={onReject}
+        <button onClick={onReject} disabled={executing}
           className="flex-1 py-2 rounded-xl text-xs font-medium transition-all active:scale-95"
           style={{
             background: 'var(--sarah-util-btn-bg)',
@@ -682,6 +516,14 @@ function TypingDots({ presentation }: { presentation: 'app' | 'legacy' }) {
 // Alternative au vocal live (ElevenLabs, réservé Pro/Expert) : disponible pour tous
 // les membres ayant accès à Sarah, y compris les setups sans abonnement mensuel.
 
+export function getSarahDictationErrorMessage(code: unknown): string {
+  if (code === 'permission_denied') return 'Votre rôle ne permet pas la transcription vocale.'
+  if (code === 'unauthenticated') return 'Votre session a expiré. Rechargez la page pour vous reconnecter.'
+  if (code === 'rate_limit') return 'Trop de demandes vocales. Réessayez dans un instant.'
+  if (code === 'quota_exceeded') return 'Le quota mensuel de transcription est atteint.'
+  return 'La transcription vocale n’a pas abouti. Réessayez dans un instant.'
+}
+
 function useDictation(onTranscribed: (text: string) => void) {
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
@@ -736,7 +578,7 @@ function useDictation(onTranscribed: (text: string) => void) {
           fd.append('audio', blob, 'recording.webm')
           const res = await fetch('/api/ai/transcribe-audio', { method: 'POST', body: fd })
           const data = await res.json()
-          if (!res.ok) setError(data.error ?? 'Erreur de transcription.')
+          if (!res.ok) setError(getSarahDictationErrorMessage(data?.code))
           else if (data.text) onTranscribed(data.text)
         } catch {
           setError('Impossible de transcrire l\'audio.')
@@ -784,7 +626,7 @@ function voiceErrorLabel(err: VoiceLiveError): { title: string; body: string; up
     case 'module_disabled':
       return { title: 'Conversation en direct non incluse', body: 'Cette formule n\'inclut pas la voix en direct. Vous pouvez dicter votre message à la place.', upgrade: false }
     case 'configuration':
-      return { title: 'Configuration ElevenLabs', body: 'Vérifiez que l\'agent autorise le prompt en remplacement et que la voix est configurée directement dans ElevenLabs.', upgrade: false }
+      return { title: 'Configuration vocale incomplète', body: 'Le service vocal est momentanément indisponible. Réessayez dans un instant ou contactez le support.', upgrade: false }
     case 'network':
       return { title: 'Problème de connexion', body: 'Vérifiez votre réseau puis réessayez.', upgrade: false }
     default:
@@ -1204,19 +1046,24 @@ function useDrawerLogic({
 
   const confirmAction = useCallback(async (id: string) => {
     const msg = messages.find(m => m.id === id)
-    if (!msg?.action) return
-    setMessages(p => p.map(m => m.id === id && m.action ? { ...m, action: { ...m.action, confirmed: true } } : m))
-    const { message, deepLink } = await executeAction(msg.action)
+    if (!msg?.action || msg.action.confirmed !== undefined || msg.action.executionStatus) return
+    setMessages(p => p.map(m => m.id === id && m.action ? { ...m, action: { ...m.action, executionStatus: 'executing' } } : m))
+    const { status, message, deepLink } = await executeAction(msg.action)
+    setMessages(p => p.map(m => m.id === id && m.action ? {
+      ...m,
+      action: { ...m.action, confirmed: status === 'executed' ? true : undefined, executionStatus: status === 'executed' ? undefined : status },
+    } : m))
     push({ role: 'sarah', content: message })
     // Navigation client Next (soft navigation) : plus fiable qu'un rechargement
     // complet, et fonctionne même si un chunk JS n'est pas préchargé.
-    if (deepLink && deepLink.startsWith('/')) {
+    if (status === 'executed' && deepLink && deepLink.startsWith('/') && !deepLink.startsWith('//')) {
       setTimeout(() => router.push(deepLink), 350)
     }
   }, [messages, push, router])
 
   const rejectAction = useCallback((id: string) => {
     const msg = messages.find(m => m.id === id)
+    if (!msg?.action || msg.action.confirmed !== undefined || msg.action.executionStatus) return
     if (msg?.action?.proposalId) {
       fetch(`/api/sarah/actions/${msg.action.proposalId}/dismiss`, { method: 'POST' }).catch(() => {})
     }

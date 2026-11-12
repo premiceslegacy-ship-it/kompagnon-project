@@ -62,7 +62,7 @@ export default function AIReminderModal({ type, id, onSent, onClose }: Props) {
   }
 
   const rankLabel = RANK_LABELS[rank] ?? `Relance ${rank}`
-  const canSend = !isGenerating && !draftError && Boolean(subject) && Boolean(body)
+  const canSend = !isGenerating && !isSending && Boolean(clientEmail) && Boolean(subject.trim()) && Boolean(body.trim())
 
   return (
     <Sheet
@@ -80,16 +80,17 @@ export default function AIReminderModal({ type, id, onSent, onClose }: Props) {
         {draftError && (
           <>
             <p className={`${styles.hint} ${styles.warn}`} role="alert" style={{ marginTop: 0 }}>{draftError}</p>
+            <p className={styles.hint}>Vous pouvez rédiger la relance manuellement ci-dessous.</p>
             <div className={styles.inline}>
               <Button variant="secondary" size="md" onClick={generate}>Réessayer</Button>
             </div>
           </>
         )}
-        {!isGenerating && !draftError && (
+        {!isGenerating && (
           <>
             {!clientEmail && (
               <p className={styles.hint} style={{ marginTop: 0 }}>
-                Aucun email enregistré pour ce client : la relance sera notée mais pas envoyée.
+                Aucun email enregistré pour ce client : ajoutez-en un avant d’envoyer une relance.
               </p>
             )}
             <div className={styles.fields}>

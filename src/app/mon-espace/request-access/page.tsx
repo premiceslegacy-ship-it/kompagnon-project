@@ -23,7 +23,7 @@ export default async function RequestAccessPage({
           ? undefined
           : expired
             ? 'Demandez-en un nouveau : saisissez votre email, vous le recevrez dans quelques instants.'
-            : 'Saisissez l’adresse email que votre entreprise vous a enregistrée. Vous recevrez un lien d’accès personnel valable 30 jours.'
+            : 'Saisissez l’adresse email que votre entreprise vous a enregistrée. Vous recevrez un lien d’accès personnel valable 7 jours.'
       }
     >
       {renewed && <AuthNotice tone="success">Votre lien avait expiré : un nouveau vient de vous être envoyé par email. Vérifiez votre boîte de réception.</AuthNotice>}

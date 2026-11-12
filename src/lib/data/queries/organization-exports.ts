@@ -5,7 +5,7 @@ import { ORGANIZATION_EXPORT_BUCKET, ORGANIZATION_EXPORT_LINK_TTL_SECONDS, type 
 export type OrganizationExportListItem = {
   id: string
   status: OrganizationExportStatus
-  requestedByEmail: string
+  requestedByEmail: string | null
   bundleSizeBytes: number | null
   errorMessage: string | null
   createdAt: string

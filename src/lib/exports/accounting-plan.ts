@@ -12,12 +12,15 @@ export type AccountingPlan = {
   invoiceSale: AccountingEntry        // HT prestation
   invoiceSaleGoods: AccountingEntry   // HT vente de biens (industrie)
   invoiceTva: (rate: number) => AccountingEntry
+  invoiceDeferredTva: AccountingEntry
+  paymentTva: (rate: number) => AccountingEntry
   // Encaissements
   payment: AccountingEntry
   // Avoirs
   creditNoteSale: AccountingEntry
   creditNoteSaleGoods: AccountingEntry
   creditNoteTva: (rate: number) => AccountingEntry
+  creditNoteDeferredTva: AccountingEntry
   // Acomptes
   depositReceived: AccountingEntry    // émission acompte
   depositApplied: AccountingEntry     // apurement acompte
@@ -31,6 +34,7 @@ const ACCOUNT_LIBS: Record<string, string> = {
   '411': 'Clients',
   '4191': 'Clients — avances et acomptes reçus',
   '44566': 'TVA déductible sur autres biens et services',
+  '4458': 'TVA à régulariser ou en attente',
   '4457': 'TVA collectée',
   '44571': 'TVA collectée 20%',
   '44572': 'TVA collectée 10%',
@@ -67,6 +71,17 @@ export function getAccountingPlan(profile: BusinessProfile, preferGoods = false)
         credit: tva.num, creditLib: tva.lib,
       }
     },
+    invoiceDeferredTva: {
+      debit: '411', debitLib: ACCOUNT_LIBS['411'],
+      credit: '4458', creditLib: ACCOUNT_LIBS['4458'],
+    },
+    paymentTva: (rate: number) => {
+      const tva = tvaAccount(rate)
+      return {
+        debit: '4458', debitLib: ACCOUNT_LIBS['4458'],
+        credit: tva.num, creditLib: tva.lib,
+      }
+    },
     payment: {
       debit: '512', debitLib: ACCOUNT_LIBS['512'],
       credit: '411', creditLib: ACCOUNT_LIBS['411'],
@@ -86,13 +101,17 @@ export function getAccountingPlan(profile: BusinessProfile, preferGoods = false)
         credit: '411', creditLib: ACCOUNT_LIBS['411'],
       }
     },
+    creditNoteDeferredTva: {
+      debit: '4458', debitLib: ACCOUNT_LIBS['4458'],
+      credit: '411', creditLib: ACCOUNT_LIBS['411'],
+    },
     depositReceived: {
       debit: '411', debitLib: ACCOUNT_LIBS['411'],
       credit: '4191', creditLib: ACCOUNT_LIBS['4191'],
     },
     depositApplied: {
       debit: '4191', debitLib: ACCOUNT_LIBS['4191'],
-      credit: '411', creditLib: ACCOUNT_LIBS['411'],
+      credit: saleAccount, creditLib: saleLib,
     },
     purchaseCharge: {
       debit: '6068', debitLib: ACCOUNT_LIBS['6068'],

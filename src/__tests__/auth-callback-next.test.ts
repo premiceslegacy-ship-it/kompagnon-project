@@ -64,3 +64,20 @@ it('refuse un type OTP inconnu avant de vérifier le token', async () => {
   expect(auth.verifyOtp).not.toHaveBeenCalled()
   expect(response.headers.get('location')).toBe(`${origin}/login?error=auth_callback_error`)
 })
+it('vérifie un lien d’invitation par token_hash sans dépendre du vérificateur PKCE', async () => {
+  const invitationId = '4a2483d1-7364-4f58-94fb-f275d64d637d'
+  const response = await callback(`/invite/accept?invitation_id=${invitationId}`, 'otp')
+  expect(auth.verifyOtp).toHaveBeenCalledWith({ token_hash: 'local-hash', type: 'invite' })
+  expect(auth.exchangeCodeForSession).not.toHaveBeenCalled()
+  expect(response.headers.get('location')).toBe(`${origin}/invite/accept?invitation_id=${invitationId}`)
+})
+
+it.each([
+  '/auth/callback?code=one&code=two',
+  '/auth/callback?code=one&token_hash=two&type=invite',
+])('refuse les identifiants de callback ambigus : %s', async path => {
+  const response = await GET(new Request(new URL(path, origin)))
+  expect(auth.verifyOtp).not.toHaveBeenCalled()
+  expect(auth.exchangeCodeForSession).not.toHaveBeenCalled()
+  expect(response.headers.get('location')).toBe(`${origin}/login?error=auth_callback_error`)
+})

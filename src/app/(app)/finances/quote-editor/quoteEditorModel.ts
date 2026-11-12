@@ -8,6 +8,7 @@ import { computeLinearQuantity, computeSurfaceQuantity, computeVolumeQuantity, t
 import type { QuoteItem } from '@/lib/data/queries/quotes'
 import type { AIQuoteResult } from '@/app/api/ai/analyze-quote/route'
 import type { ResolvedCatalogContext } from '@/lib/catalog-context'
+import { calculateMonetaryTotals, roundMoney } from '@/lib/utils/money'
 import { DEFAULT_CONSUMPTION_L_PER_100KM } from '@/lib/utils/fuel'
 
 export const fmt = (n: number) =>
@@ -159,10 +160,6 @@ export type LocalItem = {
   transport_prix_l: number | null
   // Module prix matières
   metal_grid_id: string | null
-  // Cours LME (€/kg) au moment de la sélection de grille - UI uniquement, non persisté en DB.
-  // Permet de recalculer le prix au poids réel (L × l × épaisseur × densité) quand
-  // l'artisan saisit les dimensions de la pièce après avoir choisi la grille.
-  metal_lme_price_eur_kg: number | null
   price_pending: boolean
   labor_category: 'atelier' | 'pose' | 'finition' | 'autre' | null
 }
@@ -206,7 +203,7 @@ export type LocalSection = {
 }
 
 export function roundCurrency(n: number) {
-  return Math.round((n + Number.EPSILON) * 100) / 100
+  return roundMoney(n)
 }
 
 export function getInternalCostTotal(item: LocalItem) {
@@ -304,7 +301,6 @@ export function itemToLocal(i: QuoteItem): LocalItem {
     transport_conso: isTransportLine ? DEFAULT_CONSUMPTION_L_PER_100KM : null,
     transport_prix_l: isTransportLine ? i.unit_price : null,
     metal_grid_id: i.metal_grid_id ?? null,
-    metal_lme_price_eur_kg: null,
     price_pending: (i as { price_pending?: boolean }).price_pending ?? false,
     labor_category: (i as { labor_category?: 'atelier' | 'pose' | 'finition' | 'autre' | null }).labor_category ?? null,
   }
@@ -319,9 +315,8 @@ export function computeQuoteTotals(sections: LocalSection[]) {
   const visibleItems = allItems.filter(i => !i.is_internal)
   const internalItems = allItems.filter(i => i.is_internal)
   // Totaux client = hors lignes internes (celles-ci n'apparaissent pas sur le PDF)
-  const totalHt = visibleItems.reduce((sum, i) => sum + i.quantity * i.unit_price, 0)
-  const totalTva = visibleItems.reduce((sum, i) => sum + i.quantity * i.unit_price * (i.vat_rate / 100), 0)
-  const totalTtc = totalHt + totalTva
+  const monetaryTotals = calculateMonetaryTotals(visibleItems)
+  const { totalHt, totalTva, totalTtc } = monetaryTotals
   // Coût interne réel = unit_cost_ht sur toutes les lignes (achat matière + coût horaire MO).
   // Les lignes sans unit_cost_ht (saisie libre) contribuent leur unit_price comme coût proxy.
   const totalInternalHt = allItems.reduce((sum, i) => sum + getInternalCostTotal(i), 0)

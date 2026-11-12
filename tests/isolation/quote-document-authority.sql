@@ -1,4 +1,4 @@
--- Disposable LOCAL database, all migrations through 210. No provider calls.
+-- Disposable LOCAL database, all migrations through 218. No provider calls.
 BEGIN;
 DO $test$
 DECLARE
@@ -38,15 +38,27 @@ BEGIN
   INSERT INTO public.quote_items (id, quote_id, section_id, type, description, quantity, unit, unit_price, vat_rate, position)
   VALUES (v_item, v_quote, v_section, 'custom', 'Stable quoted work', 1, 'u', 100, 20, 0);
   INSERT INTO public.quote_items (quote_id, type, description, quantity, unit_price, vat_rate, is_internal, position)
-  VALUES (v_quote, 'custom', 'Internal resource', 1, 900, 20, true, 1);
+  VALUES (v_quote, 'custom', 'Internal resource', 1, 900, 20, true, 9);
+  INSERT INTO public.quote_items (quote_id, section_id, type, description, quantity, unit, unit_price, vat_rate, position)
+  VALUES
+    (v_quote, v_section, 'custom', 'Fractional 20 percent line', 8, 'u', 62.80, 20, 1),
+    (v_quote, v_section, 'custom', 'Fractional cent line', 0.001, 'u', 625.50, 20, 2),
+    (v_quote, v_section, 'custom', 'Second VAT bucket', 1, 'u', 100, 10, 3),
+    (v_quote, v_section, 'custom', 'Small 20 percent line 1', 1, 'u', 0.03, 20, 4),
+    (v_quote, v_section, 'custom', 'Small 20 percent line 2', 1, 'u', 0.03, 20, 5),
+    (v_quote, v_section, 'custom', 'Small 20 percent line 3', 1, 'u', 0.03, 20, 6),
+    (v_quote, v_section, 'custom', 'Small 20 percent line 4', 1, 'u', 0.03, 20, 7),
+    (v_quote, v_section, 'custom', 'Small 20 percent line 5', 1, 'u', 0.03, 20, 8);
   UPDATE public.quotes SET status = 'sent', sent_at = now(), signature_token = gen_random_uuid(),
     signature_token_expires_at = now() + INTERVAL '1 day' WHERE id = v_quote;
   SELECT document_snapshot INTO v_snapshot FROM public.quotes WHERE id = v_quote;
   IF v_snapshot->'organization'->>'name' <> 'Original quote issuer'
      OR v_snapshot->'quote'->'client'->>'company_name' <> 'Original quote buyer'
-     OR (v_snapshot->'quote'->>'total_ttc')::numeric <> 120
+     OR (v_snapshot->'quote'->>'total_ht')::numeric <> 703.18
+     OR (v_snapshot->'quote'->>'total_tva')::numeric <> 130.64
+     OR (v_snapshot->'quote'->>'total_ttc')::numeric <> 833.82
      OR v_snapshot->'quote'->'sections'->0->'items'->0->>'description' <> 'Stable quoted work' THEN
-    RAISE EXCEPTION 'Published quote did not capture its actual parties, section or visible total';
+    RAISE EXCEPTION 'Published quote did not capture its actual parties, section or VAT-bucket totals';
   END IF;
   IF v_snapshot->'organization' ? 'openrouter_api_key' THEN
     RAISE EXCEPTION 'Document facts included provider credentials';
@@ -69,11 +81,11 @@ BEGIN
   END IF;
   UPDATE public.quotes SET status = 'sent', sent_at = now(), signature_token = gen_random_uuid(),
     signature_token_expires_at = now() + INTERVAL '1 day' WHERE id = v_quote;
-  IF NOT EXISTS (SELECT 1 FROM public.quotes WHERE id = v_quote AND total_ht = 200
-                 AND total_tva = 0 AND total_ttc = 200
+  IF NOT EXISTS (SELECT 1 FROM public.quotes WHERE id = v_quote AND total_ht = 803.18
+                 AND total_tva = 0 AND total_ttc = 803.18
                  AND document_snapshot->'organization'->>'name' = 'Current quote issuer'
                  AND document_snapshot->'quote'->'client'->>'company_name' = 'Current quote buyer') THEN
-    RAISE EXCEPTION 'Explicit republication did not use its current verified facts and VAT regime';
+    RAISE EXCEPTION 'Explicit republication did not use its current facts, cent-rounded lines, and non-VAT regime';
   END IF;
   UPDATE public.quotes SET status = 'viewed' WHERE id = v_quote;
   UPDATE public.quotes SET title = 'A revised viewed proposal' WHERE id = v_quote;

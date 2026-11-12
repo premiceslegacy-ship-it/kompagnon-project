@@ -9,6 +9,7 @@ import type { ReceivedInvoice } from '@/lib/data/queries/received-invoices'
 import { formatCurrency } from '@/components/shared'
 import { archiveQuote, markQuoteAccepted, duplicateQuote } from '@/lib/data/mutations/quotes'
 import { archiveInvoice, markInvoicePaid, generateDepositInvoice, recordScheduledPayment } from '@/lib/data/mutations/invoices'
+import { createInvoiceCreditNote, createQuoteBalanceInvoice } from '@/lib/data/mutations/invoice-adjustments'
 import { createChantierFromQuote } from '@/lib/data/mutations/chantiers'
 import { linkReceivedInvoiceToChantier } from '@/lib/data/mutations/chantier-expenses'
 import ImportDocumentsModal from './ImportDocumentsModal'
@@ -16,6 +17,7 @@ import SituationsSection from '@/components/situations/SituationsSection'
 import { loadSituationsSummary } from './actions'
 import type { SituationsSummary } from '@/lib/data/queries/invoices'
 import { todayParis } from '@/lib/utils'
+import { roundMoney } from '@/lib/utils/money'
 import { ChevronDown, ChevronLeft, ChevronRight, MoreHorizontal, Plus } from 'lucide-react'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
@@ -82,8 +84,11 @@ const STATUS: Record<string, Status> = {
 
 const INVOICE_STATUS: Record<string, Status> = {
   draft:     { label: 'Brouillon',           status: 'neutral' },
+  sending:   { label: 'Émission en cours',   status: 'wait' },
   sent:      { label: 'Envoyée',             status: 'wait' },
+  viewed:    { label: 'Consultée',           status: 'wait' },
   partial:   { label: 'Partiellement payée', status: 'wait' },
+  overdue:   { label: 'En retard',           status: 'danger' },
   paid:      { label: 'Payée',               status: 'success' },
   cancelled: { label: 'Annulée',             status: 'danger' },
 }
@@ -115,7 +120,7 @@ export default function FinancesClient({
   initialQuotes, initialInvoices,
   canCreateQuote, canEditQuote, canSendQuote, canDeleteQuote,
   canCreateInvoice, canSendInvoice, canRecordPayment, canDeleteInvoice,
-  canCreateSituation = false, canCreateSolde = false,
+  canCreateSituation = false, canCreateSolde = false, canCreateCredit = false,
   canViewReceivedInvoices = false, initialReceivedInvoices = [],
   linkableChantiers = [], canLinkReceivedInvoice = false,
 }: {
@@ -131,6 +136,7 @@ export default function FinancesClient({
   canDeleteInvoice: boolean
   canCreateSituation?: boolean
   canCreateSolde?: boolean
+  canCreateCredit?: boolean
   canViewReceivedInvoices?: boolean
   initialReceivedInvoices?: ReceivedInvoice[]
   linkableChantiers?: { id: string; title: string }[]
@@ -155,6 +161,11 @@ export default function FinancesClient({
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [loadingScheduleId, setLoadingScheduleId] = useState<string | null>(null)
   const [depositModal, setDepositModal] = useState<{ quoteId: string; quoteTitle: string | null; quoteTtc: number | null } | null>(null)
+  const [balanceLoadingId, setBalanceLoadingId] = useState<string | null>(null)
+  const [creditNoteModal, setCreditNoteModal] = useState<{ invoiceId: string; invoiceNumber: string | null; invoiceTitle: string | null } | null>(null)
+  const [creditNoteReason, setCreditNoteReason] = useState('')
+  const [creditNoteLoading, setCreditNoteLoading] = useState(false)
+  const [creditNoteError, setCreditNoteError] = useState<string | null>(null)
   const [situationsPanel, setSituationsPanel] = useState<{ quoteId: string; quoteTitle: string | null; chantierId: string | null } | null>(null)
   const [situationsSummary, setSituationsSummary] = useState<SituationsSummary | null>(null)
   const [situationsSummaryLoading, setSituationsSummaryLoading] = useState(false)
@@ -174,12 +185,23 @@ export default function FinancesClient({
   const [importOpen, setImportOpen] = useState(false)
   const [importDefaultType, setImportDefaultType] = useState<'invoices' | 'quotes'>('invoices')
   const [reportLoading, setReportLoading] = useState(false)
-	  const [paymentModal, setPaymentModal] = useState<{
-	    invoiceId: string
-	    invoiceNumber: string | null
-	    schedule: { id: string; label: string; due_date: string; amount: number; amount_type?: 'amount' | 'percentage'; percentage?: number | null }[]
-	  } | null>(null)
+  const [paymentModal, setPaymentModal] = useState<{
+    invoiceId: string
+    invoiceNumber: string | null
+    schedule: {
+      id: string
+      label: string
+      due_date: string
+      amount: number
+      amount_type?: 'amount' | 'percentage'
+      percentage?: number | null
+      paid_amount: number
+      remaining_amount: number
+      is_paid: boolean
+    }[]
+  } | null>(null)
   const [paymentScheduleItemId, setPaymentScheduleItemId] = useState('')
+  const [paymentAmount, setPaymentAmount] = useState('')
   const [paymentDate, setPaymentDate] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('virement')
   const [paymentRef, setPaymentRef] = useState('')
@@ -284,9 +306,13 @@ export default function FinancesClient({
   const invOfPrevMonth = invoices.filter(inv => invDate(inv).startsWith(prevStatsMonth))
 
   const invoicePaidAmount = (inv: Invoice) =>
-    inv.status === 'partial' ? (inv.total_paid ?? 0) : inv.status === 'paid' ? (inv.total_ttc ?? 0) : 0
+    inv.invoice_type === 'avoir'
+      ? 0
+      : inv.status === 'partial' ? (inv.total_paid ?? 0) : inv.status === 'paid' ? (inv.total_ttc ?? 0) : 0
   const invoiceRemainingAmount = (inv: Invoice) =>
-    inv.status === 'partial' ? Math.max(0, (inv.total_ttc ?? 0) - (inv.total_paid ?? 0)) : inv.status === 'sent' ? (inv.total_ttc ?? 0) : 0
+    inv.invoice_type === 'avoir' || !['partial', 'sent', 'viewed', 'overdue'].includes(inv.status)
+      ? 0
+      : Math.max(0, (inv.total_ttc ?? 0) - (inv.total_paid ?? 0) - (inv.credited_ttc ?? 0))
 
   const totalEncaisse = invOfMonth.reduce((s, inv) => s + invoicePaidAmount(inv), 0)
   const totalEncaissePrev = invOfPrevMonth.reduce((s, inv) => s + invoicePaidAmount(inv), 0)
@@ -294,12 +320,15 @@ export default function FinancesClient({
   const resteARecouvrer = invOfMonth.reduce((s, inv) => s + invoiceRemainingAmount(inv), 0)
 
   const enRetardCount = invoices.filter(
-    inv => (inv.status === 'sent' || inv.status === 'partial') && inv.due_date != null && inv.due_date < today
+    inv => invoiceRemainingAmount(inv) > 0
+      && (inv.status === 'overdue' || (['sent', 'viewed', 'partial'].includes(inv.status) && inv.due_date != null && inv.due_date < today))
   ).length
 
-  // Montant facturé du mois = factures envoyées ou payées (sent + partial + paid) HT
-  const caMois = invOfMonth.filter(inv => ['sent', 'partial', 'paid'].includes(inv.status)).reduce((s, inv) => s + (inv.total_ht ?? 0), 0)
-  const caMoisPrev = invOfPrevMonth.filter(inv => ['sent', 'partial', 'paid'].includes(inv.status)).reduce((s, inv) => s + (inv.total_ht ?? 0), 0)
+  // Montant facturé du mois = factures émises, payées ou échues HT.
+  const invoiceBilledAmount = (inv: Invoice) =>
+    inv.invoice_type === 'avoir' ? -Math.abs(inv.total_ht ?? 0) : (inv.total_ht ?? 0)
+  const caMois = invOfMonth.filter(inv => ['sent', 'viewed', 'partial', 'paid', 'overdue'].includes(inv.status)).reduce((s, inv) => s + invoiceBilledAmount(inv), 0)
+  const caMoisPrev = invOfPrevMonth.filter(inv => ['sent', 'viewed', 'partial', 'paid', 'overdue'].includes(inv.status)).reduce((s, inv) => s + invoiceBilledAmount(inv), 0)
 
   // ── Handlers ────────────────────────────────────────────────────────────────
 
@@ -342,9 +371,13 @@ export default function FinancesClient({
     setPaymentLoading(true)
     setPaymentError(null)
 
-    // Cas sans échéancier : on marque directement comme payée
+    // Cas sans échéancier : le RPC enregistre le solde réel de la facture.
     if (paymentScheduleItemId === '__full__') {
-      const res = await markInvoicePaid(paymentModal.invoiceId)
+      const res = await markInvoicePaid(paymentModal.invoiceId, {
+        payment_date: paymentDate || todayParis(),
+        method: paymentMethod || undefined,
+        reference: paymentRef || undefined,
+      })
       setPaymentLoading(false)
       if (res.error) { setPaymentError(res.error); return }
       setInvoices(prev => prev.map(inv =>
@@ -353,13 +386,21 @@ export default function FinancesClient({
           : inv
       ))
       setPaymentModal(null)
+      router.refresh()
       return
     }
 
     const scheduleItem = paymentModal.schedule.find(s => s.id === paymentScheduleItemId)
+    const enteredAmount = Number(paymentAmount)
+    const amount = roundMoney(enteredAmount)
     if (!scheduleItem) { setPaymentError('Échéance introuvable.'); setPaymentLoading(false); return }
+    if (!Number.isFinite(amount) || amount <= 0 || amount !== enteredAmount || amount > scheduleItem.remaining_amount) {
+      setPaymentError('Le montant doit être positif, exprimé au centime et ne peut pas dépasser le reste dû de cette échéance.')
+      setPaymentLoading(false)
+      return
+    }
     const res = await recordScheduledPayment(paymentModal.invoiceId, paymentScheduleItemId, {
-      amount: scheduleItem.amount,
+      amount,
       payment_date: paymentDate || todayParis(),
       method: paymentMethod || undefined,
       reference: paymentRef || undefined,
@@ -372,6 +413,7 @@ export default function FinancesClient({
         : inv
     ))
     setPaymentModal(null)
+    router.refresh()
   }
 
   useEffect(() => {
@@ -425,6 +467,44 @@ export default function FinancesClient({
     if (error) { setDepositError(error); return }
     setDepositModal(null)
     if (invoiceId) { setIsNavigating(true); router.push(invoiceEditorHref(invoiceId)) }
+  }
+  const handleCreateBalance = async (quoteId: string) => {
+    if (balanceLoadingId) return
+    setBalanceLoadingId(quoteId)
+    const result = await createQuoteBalanceInvoice(quoteId)
+    setBalanceLoadingId(null)
+    if (result.error) {
+      setNotice({ message: result.error, error: true })
+      return
+    }
+    if (result.invoiceId) {
+      setIsNavigating(true)
+      router.push(invoiceEditorHref(result.invoiceId))
+    }
+  }
+
+  const openCreditNote = (invoice: Invoice) => {
+    setSelected(null)
+    setCreditNoteReason('')
+    setCreditNoteError(null)
+    setCreditNoteModal({ invoiceId: invoice.id, invoiceNumber: invoice.number, invoiceTitle: invoice.title })
+  }
+
+  const handleCreateCreditNote = async () => {
+    if (!creditNoteModal || creditNoteLoading) return
+    setCreditNoteLoading(true)
+    setCreditNoteError(null)
+    const result = await createInvoiceCreditNote(creditNoteModal.invoiceId, creditNoteReason)
+    setCreditNoteLoading(false)
+    if (result.error) {
+      setCreditNoteError(result.error)
+      return
+    }
+    setCreditNoteModal(null)
+    if (result.invoiceId) {
+      setIsNavigating(true)
+      router.push(invoiceEditorHref(result.invoiceId))
+    }
   }
 
   const handleDownloadMonthlyReport = async () => {
@@ -483,16 +563,32 @@ export default function FinancesClient({
     try {
       const res = await fetch(`/api/invoices/${inv.id}/schedule`)
       const data = await res.json()
-      const unpaid = (data.schedule ?? []).filter((s: { paid_payment_id?: string | null }) => !s.paid_payment_id)
+      if (!res.ok) {
+        setNotice({ message: data.error ?? 'Impossible de charger les échéances.', error: true })
+        return
+      }
+      const scheduleRows = (data.schedule ?? []) as NonNullable<typeof paymentModal>['schedule']
+      const apiOutstanding = Number(data.invoice_outstanding)
+      const invoiceOutstanding = Number.isFinite(apiOutstanding)
+        ? roundMoney(Math.max(0, apiOutstanding))
+        : roundMoney(Math.max(0, (inv.total_ttc ?? 0) - (inv.total_paid ?? 0)))
+      if (invoiceOutstanding <= 0) {
+        setNotice({ message: 'Cette facture ne présente plus de solde à encaisser.', error: true })
+        return
+      }
+      const unpaid = scheduleRows.filter(s => !s.is_paid && s.remaining_amount > 0)
       const scheduleToShow = unpaid.length > 0 ? unpaid : [{
         id: '__full__',
         label: 'Paiement intégral',
         due_date: todayParis(),
-        amount: inv.total_ttc ?? 0,
+        amount: invoiceOutstanding,
         amount_type: 'amount' as const,
         percentage: null,
+        paid_amount: 0,
+        remaining_amount: invoiceOutstanding,
+        is_paid: false,
       }]
-      setPaymentScheduleItemId(scheduleToShow[0].id)
+      setPaymentAmount(String(scheduleToShow[0].remaining_amount))
       setPaymentDate(todayParis())
       setPaymentMethod('virement')
       setPaymentRef('')
@@ -533,8 +629,9 @@ export default function FinancesClient({
   }
 
   function invoicePrimary(inv: Invoice): { label: string; onClick: () => void; loading?: boolean } | null {
+    if (inv.invoice_type === 'avoir') return null
     if (inv.status === 'draft' && canSendInvoice) return { label: 'Valider et envoyer', onClick: () => go(invoiceEditorHref(inv.id)) }
-    if ((inv.status === 'sent' || inv.status === 'partial') && canRecordPayment) return { label: 'Encaisser un versement', onClick: () => openPayment(inv), loading: loadingScheduleId === inv.id }
+    if (['sent', 'viewed', 'partial', 'overdue'].includes(inv.status) && canRecordPayment && invoiceRemainingAmount(inv) > 0) return { label: 'Encaisser un versement', onClick: () => openPayment(inv), loading: loadingScheduleId === inv.id }
     return null
   }
 
@@ -714,8 +811,8 @@ export default function FinancesClient({
               {activeTab === 'invoices' && paginatedInvoices.map(inv => {
                 const st = INVOICE_STATUS[inv.status] ?? INVOICE_STATUS.draft
                 const client = clientOf(inv)
-                const isOverdue = (inv.status === 'sent' || inv.status === 'partial') && inv.due_date != null && inv.due_date < today
-                const kind = inv.invoice_type === 'acompte' ? 'Acompte' : inv.invoice_type === 'solde' ? 'Solde' : inv.invoice_type === 'situation' ? 'Situation' : null
+                const isOverdue = inv.status === 'overdue' || (['sent', 'viewed', 'partial'].includes(inv.status) && inv.due_date != null && inv.due_date < today)
+                const kind = inv.invoice_type === 'avoir' ? 'Avoir' : inv.invoice_type === 'acompte' ? 'Acompte' : inv.invoice_type === 'solde' ? 'Solde' : inv.invoice_type === 'situation' ? 'Situation' : null
                 return (
                   <li key={inv.id}>
                     <button type="button" className={screen.row} onClick={() => setSelected({ kind: 'invoice', id: inv.id })} aria-haspopup="dialog">
@@ -786,7 +883,9 @@ export default function FinancesClient({
             if (primary?.label !== "Générer l'acompte") next.push(<ListRow key="dep" title="Générer l'acompte" description="Taux et échéances au choix" onClick={() => openDeposit(q)} />)
             next.push(<ListRow key="ch" title="Créer le chantier" description="À partir de ce devis" onClick={() => { setSelected(null); handleCreateChantierFromQuote(q.id) }} />)
           }
-          if ((canCreateSituation || canCreateSolde) && acceptedLike(q.status) && primary?.label !== 'Situations de travaux') next.push(<ListRow key="sit" title="Situations de travaux" description="Facturer selon l'avancement" onClick={() => { setSelected(null); handleOpenSituations(q.id, q.title) }} />)
+          if (canCreateSolde && acceptedLike(q.status)) {
+            next.push(<ListRow key="balance" title="Créer le solde" description="Calculé sur les lignes du devis et les factures déjà émises" disabled={balanceLoadingId !== null} onClick={() => { void handleCreateBalance(q.id) }} />)
+          }
           const edit: React.ReactNode[] = []
           if (canEditQuote && primary?.label !== 'Modifier le devis') edit.push(<ListRow key="ed" title="Modifier" onClick={() => go(quoteEditorHref(q.id))} />)
           if (canCreateQuote && primary?.label !== 'Dupliquer') edit.push(<ListRow key="dup" title="Dupliquer" description="Nouveau brouillon avec les mêmes lignes" onClick={() => { setSelected(null); handleDuplicateQuote(q.id) }} />)
@@ -824,18 +923,27 @@ export default function FinancesClient({
       <Sheet
         open={selectedInvoice !== null}
         onOpenChange={(open) => { if (!open) setSelected(null) }}
-        title={selectedInvoice ? `Facture ${selectedInvoice.number ?? ''}`.trim() : 'Facture'}
+        title={selectedInvoice ? `${selectedInvoice.invoice_type === 'avoir' ? 'Avoir' : 'Facture'} ${selectedInvoice.number ?? ''}`.trim() : 'Facture'}
         description={selectedInvoice ? clientOf(selectedInvoice) : undefined}
       >
         {selectedInvoice ? (() => {
           const inv = selectedInvoice
           const st = INVOICE_STATUS[inv.status] ?? INVOICE_STATUS.draft
-          const isOverdue = (inv.status === 'sent' || inv.status === 'partial') && inv.due_date != null && inv.due_date < today
+          const isOverdue = inv.invoice_type !== 'avoir'
+            && (inv.status === 'overdue' || (['sent', 'viewed', 'partial'].includes(inv.status) && inv.due_date != null && inv.due_date < today))
           const primary = invoicePrimary(inv)
           const next: React.ReactNode[] = []
-          if (canRecordPayment && inv.status === 'sent') next.push(<ListRow key="paid" title="Marquer payée" description="Paiement intégral reçu" disabled={markPaidLoadingId !== null} onClick={() => run(() => handleMarkPaid(inv.id), `${inv.number ?? 'Facture'} marquée payée`)} />)
-          if (canCreateInvoice) next.push(<ListRow key="rec" title="Convertir en facture récurrente" onClick={() => go(`/finances/recurring?from_invoice=${inv.id}`)} />)
-          const remaining = inv.status === 'partial' ? Math.max(0, (inv.total_ttc ?? 0) - (inv.total_paid ?? 0)) : null
+          if (inv.invoice_type !== 'avoir' && canRecordPayment
+              && ['sent', 'viewed', 'overdue'].includes(inv.status)
+              && invoiceRemainingAmount(inv as Invoice) > 0) {
+            next.push(<ListRow key="paid" title="Marquer payée" description="Paiement intégral reçu" disabled={markPaidLoadingId !== null} onClick={() => run(() => handleMarkPaid(inv.id), `${inv.number ?? 'Facture'} marquée payée`)} />)
+          }
+          if (canCreateCredit && inv.invoice_type !== 'avoir' && ['sent', 'viewed', 'partial', 'paid', 'overdue'].includes(inv.status)) {
+            next.push(<ListRow key="credit" title="Créer un avoir" description="Corriger cette facture émise" onClick={() => openCreditNote(inv)} />)
+          }
+          const remaining = inv.invoice_type === 'avoir'
+            ? 0
+            : Math.max(0, (inv.total_ttc ?? 0) - (inv.total_paid ?? 0) - (inv.credited_ttc ?? 0))
           return (
             <div className={styles.detail}>
               <section className={`${screen.card} ${screen.hero}`}>
@@ -843,7 +951,12 @@ export default function FinancesClient({
                 <div className={screen.big}>{inv.total_ttc != null ? formatCurrency(inv.total_ttc) : '/'}</div>
                 <div className={screen.sub}>
                   {inv.total_ht != null ? `${formatCurrency(inv.total_ht)} HT` : ''}
-                  {remaining != null ? ` · reste ${formatCurrency(remaining)}` : ''}
+                  {inv.invoice_type !== 'avoir' && (inv.credited_ttc ?? 0) > 0
+                    ? ` · avoirs émis ${formatCurrency(inv.credited_ttc ?? 0)}`
+                    : ''}
+                  {inv.invoice_type !== 'avoir' && ['sent', 'viewed', 'partial', 'overdue'].includes(inv.status)
+                    ? ` · reste à encaisser ${formatCurrency(remaining)}`
+                    : ''}
                 </div>
               </section>
               {primary ? <Button size="lg" className={styles.primary} onClick={primary.onClick} loading={primary.loading}>{primary.label}</Button> : null}
@@ -924,7 +1037,7 @@ export default function FinancesClient({
         onConfirm={handleRecordScheduledPayment}
         confirmLabel="Encaisser"
         confirmLoading={paymentLoading}
-        confirmDisabled={!paymentScheduleItemId}
+        confirmDisabled={!paymentScheduleItemId || (paymentScheduleItemId !== '__full__' && (!Number.isFinite(Number(paymentAmount)) || Number(paymentAmount) <= 0))}
       >
         {paymentModal ? (
           <div className={styles.detail}>
@@ -933,12 +1046,25 @@ export default function FinancesClient({
                 <ListRow
                   key={s.id}
                   title={s.label}
-                  description={`${s.amount_type === 'percentage' && s.percentage ? `${s.percentage}${NB}% · ` : ''}${shortDate(s.due_date)}`}
-                  trailing={<span className={styles.value}>{formatCurrency(s.amount)}{paymentScheduleItemId === s.id ? <span className={styles.tick} aria-label=", sélectionnée"> ✓</span> : null}</span>}
-                  onClick={() => setPaymentScheduleItemId(s.id)}
+                  description={`${s.amount_type === 'percentage' && s.percentage ? `${s.percentage}${NB}% · ` : ''}${shortDate(s.due_date)} · reste ${formatCurrency(s.remaining_amount)} sur ${formatCurrency(s.amount)}`}
+                  trailing={<span className={styles.value}>{formatCurrency(s.remaining_amount)}{paymentScheduleItemId === s.id ? <span className={styles.tick} aria-label=", sélectionnée"> ✓</span> : null}</span>}
+                  onClick={() => { setPaymentScheduleItemId(s.id); setPaymentAmount(String(s.remaining_amount)) }}
                 />
               ))}
             </ListGroup>
+            {paymentScheduleItemId !== '__full__' ? (
+              <label className={styles.field}>
+                <span>Montant reçu · reste {formatCurrency(paymentModal.schedule.find(s => s.id === paymentScheduleItemId)?.remaining_amount ?? 0)}</span>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  max={paymentModal.schedule.find(s => s.id === paymentScheduleItemId)?.remaining_amount}
+                  value={paymentAmount}
+                  onChange={e => setPaymentAmount(e.target.value)}
+                />
+              </label>
+            ) : null}
             <div className={styles.fields}>
               <label className={styles.field}>
                 <span>Date de réception</span>
@@ -959,6 +1085,34 @@ export default function FinancesClient({
               </label>
             </div>
             {paymentError ? <p className={screen.error} role="alert">{paymentError}</p> : null}
+          </div>
+        ) : null}
+      </Sheet>
+
+      <Sheet
+        open={creditNoteModal !== null}
+        onOpenChange={(open) => { if (!open && !creditNoteLoading) { setCreditNoteModal(null); setCreditNoteError(null) } }}
+        title="Créer un avoir"
+        description={creditNoteModal?.invoiceNumber ? `Facture ${creditNoteModal.invoiceNumber}` : creditNoteModal?.invoiceTitle ?? undefined}
+        onConfirm={handleCreateCreditNote}
+        confirmLabel="Créer le brouillon"
+        confirmLoading={creditNoteLoading}
+        confirmDisabled={!creditNoteReason.trim() || creditNoteLoading}
+      >
+        {creditNoteModal ? (
+          <div className={styles.detail}>
+            <p>Le brouillon reprendra les lignes de la facture émise. Aucun envoi ne sera effectué.</p>
+            <label>
+              Motif de l&apos;avoir
+              <textarea
+                value={creditNoteReason}
+                onChange={event => setCreditNoteReason(event.target.value)}
+                maxLength={500}
+                rows={4}
+                required
+              />
+            </label>
+            {creditNoteError ? <p className={screen.error} role="alert">{creditNoteError}</p> : null}
           </div>
         ) : null}
       </Sheet>

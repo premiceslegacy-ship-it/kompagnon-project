@@ -23,6 +23,7 @@ import { Sheet } from '@/components/ui/Sheet'
 import { StatusPill, type StatusPillStatus } from '@/components/ui/StatusPill'
 import { Switch } from '@/components/ui/Switch'
 import { AI_NAME } from '@/lib/brand'
+import { roundMoney } from '@/lib/utils/money'
 import { QuoteStartChoice } from './QuoteStartChoice'
 import { LineSheet } from './LineSheet'
 import {
@@ -81,8 +82,8 @@ export default function QuoteEditorClient(props: QuoteEditorProps) {
 
   const menuItems: MenuItem[] = [
     { label: 'Aperçu du PDF', disabled: !q.quoteId, onSelect: () => void q.handlePreviewPdf() },
-    ...(q.modules.quote_ai ? [{ label: 'Estimer les ressources internes', onSelect: () => q.setMoaPanelOpen(true) }] : []),
-    ...(q.modules.quote_ai && !q.initialQuote?.id && q.visibleItems.length === 0
+    ...(q.canUseQuoteAssistant ? [{ label: 'Estimer les ressources internes', onSelect: () => q.setMoaPanelOpen(true) }] : []),
+    ...(q.canUseQuoteAssistant && !q.initialQuote?.id && q.visibleItems.length === 0
       ? [{ label: `Assistance ${AI_NAME}`, onSelect: () => q.setAIPanelOpen(true) }]
       : []),
     ...(q.quoteId && !q.variantGroupId ? [{ label: 'Créer une variante (option A/B)', onSelect: () => q.setVariantModalOpen(true) }] : []),
@@ -109,7 +110,7 @@ export default function QuoteEditorClient(props: QuoteEditorProps) {
           <QuoteStartChoice onSelectManual={() => q.setStartChoice('done')} onSelectAI={() => q.router.push('/atelier-ia')} />
         )}
 
-        <button type="button" className={styles.back} onClick={() => q.router.replace(q.returnTo)}>
+        <button type="button" className={styles.back} onClick={() => { if (q.confirmUnsavedNavigation()) q.router.replace(q.returnTo) }}>
           <ChevronLeft size={20} aria-hidden="true" />
           Documents
         </button>
@@ -130,6 +131,17 @@ export default function QuoteEditorClient(props: QuoteEditorProps) {
         </header>
         <p className={styles.saveState} role="status" data-state={q.saveStatus}>{q.isPending && !saveText ? 'Enregistrement…' : saveText}</p>
         {q.errorMsg && <p className={screen.error} role="alert">{q.errorMsg}</p>}
+        {q.recoveryWarning && <p className={screen.error} role="alert">{q.recoveryWarning}</p>}
+        {q.saveStatus === 'error' && (
+          <button
+            type="button"
+            className={styles.linkButton}
+            disabled={q.isSending}
+            onClick={() => { void q.retryPendingSave() }}
+          >
+            Réessayer la sauvegarde
+          </button>
+        )}
 
         {q.variants.length > 0 && (q.variantGroupId || q.variantLabel) && (
           <nav className={styles.variantBar} aria-label="Variantes du devis">
@@ -238,7 +250,7 @@ export default function QuoteEditorClient(props: QuoteEditorProps) {
 
           {q.sections.map(sec => {
             const isLoose = sec._tempId === '_unsectioned'
-            const subtotal = sec.items.filter(i => !i.is_internal).reduce((s, i) => s + i.quantity * i.unit_price, 0)
+            const subtotal = sec.items.filter(i => !i.is_internal).reduce((s, i) => s + roundMoney(i.quantity * i.unit_price), 0)
             return (
               <ListGroup
                 key={sec._tempId}
@@ -441,16 +453,16 @@ export default function QuoteEditorClient(props: QuoteEditorProps) {
         </Sheet>
       )}
 
-      {q.aiPanelOpen && (
+      {q.aiPanelOpen && q.canUseQuoteAssistant && (
         <AtelierAIPanel
           onImport={q.handleAIImport}
           onClose={() => { q.setAIPanelOpen(false); q.setChloeBriefBanner(null); q.setChloeAutoAnalyze(null) }}
-          voiceInputEnabled={q.modules.voice_input}
+          voiceInputEnabled={q.canUseQuoteVoiceInput}
           briefBanner={q.chloeBriefBanner}
           autoAnalyzeText={q.chloeAutoAnalyze}
         />
       )}
-      {q.moaPanelOpen && (
+      {q.moaPanelOpen && q.canUseQuoteAssistant && (
         <LaborEstimatePanel
           laborRates={q.laborRates}
           quoteTitle={q.title}

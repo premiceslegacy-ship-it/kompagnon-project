@@ -75,6 +75,8 @@ export async function POST(request: NextRequest) {
     .select('id, slug, public_form_enabled')
     .eq('slug', orgSlug)
     .eq('public_form_enabled', true)
+    .is('deletion_scheduled_at', null)
+    .is('anonymized_at', null)
     .maybeSingle()
   if (!organization) return response({ error: 'Formulaire indisponible.' }, 404)
 

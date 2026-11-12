@@ -1,11 +1,13 @@
 import { createClient } from '@/lib/supabase/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { roundMoney } from '@/lib/utils/money'
 import { getCurrentOrganizationId } from './clients'
 import { isInvoiceIssuanceSnapshot, InvoiceIssuanceAuthorityError } from '@/lib/pdf/server'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'partial' | 'cancelled'
-export type InvoiceType = 'standard' | 'acompte' | 'situation' | 'solde'
+export type InvoiceStatus = 'draft' | 'sending' | 'sent' | 'viewed' | 'paid' | 'partial' | 'overdue' | 'cancelled'
+export type InvoiceType = 'standard' | 'acompte' | 'situation' | 'solde' | 'avoir'
 
 export type PaymentScheduleItem = {
   id: string
@@ -17,6 +19,9 @@ export type PaymentScheduleItem = {
   percentage: number | null
   position: number
   paid_payment_id: string | null
+  paid_amount?: number
+  remaining_amount?: number
+  is_paid?: boolean
 }
 
 export type Invoice = {
@@ -27,6 +32,7 @@ export type Invoice = {
   invoice_type: InvoiceType
   total_ht: number | null
   total_ttc: number | null
+  credited_ttc?: number
   total_paid: number | null
   currency: string
   issue_date: string | null
@@ -74,6 +80,7 @@ export type InvoiceWithItems = {
   total_ht: number | null
   total_tva: number | null
   total_ttc: number | null
+  credited_ttc?: number
   total_paid: number | null
   currency: string
   issue_date: string | null
@@ -97,6 +104,10 @@ export type InvoiceWithItems = {
   retention_amount: number | null
   market_reference: string | null
   is_reverse_charge: boolean
+  invoice_type_code?: string | null
+  credit_note_for?: string | null
+  preceding_invoice_ref?: string | null
+  preceding_invoice_date?: string | null
   billing_period_key?: string | null
   generation_source?: string | null
   quote_number: string | null
@@ -238,7 +249,17 @@ export async function getInvoices(): Promise<Invoice[]> {
     return []
   }
 
-  return (data ?? []) as unknown as Invoice[]
+  const sourceInvoiceIds = (data ?? []).filter(row => row.invoice_type !== 'avoir').map(row => row.id)
+  try {
+    const creditedByInvoice = await getIssuedInvoiceCreditTotals(sourceInvoiceIds)
+    return (data ?? []).map(row => ({
+      ...row,
+      credited_ttc: creditedByInvoice.get(row.id) ?? 0,
+    })) as unknown as Invoice[]
+  } catch (creditError) {
+    console.error('[getInvoices] issued credit-note authority', creditError)
+    return []
+  }
 }
 
 export async function getInvoiceById(invoiceId: string): Promise<InvoiceWithItems | null> {
@@ -253,6 +274,7 @@ export async function getInvoiceById(invoiceId: string): Promise<InvoiceWithItem
       issue_date, due_date, sent_at, paid_at, created_at,
       notes_client, payment_conditions, aid_label, aid_amount, quote_id, chantier_id, client_id,
       situation_number, cumulative_pct, period_from, period_to, retention_pct, retention_amount, market_reference, is_reverse_charge,
+      invoice_type_code, credit_note_for, preceding_invoice_ref, preceding_invoice_date,
       billing_period_key, generation_source, pa_status, pa_message_id,
       client:clients(id, company_name, contact_name, first_name, last_name, email, phone,
         address_line1, postal_code, city, siret, siren, vat_number, type),
@@ -270,7 +292,62 @@ export async function getInvoiceById(invoiceId: string): Promise<InvoiceWithItem
     return null
   }
 
-  return data as unknown as InvoiceWithItems
+  const scheduleItems = data.payment_schedule ?? []
+  const scheduleIds = scheduleItems.map(item => item.id)
+  const paidBySchedule = new Map<string, number>()
+  if (scheduleIds.length > 0) {
+    const { data: payments, error: paymentsError } = await supabase
+      .from('payments')
+      .select('payment_schedule_id, amount')
+      .eq('invoice_id', invoiceId)
+      .eq('organization_id', orgId)
+      .in('payment_schedule_id', scheduleIds)
+
+    if (paymentsError) {
+      console.error('[getInvoiceById] payment schedule', paymentsError)
+      return null
+    }
+    for (const payment of payments ?? []) {
+      const scheduleId = payment.payment_schedule_id
+      if (!scheduleId) continue
+      paidBySchedule.set(scheduleId, roundMoney((paidBySchedule.get(scheduleId) ?? 0) + (Number(payment.amount) || 0)))
+    }
+  }
+
+  let creditedTtc = 0
+  if (data.invoice_type !== 'avoir') {
+    try {
+      creditedTtc = (await getIssuedInvoiceCreditTotals([invoiceId])).get(invoiceId) ?? 0
+    } catch (creditError) {
+      console.error('[getInvoiceById] issued credit-note authority', creditError)
+      return null
+    }
+  }
+
+  const totalTtc = roundMoney(Number(data.total_ttc) || 0)
+  const totalPaid = roundMoney(Number(data.total_paid) || 0)
+  let scheduleOutstanding = Math.max(0, roundMoney(totalTtc - totalPaid - creditedTtc))
+  const invoiceNotPayable = data.invoice_type === 'avoir' || data.status === 'paid' || scheduleOutstanding === 0
+  const payment_schedule = scheduleItems.map(item => {
+    const amount = item.amount_type === 'percentage'
+      ? roundMoney(totalTtc * ((Number(item.percentage) || 0) / 100))
+      : roundMoney(Number(item.amount) || 0)
+    const ledgerPaid = paidBySchedule.get(item.id) ?? 0
+    const paid_amount = item.paid_payment_id ? Math.max(amount, ledgerPaid) : ledgerPaid
+    const installmentOutstanding = Math.max(0, roundMoney(amount - paid_amount))
+    const remaining_amount = invoiceNotPayable
+      ? 0
+      : Math.min(installmentOutstanding, scheduleOutstanding)
+    scheduleOutstanding = Math.max(0, roundMoney(scheduleOutstanding - remaining_amount))
+    return {
+      ...item,
+      amount,
+      paid_amount,
+      remaining_amount,
+      is_paid: invoiceNotPayable || item.paid_payment_id !== null || remaining_amount === 0,
+    }
+  })
+  return { ...data, payment_schedule, credited_ttc: creditedTtc } as unknown as InvoiceWithItems
 }
 
 export async function getClientInvoices(clientId: string): Promise<Invoice[]> {
@@ -296,7 +373,17 @@ export async function getClientInvoices(clientId: string): Promise<Invoice[]> {
     return []
   }
 
-  return (data ?? []) as unknown as Invoice[]
+  const sourceInvoiceIds = (data ?? []).filter(row => row.invoice_type !== 'avoir').map(row => row.id)
+  try {
+    const creditedByInvoice = await getIssuedInvoiceCreditTotals(sourceInvoiceIds)
+    return (data ?? []).map(row => ({
+      ...row,
+      credited_ttc: creditedByInvoice.get(row.id) ?? 0,
+    })) as unknown as Invoice[]
+  } catch (creditError) {
+    console.error('[getClientInvoices] issued credit-note authority', creditError)
+    return []
+  }
 }
 
 export type InvoiceStub = {
@@ -317,15 +404,20 @@ export type InvoiceForExport = {
   id: string
   number: string | null
   invoice_type: string
+  credit_note_for: string | null
+  vat_breakdown: Array<{ rate: number; taxable_basis: number; tax_amount: number }> | null
+  applied_acompte_ht: number | null
   issue_date: string | null
   paid_at: string | null
   total_ht: number
   total_tva: number
   total_ttc: number
   total_paid: number
+  credited_ttc: number
   status: string
   chantier_id: string | null
   is_vat_subject: boolean
+  is_reverse_charge: boolean
   tva_sur_debits: boolean
   business_profile: string | null
   seller_siren: string | null
@@ -346,6 +438,131 @@ export type InvoiceForExport = {
   pa_message_id: string | null
   chantier_title: string | null
 }
+type InvoiceExportRow = {
+  id: string
+  status: string
+  paid_at: string | null
+  total_paid: number | null
+  issuance_snapshot: unknown
+}
+
+function mapInvoiceForExport(row: InvoiceExportRow): InvoiceForExport {
+  if (!isInvoiceIssuanceSnapshot(row.issuance_snapshot, row.id)) throw new InvoiceIssuanceAuthorityError()
+  const snapshot = row.issuance_snapshot
+  const facts = snapshot.invoice
+  const buyer = snapshot.buyer
+  const items = snapshot.items
+    .filter(item => item.is_internal !== true && item.unit !== '__section__')
+    .map(item => ({
+      unit_price: item.unit_price,
+      quantity: item.quantity ?? 0,
+      vat_rate: item.vat_rate ?? 0,
+    }))
+
+  return {
+    id: row.id,
+    number: facts.number,
+    invoice_type: facts.invoice_type ?? 'standard',
+    credit_note_for: typeof facts.credit_note_for === 'string' ? facts.credit_note_for : null,
+    vat_breakdown: facts.vat_breakdown ?? null,
+    applied_acompte_ht: facts.applied_acompte_ht ?? null,
+    issue_date: facts.issue_date,
+    paid_at: row.paid_at,
+    total_ht: facts.total_ht ?? 0,
+    total_tva: facts.total_tva ?? 0,
+    total_ttc: facts.total_ttc ?? 0,
+    total_paid: row.total_paid ?? 0,
+    credited_ttc: 0,
+    status: row.status,
+    chantier_id: typeof facts.chantier_id === 'string' ? facts.chantier_id : null,
+    is_vat_subject: snapshot.seller.is_vat_subject,
+    is_reverse_charge: facts.is_reverse_charge === true,
+    tva_sur_debits: snapshot.seller.tva_sur_debits ?? false,
+    business_profile: snapshot.seller.business_profile,
+    seller_siren: snapshot.seller.siren,
+    seller_vat_number: snapshot.seller.vat_number,
+    client: buyer ? {
+      id: buyer.id,
+      company_name: buyer.company_name,
+      contact_name: buyer.contact_name,
+      first_name: buyer.first_name,
+      last_name: buyer.last_name,
+      siret: buyer.siret,
+    } : null,
+    items,
+    pa_message_id: null,
+    chantier_title: snapshot.chantier?.title ?? null,
+  }
+}
+export async function getIssuedInvoiceCreditTotals(
+  sourceInvoiceIds: readonly string[],
+  deps?: { client: SupabaseClient; orgId: string },
+): Promise<Map<string, number>> {
+  const requestedIds = [...new Set(sourceInvoiceIds)]
+  const credited = new Map<string, number>()
+  if (requestedIds.length === 0) return credited
+  if (requestedIds.some(id => !id)) {
+    throw new Error('Identifiants de facture invalides pour calculer les avoirs émis.')
+  }
+  for (const id of requestedIds) credited.set(id, 0)
+
+  const supabase = deps?.client ?? await createClient()
+  const orgId = deps?.orgId ?? await getCurrentOrganizationId()
+  if (!orgId) throw new Error('Organisation indisponible pour vérifier les avoirs émis.')
+
+  const pageSize = 1000
+  let offset = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('invoices')
+      .select('id, status, paid_at, total_paid, issuance_snapshot, credit_note_for, unissued_cancelled_at')
+      .eq('organization_id', orgId)
+      .eq('invoice_type', 'avoir')
+      .or('status.in.(sent,viewed,partial,paid,overdue),and(status.eq.cancelled,unissued_cancelled_at.is.null)')
+      .order('id', { ascending: true })
+      .range(offset, offset + pageSize - 1)
+
+    if (error) {
+      console.error('[getIssuedInvoiceCreditTotals]', error)
+      throw new Error('Impossible de vérifier les avoirs émis pour ces factures.')
+    }
+    const rows = data ?? []
+    for (const row of rows) {
+      const snapshotSourceId = (row.issuance_snapshot as { invoice?: { credit_note_for?: unknown } } | null)?.invoice?.credit_note_for
+      if (!isInvoiceIssuanceSnapshot(row.issuance_snapshot, row.id)) {
+        if (requestedIds.includes(row.credit_note_for ?? '')
+            || (typeof snapshotSourceId === 'string' && requestedIds.includes(snapshotSourceId))) {
+          throw new InvoiceIssuanceAuthorityError()
+        }
+        continue
+      }
+      const snapshot = row.issuance_snapshot
+      const sourceId = snapshot.invoice.credit_note_for
+      const amount = snapshot.invoice.total_ttc
+      if (typeof sourceId !== 'string') {
+        if (requestedIds.includes(row.credit_note_for ?? '')) throw new InvoiceIssuanceAuthorityError()
+        continue
+      }
+      if (sourceId !== row.credit_note_for) {
+        if (requestedIds.includes(sourceId) || requestedIds.includes(row.credit_note_for ?? '')) {
+          throw new InvoiceIssuanceAuthorityError()
+        }
+        continue
+      }
+      if (!requestedIds.includes(sourceId)) continue
+      if (snapshot.invoice.invoice_type !== 'avoir'
+          || typeof amount !== 'number'
+          || amount <= 0) {
+        throw new InvoiceIssuanceAuthorityError()
+      }
+      credited.set(sourceId, roundMoney((credited.get(sourceId) ?? 0) + amount))
+    }
+    if (rows.length < pageSize) break
+    offset += pageSize
+  }
+  return credited
+}
+
 
 const EXPORTABLE_INVOICE_STATUSES = ['sent', 'viewed', 'partial', 'paid', 'overdue'] as const
 
@@ -380,49 +597,14 @@ export async function getInvoicesForExport(
     throw new Error('Impossible de vérifier les factures pour cet export comptable.')
   }
 
-  const invoices: InvoiceForExport[] = (data ?? []).map((row) => {
-    const snapshot: unknown = row.issuance_snapshot
-    if (!isInvoiceIssuanceSnapshot(snapshot, row.id)) throw new InvoiceIssuanceAuthorityError()
-    const facts = snapshot.invoice
-    const buyer = snapshot.buyer
-    const items = snapshot.items
-      .filter(item => item.is_internal !== true && item.unit !== '__section__')
-      .map(item => ({
-        unit_price: item.unit_price,
-        quantity: item.quantity ?? 0,
-        vat_rate: item.vat_rate ?? 0,
-      }))
-
-    return {
-      id: row.id,
-      number: facts.number,
-      invoice_type: facts.invoice_type ?? 'standard',
-      issue_date: facts.issue_date,
-      paid_at: row.paid_at,
-      total_ht: facts.total_ht ?? 0,
-      total_tva: facts.total_tva ?? 0,
-      total_ttc: facts.total_ttc ?? 0,
-      total_paid: row.total_paid ?? 0,
-      status: row.status,
-      chantier_id: typeof facts.chantier_id === 'string' ? facts.chantier_id : null,
-      is_vat_subject: snapshot.seller.is_vat_subject,
-      tva_sur_debits: snapshot.seller.tva_sur_debits ?? false,
-      business_profile: snapshot.seller.business_profile,
-      seller_siren: snapshot.seller.siren,
-      seller_vat_number: snapshot.seller.vat_number,
-      client: buyer ? {
-        id: buyer.id,
-        company_name: buyer.company_name,
-        contact_name: buyer.contact_name,
-        first_name: buyer.first_name,
-        last_name: buyer.last_name,
-        siret: buyer.siret,
-      } : null,
-      items,
-      pa_message_id: null,
-      chantier_title: snapshot.chantier?.title ?? null,
-    }
-  })
+  const mappedInvoices: InvoiceForExport[] = (data ?? []).map(mapInvoiceForExport)
+  const creditedByInvoice = await getIssuedInvoiceCreditTotals(
+    mappedInvoices.filter(invoice => invoice.invoice_type !== 'avoir').map(invoice => invoice.id),
+  )
+  const invoices = mappedInvoices.map(invoice => ({
+    ...invoice,
+    credited_ttc: creditedByInvoice.get(invoice.id) ?? 0,
+  }))
 
   // Récupérer les pa_message_id depuis pa_status_events
   const invoiceIds = invoices.map(i => i.id)
@@ -441,6 +623,49 @@ export async function getInvoicesForExport(
   return invoices.map(invoice => ({
     ...invoice,
     pa_message_id: paMessageIds[invoice.id] ?? null,
+  }))
+}
+
+/** Load frozen invoice contexts for payment-ledger exports, including archived records. */
+export async function getInvoiceExportRecordsByIds(
+  invoiceIds: readonly string[],
+): Promise<InvoiceForExport[]> {
+  const requestedIds = [...new Set(invoiceIds)]
+  if (requestedIds.length === 0) return []
+  if (requestedIds.some(id => !id)) {
+    throw new Error('Identifiants de facture invalides pour cet export comptable.')
+  }
+
+  const supabase = await createClient()
+  const orgId = await getCurrentOrganizationId()
+  if (!orgId) throw new Error('Organisation indisponible pour vérifier les factures de cet export.')
+
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('id, status, paid_at, total_paid, issuance_snapshot')
+    .eq('organization_id', orgId)
+    .in('id', requestedIds)
+  if (error) {
+    console.error('[getInvoiceExportRecordsByIds]', error)
+    throw new Error('Impossible de vérifier les factures pour cet export comptable.')
+  }
+
+  const byId = new Map<string, InvoiceForExport>()
+  for (const row of data ?? []) byId.set(row.id, mapInvoiceForExport(row))
+  if (byId.size !== requestedIds.length) {
+    throw new Error('Une ou plusieurs factures demandées sont absentes de votre organisation ou sans autorité d’émission vérifiée.')
+  }
+  const mapped = requestedIds.map(id => {
+    const invoice = byId.get(id)
+    if (!invoice) throw new Error('Une facture demandée est absente de votre organisation.')
+    return invoice
+  })
+  const creditedByInvoice = await getIssuedInvoiceCreditTotals(
+    mapped.filter(invoice => invoice.invoice_type !== 'avoir').map(invoice => invoice.id),
+  )
+  return mapped.map(invoice => ({
+    ...invoice,
+    credited_ttc: creditedByInvoice.get(invoice.id) ?? 0,
   }))
 }
 

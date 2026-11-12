@@ -484,6 +484,7 @@ export async function buildOrganizationExportBundle({
     quotes,
     invoices,
     reminders,
+    reminderDispatches,
     payments,
     recurringInvoices,
     invoiceSchedules,
@@ -513,6 +514,7 @@ export async function buildOrganizationExportBundle({
       summary.warnings.push('Impossible de vérifier l’intégralité des factures émises pour cet export.')
     }),
     fetchOrgRows(admin, 'reminders', organizationId, 'created_at'),
+    fetchOrgRows(admin, 'document_reminder_dispatches', organizationId, 'created_at'),
     fetchOrgRows(admin, 'payments', organizationId, 'created_at'),
     fetchOrgRows(admin, 'recurring_invoices', organizationId, 'created_at'),
     fetchOrgRows(admin, 'invoice_schedules', organizationId, 'created_at'),
@@ -581,6 +583,7 @@ export async function buildOrganizationExportBundle({
   addCsvFile(zip, 'csv/invoices.csv', invoices, summary)
   addCsvFile(zip, 'csv/invoice_items.csv', invoiceItems, summary)
   addCsvFile(zip, 'csv/reminders.csv', reminders, summary)
+  addCsvFile(zip, 'csv/document_reminder_dispatches.csv', reminderDispatches, summary)
   addCsvFile(zip, 'csv/payments.csv', payments, summary)
   addCsvFile(zip, 'csv/recurring_invoices.csv', recurringInvoices, summary)
   addCsvFile(zip, 'csv/recurring_invoice_items.csv', recurringInvoiceItems, summary)

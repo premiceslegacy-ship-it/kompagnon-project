@@ -11,8 +11,8 @@ import { fetchRAGContext } from '@/lib/ai/rag'
 import { buildIndustryQualityPrompt } from '@/lib/ai/industry-context'
 import { getVerticalPackDefinition } from '@/lib/vertical-packs'
 import { getCurrentMembershipContext, hasPermission } from '@/lib/data/queries/membership'
-import { METAL_LABELS, type MetalCode } from '@/lib/metal-prices'
-
+import { getBusinessContext } from '@/lib/ai/business-context'
+import { applyManualPriceKnowledge, formatManualPriceGridContext, type CatalogPriceReference, type PriceKnowledgeSources, type RecentPriceReference } from '@/lib/ai/manual-pricing'
 export type AIQuoteItem = {
   designation: string
   details?: string | null
@@ -72,7 +72,6 @@ const VISION_MODEL = 'google/gemini-2.5-flash'
 const FALLBACK_MODEL = 'anthropic/claude-sonnet-4-6'
 const FAST_MODEL_TIMEOUT_MS = 35_000
 const FALLBACK_MODEL_TIMEOUT_MS = 45_000
-const AI_CONTEXT_CACHE_MS = 5 * 60 * 1000
 
 type QuoteAIContext = {
   context: string
@@ -80,12 +79,11 @@ type QuoteAIContext = {
   activityId: string | null
   activityDescription: string | null
   secondaryActivityLabels: string[]
-  metalPricingPrompt: string
+  manualPricingPrompt: string
   verticalPackPrompt: string
   clientsContext: string
+  pricingSources: PriceKnowledgeSources
 }
-
-const aiContextCache = new Map<string, { expiresAt: number; value: QuoteAIContext }>()
 
 function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -462,7 +460,7 @@ function normalizeAIQuote(quote: AIQuoteResult): AIQuoteResult {
 }
 
 // Charge le catalogue, les postes récents et les infos de l'org pour enrichir le contexte IA
-async function loadCatalogContext(orgId: string): Promise<{ context: string; sector: string; activityId: string | null; activityDescription: string | null; secondaryActivityLabels: string[]; metalPricingPrompt: string; verticalPackPrompt: string }> {
+async function loadCatalogContext(orgId: string): Promise<Omit<QuoteAIContext, 'clientsContext'>> {
   const supabase = await createClient()
 
   const [
@@ -470,7 +468,7 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
     { data: materials },
     { data: laborRates },
     { data: recentItems },
-    { data: metalGrids },
+    businessContext,
   ] = await Promise.all([
     supabase
       .from('organizations')
@@ -493,17 +491,13 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
       .limit(100),
     supabase
       .from('quote_items')
-      .select('description, unit, unit_price')
-      .eq('organization_id', orgId)
+      .select('description, unit, unit_price, quote:quotes!inner(organization_id, status)')
+      .eq('quote.organization_id', orgId)
+      .in('quote.status', ['sent', 'accepted'])
       .not('unit_price', 'eq', 0)
       .order('created_at', { ascending: false })
       .limit(80),
-    supabase
-      .from('metal_price_grids')
-      .select('label, metal_code, coefficient, unit')
-      .eq('organization_id', orgId)
-      .eq('is_active', true)
-      .order('position', { ascending: true }),
+    getBusinessContext(orgId),
   ])
 
   // Variantes tarifaires pour les articles/services qui en ont
@@ -520,8 +514,26 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
   for (const v of (variants ?? [])) {
     const vid = (v as { material_id: string }).material_id
     if (!variantsByMaterial[vid]) variantsByMaterial[vid] = []
-    variantsByMaterial[vid].push(v as { label: string; unit_price_ht: number; unit: string | null })
+    variantsByMaterial[vid].push(v as { material_id: string; label: string; unit_price_ht: number; unit: string | null })
   }
+
+  const catalogPrices: CatalogPriceReference[] = (materials ?? []).map((material: {
+    id: string
+    name: string
+    unit: string | null
+    sale_price: number | null
+  }) => ({
+    name: material.name,
+    unit: material.unit,
+    salePrice: material.sale_price,
+    variants: (variantsByMaterial[material.id] ?? [])
+      .filter(variant => Number.isFinite(variant.unit_price_ht) && variant.unit_price_ht > 0)
+      .map(variant => ({
+        label: variant.label,
+        unit: variant.unit ?? material.unit,
+        unitPrice: variant.unit_price_ht,
+      })),
+  }))
 
   const catalogContextConfig = resolveCatalogContext({
     sector: org?.sector,
@@ -544,7 +556,8 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
           lines.push(`    • ${v.label} | ${v.unit ?? m.unit ?? 'u'} | ${v.unit_price_ht} € HT`)
         }
       } else {
-        lines.push(`- ${m.name} ${kindLabel}${dimLabel} | ${m.unit ?? 'u'} | ${m.sale_price ?? 0} € HT`)
+        const priceLabel = m.sale_price == null ? 'prix de vente non renseigné' : `${m.sale_price} € HT`
+        lines.push(`- ${m.name} ${kindLabel}${dimLabel} | ${m.unit ?? 'u'} | ${priceLabel}`)
       }
     }
   }
@@ -559,19 +572,17 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
   }
 
   // Déduplique les postes récents par description normalisée
-  if (recentItems && recentItems.length > 0) {
-    const seen = new Set<string>()
-    const unique = recentItems.filter(i => {
-      const key = (i.description ?? '').toLowerCase().trim().slice(0, 60)
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-    if (unique.length > 0) {
-      lines.push('\n## Postes de devis récents (prix déjà utilisés par cette entreprise) :')
-      for (const i of unique) {
-        lines.push(`- ${i.description} | ${i.unit ?? 'u'} | ${i.unit_price} € HT`)
-      }
+  const seen = new Set<string>()
+  const uniqueRecentItems = (recentItems ?? []).filter(i => {
+    const key = (i.description ?? '').toLowerCase().trim().slice(0, 60)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  if (uniqueRecentItems.length > 0) {
+    lines.push('\n## Postes de devis récents (prix déjà utilisés par cette entreprise) :')
+    for (const i of uniqueRecentItems) {
+      lines.push(`- ${i.description} | ${i.unit ?? 'u'} | ${i.unit_price} € HT`)
     }
   }
 
@@ -580,39 +591,41 @@ async function loadCatalogContext(orgId: string): Promise<{ context: string; sec
   const secondaryActivityLabels = normalizeSecondaryActivityIds(org?.secondary_activity_ids, org?.business_activity_id)
     .map((activityId) => getBusinessActivityById(activityId)?.label)
     .filter((label): label is string => Boolean(label))
-  const metalPricingPrompt = org?.has_metal_pricing
-    ? buildMetalPricingPrompt(metalGrids ?? [])
+  const manualPricingPrompt = businessContext.hasMetalPricing
+    ? buildManualPricingPrompt(businessContext.manualPriceGrids)
     : ''
   const verticalPack = getVerticalPackDefinition(org?.business_vertical_pack ?? null)
   const verticalPackPrompt = verticalPack?.aiPromptGuidance ?? ''
+  const recentPrices: RecentPriceReference[] = uniqueRecentItems.map(item => ({
+    description: item.description,
+    unit: item.unit,
+    unitPrice: item.unit_price,
+  }))
 
-  return { context: lines.join('\n'), sector, activityId: org?.business_activity_id ?? null, activityDescription, secondaryActivityLabels, metalPricingPrompt, verticalPackPrompt }
+  return {
+    context: lines.join('\n'),
+    sector,
+    activityId: org?.business_activity_id ?? null,
+    activityDescription,
+    secondaryActivityLabels,
+    manualPricingPrompt,
+    verticalPackPrompt,
+    pricingSources: {
+      hasMetalPricing: businessContext.hasMetalPricing,
+      catalogPrices,
+      recentPrices,
+      manualGrids: businessContext.manualPriceGrids,
+    },
+  }
 }
 
-function buildMetalPricingPrompt(grids: Array<{ label: string; metal_code: string; coefficient: number; unit: string }>): string {
-  const lines = [
-    '## Module prix matières métaux',
-    'Le module prix matières métaux est activé pour cette entreprise.',
-    'Règles obligatoires :',
-    '- Utilise les prix catalogue client en priorité quand une correspondance existe.',
-    '- Si une grille matière correspond à la demande, tu peux proposer un prix indicatif basé sur la grille, mais tu dois ajouter un warning.',
-    '- Ne présente jamais le cours LME comme un prix d’achat réel.',
-    '- Le prix final doit rester validé par l’artisan selon fournisseur, format, épaisseur, coupe et livraison.',
-    '- Ne mets jamais de cours brut LME dans le devis client.',
-  ]
-
-  if (grids.length > 0) {
-    lines.push('Grilles configurées :')
-    for (const grid of grids) {
-      const metalLabel = METAL_LABELS[grid.metal_code as MetalCode] ?? grid.metal_code
-      lines.push(`- ${grid.label} : ${metalLabel} x ${Number(grid.coefficient).toFixed(2)} en ${grid.unit}`)
-    }
-    lines.push('Warning à ajouter si tu utilises une grille : "Prix matière proposé depuis une grille de référence client. À valider selon fournisseur, format, épaisseur, coupe et livraison."')
-  } else {
-    lines.push('Aucune grille n’est configurée : n’utilise pas de prix métal indicatif et demande à l’artisan de configurer ses grilles.')
-  }
-
-  return lines.join('\n')
+function buildManualPricingPrompt(grids: PriceKnowledgeSources['manualGrids']): string {
+  return [
+    '## Module de prix manuels des matières métalliques',
+    'Les grilles présentées ci-dessous sont des prix saisis par l’entreprise, et non des coefficients de marché.',
+    'Priorité aux prix catalogue et variantes exacts. N’utilise jamais une autre matière, un autre fournisseur, une autre nuance, un autre format ou une autre unité comme remplacement.',
+    ...formatManualPriceGridContext(grids),
+  ].join('\n')
 }
 
 async function loadClientsContext(orgId: string): Promise<string> {
@@ -639,20 +652,14 @@ async function loadClientsContext(orgId: string): Promise<string> {
 }
 
 async function loadQuoteAIContext(orgId: string): Promise<QuoteAIContext> {
-  const cached = aiContextCache.get(orgId)
-  if (cached && cached.expiresAt > Date.now()) return cached.value
-
   const [catalog, clientsContext] = await Promise.all([
     loadCatalogContext(orgId),
     loadClientsContext(orgId),
   ])
-
-  const value: QuoteAIContext = { ...catalog, clientsContext }
-  aiContextCache.set(orgId, { expiresAt: Date.now() + AI_CONTEXT_CACHE_MS, value })
-  return value
+  return { ...catalog, clientsContext }
 }
 
-function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string, activityDescription: string | null, secondaryActivityLabels: string[], metalPricingPrompt: string, clientsContext: string, verticalPackPrompt: string): string {
+function buildSystemPrompt(catalogContext: string, sector: string, ragContext: string, activityDescription: string | null, secondaryActivityLabels: string[], manualPricingPrompt: string, clientsContext: string, verticalPackPrompt: string): string {
   const hasCatalog = catalogContext.trim().length > 0
   const activityContext = activityDescription ? `\nSpécificité métier : ${activityDescription}` : ''
   const secondaryActivityContext = secondaryActivityLabels.length > 0
@@ -667,7 +674,7 @@ function buildSystemPrompt(catalogContext: string, sector: string, ragContext: s
 
 Tu parles comme un pro du terrain : direct, précis, sans jargon inutile. Tu connais ton métier sur le bout des doigts.
 ${clientContextBlock}
-${metalPricingPrompt ? `\n${metalPricingPrompt}\n` : ''}
+${manualPricingPrompt ? `\n${manualPricingPrompt}\n` : ''}
 ${verticalPackPrompt ? `\n${verticalPackPrompt}\n` : ''}
 ${industryQualityPrompt ? `\n${industryQualityPrompt}\n` : ''}
 ${hasCatalog ? `
@@ -681,6 +688,7 @@ ${catalogContext}
 - Les articles marqués **[prix dimensionnel]** ont un prix calculé selon les dimensions (m², ml, m³) : utilise la surface ou longueur mentionnée dans la description comme quantité.
 - Les éléments marqués **[service]** sont des prestations de main d'oeuvre ou services : inclus-les dans la section "Main d'oeuvre" ou dans la section concernée selon le contexte.
 - Ne jamais laisser unit_price à 0.
+${manualPricingPrompt ? '- Pour une matière métallique, n’estime jamais le prix : utilise uniquement une correspondance catalogue, une grille manuelle exacte, un devis récent exact ou un prix unitaire explicitement fourni. Sinon, la route demandera une précision.' : ''}
 - Le client achète des ouvrages/prestations visibles, pas le détail de la cuisine interne. Les lignes visibles doivent donc porter le prix vendu final de l'ouvrage, matière + main d'oeuvre + équipement + marge.
 - Les lignes internes (is_internal: true) servent à modéliser les ressources masquées : main d'oeuvre, préparation, atelier, pose, équipement. Pour ces lignes internes, \`unit_price\` = montant vendu interne à dispatcher dans les lignes visibles ; \`unit_cost_ht\` = coût réel de revient. Exemple : 100 h vendues 20 €/h et coûtant 10 €/h → ligne interne quantity 100, unit_price 20, unit_cost_ht 10, is_internal true.
 - Ne crée jamais un devis déficitaire : le montant vendu des lignes internes doit être répercuté dans les lignes visibles par le client, par exemple en ajustant les quantités, forfaits ou prix visibles.
@@ -894,11 +902,21 @@ export async function POST(req: NextRequest) {
 
   const context = orgId
     ? await loadQuoteAIContext(orgId)
-    : { context: '', sector: 'BTP', activityId: null, activityDescription: null, secondaryActivityLabels: [], metalPricingPrompt: '', verticalPackPrompt: '', clientsContext: '' }
+    : {
+        context: '',
+        sector: 'BTP',
+        activityId: null,
+        activityDescription: null,
+        secondaryActivityLabels: [],
+        manualPricingPrompt: '',
+        verticalPackPrompt: '',
+        clientsContext: '',
+        pricingSources: { hasMetalPricing: false, catalogPrices: [], recentPrices: [], manualGrids: [] },
+      }
   const ragContext = orgId
     ? await fetchRAGContext(orgId, queryText, { activityId: context.activityId })
     : ''
-  const systemPrompt = buildSystemPrompt(context.context, context.sector, ragContext, context.activityDescription, context.secondaryActivityLabels, context.metalPricingPrompt, context.clientsContext, context.verticalPackPrompt)
+  const systemPrompt = buildSystemPrompt(context.context, context.sector, ragContext, context.activityDescription, context.secondaryActivityLabels, context.manualPricingPrompt, context.clientsContext, context.verticalPackPrompt)
 
   if (contentType.includes('multipart/form-data')) {
     const formData = formDataCache!
@@ -993,12 +1011,39 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Réponse IA invalide, veuillez réessayer' }, { status: 500 })
     }
 
-    quotes = quotes
+    const pricingBeforeNormalization = applyManualPriceKnowledge(
+      quotes,
+      context.pricingSources,
+      queryText,
+      contentType.includes('multipart/form-data'),
+    )
+    if (pricingBeforeNormalization.clarification) {
+      return NextResponse.json(
+        { error: pricingBeforeNormalization.clarification, code: 'manual_material_price_required' },
+        { status: 422 },
+      )
+    }
+
+    quotes = pricingBeforeNormalization.quotes
       .filter(q => Array.isArray(q.sections) && q.sections.length > 0)
       .map(normalizeAIQuote)
     if (quotes.length === 0) {
       return NextResponse.json({ error: 'Structure IA invalide' }, { status: 500 })
     }
+
+    const pricingAfterNormalization = applyManualPriceKnowledge(
+      quotes,
+      context.pricingSources,
+      queryText,
+      contentType.includes('multipart/form-data'),
+    )
+    if (pricingAfterNormalization.clarification) {
+      return NextResponse.json(
+        { error: pricingAfterNormalization.clarification, code: 'manual_material_price_required' },
+        { status: 422 },
+      )
+    }
+    quotes = pricingAfterNormalization.quotes
 
     const result: AIQuoteMultiResult = { quotes }
 

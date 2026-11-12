@@ -57,25 +57,15 @@ function validateGridInput(params: {
   label: string
   metalCode: string
   sourceType: string
-  coefficient: number
   manualPriceEurKg: number | null
   unit: string
 }): string | null {
   if (!params.label) return "Le libellé est requis."
   if (params.label.length > 120) return "Le libellé doit faire 120 caractères maximum."
   if (!isMetalCode(params.metalCode)) return "Le métal source est invalide."
-  if (params.sourceType !== 'lme' && params.sourceType !== 'manual') return "La source est invalide."
-  if (params.metalCode === 'STEEL' && params.sourceType !== 'manual') {
-    return "L'acier ne dispose pas de cotation LME, utilisez la saisie manuelle."
-  }
-  if (params.sourceType === 'manual') {
-    if (params.manualPriceEurKg === null || !Number.isFinite(params.manualPriceEurKg) || params.manualPriceEurKg <= 0) {
-      return 'Le prix manuel doit être un nombre positif.'
-    }
-  } else {
-    if (!Number.isFinite(params.coefficient) || params.coefficient <= 0 || params.coefficient > 100) {
-      return 'Le coefficient doit être compris entre 0 et 100.'
-    }
+  if (params.sourceType !== 'manual') return 'Les cours automatiques sont désactivés. Renseignez un prix manuel.'
+  if (params.manualPriceEurKg === null || !Number.isFinite(params.manualPriceEurKg) || params.manualPriceEurKg <= 0) {
+    return 'Le prix manuel doit être un nombre positif.'
   }
   if (!GRID_UNITS.has(params.unit)) return 'L\'unité est invalide.'
   return null
@@ -133,15 +123,15 @@ export async function createMetalPriceGrid(
 
   const label = (formData.get('label') as string)?.trim()
   const metal_code = (formData.get('metal_code') as string)?.trim()
-  const source_type = (formData.get('source_type') as string)?.trim() || 'lme'
-  const coefficient = parseFloat(formData.get('coefficient') as string)
+  const source_type = (formData.get('source_type') as string)?.trim() || 'manual'
   const manual_price_raw = formData.get('manual_price_eur_kg')
-  const manual_price_eur_kg = manual_price_raw ? parseFloat(manual_price_raw as string) : null
+  const manual_price_eur_kg = typeof manual_price_raw === 'string' && manual_price_raw.trim()
+    ? Number(manual_price_raw.replace(',', '.')) : null
   const unit = (formData.get('unit') as string)?.trim() || 'kg'
   const catalog_item_id = normalizeOptionalUuid(formData.get('catalog_item_id'))
   const supplier_id = normalizeOptionalUuid(formData.get('supplier_id'))
 
-  const validationError = validateGridInput({ label, metalCode: metal_code, sourceType: source_type, coefficient, manualPriceEurKg: manual_price_eur_kg, unit })
+  const validationError = validateGridInput({ label, metalCode: metal_code, sourceType: source_type, manualPriceEurKg: manual_price_eur_kg, unit })
   if (validationError) return { error: validationError, success: false }
   const linkError = await validateOptionalLinks({ organizationId, catalogItemId: catalog_item_id, supplierId: supplier_id })
   if (linkError) return { error: linkError, success: false }
@@ -156,8 +146,8 @@ export async function createMetalPriceGrid(
     label,
     metal_code,
     source_type,
-    coefficient: source_type === 'manual' ? 1 : coefficient,
-    manual_price_eur_kg: source_type === 'manual' ? manual_price_eur_kg : null,
+    coefficient: 1,
+    manual_price_eur_kg,
     unit,
     catalog_item_id,
     supplier_id,
@@ -185,16 +175,16 @@ export async function updateMetalPriceGrid(
   const id = (formData.get('id') as string)?.trim()
   const label = (formData.get('label') as string)?.trim()
   const metal_code = (formData.get('metal_code') as string)?.trim()
-  const source_type = (formData.get('source_type') as string)?.trim() || 'lme'
-  const coefficient = parseFloat(formData.get('coefficient') as string)
+  const source_type = (formData.get('source_type') as string)?.trim() || 'manual'
   const manual_price_raw = formData.get('manual_price_eur_kg')
-  const manual_price_eur_kg = manual_price_raw ? parseFloat(manual_price_raw as string) : null
+  const manual_price_eur_kg = typeof manual_price_raw === 'string' && manual_price_raw.trim()
+    ? Number(manual_price_raw.replace(',', '.')) : null
   const unit = (formData.get('unit') as string)?.trim() || 'kg'
   const catalog_item_id = normalizeOptionalUuid(formData.get('catalog_item_id'))
   const supplier_id = normalizeOptionalUuid(formData.get('supplier_id'))
 
   if (!id) return { error: 'ID manquant.', success: false }
-  const validationError = validateGridInput({ label, metalCode: metal_code, sourceType: source_type, coefficient, manualPriceEurKg: manual_price_eur_kg, unit })
+  const validationError = validateGridInput({ label, metalCode: metal_code, sourceType: source_type, manualPriceEurKg: manual_price_eur_kg, unit })
   if (validationError) return { error: validationError, success: false }
   const linkError = await validateOptionalLinks({ organizationId, catalogItemId: catalog_item_id, supplierId: supplier_id })
   if (linkError) return { error: linkError, success: false }
@@ -210,8 +200,8 @@ export async function updateMetalPriceGrid(
       label,
       metal_code,
       source_type,
-      coefficient: source_type === 'manual' ? 1 : coefficient,
-      manual_price_eur_kg: source_type === 'manual' ? manual_price_eur_kg : null,
+      coefficient: 1,
+      manual_price_eur_kg,
       unit,
       catalog_item_id,
       supplier_id,
@@ -268,9 +258,7 @@ export async function getMetalPriceGrids(): Promise<MetalPriceGrid[]> {
 export type ImportGridRow = {
   label: string
   metal_code: string
-  source_type: 'lme' | 'manual'
-  coefficient?: number
-  manual_price_eur_kg?: number
+  manual_price_eur_kg: number
   unit?: string
   grade?: string
   thickness_mm?: number
@@ -293,9 +281,8 @@ export async function importMetalPriceGrids(rows: ImportGridRow[]): Promise<Impo
     const err = validateGridInput({
       label: row.label,
       metalCode: row.metal_code,
-      sourceType: row.source_type,
-      coefficient: row.coefficient ?? 1,
-      manualPriceEurKg: row.manual_price_eur_kg ?? null,
+      sourceType: 'manual',
+      manualPriceEurKg: row.manual_price_eur_kg,
       unit: row.unit ?? 'kg',
     })
     if (err) { errors.push(`Ligne ${i + 2} : ${err}`); return false }
@@ -317,9 +304,9 @@ export async function importMetalPriceGrids(rows: ImportGridRow[]): Promise<Impo
     organization_id: organizationId,
     label: row.label,
     metal_code: row.metal_code,
-    source_type: row.source_type,
-    coefficient: row.source_type === 'manual' ? 1 : (row.coefficient ?? 1.35),
-    manual_price_eur_kg: row.source_type === 'manual' ? (row.manual_price_eur_kg ?? null) : null,
+    source_type: 'manual',
+    coefficient: 1,
+    manual_price_eur_kg: row.manual_price_eur_kg,
     unit: row.unit ?? 'kg',
     grade: row.grade ?? null,
     thickness_mm: row.thickness_mm ?? null,

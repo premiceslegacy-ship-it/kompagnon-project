@@ -1,108 +1,64 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
 
-/**
- * Page d'acceptation d'une invitation email.
- *
- * Flow :
- * 1. L'invitant envoie une invitation → invitation insérée en DB + email Supabase
- * 2. L'invité clique le lien → /auth/callback?next=/invite/accept → session créée
- * 3. Cette page trouve l'invitation, crée le membership, marque onboarding_done
- * 4. Redirige vers /dashboard
- */
-export default async function InviteAcceptPage() {
+type InvitationAcceptance = {
+  status: string
+  password_setup_required?: boolean
+}
+
+function readAcceptance(value: unknown): InvitationAcceptance | null {
+  if (typeof value !== 'object' || value === null || !('status' in value) || typeof value.status !== 'string') {
+    return null
+  }
+  return {
+    status: value.status,
+    password_setup_required: 'password_setup_required' in value && value.password_setup_required === true,
+  }
+}
+
+export default async function InviteAcceptPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ invitation_id?: string }>
+}) {
+  const { invitation_id: invitationId } = await searchParams
   const supabase = await createClient()
-  const admin = createAdminClient()
-
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  // Chercher une invitation non expirée et non acceptée pour cet email
-  const { data: invitation } = await admin
-    .from('invitations')
-    .select('id, organization_id, role_id')
-    .eq('email', user.email!)
-    .is('accepted_at', null)
-    .gt('expires_at', new Date().toISOString())
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single()
-
-  if (!invitation) {
-    // Pas d'invitation valide → vérifier si l'utilisateur a déjà un membership
-    const { data: membership } = await admin
-      .from('memberships')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-      .single()
-
-    if (membership) {
-      // Deuxième clic sur le lien ou invitation déjà acceptée → dashboard
-      await supabase.from('profiles').update({ onboarding_done: true }).eq('id', user.id)
-      redirect('/dashboard')
-    }
-
-    // Aucune invitation et aucun membership → onboarding normal
-    redirect('/onboarding')
+  if (!invitationId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(invitationId)) {
+    return <InvitationAcceptanceError message="Ce lien d’invitation est invalide ou incomplet." />
   }
 
-  // Vérifier si l'utilisateur a un membership existant (org orpheline créée par le trigger
-  // si la migration 011 n'a pas encore été appliquée, ou cas de re-invitation)
-  const { data: existingMembership } = await admin
-    .from('memberships')
-    .select('id, organization_id')
-    .eq('user_id', user.id)
-    .eq('is_active', true)
-    .single()
-
-  if (existingMembership) {
-    if (existingMembership.organization_id !== invitation.organization_id) {
-      // Déplacer le membership vers l'org de l'invitation
-      await admin
-        .from('memberships')
-        .update({
-          organization_id: invitation.organization_id,
-          role_id: invitation.role_id,
-          accepted_at: new Date().toISOString(),
-        })
-        .eq('id', existingMembership.id)
-
-      // Supprimer l'org orpheline si elle n'a plus aucun membre actif
-      const { count } = await admin
-        .from('memberships')
-        .select('id', { count: 'exact', head: true })
-        .eq('organization_id', existingMembership.organization_id)
-        .eq('is_active', true)
-
-      if (count === 0) {
-        await admin.from('organizations').delete().eq('id', existingMembership.organization_id)
-      }
-    }
-  } else {
-    // Aucun membership (trigger patché ou cas normal) → créer directement
-    await admin.from('memberships').insert({
-      organization_id: invitation.organization_id,
-      user_id: user.id,
-      role_id: invitation.role_id,
-      accepted_at: new Date().toISOString(),
-      is_active: true,
-    })
+  const { data, error } = await supabase.rpc('accept_team_invitation', {
+    p_invitation_id: invitationId,
+  })
+  if (error) {
+    console.error('[InviteAcceptPage] invitation acceptance failed:', error.message)
+    return <InvitationAcceptanceError message="Impossible d’accepter cette invitation pour le moment. Réessayez ou demandez un nouveau lien." />
   }
 
-  // Marquer l'invitation comme acceptée
-  // onboarding_done reste false jusqu'à /invite/setup pour forcer le remplissage du profil
-  await Promise.all([
-    admin
-      .from('invitations')
-      .update({ accepted_at: new Date().toISOString() })
-      .eq('id', invitation.id),
-    supabase
-      .from('profiles')
-      .update({ onboarding_done: true })
-      .eq('id', user.id),
-  ])
+  const acceptance = readAcceptance(data)
+  if (acceptance?.status === 'accepted') {
+    redirect(`/invite/setup?invitation_id=${encodeURIComponent(invitationId)}`)
+  }
+  if (acceptance?.status === 'already_member') redirect('/dashboard')
 
-  redirect('/invite/setup')
+  const message = acceptance?.status === 'already_member_elsewhere'
+    ? 'Ce compte est déjà rattaché à une autre organisation. L’invitation n’a pas modifié cet accès. Demandez au responsable de l’organisation de vous inviter avec le compte approprié.'
+    : acceptance?.status === 'expired'
+      ? 'Cette invitation a expiré. Demandez au responsable de l’organisation de vous en envoyer une nouvelle.'
+      : 'Cette invitation est invalide, déjà utilisée ou ne correspond pas au compte connecté.'
+
+  return <InvitationAcceptanceError message={message} />
+}
+
+function InvitationAcceptanceError({ message }: { message: string }) {
+  return (
+    <main style={{ maxWidth: 520, margin: '10vh auto', padding: 24 }}>
+      <h1>Invitation non acceptée</h1>
+      <p>{message}</p>
+      <a href="/dashboard">Continuer vers Atelier</a>
+    </main>
+  )
 }

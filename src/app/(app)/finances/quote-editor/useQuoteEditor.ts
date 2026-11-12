@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation'
 import type { Client } from '@/lib/data/queries/clients'
 import { buildPersonalizedQuoteIntro, isLegacyAutoQuoteIntro } from '@/lib/client'
 import { buildMaterialSelectionPricing } from '@/lib/catalog-pricing'
-import { computeMetalWeightKg, type MetalCode } from '@/lib/metal-prices'
+import { computeManualMetalQuantity } from '@/lib/metal-prices'
 import type { QuoteWithItems } from '@/lib/data/queries/quotes'
 import type { CatalogMaterial, CatalogLaborRate, PrestationType } from '@/lib/data/queries/catalog'
 import { createQuote, updateQuote, upsertQuoteSection, deleteQuoteSection, upsertQuoteItem, deleteQuoteItem, pruneQuoteItems, sendQuote } from '@/lib/data/mutations/quotes'
@@ -28,7 +28,6 @@ import { computeFuel, DEFAULT_CONSUMPTION_L_PER_100KM, DEFAULT_FUEL_PRICE_EUR_PE
 import { getCatalogDocumentVatRate, getCatalogSaleUnitPrice, getInternalResourceUnitCost } from '@/lib/catalog-ui'
 
 import type { OrganizationModules } from '@/lib/organization-modules'
-import MetalPriceBanner from '@/components/quotes/MetalPriceBanner'
 
 import type { SupplierPriceRequest } from '@/lib/data/mutations/supplier-price-requests'
 
@@ -36,6 +35,14 @@ import type { MetalPriceGrid } from '@/lib/data/mutations/metal-price-grids'
 import { saveMetalPriceSnapshots } from '@/lib/data/mutations/metal-price-snapshots'
 import type { MetalPriceSnapshotRow } from '@/lib/data/queries/metal-price-snapshots'
 
+import {
+  clearQuoteEditorRecoveryDraft,
+  readQuoteEditorRecoveryDraft,
+  writeQuoteEditorRecoveryDraft,
+  type QuoteEditorRecoveryDraft,
+  type QuoteEditorRecoveryDraftInput,
+  type QuoteEditorRecoveryScope,
+} from './quoteEditorRecovery'
 import { fmt, getSafeReturnTo, findBestClientMatch, getAIClientSearch, getAIClientDraftInput, isLikelyInternalAIItem, inferLaborCategory, LocalItem, getLaborCategoryOptions, LocalSection, roundCurrency, getInternalSaleTotal, resolvePersistedSectionId, getItemDimensionMode, getModeUnit, computeDimensionQuantity, itemToLocal, computeQuoteTotals, formatGridLabel } from './quoteEditorModel'
 
 export type QuoteEditorProps = {
@@ -58,11 +65,26 @@ export type QuoteEditorProps = {
   initialPriceRequests?: SupplierPriceRequest[]
   allSuppliers?: import('@/lib/data/queries/suppliers').Supplier[]
   orgForMentions?: import('@/lib/btp-legal-mentions').OrgForCheck | null
+  recoveryIdentity?: { userId: string | null; organizationId: string | null }
+  canUseQuoteAi?: boolean
+  canUseQuoteVoice?: boolean
 }
 
-export function useQuoteEditor({ clients: initialClients, initialQuote, materials, laborRates, prestationTypes, initialClientId, catalogContext, modules, vatConfig, returnTo: rawReturnTo = null, allQuotes = [], hasMetalPricing = false, metalPriceGrids = [], initialMetalSnapshots = [], clauseTemplates = [], initialVariants = [], initialPriceRequests = [], allSuppliers = [], orgForMentions = null }: QuoteEditorProps) {
+export function useQuoteEditor({ clients: initialClients, initialQuote, materials, laborRates, prestationTypes, initialClientId, catalogContext, modules, vatConfig, returnTo: rawReturnTo = null, allQuotes = [], hasMetalPricing = false, metalPriceGrids = [], initialMetalSnapshots = [], clauseTemplates = [], initialVariants = [], initialPriceRequests = [], allSuppliers = [], orgForMentions = null, recoveryIdentity = { userId: null, organizationId: null }, canUseQuoteAi = false, canUseQuoteVoice = false }: QuoteEditorProps) {
 
   const router = useRouter()
+  const canUseQuoteAssistant = modules.quote_ai && canUseQuoteAi
+  const canUseQuoteVoiceInput = modules.voice_input && canUseQuoteVoice
+
+  const initialRecoveryScope: QuoteEditorRecoveryScope = {
+    ...recoveryIdentity,
+    quoteId: initialQuote?.id ?? null,
+  }
+  const recoveryInitRef = useRef<{ loaded: boolean; scope: QuoteEditorRecoveryScope; draft: QuoteEditorRecoveryDraft | null }>({
+    loaded: false,
+    scope: initialRecoveryScope,
+    draft: null,
+  })
   const [isPending, startTransition] = useTransition()
   const [isSending, setIsSending] = useState(false)
   const [isAddingSection, setIsAddingSection] = useState(false)
@@ -78,6 +100,8 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
   const [clauseTarget, setClauseTarget] = useState<'notes' | 'conditions'>('notes')
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [recoveryWarning, setRecoveryWarning] = useState<string | null>(null)
+  const [recoveryRevision, setRecoveryRevision] = useState(0)
   const defaultVatRate = getCatalogDocumentVatRate(vatConfig)
   const returnTo = getSafeReturnTo(rawReturnTo, '/finances?tab=quotes')
   const laborCategoryOptions = getLaborCategoryOptions(catalogContext.businessProfile)
@@ -88,6 +112,10 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
   // Brief Sarah -> Chloé : pré-remplissage au chargement (sessionStorage d'abord, puis ai_briefs en DB)
   useEffect(() => {
     if (initialQuote) return // ne pas écraser un devis existant
+    if (!canUseQuoteAssistant) {
+      setStartChoice('done')
+      return
+    }
 
     type ChloeBrief = {
       client_name?: string
@@ -275,6 +303,85 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
     return secs
   })
 
+  useEffect(() => {
+    if (recoveryInitRef.current.loaded) return
+    recoveryInitRef.current.loaded = true
+    const draft = initialQuote && initialQuote.status !== 'draft'
+      ? null
+      : readQuoteEditorRecoveryDraft(browserSessionStorage(), initialRecoveryScope)
+    recoveryInitRef.current.draft = draft
+    if (!draft) return
+
+    const header = draft.header
+    const headerUpdates: Parameters<typeof updateQuote>[1] = {
+      title: header.title || 'Nouveau devis',
+      client_id: header.clientId || null,
+      validity_days: header.validityDays,
+      notes_client: header.notesClient,
+      client_request_visible_on_pdf: header.clientRequestVisibleOnPdf,
+      aid_label: header.aidLabel || null,
+      aid_amount: header.aidAmount,
+      parent_quote_id: header.parentQuoteId,
+      show_section_subtotals: header.showSectionSubtotals,
+      variant_label: header.variantLabel || null,
+    }
+    pendingHeaderUpdatesRef.current = headerUpdates
+    draftRevisionRef.current = 1
+    for (const field of Object.keys(headerUpdates)) dirtyWritesRef.current.set(`header:${field}`, 1)
+    for (const section of draft.sections) {
+      if (section._tempId !== '_unsectioned') dirtyWritesRef.current.set(`section:${section._tempId}`, 1)
+      for (const item of section.items) dirtyWritesRef.current.set(`item:${section._tempId}_${item._tempId}`, 1)
+    }
+
+    const currentSectionIds = new Set(draft.sections.flatMap(section => section.id ? [section.id] : []))
+    const currentItemIds = new Set(draft.sections.flatMap(section => section.items.flatMap(item => item.id ? [item.id] : [])))
+    for (const sectionId of draft.deletedSectionIds) pendingSectionDeletes.current.add(sectionId)
+    for (const itemId of draft.deletedItemIds) {
+      deletedItemIds.current.add(itemId)
+      pendingItemDeletes.current.add(itemId)
+    }
+    for (const section of initialQuote?.sections ?? []) {
+      if (!currentSectionIds.has(section.id)) {
+        pendingSectionDeletes.current.add(section.id)
+        dirtyWritesRef.current.set(`delete-section:${section.id}`, 1)
+        continue
+      }
+      for (const item of section.items) {
+        if (!currentItemIds.has(item.id)) {
+          deletedItemIds.current.add(item.id)
+          pendingItemDeletes.current.add(item.id)
+          dirtyWritesRef.current.set(`delete-item:${item.id}`, 1)
+        }
+      }
+    }
+    for (const item of initialQuote?.unsectionedItems ?? []) {
+      if (!currentItemIds.has(item.id)) {
+        deletedItemIds.current.add(item.id)
+        pendingItemDeletes.current.add(item.id)
+        dirtyWritesRef.current.set(`delete-item:${item.id}`, 1)
+      }
+    }
+    for (const sectionId of pendingSectionDeletes.current) dirtyWritesRef.current.set(`delete-section:${sectionId}`, 1)
+    for (const itemId of pendingItemDeletes.current) dirtyWritesRef.current.set(`delete-item:${itemId}`, 1)
+    requiresExplicitSaveRef.current = true
+    setTitle(header.title)
+    setClientId(header.clientId)
+    setValidityDays(header.validityDays)
+    setNotesClient(header.notesClient)
+    setClientRequestVisibleOnPdf(header.clientRequestVisibleOnPdf)
+    setAidLabel(header.aidLabel)
+    setAidAmount(header.aidAmount)
+    setShowAid(header.showAid)
+    setAidMode(header.aidMode)
+    setParentQuoteId(header.parentQuoteId)
+    setShowSectionSubtotals(header.showSectionSubtotals)
+    setVariantLabel(header.variantLabel)
+    setSectionsSynced(draft.sections)
+    setSaveStatus('error')
+    setErrorMsg('Un brouillon local a été récupéré. Enregistrez-le pour le synchroniser.')
+    setRecoveryRevision(1)
+  }, [])
+
   // Expanded detail rows (dimensions)
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const toggleItemExpand = (key: string) =>
@@ -298,7 +405,7 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
   // vide. 'checking' le temps de savoir si un brief Sarah pré-sélectionne
   // Chloé (évite l'affichage puis la fermeture immédiate du choix).
   const [startChoice, setStartChoice] = useState<'checking' | 'pending' | 'done'>(
-    !initialQuote && modules.quote_ai ? 'checking' : 'done'
+    !initialQuote && canUseQuoteAssistant ? 'checking' : 'done'
   )
 
   // Labour estimate panel
@@ -310,16 +417,201 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
   useEffect(() => { quoteIdRef.current = quoteId }, [quoteId])
   useEffect(() => { sectionsRef.current = sections }, [sections])
 
+  const pendingHeaderUpdatesRef = useRef<Parameters<typeof updateQuote>[1]>({})
+  const pendingHeaderWriteRef = useRef<Promise<unknown> | null>(null)
   const headerDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
   const addingSectionRef = useRef(false)
   const itemDebounces = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const pendingItemKeys = useRef<Set<string>>(new Set())
+  const pendingItemWrites = useRef(new Set<Promise<string | null>>())
+  const pendingItemWritesByKey = useRef(new Map<string, Promise<string | null>>())
   const deletedSectionTempIds = useRef<Set<string>>(new Set())
   const deletedItemKeys = useRef<Set<string>>(new Set())
   const deletedItemIds = useRef<Set<string>>(new Set())
   const persistedItemIdsByKey = useRef<Map<string, string>>(new Map())
   const pendingCreatedItemSaves = useRef<Set<Promise<void>>>(new Set())
   const pendingDeleteTasks = useRef<Set<Promise<unknown>>>(new Set())
+  const draftRevisionRef = useRef(0)
+  const dirtyWritesRef = useRef(new Map<string, number>())
+  const writeFailuresRef = useRef(new Map<string, string>())
+  const requiresExplicitSaveRef = useRef(false)
+  const pendingSectionWrites = useRef(new Set<Promise<void>>())
+  const pendingSectionDeletes = useRef(new Set<string>())
+  const pendingItemDeletes = useRef(new Set<string>())
+  const recoveryUnavailableRef = useRef(false)
+  const recoveryLastSignatureRef = useRef('')
+  const recoveryActiveScopeRef = useRef(initialRecoveryScope)
+
+  function browserSessionStorage(): Storage | null {
+    try { return typeof window === 'undefined' ? null : window.sessionStorage } catch { return null }
+  }
+
+  function currentRecoveryScope(id = quoteIdRef.current): QuoteEditorRecoveryScope {
+    return { ...recoveryIdentity, quoteId: id }
+  }
+  function currentRecoveryDraft(): QuoteEditorRecoveryDraftInput {
+    const currentSections = sectionsRef.current
+    const currentSectionIds = new Set(currentSections.flatMap(section => section.id ? [section.id] : []))
+    const currentItemIds = new Set(currentSections.flatMap(section => section.items.flatMap(item => item.id ? [item.id] : [])))
+    const deletedSectionIds = new Set(pendingSectionDeletes.current)
+    const deletedItemIdsForRecovery = new Set([...deletedItemIds.current, ...pendingItemDeletes.current])
+    for (const section of initialQuote?.sections ?? []) {
+      if (!currentSectionIds.has(section.id)) {
+        deletedSectionIds.add(section.id)
+        continue
+      }
+      for (const item of section.items) {
+        if (!currentItemIds.has(item.id)) deletedItemIdsForRecovery.add(item.id)
+      }
+    }
+    for (const item of initialQuote?.unsectionedItems ?? []) {
+      if (!currentItemIds.has(item.id)) deletedItemIdsForRecovery.add(item.id)
+    }
+    return {
+      header: {
+        title,
+        clientId,
+        validityDays,
+        notesClient,
+        clientRequestVisibleOnPdf,
+        aidLabel,
+        aidAmount,
+        showAid,
+        aidMode,
+        parentQuoteId,
+        showSectionSubtotals,
+        variantLabel,
+      },
+      sections: currentSections,
+      deletedSectionIds: [...deletedSectionIds],
+      deletedItemIds: [...deletedItemIdsForRecovery],
+    }
+  }
+
+  function confirmUnsavedNavigation(): boolean {
+    if (!recoveryUnavailableRef.current) return true
+    return typeof window !== 'undefined' && window.confirm(
+      'Le navigateur n’a pas pu conserver ce brouillon local. Quitter cette page peut perdre des modifications non synchronisées. Quitter quand même ?',
+    )
+  }
+
+  function clearRecoveryIfClean() {
+    if (dirtyWritesRef.current.size > 0 || writeFailuresRef.current.size > 0) return
+    const storage = browserSessionStorage()
+    clearQuoteEditorRecoveryDraft(storage, currentRecoveryScope())
+    clearQuoteEditorRecoveryDraft(storage, { ...recoveryIdentity, quoteId: null })
+    requiresExplicitSaveRef.current = false
+    recoveryUnavailableRef.current = false
+    setRecoveryWarning(null)
+    deletedItemIds.current.clear()
+    deletedItemKeys.current.clear()
+    deletedSectionTempIds.current.clear()
+    pendingItemDeletes.current.clear()
+    pendingSectionDeletes.current.clear()
+  }
+
+  function markWriteDirty(key: string): number {
+    const revision = ++draftRevisionRef.current
+    dirtyWritesRef.current.set(key, revision)
+    setRecoveryRevision(revision)
+    if (writeFailuresRef.current.size === 0) {
+      setErrorMsg(null)
+      setSaveStatus('saving')
+    }
+    return revision
+  }
+
+  function recordWriteFailure(key: string, message: string) {
+    const error = /an unexpected response was received from the server/i.test(message)
+      ? 'La sauvegarde a échoué. Votre saisie reste dans cet onglet. Vérifiez votre connexion ou reconnectez-vous, puis réessayez.'
+      : message || 'Impossible d’enregistrer les modifications.'
+    writeFailuresRef.current.set(key, error)
+    requiresExplicitSaveRef.current = true
+    setSaveStatus('error')
+    setErrorMsg(error)
+  }
+
+  function markWriteSaved(key: string, revision?: number) {
+    if (revision == null || dirtyWritesRef.current.get(key) === revision) dirtyWritesRef.current.delete(key)
+    writeFailuresRef.current.delete(key)
+    if (writeFailuresRef.current.size > 0) {
+      setSaveStatus('error')
+      setErrorMsg([...writeFailuresRef.current.values()][0])
+      requiresExplicitSaveRef.current = true
+      return
+    }
+    if (dirtyWritesRef.current.size === 0) {
+      clearRecoveryIfClean()
+      setErrorMsg(null)
+      setSaveStatus('saved')
+      setTimeout(() => {
+        if (dirtyWritesRef.current.size === 0 && writeFailuresRef.current.size === 0) setSaveStatus('idle')
+      }, 2000)
+    }
+  }
+
+  function getWriteFailure(): string | null {
+    return writeFailuresRef.current.values().next().value ?? null
+  }
+
+  useEffect(() => {
+    const scope = currentRecoveryScope(quoteId)
+    const previousScope = recoveryActiveScopeRef.current
+    const draft = currentRecoveryDraft()
+    const signature = JSON.stringify(draft)
+    const changed = signature !== recoveryLastSignatureRef.current
+    const storage = browserSessionStorage()
+    let saved = false
+
+    if (dirtyWritesRef.current.size > 0) {
+      if (changed || previousScope.quoteId !== scope.quoteId) {
+        saved = writeQuoteEditorRecoveryDraft(storage, scope, draft)
+        recoveryUnavailableRef.current = !saved
+        setRecoveryWarning(saved ? null : 'Le navigateur n’a pas pu enregistrer ce brouillon local. Gardez cette page ouverte et enregistrez le devis avant de partir.')
+      }
+    } else {
+      clearQuoteEditorRecoveryDraft(storage, scope)
+      recoveryUnavailableRef.current = false
+      setRecoveryWarning(null)
+      saved = true
+    }
+    if (previousScope.quoteId !== scope.quoteId && saved) clearQuoteEditorRecoveryDraft(storage, previousScope)
+    recoveryLastSignatureRef.current = signature
+    recoveryActiveScopeRef.current = scope
+  }, [
+    quoteId, recoveryRevision, sections, title, clientId, validityDays, notesClient,
+    clientRequestVisibleOnPdf, aidLabel, aidAmount, showAid, aidMode, parentQuoteId,
+    showSectionSubtotals, variantLabel,
+  ])
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!recoveryUnavailableRef.current) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    const guardInternalLinks = (event: MouseEvent) => {
+      if (!recoveryUnavailableRef.current || event.defaultPrevented || event.button !== 0
+        || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const anchor = target.closest('a[href]')
+      if (!(anchor instanceof HTMLAnchorElement) || (anchor.target && anchor.target !== '_self')) return
+      const destination = new URL(anchor.href, window.location.href)
+      if (destination.origin !== window.location.origin || destination.href === window.location.href) return
+      if (!window.confirm('Le navigateur n’a pas pu conserver ce brouillon local. Quitter cette page peut perdre des modifications non synchronisées. Quitter quand même ?')) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+      }
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    document.addEventListener('click', guardInternalLinks, true)
+    return () => {
+      window.removeEventListener('beforeunload', beforeUnload)
+      document.removeEventListener('click', guardInternalLinks, true)
+    }
+  }, [])
+
+
 
   function setSectionsSynced(updater: React.SetStateAction<LocalSection[]>) {
     setSections(prev => {
@@ -331,8 +623,54 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
     })
   }
 
+  function trackSectionWrite(
+    key: string,
+    revision: number,
+    task: Promise<{ error: string | null; sectionId?: string | null }>,
+  ): Promise<void> {
+    const tracked = task.then(res => {
+      if (res.error || !res.sectionId) {
+        recordWriteFailure(key, res.error ?? 'Impossible d’enregistrer le lot.')
+      } else {
+        markWriteSaved(key, revision)
+      }
+    }).catch(error => {
+      recordWriteFailure(key, error instanceof Error ? error.message : String(error))
+    }).finally(() => {
+      pendingSectionWrites.current.delete(tracked)
+    })
+    pendingSectionWrites.current.add(tracked)
+    return tracked
+  }
+
+  function quoteItemPayload(qId: string, sectionId: string | null, item: LocalItem, id = item.id ?? crypto.randomUUID()) {
+    return {
+      id,
+      quote_id: qId,
+      section_id: sectionId,
+      type: item.type,
+      material_id: item.material_id,
+      labor_rate_id: item.labor_rate_id,
+      description: item.description,
+      quantity: item.quantity,
+      unit: item.unit,
+      unit_price: item.unit_price,
+      unit_cost_ht: item.unit_cost_ht,
+      vat_rate: item.vat_rate,
+      position: item.position,
+      length_m: item.length_m,
+      width_m: item.width_m,
+      height_m: item.height_m,
+      dim_quantity: item.dim_quantity,
+      is_internal: item.is_internal,
+      metal_grid_id: item.metal_grid_id ?? null,
+      price_pending: item.price_pending,
+      labor_category: item.labor_category ?? null,
+    }
+  }
+
   async function handleCreateVariant() {
-    if (!quoteId || !variantNewLabel.trim()) return
+    if (!quoteId || !variantNewLabel.trim() || !confirmUnsavedNavigation()) return
     setVariantCreating(true)
     const { createQuoteVariant } = await import('@/lib/data/mutations/quotes')
     const res = await createQuoteVariant(quoteId, variantNewLabel.trim())
@@ -345,38 +683,70 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
     }
   }
 
-  async function deleteQuoteItemOrReport(itemId: string, qId: string) {
+  async function deleteQuoteItemOrReport(itemId: string, qId: string, revision?: number) {
+    const key = `delete-item:${itemId}`
+    const writeRevision = revision ?? markWriteDirty(key)
+    pendingItemDeletes.current.add(itemId)
     const task = (async () => {
-      const res = await deleteQuoteItem(itemId, qId)
-      if (res.error) {
-        console.error('[deleteQuoteItem]', res.error)
-        setErrorMsg(res.error)
+      try {
+        const res = await deleteQuoteItem(itemId, qId)
+        if (res.error) {
+          console.error('[deleteQuoteItem]', res.error)
+          recordWriteFailure(key, res.error)
+        } else {
+          pendingItemDeletes.current.delete(itemId)
+          markWriteSaved(key, writeRevision)
+        }
+        return res
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        recordWriteFailure(key, message)
+        return { error: message }
       }
-      return res
     })()
     pendingDeleteTasks.current.add(task)
     task.finally(() => pendingDeleteTasks.current.delete(task))
     return task
   }
 
-  async function deleteQuoteSectionOrReport(sectionId: string) {
+  async function deleteQuoteSectionOrReport(sectionId: string, revision?: number) {
+    const key = `delete-section:${sectionId}`
+    const writeRevision = revision ?? markWriteDirty(key)
+    pendingSectionDeletes.current.add(sectionId)
     const task = (async () => {
-      const res = await deleteQuoteSection(sectionId)
-      if (res.error) {
-        console.error('[deleteQuoteSection]', res.error)
-        setErrorMsg(res.error)
+      try {
+        const res = await deleteQuoteSection(sectionId)
+        if (res.error) {
+          console.error('[deleteQuoteSection]', res.error)
+          recordWriteFailure(key, res.error)
+        } else {
+          pendingSectionDeletes.current.delete(sectionId)
+          markWriteSaved(key, writeRevision)
+        }
+        return res
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        recordWriteFailure(key, message)
+        return { error: message }
       }
-      return res
     })()
     pendingDeleteTasks.current.add(task)
     task.finally(() => pendingDeleteTasks.current.delete(task))
     return task
   }
 
-  async function waitForPendingDeletes() {
+  async function waitForPendingDeletes(): Promise<string | null> {
     while (pendingDeleteTasks.current.size > 0) {
       await Promise.allSettled([...pendingDeleteTasks.current])
     }
+    return getWriteFailure()
+  }
+
+  async function waitForPendingSectionWrites(): Promise<string | null> {
+    while (pendingSectionWrites.current.size > 0) {
+      await Promise.allSettled([...pendingSectionWrites.current])
+    }
+    return getWriteFailure()
   }
 
   function getCurrentPersistedItemIds() {
@@ -387,12 +757,22 @@ export function useQuoteEditor({ clients: initialClients, initialQuote, material
   }
 
   async function pruneRemovedQuoteItems(qId: string) {
-    const res = await pruneQuoteItems(qId, getCurrentPersistedItemIds())
-    if (res.error) {
-      console.error('[pruneQuoteItems]', res.error)
-      setErrorMsg(res.error)
+    const key = 'prune'
+    const revision = dirtyWritesRef.current.get(key) ?? markWriteDirty(key)
+    try {
+      const res = await pruneQuoteItems(qId, getCurrentPersistedItemIds())
+      if (res.error) {
+        console.error('[pruneQuoteItems]', res.error)
+        recordWriteFailure(key, res.error)
+      } else {
+        markWriteSaved(key, revision)
+      }
+      return res
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      recordWriteFailure(key, message)
+      return { error: message }
     }
-    return res
   }
 
   // ─── Totals ──────────────────────────────────────────────────────────────
@@ -689,7 +1069,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     const desc = `${equipmentLabel}\n\nAmortissement : ${equipmentPurchase} € / ${equipmentUses} usages`
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === equipmentTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, metal_lme_price_eur_kg: null, price_pending: false, labor_category: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: 1, unit: 'usage', unit_price: equipmentCostPerUse, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, price_pending: false, labor_category: null }] }
         : s
     ))
     setShowEquipment(false)
@@ -718,7 +1098,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     const desc = `Carburant - trajet ${transportKm} km`
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === transportTarget
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL, metal_grid_id: null, metal_lme_price_eur_kg: null, price_pending: false, labor_category: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: desc, quantity: transportLiters, unit: 'L', unit_price: transportPrixL, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: true, transport_km: transportKm, transport_conso: transportConso, transport_prix_l: transportPrixL, metal_grid_id: null, price_pending: false, labor_category: null }] }
         : s
     ))
     setShowTransport(false)
@@ -757,53 +1137,119 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   async function ensureQuote(clientIdOverride?: string | null): Promise<string | null> {
     if (quoteIdRef.current) return quoteIdRef.current
     const resolvedClientId = clientIdOverride !== undefined ? clientIdOverride : clientId
-    const res = await createQuote({ clientId: resolvedClientId || null, title: title || 'Nouveau devis' })
-    if (res.error || !res.quoteId) { setErrorMsg(res.error); return null }
-    setQuoteId(res.quoteId)
-    quoteIdRef.current = res.quoteId
-    // Mettre à jour l'URL sans déclencher un re-render SSC (évite la réinitialisation du state client)
-    const nextUrl = new URL('/finances/quote-editor', window.location.origin)
-    nextUrl.searchParams.set('id', res.quoteId)
-    nextUrl.searchParams.set('returnTo', returnTo)
-    window.history.replaceState(null, '', `${nextUrl.pathname}${nextUrl.search}`)
-    return res.quoteId
+    try {
+      const res = await createQuote({ clientId: resolvedClientId || null, title: title || 'Nouveau devis' })
+      if (res.error || !res.quoteId) {
+        recordWriteFailure('quote:create', res.error ?? 'Impossible de créer le devis.')
+        return null
+      }
+      setQuoteId(res.quoteId)
+      quoteIdRef.current = res.quoteId
+      // Mettre à jour l'URL sans déclencher un re-render SSC (évite la réinitialisation du state client)
+      const nextUrl = new URL('/finances/quote-editor', window.location.origin)
+      nextUrl.searchParams.set('id', res.quoteId)
+      nextUrl.searchParams.set('returnTo', returnTo)
+      window.history.replaceState(null, '', `${nextUrl.pathname}${nextUrl.search}`)
+      if (!requiresExplicitSaveRef.current) {
+        const updates = pendingHeaderUpdatesRef.current
+        const versions = Object.keys(updates).map(field => {
+          const key = `header:${field}`
+          return [key, dirtyWritesRef.current.get(key)] as const
+        })
+        if (versions.length > 0) {
+          pendingHeaderUpdatesRef.current = {}
+          const headerResult = await enqueueHeaderWrite(res.quoteId, updates, versions)
+          if (headerResult.error) return null
+        }
+      }
+      return res.quoteId
+    } catch (error) {
+      recordWriteFailure('quote:create', error instanceof Error ? error.message : String(error))
+      return null
+    }
   }
 
   // ─── Header auto-save ─────────────────────────────────────────────────────
 
+  function enqueueHeaderWrite(
+    quoteId: string,
+    updates: Parameters<typeof updateQuote>[1],
+    versions: readonly (readonly [string, number | undefined])[],
+  ) {
+    const previous = pendingHeaderWriteRef.current
+    const task = (async () => {
+      if (previous) await previous
+      try {
+        const res = await updateQuote(quoteId, updates)
+        if (res.error) {
+          for (const [key, revision] of versions) {
+            if (revision != null) recordWriteFailure(key, res.error)
+          }
+          if (versions.every(([, revision]) => revision == null)) recordWriteFailure('header:sync', res.error)
+        } else {
+          for (const [key, revision] of versions) {
+            if (revision != null) markWriteSaved(key, revision)
+          }
+        }
+        return res
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        for (const [key, revision] of versions) {
+          if (revision != null) recordWriteFailure(key, message)
+        }
+        if (versions.every(([, revision]) => revision == null)) recordWriteFailure('header:sync', message)
+        return { error: message }
+      }
+    })()
+    pendingHeaderWriteRef.current = task
+    void task.finally(() => {
+      if (pendingHeaderWriteRef.current === task) pendingHeaderWriteRef.current = null
+    })
+    return task
+  }
+
   function scheduleHeaderSave(updates: Parameters<typeof updateQuote>[1]) {
+    for (const field of Object.keys(updates)) markWriteDirty(`header:${field}`)
+    pendingHeaderUpdatesRef.current = { ...pendingHeaderUpdatesRef.current, ...updates }
+    clearTimeout(headerDebounce.current ?? undefined)
     if (!quoteIdRef.current) return
-    if (headerDebounce.current) clearTimeout(headerDebounce.current)
-    setSaveStatus('saving')
-    headerDebounce.current = setTimeout(async () => {
-      const res = await updateQuote(quoteIdRef.current!, updates)
-      setSaveStatus(res.error ? 'error' : 'saved')
-      if (res.error) setErrorMsg(res.error)
-      else setTimeout(() => setSaveStatus('idle'), 2000)
+    headerDebounce.current = setTimeout(() => {
+      headerDebounce.current = null
+      const qId = quoteIdRef.current
+      if (!qId) return
+      const queuedUpdates = pendingHeaderUpdatesRef.current
+      const versions = Object.keys(queuedUpdates).map(field => {
+        const key = `header:${field}`
+        return [key, dirtyWritesRef.current.get(key)] as const
+      })
+      pendingHeaderUpdatesRef.current = {}
+      void enqueueHeaderWrite(qId, queuedUpdates, versions)
     }, 1000)
   }
 
   async function syncQuoteHeader(quoteId: string) {
-    if (headerDebounce.current) {
-      clearTimeout(headerDebounce.current)
-      headerDebounce.current = null
-    }
-    setSaveStatus('saving')
-    const res = await updateQuote(quoteId, {
+    clearTimeout(headerDebounce.current ?? undefined)
+    headerDebounce.current = null
+    pendingHeaderUpdatesRef.current = {}
+    const updates = {
       title: title || 'Nouveau devis',
       client_id: clientId || null,
       validity_days: validityDays,
       notes_client: notesClient,
+      client_request_visible_on_pdf: clientRequestVisibleOnPdf,
+      aid_label: aidLabel || null,
+      aid_amount: aidAmount,
+      parent_quote_id: parentQuoteId,
       show_section_subtotals: showSectionSubtotals,
-    })
-    setSaveStatus(res.error ? 'error' : 'saved')
-    if (res.error) {
-      setErrorMsg(res.error)
-      return res
+      variant_label: variantLabel || null,
     }
-    setTimeout(() => setSaveStatus('idle'), 2000)
-    return res
+    const versions = Object.keys(updates).map(field => {
+      const key = `header:${field}`
+      return [key, dirtyWritesRef.current.get(key)] as const
+    })
+    return enqueueHeaderWrite(quoteId, updates, versions)
   }
+
 
   // ─── Section mutations ────────────────────────────────────────────────────
 
@@ -816,18 +1262,18 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
       if (!qId) return
       const pos = sectionsRef.current.length + 1
       const tempId = `sec_${Date.now()}`
+      const sectionId = crypto.randomUUID()
       deletedSectionTempIds.current.delete(tempId)
-      setSectionsSynced(prev => [...prev, { _tempId: tempId, id: null, title: `Section ${pos}`, position: pos, items: [] }])
+      setSectionsSynced(prev => [...prev, { _tempId: tempId, id: sectionId, title: `Section ${pos}`, position: pos, items: [] }])
+      const key = `section:${tempId}`
+      const revision = markWriteDirty(key)
       startTransition(async () => {
-        const res = await upsertQuoteSection({ quote_id: qId, title: `Section ${pos}`, position: pos })
-        if (res.sectionId) {
-          if (deletedSectionTempIds.current.has(tempId)) {
-            await deleteQuoteSectionOrReport(res.sectionId)
-            return
-          }
-          setSectionsSynced(prev => prev.map(s => s._tempId === tempId ? { ...s, id: res.sectionId } : s))
-        }
+        const task = upsertQuoteSection({ id: sectionId, quote_id: qId, title: `Section ${pos}`, position: pos })
+        await trackSectionWrite(key, revision, task)
+        if (deletedSectionTempIds.current.has(tempId)) await deleteQuoteSectionOrReport(sectionId)
       })
+    } catch (error) {
+      recordWriteFailure('section:create', error instanceof Error ? error.message : String(error))
     } finally {
       addingSectionRef.current = false
       setIsAddingSection(false)
@@ -837,15 +1283,26 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   function handleSectionTitleChange(tempId: string, newTitle: string) {
     setSectionsSynced(prev => prev.map(s => s._tempId === tempId ? { ...s, title: newTitle } : s))
     const sec = sectionsRef.current.find(s => s._tempId === tempId)
+    const key = `section:${tempId}`
+    const revision = markWriteDirty(key)
     if (!sec?.id || !quoteIdRef.current) return
+    const sectionId = sec.id
+    const qId = quoteIdRef.current
     startTransition(async () => {
-      await upsertQuoteSection({ id: sec.id!, quote_id: quoteIdRef.current!, title: newTitle, position: sec.position })
+      await trackSectionWrite(
+        key,
+        revision,
+        upsertQuoteSection({ id: sectionId, quote_id: qId, title: newTitle, position: sec.position }),
+      )
     })
   }
 
   async function handleRemoveSection(tempId: string) {
     const sec = sections.find(s => s._tempId === tempId)
     deletedSectionTempIds.current.add(tempId)
+    const deleteKey = sec?.id ? `delete-section:${sec.id}` : null
+    const deleteRevision = deleteKey ? markWriteDirty(deleteKey) : null
+    if (sec?.id) pendingSectionDeletes.current.add(sec.id)
     // Annuler tous les debounces de sauvegarde des items de cette section
     for (const item of sec?.items ?? []) {
       const key = `${tempId}_${item._tempId}`
@@ -859,8 +1316,29 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
       pendingItemKeys.current.delete(key)
     }
     setSectionsSynced(prev => prev.filter(s => s._tempId !== tempId))
+    const sectionWriteKey = `section:${tempId}`
     if (sec?.id) {
-      startTransition(async () => { await deleteQuoteSectionOrReport(sec.id!) })
+      startTransition(async () => {
+        await waitForPendingCreatedItemSaves()
+        while (pendingItemWrites.current.size > 0) {
+          await Promise.allSettled([...pendingItemWrites.current])
+        }
+        await waitForPendingSectionWrites()
+        await waitForPendingDeletes()
+        const res = await deleteQuoteSectionOrReport(sec.id!, deleteRevision ?? undefined)
+        if (res.error) return
+        markWriteSaved(sectionWriteKey, dirtyWritesRef.current.get(sectionWriteKey))
+        for (const item of sec.items) {
+          const itemKey = `${tempId}_${item._tempId}`
+          markWriteSaved(`item:${itemKey}`, dirtyWritesRef.current.get(`item:${itemKey}`))
+        }
+      })
+    } else {
+      markWriteSaved(sectionWriteKey, dirtyWritesRef.current.get(sectionWriteKey))
+      for (const item of sec?.items ?? []) {
+        const itemKey = `${tempId}_${item._tempId}`
+        markWriteSaved(`item:${itemKey}`, dirtyWritesRef.current.get(`item:${itemKey}`))
+      }
     }
   }
 
@@ -871,17 +1349,93 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     const sec = sectionsRef.current.find(s => s._tempId === sectionTempId)
     if (!sec) return null
     if (sec.id) return sec.id
-    const res = await upsertQuoteSection({ quote_id: qId, title: sec.title, position: sec.position })
-    if (res.sectionId) {
-      // Vérifier que la section n'a pas été supprimée pendant l'upsert
-      const stillExists = !deletedSectionTempIds.current.has(sectionTempId) && sectionsRef.current.some(s => s._tempId === sectionTempId)
-      if (!stillExists) {
-        await deleteQuoteSectionOrReport(res.sectionId)
+    const sectionId = crypto.randomUUID()
+    setSectionsSynced(prev => prev.map(s => s._tempId === sectionTempId ? { ...s, id: sectionId } : s))
+    const key = `section:${sectionTempId}`
+    const revision = dirtyWritesRef.current.get(key) ?? markWriteDirty(key)
+    try {
+      const res = await upsertQuoteSection({ id: sectionId, quote_id: qId, title: sec.title, position: sec.position })
+      if (res.error || !res.sectionId) {
+        recordWriteFailure(key, res.error ?? 'Impossible d’enregistrer le lot.')
         return null
       }
-      setSectionsSynced(prev => prev.map(s => s._tempId === sectionTempId ? { ...s, id: res.sectionId } : s))
+      const stillExists = !deletedSectionTempIds.current.has(sectionTempId) && sectionsRef.current.some(s => s._tempId === sectionTempId)
+      if (!stillExists) {
+        await deleteQuoteSectionOrReport(sectionId)
+        return null
+      }
+      markWriteSaved(key, revision)
+      return sectionId
+    } catch (error) {
+      recordWriteFailure(key, error instanceof Error ? error.message : String(error))
+      return null
     }
-    return res.sectionId
+  }
+
+  async function saveLocalItem(
+    sectionTempId: string,
+    itemTempId: string,
+    qId: string,
+    revision: number | undefined,
+  ): Promise<string | null> {
+    const section = sectionsRef.current.find(s => s._tempId === sectionTempId)
+    const item = section?.items.find(i => i._tempId === itemTempId)
+    const key = `${sectionTempId}_${itemTempId}`
+    const writeKey = `item:${key}`
+    if (!section || !item) return null
+    if (deletedSectionTempIds.current.has(sectionTempId) || deletedItemKeys.current.has(key) || (item.id && deletedItemIds.current.has(item.id))) return null
+
+    let sectionId: string | null
+    if (section._tempId === '_unsectioned') {
+      sectionId = null
+    } else {
+      sectionId = await ensureSectionSaved(sectionTempId, qId)
+      if (!sectionId) return getWriteFailure() ?? 'Impossible d’enregistrer le lot.'
+    }
+
+    const itemId = item.id ?? crypto.randomUUID()
+    if (item.id !== itemId) {
+      setSectionsSynced(prev => prev.map(s => s._tempId === sectionTempId
+        ? { ...s, items: s.items.map(i => i._tempId === itemTempId ? { ...i, id: itemId } : i) }
+        : s))
+    }
+    try {
+      const res = await upsertQuoteItem(quoteItemPayload(qId, sectionId, item, itemId))
+      if (res.error || !res.itemId) {
+        const message = res.error ?? 'Impossible d’enregistrer la ligne.'
+        recordWriteFailure(writeKey, message)
+        return message
+      }
+      if (deletedItemKeys.current.has(key) || deletedItemIds.current.has(itemId) || deletedSectionTempIds.current.has(sectionTempId)) {
+        pendingItemKeys.current.delete(key)
+        await deleteQuoteItemOrReport(itemId, qId)
+        return getWriteFailure()
+      }
+      persistedItemIdsByKey.current.set(key, itemId)
+      pendingItemKeys.current.delete(key)
+      markWriteSaved(writeKey, revision)
+      return null
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      recordWriteFailure(writeKey, message)
+      return message
+    }
+  }
+
+  function trackItemWrite(sectionTempId: string, itemTempId: string, qId: string, revision?: number) {
+    const key = `${sectionTempId}_${itemTempId}`
+    const previous = pendingItemWritesByKey.current.get(key)
+    const task = (async () => {
+      if (previous) await previous
+      return saveLocalItem(sectionTempId, itemTempId, qId, revision)
+    })()
+    pendingItemWritesByKey.current.set(key, task)
+    pendingItemWrites.current.add(task)
+    task.finally(() => {
+      pendingItemWrites.current.delete(task)
+      if (pendingItemWritesByKey.current.get(key) === task) pendingItemWritesByKey.current.delete(key)
+    })
+    return task
   }
 
   async function finalizeCreatedItem(
@@ -889,13 +1443,14 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     itemTempId: string,
     itemId: string,
     qId: string,
-    sectionId: string,
+    _sectionId: string,
+    revision: number,
   ) {
     const key = `${sectionTempId}_${itemTempId}`
+    const writeKey = `item:${key}`
     persistedItemIdsByKey.current.set(key, itemId)
     const currentItem = sectionsRef.current.find(s => s._tempId === sectionTempId)?.items.find(i => i._tempId === itemTempId)
 
-    // Si la ligne a été supprimée pendant l'upsert initial, supprimer en DB et ignorer
     if (deletedSectionTempIds.current.has(sectionTempId) || deletedItemKeys.current.has(key) || deletedItemIds.current.has(itemId) || !currentItem) {
       await deleteQuoteItemOrReport(itemId, qId)
       return
@@ -907,42 +1462,26 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
         : s
     ))
 
-    if (!pendingItemKeys.current.has(key) || !currentItem) return
-
-    if (itemDebounces.current[key]) {
-      clearTimeout(itemDebounces.current[key])
-      delete itemDebounces.current[key]
+    if (!pendingItemKeys.current.has(key)) {
+      markWriteSaved(writeKey, revision)
+      return
     }
-    pendingItemKeys.current.delete(key)
 
-    await upsertQuoteItem({
-      id: itemId,
-      quote_id: qId,
-      section_id: sectionId,
-      type: currentItem.type,
-      material_id: currentItem.material_id,
-      labor_rate_id: currentItem.labor_rate_id,
-      description: currentItem.description,
-      quantity: currentItem.quantity,
-      unit: currentItem.unit,
-      unit_price: currentItem.unit_price,
-      unit_cost_ht: currentItem.unit_cost_ht,
-      vat_rate: currentItem.vat_rate,
-      position: currentItem.position,
-      length_m: currentItem.length_m,
-      width_m: currentItem.width_m,
-      height_m: currentItem.height_m,
-      dim_quantity: currentItem.dim_quantity,
-      is_internal: currentItem.is_internal,
-      metal_grid_id: currentItem.metal_grid_id,
-      price_pending: currentItem.price_pending,
-      labor_category: currentItem.labor_category,
-    })
+    clearTimeout(itemDebounces.current[key])
+    delete itemDebounces.current[key]
+    await saveLocalItem(sectionTempId, itemTempId, qId, dirtyWritesRef.current.get(writeKey))
   }
 
-  function trackCreatedItemSave(task: Promise<void>) {
+  function trackCreatedItemSave(key: string, task: Promise<void>) {
+    const writeTask = task.then(() => null)
     pendingCreatedItemSaves.current.add(task)
+    pendingItemWrites.current.add(writeTask)
+    pendingItemWritesByKey.current.set(key, writeTask)
     task.finally(() => pendingCreatedItemSaves.current.delete(task))
+    writeTask.finally(() => {
+      pendingItemWrites.current.delete(writeTask)
+      if (pendingItemWritesByKey.current.get(key) === writeTask) pendingItemWritesByKey.current.delete(key)
+    })
     return task
   }
 
@@ -953,23 +1492,39 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     sectionId: string,
     item: Parameters<typeof upsertQuoteItem>[0],
   ) {
+    const key = `${sectionTempId}_${itemTempId}`
+    const writeKey = `item:${key}`
+    const localItem = sectionsRef.current.find(s => s._tempId === sectionTempId)?.items.find(i => i._tempId === itemTempId)
+    const itemId = localItem?.id ?? item.id ?? crypto.randomUUID()
+    const revision = dirtyWritesRef.current.get(writeKey) ?? markWriteDirty(writeKey)
+    setSectionsSynced(prev => prev.map(s => s._tempId === sectionTempId
+      ? { ...s, items: s.items.map(i => i._tempId === itemTempId ? { ...i, id: itemId } : i) }
+      : s))
+    const previous = pendingItemWritesByKey.current.get(key)
     const task = (async () => {
-      const res = await upsertQuoteItem(item)
-      if (res.error) {
-        setErrorMsg(res.error)
-        return
-      }
-      if (res.itemId) {
-        await finalizeCreatedItem(sectionTempId, itemTempId, res.itemId, qId, sectionId)
+      if (previous) await previous
+      try {
+        const res = await upsertQuoteItem({ ...item, id: itemId })
+        if (res.error || !res.itemId) {
+          const message = res.error ?? 'Impossible d’enregistrer la ligne.'
+          pendingItemKeys.current.add(key)
+          recordWriteFailure(writeKey, message)
+          return
+        }
+        await finalizeCreatedItem(sectionTempId, itemTempId, itemId, qId, sectionId, revision)
+      } catch (error) {
+        pendingItemKeys.current.add(key)
+        recordWriteFailure(writeKey, error instanceof Error ? error.message : String(error))
       }
     })()
-    return trackCreatedItemSave(task)
+    return trackCreatedItemSave(key, task)
   }
 
-  async function waitForPendingCreatedItemSaves() {
+  async function waitForPendingCreatedItemSaves(): Promise<string | null> {
     while (pendingCreatedItemSaves.current.size > 0) {
       await Promise.allSettled([...pendingCreatedItemSaves.current])
     }
+    return getWriteFailure()
   }
 
   // internal = true : ligne de coût interne (comptée dans la marge, absente du
@@ -985,7 +1540,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     deletedItemKeys.current.delete(key)
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
-        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: internal, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, metal_lme_price_eur_kg: null, price_pending: false, labor_category: null }] }
+        ? { ...s, items: [...s.items, { _tempId: tempId, id: null, description: '', quantity: 1, unit: 'u', unit_price: 0, unit_cost_ht: null, vat_rate: defaultVatRate, type: 'custom' as const, material_id: null, labor_rate_id: null, position: pos, length_m: null, width_m: null, height_m: null, dimension_pricing_mode: null, dim_quantity: 1, is_estimated: false, is_internal: internal, transport_km: null, transport_conso: null, transport_prix_l: null, metal_grid_id: null, price_pending: false, labor_category: null }] }
         : s
     ))
     const sectionId = await ensureSectionSaved(sectionTempId, qId)
@@ -1003,7 +1558,17 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   }
 
   // F3 — Pré-remplissage depuis une grille matière (MetalPriceBanner)
-  async function handleMetalGridSelect(grid: MetalPriceGrid, lmePriceEurKg: number) {
+  async function handleMetalGridSelect(grid: MetalPriceGrid) {
+    const manualPrice = Number(grid.manual_price_eur_kg)
+    if (grid.source_type !== 'manual' || !Number.isFinite(manualPrice) || manualPrice <= 0) {
+      setErrorMsg('Renseignez un prix manuel valide pour cette grille.')
+      return
+    }
+    const proposedPrice = roundCurrency(manualPrice)
+    if (!Number.isFinite(proposedPrice) || proposedPrice <= 0) {
+      setErrorMsg('Ce prix est trop faible pour un tarif de devis au centime. Choisissez une unité adaptée.')
+      return
+    }
     const qId = await ensureQuote()
     if (!qId) return
     // Cible : première section disponible, ou on en crée une
@@ -1016,11 +1581,10 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     const sec = sectionsRef.current.find(s => s._tempId === targetTempId)!
     const pos = sec.items.length + 1
     const tempId = `item_${Date.now()}`
-    const proposedPrice = Math.round(lmePriceEurKg * grid.coefficient * 100) / 100
     const lineLabel = buildMetalGridLineLabel(grid)
-    // Grille avec épaisseur connue = calcul possible par surface (L × l × épaisseur × densité)
-    // dès que l'artisan renseigne les dimensions ; sinon le prix reste le multiplicateur simple.
-    const canPriceBySurface = grid.thickness_mm != null && grid.thickness_mm > 0
+    const dimensionMode = grid.unit === 'm²'
+      || (grid.unit === 'kg' && grid.thickness_mm !== null && grid.thickness_mm > 0)
+      ? 'area' : grid.unit === 'ml' ? 'linear' : null
     deletedItemKeys.current.delete(`${targetTempId}_${tempId}`)
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === targetTempId
@@ -1037,13 +1601,12 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
             labor_rate_id: null,
             position: pos,
             length_m: null, width_m: null, height_m: null,
-            dimension_pricing_mode: canPriceBySurface ? 'area' : null,
+            dimension_pricing_mode: dimensionMode,
             dim_quantity: 1,
-            is_estimated: true,
+            is_estimated: false,
             is_internal: false,
             transport_km: null, transport_conso: null, transport_prix_l: null,
             metal_grid_id: grid.id,
-            metal_lme_price_eur_kg: lmePriceEurKg,
             price_pending: false,
             labor_category: null,
           }] }
@@ -1066,6 +1629,14 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   }
 
   function handleItemChange(sectionTempId: string, itemTempId: string, field: keyof LocalItem, value: string | number | boolean | null) {
+    if (field === 'quantity' && typeof value === 'number') {
+      const quantity = Math.round((value + Number.EPSILON) * 1000) / 1000
+      if (!Number.isFinite(quantity)) {
+        setErrorMsg('La quantité doit être un nombre fini.')
+        return
+      }
+      value = quantity
+    }
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId
         ? { ...s, items: s.items.map(i => i._tempId === itemTempId
@@ -1073,50 +1644,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
             : i) }
         : s
     ))
-    const key = `${sectionTempId}_${itemTempId}`
-    if (itemDebounces.current[key]) clearTimeout(itemDebounces.current[key])
-    pendingItemKeys.current.add(key)
-    itemDebounces.current[key] = setTimeout(async () => {
-      const qId = quoteIdRef.current
-      if (!qId) return
-      const sec = sectionsRef.current.find(s => s._tempId === sectionTempId)
-      const item = sec?.items.find(i => i._tempId === itemTempId)
-      const sectionId = resolvePersistedSectionId(sec)
-      if (!item?.id || sectionId === undefined) return
-      if (deletedSectionTempIds.current.has(sectionTempId) || deletedItemKeys.current.has(key) || deletedItemIds.current.has(item.id)) return
-      const res = await upsertQuoteItem({
-        id: item.id,
-        quote_id: qId,
-        section_id: sectionId,
-        type: item.type,
-        material_id: item.material_id,
-        labor_rate_id: item.labor_rate_id,
-        description: item.description,
-        quantity: item.quantity,
-        unit: item.unit,
-        unit_price: item.unit_price,
-        unit_cost_ht: item.unit_cost_ht,
-        vat_rate: item.vat_rate,
-        position: item.position,
-        length_m: item.length_m,
-        width_m: item.width_m,
-        height_m: item.height_m,
-        dim_quantity: item.dim_quantity,
-        is_internal: item.is_internal,
-        metal_grid_id: item.metal_grid_id ?? null,
-        price_pending: item.price_pending,
-        labor_category: item.labor_category ?? null,
-      })
-      setSaveStatus(res.error ? 'error' : 'saved')
-      if (res.error) setErrorMsg(res.error)
-      else setTimeout(() => setSaveStatus('idle'), 2000)
-      if (deletedItemIds.current.has(item.id)) {
-        await deleteQuoteItemOrReport(item.id, qId)
-        return
-      }
-      pendingItemKeys.current.delete(key)
-      delete itemDebounces.current[key]
-    }, 800)
+    scheduleItemSave(sectionTempId, itemTempId)
   }
 
   async function handleRemoveItem(sectionTempId: string, itemTempId: string) {
@@ -1124,9 +1652,12 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     const item = sec?.items.find(i => i._tempId === itemTempId)
     // Annuler le debounce de sauvegarde avant de supprimer
     const key = `${sectionTempId}_${itemTempId}`
-    const persistedItemId = item?.id ?? persistedItemIdsByKey.current.get(key)
-    deletedItemKeys.current.add(key)
-    if (persistedItemId) deletedItemIds.current.add(persistedItemId)
+    let persistedItemId = item?.id ?? persistedItemIdsByKey.current.get(key)
+    const deleteRevision = persistedItemId ? markWriteDirty(`delete-item:${persistedItemId}`) : null
+    if (persistedItemId) {
+      deletedItemIds.current.add(persistedItemId)
+      pendingItemDeletes.current.add(persistedItemId)
+    }
     if (itemDebounces.current[key]) {
       clearTimeout(itemDebounces.current[key])
       delete itemDebounces.current[key]
@@ -1135,18 +1666,25 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     setSectionsSynced(prev => prev.map(s =>
       s._tempId === sectionTempId ? { ...s, items: s.items.filter(i => i._tempId !== itemTempId) } : s
     ))
+    const writeKey = `item:${key}`
     const qId = quoteIdRef.current
-    if (persistedItemId && qId) {
-      const res = await deleteQuoteItemOrReport(persistedItemId, qId)
-      if (res.error) {
-        console.error('[deleteQuoteItem]', res.error)
-        setErrorMsg(res.error)
-      }
-    }
     if (qId) {
       await waitForPendingCreatedItemSaves()
-      await waitForPendingDeletes()
-      await pruneRemovedQuoteItems(qId)
+      const pendingWrite = pendingItemWritesByKey.current.get(key)
+      if (pendingWrite) await pendingWrite
+      persistedItemId ??= persistedItemIdsByKey.current.get(key)
+      if (persistedItemId && (deleteRevision != null || !pendingItemDeletes.current.has(persistedItemId))) {
+        await deleteQuoteItemOrReport(persistedItemId, qId, deleteRevision ?? undefined)
+      }
+      const deleteError = await waitForPendingDeletes()
+      if (deleteError) setErrorMsg(deleteError)
+      if (!persistedItemId || !pendingItemDeletes.current.has(persistedItemId)) {
+        markWriteSaved(writeKey, dirtyWritesRef.current.get(writeKey))
+      }
+      const pruneResult = await pruneRemovedQuoteItems(qId)
+      if (pruneResult.error) setErrorMsg(pruneResult.error)
+    } else {
+      markWriteSaved(writeKey, dirtyWritesRef.current.get(writeKey))
     }
   }
 
@@ -1154,28 +1692,16 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
 
   function scheduleItemSave(sectionTempId: string, itemTempId: string) {
     const key = `${sectionTempId}_${itemTempId}`
-    if (itemDebounces.current[key]) clearTimeout(itemDebounces.current[key])
+    const writeKey = `item:${key}`
+    const revision = markWriteDirty(writeKey)
     pendingItemKeys.current.add(key)
-    setSaveStatus('saving')
-    itemDebounces.current[key] = setTimeout(async () => {
+    clearTimeout(itemDebounces.current[key])
+    const timer = setTimeout(() => {
+      if (itemDebounces.current[key] === timer) delete itemDebounces.current[key]
       const qId = quoteIdRef.current
-      if (!qId) return
-      const sec = sectionsRef.current.find(s => s._tempId === sectionTempId)
-      const item = sec?.items.find(i => i._tempId === itemTempId)
-      const sectionId = resolvePersistedSectionId(sec)
-      if (!item?.id || sectionId === undefined) return
-      if (deletedSectionTempIds.current.has(sectionTempId) || deletedItemKeys.current.has(key) || deletedItemIds.current.has(item.id)) return
-      const res = await upsertQuoteItem({ id: item.id, quote_id: qId, section_id: sectionId, type: item.type, material_id: item.material_id, labor_rate_id: item.labor_rate_id, description: item.description, quantity: item.quantity, unit: item.unit, unit_price: item.unit_price, unit_cost_ht: item.unit_cost_ht, vat_rate: item.vat_rate, position: item.position, length_m: item.length_m, width_m: item.width_m, height_m: item.height_m, dim_quantity: item.dim_quantity, is_internal: item.is_internal, metal_grid_id: item.metal_grid_id ?? null, price_pending: item.price_pending, labor_category: item.labor_category ?? null })
-      setSaveStatus(res.error ? 'error' : 'saved')
-      if (res.error) setErrorMsg(res.error)
-      else setTimeout(() => setSaveStatus('idle'), 2000)
-      if (deletedItemIds.current.has(item.id)) {
-        await deleteQuoteItemOrReport(item.id, qId)
-        return
-      }
-      pendingItemKeys.current.delete(key)
-      delete itemDebounces.current[key]
+      if (qId) void trackItemWrite(sectionTempId, itemTempId, qId, revision)
     }, 800)
+    itemDebounces.current[key] = timer
   }
 
   function handleDimChange(
@@ -1188,10 +1714,19 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
       if (s._tempId !== sectionTempId) return s
       return { ...s, items: s.items.map(i => {
         if (i._tempId !== itemTempId) return i
-        const mode = getItemDimensionMode(i)
         const nextLength = field === 'length_m' ? value : i.length_m
         const nextWidth = field === 'width_m' ? value : i.width_m
         const nextHeight = field === 'height_m' ? value : i.height_m
+
+        // Une grille manuelle ne doit ni changer d'unité ni reprendre le prix du catalogue lié.
+        const grid = i.metal_grid_id ? metalPriceGrids.find(g => g.id === i.metal_grid_id) : null
+        if (grid) {
+          const quantity = grid.source_type === 'manual' && grid.unit === i.unit
+            ? computeManualMetalQuantity(grid, nextLength, nextWidth, i.dim_quantity || 1)
+            : null
+          return { ...i, [field]: value, quantity: quantity ?? i.quantity }
+        }
+        const mode = getItemDimensionMode(i)
         const sourceMaterial = i.material_id ? materials.find(material => material.id === i.material_id) : null
         const pricing = sourceMaterial
           ? buildMaterialSelectionPricing({
@@ -1201,24 +1736,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
               requestedHeightM: nextHeight,
             })
           : null
-
-        // Ligne issue d'une grille métal : calcul du poids réel (L × l × épaisseur × densité)
-        // plutôt que le multiplicateur "1 pièce" par défaut, quand les données sont disponibles.
-        // Source LME (cours du jour) ou manuelle (acier) : même calcul de poids, prix au kg différent.
-        const grid = i.metal_grid_id ? metalPriceGrids.find(g => g.id === i.metal_grid_id) : null
-        const priceEurKg = grid?.source_type === 'manual' ? grid.manual_price_eur_kg : i.metal_lme_price_eur_kg
-        const weightKg = grid && priceEurKg != null
-          ? computeMetalWeightKg(grid.metal_code as MetalCode, grid.thickness_mm, nextLength, nextWidth)
-          : null
-        if (weightKg != null && grid && priceEurKg != null) {
-          return {
-            ...i,
-            [field]: value,
-            quantity: weightKg,
-            unit: 'kg',
-            unit_price: Math.round(priceEurKg * grid.coefficient * 100) / 100,
-          }
-        }
 
         return {
           ...i,
@@ -1238,6 +1755,13 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
       if (s._tempId !== sectionTempId) return s
       return { ...s, items: s.items.map(i => {
         if (i._tempId !== itemTempId) return i
+        const grid = i.metal_grid_id ? metalPriceGrids.find(g => g.id === i.metal_grid_id) : null
+        if (grid) {
+          const quantity = grid.source_type === 'manual' && grid.unit === i.unit
+            ? computeManualMetalQuantity(grid, i.length_m, i.width_m, qty)
+            : null
+          return { ...i, dim_quantity: qty, quantity: quantity ?? i.quantity }
+        }
         const mode = getItemDimensionMode(i)
         return {
           ...i,
@@ -1288,7 +1812,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
       is_internal: !isMat,
       transport_km: null, transport_conso: null, transport_prix_l: null,
       metal_grid_id: null,
-      metal_lme_price_eur_kg: null,
       price_pending: false,
       labor_category: null,
     }
@@ -1315,46 +1838,125 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
 
   // ─── Flush pending item saves ─────────────────────────────────────────────
 
-  async function flushPendingItemSaves(qId: string) {
-    if (pendingItemKeys.current.size === 0) return
-    const saves: Promise<unknown>[] = []
+  async function flushPendingItemSaves(qId: string, includeAll = false): Promise<string | null> {
     for (const sec of sectionsRef.current) {
-      const sectionId = resolvePersistedSectionId(sec)
-      if (sectionId === undefined) continue
       for (const item of sec.items) {
         const key = `${sec._tempId}_${item._tempId}`
-        if (!pendingItemKeys.current.has(key)) continue
-        if (itemDebounces.current[key]) {
-          clearTimeout(itemDebounces.current[key])
-          delete itemDebounces.current[key]
-        }
-        if (!item.id || deletedItemKeys.current.has(key) || deletedItemIds.current.has(item.id)) continue
-        saves.push(upsertQuoteItem({
-          id: item.id,
-          quote_id: qId,
-          section_id: sectionId,
-          type: item.type,
-          material_id: item.material_id,
-          labor_rate_id: item.labor_rate_id,
-          description: item.description,
-          quantity: item.quantity,
-          unit: item.unit,
-          unit_price: item.unit_price,
-          unit_cost_ht: item.unit_cost_ht,
-          vat_rate: item.vat_rate,
-          position: item.position,
-          length_m: item.length_m,
-          width_m: item.width_m,
-          height_m: item.height_m,
-          is_internal: item.is_internal,
-          metal_grid_id: item.metal_grid_id ?? null,
-          price_pending: item.price_pending,
-          labor_category: item.labor_category ?? null,
-        }))
+        clearTimeout(itemDebounces.current[key])
+        delete itemDebounces.current[key]
       }
     }
-    pendingItemKeys.current.clear()
-    await Promise.all(saves)
+    while (pendingItemWrites.current.size > 0) {
+      await Promise.allSettled([...pendingItemWrites.current])
+    }
+    const saves: Promise<string | null>[] = []
+    for (const sec of sectionsRef.current) {
+      for (const item of sec.items) {
+        const key = `${sec._tempId}_${item._tempId}`
+        if (!includeAll && !pendingItemKeys.current.has(key)) continue
+        if (deletedItemKeys.current.has(key) || (item.id && deletedItemIds.current.has(item.id))) continue
+        const revision = dirtyWritesRef.current.get(`item:${key}`)
+        saves.push(trackItemWrite(sec._tempId, item._tempId, qId, revision))
+      }
+    }
+    const results = await Promise.all(saves)
+    return results.find(Boolean) ?? getWriteFailure()
+  }
+
+  async function retryPendingSave(): Promise<boolean> {
+    writeFailuresRef.current.clear()
+    requiresExplicitSaveRef.current = false
+    setErrorMsg(null)
+    setSaveStatus('saving')
+
+    const qId = await ensureQuote()
+    if (!qId) {
+      requiresExplicitSaveRef.current = true
+      setSaveStatus('error')
+      return false
+    }
+
+    await waitForPendingCreatedItemSaves()
+    await waitForPendingSectionWrites()
+    await waitForPendingDeletes()
+
+    const headerRes = await syncQuoteHeader(qId)
+    if (headerRes.error) return false
+
+    for (const section of sectionsRef.current) {
+      if (section._tempId === '_unsectioned') continue
+      const sectionId = section.id ?? crypto.randomUUID()
+      if (section.id !== sectionId) {
+        setSectionsSynced(prev => prev.map(s => s._tempId === section._tempId ? { ...s, id: sectionId } : s))
+      }
+      const key = `section:${section._tempId}`
+      const revision = dirtyWritesRef.current.get(key) ?? markWriteDirty(key)
+      try {
+        const res = await upsertQuoteSection({ id: sectionId, quote_id: qId, title: section.title, position: section.position })
+        if (res.error || !res.sectionId) {
+          recordWriteFailure(key, res.error ?? 'Impossible d’enregistrer le lot.')
+          return false
+        }
+        markWriteSaved(key, revision)
+      } catch (error) {
+        recordWriteFailure(key, error instanceof Error ? error.message : String(error))
+        return false
+      }
+    }
+
+    for (const itemId of [...pendingItemDeletes.current]) {
+      try {
+        const res = await deleteQuoteItem(itemId, qId)
+        if (res.error && res.error !== 'Ligne introuvable.') {
+          recordWriteFailure(`delete-item:${itemId}`, res.error)
+          return false
+        }
+        pendingItemDeletes.current.delete(itemId)
+        markWriteSaved(`delete-item:${itemId}`, dirtyWritesRef.current.get(`delete-item:${itemId}`))
+      } catch (error) {
+        recordWriteFailure(`delete-item:${itemId}`, error instanceof Error ? error.message : String(error))
+        return false
+      }
+    }
+
+    const currentSectionIds = new Set(sectionsRef.current.flatMap(section => section.id ? [section.id] : []))
+    for (const section of initialQuote?.sections ?? []) {
+      if (!currentSectionIds.has(section.id)) pendingSectionDeletes.current.add(section.id)
+    }
+    for (const sectionId of [...pendingSectionDeletes.current]) {
+      try {
+        const res = await deleteQuoteSection(sectionId)
+        if (res.error && res.error !== 'Section introuvable.') {
+          recordWriteFailure(`delete-section:${sectionId}`, res.error)
+          return false
+        }
+        pendingSectionDeletes.current.delete(sectionId)
+        markWriteSaved(`delete-section:${sectionId}`, dirtyWritesRef.current.get(`delete-section:${sectionId}`))
+      } catch (error) {
+        recordWriteFailure(`delete-section:${sectionId}`, error instanceof Error ? error.message : String(error))
+        return false
+      }
+    }
+
+    const pruneResult = await pruneRemovedQuoteItems(qId)
+    if (pruneResult.error) return false
+    const itemError = await flushPendingItemSaves(qId, true)
+    if (itemError) return false
+
+    if (writeFailuresRef.current.size > 0) {
+      setErrorMsg(getWriteFailure())
+      setSaveStatus('error')
+      requiresExplicitSaveRef.current = true
+      return false
+    }
+    dirtyWritesRef.current.clear()
+    clearRecoveryIfClean()
+    setErrorMsg(null)
+    setSaveStatus('saved')
+    setTimeout(() => {
+      if (dirtyWritesRef.current.size === 0 && writeFailuresRef.current.size === 0) setSaveStatus('idle')
+    }, 2000)
+    return true
   }
 
   // ─── Send ─────────────────────────────────────────────────────────────────
@@ -1373,10 +1975,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
             quote_item_id: item.id!,
             quote_id: qId,
             grid_id: grid.id,
-            metal_code: grid.metal_code as import('@/lib/metal-prices').MetalCode,
-            coefficient: grid.coefficient,
-            validated_price: item.unit_price,
-            show_on_pdf: false,
           }
         })
         .filter(Boolean) as import('@/lib/data/mutations/metal-price-snapshots').SnapshotInput[]
@@ -1392,6 +1990,17 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   }
 
   async function prepareQuoteSend(skipEmailCheck = false, skipCheck = false) {
+    if (requiresExplicitSaveRef.current || writeFailuresRef.current.size > 0) {
+      setSaveStatus('error')
+      setErrorMsg(getWriteFailure() ?? 'Enregistrez ou réessayez les modifications avant de continuer.')
+      return
+    }
+    if (sectionsRef.current.some(section => section.items.some(item =>
+      !Number.isFinite(item.quantity) || item.quantity <= 0 || item.quantity > 9_999_999.999
+      || Math.abs(item.quantity * 1000 - Math.round(item.quantity * 1000)) > 0.000001))) {
+      setErrorMsg('Quantité invalide. Choisissez une unité adaptée et une quantité positive, avec trois décimales maximum.')
+      return
+    }
     if (!clientId) {
       setErrorMsg('Veuillez sélectionner un client avant d\'envoyer le devis.')
       return
@@ -1423,10 +2032,18 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     if (!qId) { setIsSending(false); return }
     const headerRes = await syncQuoteHeader(qId)
     if (headerRes.error) { setIsSending(false); return }
-    await waitForPendingCreatedItemSaves()
-    await waitForPendingDeletes()
-    await pruneRemovedQuoteItems(qId)
-    await flushPendingItemSaves(qId)
+    const queuedError = await waitForPendingCreatedItemSaves()
+      ?? await waitForPendingSectionWrites()
+      ?? await waitForPendingDeletes()
+    if (queuedError) {
+      setIsSending(false)
+      setErrorMsg(queuedError)
+      return
+    }
+    const pruneResult = await pruneRemovedQuoteItems(qId)
+    if (pruneResult.error) { setIsSending(false); setErrorMsg(pruneResult.error); return }
+    const itemError = await flushPendingItemSaves(qId)
+    if (itemError) { setIsSending(false); setErrorMsg(itemError); return }
 
     // Ouvrir la modale d'envoi avec sélection optionnelle de contrats du client
     setPendingQuoteId(qId)
@@ -1473,20 +2090,30 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   }
 
   async function handlePreviewPdf() {
+    if (requiresExplicitSaveRef.current || writeFailuresRef.current.size > 0) {
+      setSaveStatus('error')
+      setErrorMsg(getWriteFailure() ?? 'Enregistrez ou réessayez les modifications avant de continuer.')
+      return
+    }
     const qId = await ensureQuote()
     if (!qId) return
     const headerRes = await syncQuoteHeader(qId)
     if (headerRes.error) return
-    await waitForPendingCreatedItemSaves()
-    await waitForPendingDeletes()
-    await pruneRemovedQuoteItems(qId)
-    await flushPendingItemSaves(qId)
+    const queuedError = await waitForPendingCreatedItemSaves()
+      ?? await waitForPendingSectionWrites()
+      ?? await waitForPendingDeletes()
+    if (queuedError) { setErrorMsg(queuedError); return }
+    const pruneResult = await pruneRemovedQuoteItems(qId)
+    if (pruneResult.error) { setErrorMsg(pruneResult.error); return }
+    const itemError = await flushPendingItemSaves(qId)
+    if (itemError) { setErrorMsg(itemError); return }
     router.push(`/api/pdf/quote/${qId}`)
   }
 
   // ─── AI import ───────────────────────────────────────────────────────────
 
   async function handleAIImport(aiResult: AIQuoteResult) {
+    if (!canUseQuoteAssistant) return
     let resolvedClientId: string | null = null
     const matchedClient = findBestClientMatch(clients, getAIClientSearch(aiResult))
     if (matchedClient) {
@@ -1583,7 +2210,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
           is_internal: isInternal,
           transport_km: null, transport_conso: null, transport_prix_l: null,
           metal_grid_id: null,
-          metal_lme_price_eur_kg: null,
           price_pending: false,
           labor_category: null,
         }
@@ -1619,6 +2245,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
   // ─── MO insert ───────────────────────────────────────────────────────────
 
   async function handleInsertMOItems(items: MOInsertItem[]) {
+    if (!canUseQuoteAssistant) return
     if (items.length === 0) return
     const qId = await ensureQuote()
     if (!qId) return
@@ -1671,7 +2298,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
         is_estimated: false, is_internal: true,
         transport_km: null, transport_conso: null, transport_prix_l: null,
         metal_grid_id: null,
-        metal_lme_price_eur_kg: null,
         price_pending: false,
         labor_category: 'atelier' as const,
       }
@@ -1725,7 +2351,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
         is_estimated: false, is_internal: false,
         transport_km: null, transport_conso: null, transport_prix_l: null,
         metal_grid_id: null,
-        metal_lme_price_eur_kg: null,
         price_pending: false,
         labor_category: null,
       }
@@ -1793,7 +2418,6 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
           transport_conso: isTransport ? conso : null,
           transport_prix_l: isTransport ? prixL : null,
           metal_grid_id: null,
-          metal_lme_price_eur_kg: null,
           price_pending: false,
           labor_category: laborCategory,
         }
@@ -1852,6 +2476,19 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
       .map(l => ({ ...l, _type: 'labor' as const })),
   ]
 
+  const setAIPanelOpenGuarded: typeof setAIPanelOpen = value => {
+    setAIPanelOpen(previous => {
+      const next = typeof value === 'function' ? value(previous) : value
+      return next && !canUseQuoteAssistant ? previous : next
+    })
+  }
+  const setMoaPanelOpenGuarded: typeof setMoaPanelOpen = value => {
+    setMoaPanelOpen(previous => {
+      const next = typeof value === 'function' ? value(previous) : value
+      return next && !canUseQuoteAssistant ? previous : next
+    })
+  }
+
   return {
     initialClients,
     initialQuote,
@@ -1861,6 +2498,8 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     initialClientId,
     catalogContext,
     modules,
+    canUseQuoteVoiceInput,
+    canUseQuoteAssistant,
     vatConfig,
     rawReturnTo,
     allQuotes,
@@ -1903,6 +2542,8 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     setSaveStatus,
     errorMsg,
     setErrorMsg,
+    recoveryWarning,
+    confirmUnsavedNavigation,
     defaultVatRate,
     returnTo,
     laborCategoryOptions,
@@ -1978,7 +2619,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     prestationSearch,
     setPrestationSearch,
     aiPanelOpen,
-    setAIPanelOpen,
+    setAIPanelOpen: setAIPanelOpenGuarded,
     chloeBriefBanner,
     setChloeBriefBanner,
     chloeAutoAnalyze,
@@ -1986,7 +2627,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     startChoice,
     setStartChoice,
     moaPanelOpen,
-    setMoaPanelOpen,
+    setMoaPanelOpen: setMoaPanelOpenGuarded,
     quoteIdRef,
     sectionsRef,
     headerDebounce,
@@ -2098,6 +2739,7 @@ function buildEquipmentDescription(name: string, purchasePrice: number | null, l
     handleClientEmailSaved,
     confirmQuoteSend,
     handlePreviewPdf,
+    retryPendingSave,
     handleAIImport,
     handleInsertMOItems,
     handlePrestationSelect,

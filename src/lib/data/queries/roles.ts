@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 
+import { getUserPermissions } from './membership'
+
 export type OrgRole = {
   id: string
   name: string
@@ -24,6 +26,33 @@ export type RoleWithPermissions = OrgRole & {
 export type AllPermissionsData = {
   roles: RoleWithPermissions[]
   allPermissions: Permission[]
+}
+
+/** A caller may only assign a role whose effective permissions they already hold. */
+export async function canAssignRoleToCurrentUser(organizationId: string, roleId: string): Promise<boolean> {
+  const supabase = await createClient()
+  const callerPermissions = await getUserPermissions()
+  if (callerPermissions.size === 0) return false
+
+  const { data: role, error: roleError } = await supabase
+    .from('roles')
+    .select('id, slug, is_active')
+    .eq('id', roleId)
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
+  if (roleError || !role || role.slug === 'owner' || role.is_active !== true) return false
+
+  const { data: permissions, error: permissionsError } = await supabase
+    .from('role_permissions')
+    .select('permission_key')
+    .eq('role_id', roleId)
+    .eq('is_allowed', true)
+
+  if (permissionsError || !permissions) return false
+  return permissions.every(permission =>
+    callerPermissions.has('*') || callerPermissions.has(permission.permission_key),
+  )
 }
 
 /**

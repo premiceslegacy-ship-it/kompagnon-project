@@ -86,7 +86,7 @@ export default function DonneesView({ q }: { q: SettingsState }) {
           {exports.map(item => {
             const status = backupStatus(item.status)
             const details = [
-              `Demandée par ${item.requestedByEmail}`,
+              item.requestedByEmail ? `Demandée par ${item.requestedByEmail}` : null,
               formatFileSize(item.bundleSizeBytes),
               item.expiresAt ? `disponible jusqu’au ${q.formatExportDate(item.expiresAt)}` : null,
               item.errorMessage,

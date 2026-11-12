@@ -87,6 +87,8 @@ async function getOrgPublicData(slug: string): Promise<{
     .from('organizations')
     .select('id, name, slug, logo_url, sector, business_profile, business_activity_id, label_set, unit_set, default_categories, starter_presets, public_form_enabled, public_form_welcome_message, public_form_catalog_item_ids, public_form_custom_mode_enabled')
     .eq('slug', slug)
+    .is('deletion_scheduled_at', null)
+    .is('anonymized_at', null)
     .single()
 
   if (error || !org) return null

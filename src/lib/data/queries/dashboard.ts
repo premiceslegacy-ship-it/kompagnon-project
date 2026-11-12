@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentOrganizationId } from '@/lib/data/queries/clients'
+import { getIssuedInvoiceCreditTotals } from '@/lib/data/queries/invoices'
 import { todayParis, dateParis } from '@/lib/utils'
 import { MISSING_POINTAGE_WINDOW_DAYS } from '@/lib/data/queries/notifications'
 import type { BusinessActivityId } from '@/lib/catalog-context'
@@ -18,6 +19,33 @@ import type { BusinessActivityId } from '@/lib/catalog-context'
 type QueryDeps = { client: SupabaseClient; orgId: string }
 
 const FOLLOW_UP_DELAY_DAYS = 2
+/** DATE columns use calendar dates; never convert them through UTC. */
+export function monthDateRange(month: string): { firstDay: string; nextMonthFirstDay: string } {
+  const [year, monthNumber] = month.split('-').map(Number)
+  const monthIndex = year * 12 + monthNumber - 1
+  const nextMonthIndex = monthIndex + 1
+  const formatMonth = (index: number) =>
+    `${String(Math.floor(index / 12)).padStart(4, '0')}-${String((index % 12) + 1).padStart(2, '0')}-01`
+  return { firstDay: formatMonth(monthIndex), nextMonthFirstDay: formatMonth(nextMonthIndex) }
+}
+
+function netBilledTtc(totalTtc: number | null | undefined, creditedTtc: number | null | undefined): number {
+  return Math.max(0, Math.round(Number(totalTtc ?? 0) * 100) - Math.round(Number(creditedTtc ?? 0) * 100)) / 100
+}
+
+function invoiceOutstandingTtc(
+  totalTtc: number | null | undefined,
+  totalPaid: number | null | undefined,
+  creditedTtc: number | null | undefined,
+): number {
+  return Math.max(
+    0,
+    Math.round(Number(totalTtc ?? 0) * 100)
+      - Math.round(Number(totalPaid ?? 0) * 100)
+      - Math.round(Number(creditedTtc ?? 0) * 100),
+  ) / 100
+}
+
 const RECENT_ACTIVITY_DAYS = 7
 
 export type UrgentItem = {
@@ -100,17 +128,11 @@ export async function getDashboardStats(month?: string, deps?: QueryDeps): Promi
   }
 
   const now = new Date()
-  // Si month est fourni (YYYY-MM), utiliser ce mois ; sinon le mois courant
-  let year: number, mon: number
-  if (month && /^\d{4}-\d{2}$/.test(month)) {
-    [year, mon] = month.split('-').map(Number)
-    mon = mon - 1 // 0-indexed
-  } else {
-    year = now.getFullYear()
-    mon = now.getMonth()
-  }
-  const firstOfMonth = new Date(year, mon, 1).toISOString()
-  const firstOfNextMonth = new Date(year, mon + 1, 1).toISOString()
+  // Si month est fourni (YYYY-MM), utiliser ce mois ; sinon le mois courant.
+  const selectedMonth = month && /^\d{4}-\d{2}$/.test(month)
+    ? month
+    : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const { firstDay, nextMonthFirstDay } = monthDateRange(selectedMonth)
   const today = todayParis()
   const followUpCutoff = new Date(now.getTime() - FOLLOW_UP_DELAY_DAYS * 24 * 60 * 60 * 1000).toISOString()
   const recentActivityCutoff = new Date(now.getTime() - RECENT_ACTIVITY_DAYS * 24 * 60 * 60 * 1000).toISOString()
@@ -138,19 +160,19 @@ export async function getDashboardStats(month?: string, deps?: QueryDeps): Promi
     // Factures du mois - filtre sur issue_date (date d'émission réelle, pas de création du brouillon)
     supabase
       .from('invoices')
-      .select('total_ht, total_ttc, total_paid, status')
+      .select('issue_date, invoice_type, total_ttc, total_paid, status')
       .eq('organization_id', orgId)
-      .gte('issue_date', firstOfMonth.split('T')[0])
-      .lt('issue_date', firstOfNextMonth.split('T')[0])
-      .in('status', ['sent', 'partial', 'paid']),
+      .gte('issue_date', firstDay)
+      .lt('issue_date', nextMonthFirstDay)
+      .in('status', ['sent', 'viewed', 'partial', 'paid', 'overdue']),
 
     // Factures à relancer : échéance dépassée, ou envoyées depuis 2 jours sans règlement.
     supabase
       .from('invoices')
-      .select('id, number, title, total_ttc, due_date, sent_at, client_id')
+      .select('id, number, title, status, total_ttc, total_paid, invoice_type, due_date, sent_at, client_id')
       .eq('organization_id', orgId)
       .eq('is_archived', false)
-      .in('status', ['sent', 'partial'])
+      .in('status', ['sent', 'viewed', 'partial', 'overdue'])
       .or(`due_date.lt.${today},sent_at.lt.${followUpCutoff}`)
       .order('due_date')
       .limit(10),
@@ -183,7 +205,7 @@ export async function getDashboardStats(month?: string, deps?: QueryDeps): Promi
     // Acomptes versés dont le solde restant arrive à échéance dans les 7 prochains jours (ou déjà dépassé)
     supabase
       .from('invoices')
-      .select('id, number, title, total_ttc, balance_due_date, client_id')
+      .select('id, number, title, total_ttc, invoice_type, balance_due_date, client_id')
       .eq('organization_id', orgId)
       .eq('invoice_type', 'acompte')
       .in('status', ['sent', 'paid'])
@@ -196,13 +218,14 @@ export async function getDashboardStats(month?: string, deps?: QueryDeps): Promi
     supabase
       .from('invoice_payment_schedule')
       .select(`
-        id, label, due_date, amount, invoice_id,
-        invoice:invoices!inner(id, number, organization_id, status, client_id)
+        id, label, due_date, amount, amount_type, percentage, paid_payment_id, invoice_id,
+        payments:payments!payments_schedule_invoice_org_fkey(amount),
+        invoice:invoices!inner(id, number, organization_id, status, invoice_type, client_id, total_ttc, total_paid)
       `)
       .eq('invoices.organization_id', orgId)
       .is('paid_payment_id', null)
       .lte('due_date', dateParis(now.getTime() + 7 * 24 * 60 * 60 * 1000))
-      .not('invoices.status', 'eq', 'cancelled')
+      .in('invoices.status', ['sent', 'viewed', 'overdue', 'partial'])
       .order('due_date')
       .limit(5),
 
@@ -342,6 +365,24 @@ export async function getDashboardStats(month?: string, deps?: QueryDeps): Promi
       .limit(5),
   ])
 
+  const installmentInvoiceIds = [...new Set(
+    (installmentsDue ?? [])
+      .map((item: any) => item.invoice?.invoice_type === 'avoir' ? null : item.invoice?.id)
+      .filter((id: unknown): id is string => typeof id === 'string')
+  )]
+  const creditSourceInvoiceIds = [...new Set([
+    ...(overdueInvoices ?? []).filter(inv => inv.invoice_type !== 'avoir').map(inv => inv.id),
+    ...(pendingBalances ?? []).filter(inv => inv.invoice_type !== 'avoir').map(inv => inv.id),
+    ...installmentInvoiceIds,
+  ])]
+  const creditedTtcByInvoice = creditSourceInvoiceIds.length > 0
+    ? await getIssuedInvoiceCreditTotals(creditSourceInvoiceIds, { client: supabase, orgId })
+    : new Map<string, number>()
+  const payableOverdueInvoices = (overdueInvoices ?? []).filter(inv =>
+    inv.invoice_type !== 'avoir'
+    && invoiceOutstandingTtc(inv.total_ttc, inv.total_paid, creditedTtcByInvoice.get(inv.id)) > 0,
+  )
+
   // Une absence déclarée couvre le créneau : rien à signaler pour ce membre
   // (même règle que la cloche de notifications).
   const { data: absenceRows } = await supabase
@@ -384,17 +425,14 @@ export async function getDashboardStats(month?: string, deps?: QueryDeps): Promi
     })
   }
 
-  // Facturé TTC = toutes les factures émises ce mois (sent + partial + paid), en TTC.
-  // L'encaissé réel reste affiché séparément dans le dashboard.
-  const caMois = monthInvoices
-    ?.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0) ?? 0
-  // Encaissé du mois = factures payées + montants déjà encaissés sur les factures partielles.
-  const encaisseMois = monthInvoices
-    ?.reduce((sum, inv) => {
-      if (inv.status === 'paid') return sum + (inv.total_ttc ?? 0)
-      if (inv.status === 'partial') return sum + (inv.total_paid ?? 0)
-      return sum
-    }, 0) ?? 0
+  // Facturé TTC = somme des documents émis par date d’émission, avec les avoirs en négatif.
+  // L'encaissement reste le montant réellement reçu, sans remboursement inféré.
+  const monthBilling = aggregateBillingByMonth(
+    [selectedMonth],
+    (monthInvoices ?? []) as BillingInvoice[],
+  )[0]
+  const caMois = monthBilling.caMois
+  const encaisseMois = monthBilling.encaisseMois
 
   const devisEnAttente = pendingQuotes?.length ?? 0
 
@@ -457,44 +495,68 @@ export async function getDashboardStats(month?: string, deps?: QueryDeps): Promi
       }))
   }
 
+  const remainingInvoiceReceivableCents = new Map<string, number>()
   const urgentItems: UrgentItem[] = [
-    ...(overdueInvoices ?? []).filter(inv => !recentlyRemindedInvoiceIds.has(inv.id)).map(inv => {
-      const isOverdue = Boolean(inv.due_date && inv.due_date < today)
+    ...payableOverdueInvoices.filter(inv => !recentlyRemindedInvoiceIds.has(inv.id)).map(inv => {
+      const isOverdue = inv.status === 'overdue' || Boolean(inv.due_date && inv.due_date < today)
       return {
         id: inv.id,
         type: isOverdue ? 'overdue_invoice' as const : 'invoice_to_follow_up' as const,
         label: isOverdue ? `Facture ${inv.number ?? '-'} en retard` : `Facture ${inv.number ?? '-'} à relancer`,
         title: inv.title,
-        amount: inv.total_ttc,
+        amount: invoiceOutstandingTtc(inv.total_ttc, inv.total_paid, creditedTtcByInvoice.get(inv.id)),
         date: isOverdue ? inv.due_date : inv.sent_at,
         clientEmail: inv.client_id ? (clientMap[inv.client_id]?.email ?? null) : null,
         clientName: inv.client_id ? (clientMap[inv.client_id]?.name ?? null) : null,
       }
     }),
-    ...(pendingBalances ?? []).map(inv => ({
-      id: `balance-${inv.id}`,
-      type: 'balance_due' as const,
-      label: `Solde à encaisser · ${inv.number ?? '-'}`,
-      title: inv.title,
-      amount: null,
-      date: inv.balance_due_date,
-      clientEmail: inv.client_id ? (clientMap[inv.client_id]?.email ?? null) : null,
-      clientName: inv.client_id ? (clientMap[inv.client_id]?.name ?? null) : null,
-      invoiceId: inv.id,
-    })),
-    ...(installmentsDue ?? []).map((s: any) => {
+    ...(pendingBalances ?? [])
+      .filter(inv => inv.invoice_type !== 'avoir'
+        && netBilledTtc(inv.total_ttc, creditedTtcByInvoice.get(inv.id)) > 0)
+      .map(inv => ({
+        id: `balance-${inv.id}`,
+        type: 'balance_due' as const,
+        label: `Solde à encaisser · ${inv.number ?? '-'}`,
+        title: inv.title,
+        amount: null,
+        date: inv.balance_due_date,
+        clientEmail: inv.client_id ? (clientMap[inv.client_id]?.email ?? null) : null,
+        clientName: inv.client_id ? (clientMap[inv.client_id]?.name ?? null) : null,
+        invoiceId: inv.id,
+      })),
+    ...(installmentsDue ?? []).flatMap((s: any) => {
       const inv = s.invoice
       const clientId = inv?.client_id ?? null
-      return {
+      if (!inv?.id || inv.invoice_type === 'avoir') return []
+      const invoiceTtcCents = Math.round(Number(inv.total_ttc ?? 0) * 100)
+      let invoiceOutstandingCents = remainingInvoiceReceivableCents.get(inv.id)
+      if (invoiceOutstandingCents === undefined) {
+        invoiceOutstandingCents = Math.round(
+          invoiceOutstandingTtc(inv.total_ttc, inv.total_paid, creditedTtcByInvoice.get(inv.id)) * 100,
+        )
+      }
+      if (invoiceTtcCents <= 0 || invoiceOutstandingCents <= 0) return []
+      const scheduledCents = s.amount_type === 'percentage'
+        ? Math.round(invoiceTtcCents * Number(s.percentage ?? 0) / 100)
+        : Math.round(Number(s.amount ?? 0) * 100)
+      const paidCents = (s.payments ?? []).reduce(
+        (sum: number, payment: { amount: number | string }) => sum + Math.round(Number(payment.amount ?? 0) * 100),
+        0,
+      )
+      const scheduleRemainingCents = Math.max(0, scheduledCents - paidCents)
+      const remainingCents = Math.min(scheduleRemainingCents, invoiceOutstandingCents)
+      remainingInvoiceReceivableCents.set(inv.id, invoiceOutstandingCents - remainingCents)
+      if (remainingCents === 0) return []
+      return [{
         id: `installment-${s.id}`,
         type: 'installment_due' as const,
         label: `${s.label} · ${inv?.number ?? '-'}`,
-        amount: s.amount,
+        amount: remainingCents / 100,
         date: s.due_date,
         clientEmail: clientId ? (clientMap[clientId]?.email ?? null) : null,
         clientName: clientId ? (clientMap[clientId]?.name ?? null) : null,
         invoiceId: inv?.id ?? null,
-      }
+      }]
     }),
     ...staleQuotes.filter(q => !recentlyRemindedQuoteIds.has(q.id)).map(q => ({
       id: q.id,
@@ -633,7 +695,7 @@ export async function getDashboardStats(month?: string, deps?: QueryDeps): Promi
     caMois,
     encaisseMois,
     devisEnAttente,
-    facturesEnRetard: (overdueInvoices ?? []).filter(inv => inv.due_date && inv.due_date < today).length,
+    facturesEnRetard: payableOverdueInvoices.filter(inv => inv.status === 'overdue' || (inv.due_date && inv.due_date < today)).length,
     urgentItems,
   }
 }
@@ -737,33 +799,24 @@ export async function getPrevMonthKPIs(month?: string, deps?: QueryDeps): Promis
   if (!orgId) return { caMois: 0, encaisseMois: 0 }
 
   const now = new Date()
-  let year: number, mon: number
-  if (month && /^\d{4}-\d{2}$/.test(month)) {
-    ;[year, mon] = month.split('-').map(Number)
-    mon = mon - 1
-  } else {
-    year = now.getFullYear()
-    mon = now.getMonth()
-  }
-  const firstOfMonth = new Date(year, mon, 1).toISOString().split('T')[0]
-  const firstOfNextMonth = new Date(year, mon + 1, 1).toISOString().split('T')[0]
+  const selectedMonth = month && /^\d{4}-\d{2}$/.test(month)
+    ? month
+    : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const { firstDay, nextMonthFirstDay } = monthDateRange(selectedMonth)
 
   const { data: monthInvoices } = await supabase
     .from('invoices')
-    .select('total_ttc, total_paid, status')
+    .select('issue_date, invoice_type, total_ttc, total_paid, status')
     .eq('organization_id', orgId)
-    .gte('issue_date', firstOfMonth)
-    .lt('issue_date', firstOfNextMonth)
-    .in('status', ['sent', 'partial', 'paid'])
+    .gte('issue_date', firstDay)
+    .lt('issue_date', nextMonthFirstDay)
+    .in('status', ['sent', 'viewed', 'partial', 'paid', 'overdue'])
 
-  const caMois = monthInvoices?.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0) ?? 0
-  const encaisseMois = monthInvoices?.reduce((sum, inv) => {
-    if (inv.status === 'paid') return sum + (inv.total_ttc ?? 0)
-    if (inv.status === 'partial') return sum + (inv.total_paid ?? 0)
-    return sum
-  }, 0) ?? 0
-
-  return { caMois, encaisseMois }
+  const billing = aggregateBillingByMonth(
+    [selectedMonth],
+    (monthInvoices ?? []) as BillingInvoice[],
+  )[0]
+  return { caMois: billing.caMois, encaisseMois: billing.encaisseMois }
 }
 
 
@@ -781,17 +834,29 @@ export function monthsEndingAt(month: string, count: number): string[] {
   })
 }
 
-type BillingInvoice = { issue_date: string | null; total_ttc: number | null; total_paid: number | null; status: string }
+type BillingInvoice = {
+  issue_date: string | null
+  invoice_type?: string | null
+  total_ttc: number | null
+  total_paid: number | null
+  status: string
+}
 
-/** Même définition que les chiffres du mois : facturé TTC, et encaissé sur ces mêmes factures. */
+/** Facturé TTC = factures moins avoirs émis sur le mois d’émission ; encaissé sans remboursement inféré. */
 export function aggregateBillingByMonth(months: string[], invoices: BillingInvoice[]): MonthBilling[] {
   const byMonth = new Map(months.map(m => [m, { month: m, caMois: 0, encaisseMois: 0 }]))
   for (const inv of invoices) {
     const bucket = inv.issue_date ? byMonth.get(inv.issue_date.slice(0, 7)) : undefined
     if (!bucket) continue
-    bucket.caMois += inv.total_ttc ?? 0
-    if (inv.status === 'paid') bucket.encaisseMois += inv.total_ttc ?? 0
-    else if (inv.status === 'partial') bucket.encaisseMois += inv.total_paid ?? 0
+    const totalCents = Math.round((inv.total_ttc ?? 0) * 100)
+    bucket.caMois += inv.invoice_type === 'avoir' ? -Math.abs(totalCents) : totalCents
+    if (inv.invoice_type !== 'avoir' && (inv.status === 'paid' || inv.status === 'partial')) {
+      bucket.encaisseMois += Math.round((inv.total_paid ?? 0) * 100)
+    }
+  }
+  for (const bucket of byMonth.values()) {
+    bucket.caMois /= 100
+    bucket.encaisseMois /= 100
   }
   return months.map(m => byMonth.get(m)!)
 }
@@ -802,17 +867,15 @@ export async function getBillingTrend(month: string, count = 6, deps?: QueryDeps
   const months = monthsEndingAt(month, count)
   if (!orgId) return months.map(m => ({ month: m, caMois: 0, encaisseMois: 0 }))
 
-  const [lastYear, lastMon] = months[months.length - 1].split('-').map(Number)
-  const nextIndex = lastYear * 12 + lastMon
-  const firstOfNextMonth = `${Math.floor(nextIndex / 12)}-${String((nextIndex % 12) + 1).padStart(2, '0')}-01`
-
+  const firstRange = monthDateRange(months[0])
+  const lastRange = monthDateRange(months[months.length - 1])
   const { data } = await supabase
     .from('invoices')
-    .select('issue_date, total_ttc, total_paid, status')
+    .select('issue_date, invoice_type, total_ttc, total_paid, status')
     .eq('organization_id', orgId)
-    .gte('issue_date', `${months[0]}-01`)
-    .lt('issue_date', firstOfNextMonth)
-    .in('status', ['sent', 'partial', 'paid'])
+    .gte('issue_date', firstRange.firstDay)
+    .lt('issue_date', lastRange.nextMonthFirstDay)
+    .in('status', ['sent', 'viewed', 'partial', 'paid', 'overdue'])
 
   return aggregateBillingByMonth(months, (data ?? []) as BillingInvoice[])
 }

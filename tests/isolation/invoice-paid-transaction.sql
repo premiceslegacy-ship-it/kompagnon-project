@@ -1,4 +1,4 @@
--- Disposable LOCAL Supabase database migrated through 213. Every fixture row
+-- Disposable LOCAL Supabase database migrated through 218. Every fixture row
 -- and the injected failure trigger are rolled back on success.
 BEGIN;
 
@@ -113,6 +113,7 @@ BEGIN
   UPDATE public.invoices
   SET status = 'sent', sent_at = clock_timestamp()
   WHERE id IN (v_paid_invoice_id, v_failed_invoice_id, v_partial_invoice_id);
+  UPDATE public.invoices SET status = 'overdue' WHERE id = v_paid_invoice_id;
 
   UPDATE public.invoices
   SET status = 'partial', total_paid = 20
@@ -162,8 +163,8 @@ BEGIN
     RAISE EXCEPTION 'Payment fixture did not preserve the expected issued and historical baseline';
   END IF;
 
-  IF has_function_privilege('anon', 'public.mark_invoice_paid(uuid)', 'EXECUTE')
-     OR has_function_privilege('service_role', 'public.mark_invoice_paid(uuid)', 'EXECUTE') THEN
+  IF has_function_privilege('anon', 'public.mark_invoice_paid(uuid,date,text,text)', 'EXECUTE')
+     OR has_function_privilege('service_role', 'public.mark_invoice_paid(uuid,date,text,text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'mark_invoice_paid must not be executable by anon or service_role';
   END IF;
 
@@ -173,7 +174,7 @@ BEGIN
   PERFORM set_config('request.jwt.claim.sub', v_owner_id::TEXT, true);
   EXECUTE 'RESET ROLE';
   EXECUTE 'SET LOCAL ROLE authenticated';
-  SELECT public.mark_invoice_paid(v_paid_invoice_id) INTO v_result;
+  SELECT public.mark_invoice_paid(v_paid_invoice_id, DATE '2026-11-09', 'virement', 'VIR-TEST-218') INTO v_result;
   EXECUTE 'RESET ROLE';
 
   IF v_result->>'changed' IS DISTINCT FROM 'true'
@@ -193,11 +194,16 @@ BEGIN
      OR (SELECT count(*) FROM public.payments WHERE invoice_id = v_paid_invoice_id AND organization_id = v_org_id) <> 1
      OR (SELECT amount FROM public.payments WHERE invoice_id = v_paid_invoice_id AND organization_id = v_org_id) <> 120
      OR NOT EXISTS (
+       SELECT 1 FROM public.payments
+       WHERE invoice_id = v_paid_invoice_id AND organization_id = v_org_id
+         AND payment_date = DATE '2026-11-09' AND method = 'virement' AND reference = 'VIR-TEST-218'
+     )
+     OR NOT EXISTS (
        SELECT 1 FROM public.invoices
        WHERE id = v_paid_invoice_id AND status = 'paid' AND total_paid = 120 AND paid_at = v_first_paid_at
          AND issuance_snapshot = v_paid_snapshot AND historical_import IS NULL
      ) THEN
-    RAISE EXCEPTION 'Owner payment, paid timestamp, or issuance authority was not committed together';
+    RAISE EXCEPTION 'Owner payment metadata, paid timestamp, or issuance authority was not committed together';
   END IF;
 
   -- Retry returns the stored timestamp and total without inserting another row.

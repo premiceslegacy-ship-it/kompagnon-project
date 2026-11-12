@@ -31,7 +31,7 @@ function daysSince(iso: string | null): number | null {
 
 const SENT_TYPES = new Set<UrgentItem['type']>(['recently_sent', 'task_completed'])
 const CHANTIER_TYPES = new Set<UrgentItem['type']>(['task_due', 'planning_slot', 'missing_pointage', 'chantier_profitability'])
-const REMINDABLE = new Set<UrgentItem['type']>(['overdue_invoice', 'invoice_to_follow_up', 'pending_quote', 'balance_due', 'installment_due'])
+const REMINDABLE = new Set<UrgentItem['type']>(['overdue_invoice', 'invoice_to_follow_up', 'pending_quote', 'installment_due'])
 
 /** Libellé court de l'état, à droite de la ligne. */
 function statusOf(item: UrgentItem): { text: string; status: StatusPillStatus } {
@@ -112,7 +112,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
   const [loading, setLoading] = useState<'paid' | 'accepted' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [hud, setHud] = useState<string | null>(null)
-  const [reminderTarget, setReminderTarget] = useState<{ type: 'invoice' | 'quote'; id: string } | null>(null)
+  const [reminderTarget, setReminderTarget] = useState<{ type: 'invoice' | 'quote'; id: string; itemId: string } | null>(null)
   const [, startTransition] = useTransition()
 
   const actionItems = items.filter(i => !SENT_TYPES.has(i.type))
@@ -155,10 +155,13 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
 
   function remind(item: UrgentItem) {
     setSelected(null)
+    const invoiceTarget = item.type === 'overdue_invoice'
+      || item.type === 'invoice_to_follow_up'
+      || item.type === 'installment_due'
     setReminderTarget({
-      // Correspondance d'origine conservée : seules les factures en retard ou à suivre sont relancées comme factures.
-      type: item.type === 'overdue_invoice' || item.type === 'invoice_to_follow_up' ? 'invoice' : 'quote',
-      id: item.id,
+      type: invoiceTarget ? 'invoice' : 'quote',
+      id: invoiceTarget ? (item.invoiceId ?? item.id) : item.id,
+      itemId: item.id,
     })
   }
 
@@ -280,7 +283,7 @@ export default function UrgentTasksClient({ initialItems, quoteAiEnabled }: {
           type={reminderTarget.type}
           id={reminderTarget.id}
           onSent={() => {
-            removeItem(reminderTarget.id)
+            removeItem(reminderTarget.itemId)
             setReminderTarget(null)
             setHud('Relance envoyée')
           }}

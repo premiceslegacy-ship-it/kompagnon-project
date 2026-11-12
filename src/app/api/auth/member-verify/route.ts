@@ -21,6 +21,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/mon-espace/request-access?error=expired_renewed', req.url))
   }
 
-  await setMemberSessionCookie(result.memberId, result.organizationId)
+  await setMemberSessionCookie(result.memberId, result.organizationId, {
+    requestIsHttps: req.nextUrl.protocol === 'https:',
+  })
   return NextResponse.redirect(new URL('/mon-espace/dashboard', req.url))
 }

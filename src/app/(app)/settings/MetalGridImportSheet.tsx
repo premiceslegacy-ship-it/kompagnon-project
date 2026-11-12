@@ -56,7 +56,7 @@ export default function MetalGridImportSheet({ open, onClose }: { open: boolean;
     >
       <div className={local.sheetBody}>
         <input ref={fileRef} type="file" accept=".csv,.tsv,.txt" className={local.fileInput} tabIndex={-1} aria-hidden="true" onChange={handleFile} />
-        <ListGroup description={`Colonnes dans l’ordre : ${GRID_CSV_HEADERS.join(' | ')}. Source : lme ou manuel. Métal : ALU, XCU, ZNC, PB, STEEL, NI, ou le nom en français.`}>
+        <ListGroup description={`Colonnes dans l’ordre : ${GRID_CSV_HEADERS.join(' | ')}. Prix manuel HT par unité. Métal : ALU, XCU, ZNC, PB, STEEL, NI, ou le nom en français.`}>
           <ListRow
             title="Choisir un fichier CSV"
             description="Exportez votre tableur en CSV (séparateur « ; » ou « , »)."
@@ -73,7 +73,7 @@ export default function MetalGridImportSheet({ open, onClose }: { open: boolean;
               <ListRow
                 key={i}
                 title={row.label}
-                description={[row.metal_code, row.source_type === 'manual' ? `${row.manual_price_eur_kg} €/${row.unit}` : `× ${row.coefficient ?? '?'}`, ...gridDetails({ grade: row.grade ?? null, thickness_mm: row.thickness_mm ?? null, format_label: row.format_label ?? null })].join(' · ')}
+                description={[row.metal_code, `${row.manual_price_eur_kg} € HT/${row.unit}`, ...gridDetails({ grade: row.grade ?? null, thickness_mm: row.thickness_mm ?? null, format_label: row.format_label ?? null })].join(' · ')}
               />
             ))}
           </ListGroup>

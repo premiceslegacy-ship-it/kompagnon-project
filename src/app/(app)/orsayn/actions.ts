@@ -1095,10 +1095,9 @@ export async function upsertOperatorClientVerticalPack(formData: FormData) {
 }
 
 /**
- * Active/désactive has_metal_pricing pour un client — geste manuel volontaire.
- * Pas d'activation automatique : la clé METALPRICEAPI_KEY reste posée à la
- * main par Samuel, client par client, donc l'activation du flag doit rester
- * sous son contrôle explicite plutôt que suivre le tier ou l'activité déclarée.
+ * Active/désactive les grilles de prix matières manuelles pour un client.
+ * Activation explicite par Samuel, indépendante du tier et de l'activité déclarée.
+ * Les prix du catalogue restent disponibles sans ce module ni clé fournisseur.
  */
 export async function upsertOperatorClientMetalPricing(formData: FormData) {
   const user = await getOperatorUser()

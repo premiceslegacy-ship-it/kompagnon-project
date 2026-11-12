@@ -92,7 +92,16 @@ jobs:
             tests/isolation/account-deletion-logo-claim.sql \
             tests/isolation/quote-attachment-identity.sql \
             tests/isolation/app-215-setup-sync.sql \
-            tests/isolation/invoice-paid-transaction.sql; do
+            tests/isolation/invoice-paid-transaction.sql \
+            tests/isolation/accounting-payment-ledger.sql \
+            tests/isolation/client-billed-totals.sql \
+            tests/isolation/document-reminder-dispatch.sql \
+            tests/isolation/invoice-adjustments-authority.sql \
+            tests/isolation/invoice-payment-write-authority.sql \
+            tests/isolation/invoice-schedule-payment.sql \
+            tests/isolation/recurring-invoice-authority.sql \
+            tests/isolation/recurring-skip-authority.sql \
+            tests/isolation/team-invitation-authority.sql; do
             if [[ "$smoke" == tests/isolation/quote-attachment-identity.sql ]]; then
               # Disposable legacy-restore fixture alone needs the Storage owner.
               storage_fixture_db_url="$(node -e 'const u = new URL(process.env.DB_URL); u.username = "supabase_admin"; process.stdout.write(u.href)')"
