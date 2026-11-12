@@ -340,16 +340,24 @@ describe('migration 196 — cross-organization billing references', () => {
       .eq('id', invoice.id)
     expect(sameOrgQuoteUpdate.error).toBeNull()
 
-    const { data: payment, error: paymentError } = await tenantA.client.from('payments').insert({
+    // Depuis la migration 225, un paiement ne s'écrit plus en direct avec une session
+    // utilisateur : seules les fonctions verrouillées (service_role) le font. Le lien
+    // paiement/facture de la même organisation reste valide côté service.
+    const paymentRow = {
       organization_id: tenantA.orgId,
       invoice_id: invoice.id,
       client_id: dataA.clientId,
       amount: 25,
       payment_date: new Date().toISOString().slice(0, 10),
       method: 'manual',
-    }).select('id').single()
+    }
+    const { data: payment, error: paymentError } = await adminClient().from('payments').insert(paymentRow).select('id').single()
     expect(paymentError).toBeNull()
     if (payment) createdPaymentIds.push(payment.id)
+
+    const direct = await tenantA.client.from('payments').insert(paymentRow).select('id').single()
+    expect(direct.error?.code).toBe('42501')
+    if (direct.data) createdPaymentIds.push(direct.data.id)
   })
 
   it('accepts same-organization chantier links and rejects cross-organization invoice links', async () => {
