@@ -44,6 +44,6 @@ describe('voix de Sarah', () => {
     expect(widget).not.toContain('votre assistante')
     expect(widget).not.toContain('Posez votre question')
     // Les erreurs et quotas restent des messages d\'application, vouvoyés.
-    expect(widget).toContain('Vous avez atteint la limite de messages IA ce mois-ci.')
+    expect(widget).toContain('Vous avez utilisé toutes vos minutes ce mois-ci.')
   })
 })

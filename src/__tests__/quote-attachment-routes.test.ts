@@ -49,6 +49,7 @@ import { GET as downloadAttachment } from '@/app/api/requests/[id]/attachment/ro
 type MockQuery = {
   select: () => MockQuery
   eq: (column: string, value: unknown) => MockQuery
+  is: (column: string, value: null) => MockQuery
   maybeSingle: () => Promise<{ data: unknown; error: null }>
 }
 
@@ -62,6 +63,8 @@ function createAdminMock() {
           filters[column] = value
           return query
         },
+        // Filtres « pas en cours d'effacement » de la route : sans effet sur ces cas.
+        is: () => query,
         maybeSingle: async () => {
           if (table === 'organizations') {
             const matches = filters.slug === mocks.organizationSlug && filters.public_form_enabled === true
